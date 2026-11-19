@@ -94,6 +94,13 @@ export const noUnforwardedPeer = createRule({
                       {
                         kind: "manifest",
                         file: dependency.file,
+                        range: manifestEntryRange(
+                          ctx,
+                          dependency.file,
+                          dependency.text,
+                          "peerDependencies",
+                          peer,
+                        ),
                         summary: `peerDependencies["${peer}"] is "${specifier}" and not optional.`,
                       },
                     ],

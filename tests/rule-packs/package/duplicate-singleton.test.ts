@@ -80,18 +80,17 @@ const vueSnapshots = {
 };
 
 test("reports two versions of a singleton reachable from one importer where the extra copy enters", async () => {
-  const { root, diagnostics } = await duplicates(
-    workspace(
-      {
-        ".": { manifest: {}, devDependencies: { lib: "link:packages/lib" } },
-        "packages/lib": {
-          manifest: { name: "lib", dependencies: { vue: "^3.5.0", "old-ui": "1.0.0" } },
-          dependencies: { vue: "3.5.44", "old-ui": "1.0.0(vue@3.4.0)" },
-        },
+  const files = workspace(
+    {
+      ".": { manifest: {}, devDependencies: { lib: "link:packages/lib" } },
+      "packages/lib": {
+        manifest: { name: "lib", dependencies: { vue: "^3.5.0", "old-ui": "1.0.0" } },
+        dependencies: { vue: "3.5.44", "old-ui": "1.0.0(vue@3.4.0)" },
       },
-      vueSnapshots,
-    ),
+    },
+    vueSnapshots,
   );
+  const { root, diagnostics } = await duplicates(files);
   expect(diagnostics).toHaveLength(1);
   const [diagnostic] = diagnostics;
   expect(diagnostic).toMatchObject({
@@ -109,6 +108,18 @@ test("reports two versions of a singleton reachable from one importer where the 
   });
   expect(manifest.slice(diagnostic!.range!.start, diagnostic!.range!.end)).toBe('"old-ui":"1.0.0"');
   expect(diagnostic!.evidence?.[0]?.file).toBe(join(root, "pnpm-lock.yaml"));
+  // Each copy cites the lockfile entries that start and end its route, so a --since run can
+  // report a duplicate that only a lockfile change adds.
+  const lockfile = files["pnpm-lock.yaml"];
+  expect(
+    diagnostic!.evidence
+      ?.filter((item) => item.file === join(root, "pnpm-lock.yaml"))
+      .map((item) => lockfile.slice(item.range!.start, item.range!.end)),
+  ).toEqual([
+    "'vue':\n        specifier: '*'\n        version: '3.5.44'",
+    "'old-ui':\n        specifier: '*'\n        version: '1.0.0(vue@3.4.0)'",
+    "'vue': '3.4.0'",
+  ]);
 });
 
 test("reports an app whose separate workspace dependencies bring different copies", async () => {

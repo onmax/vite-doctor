@@ -21,6 +21,7 @@ import type {
   FixEdit,
   DoctorFramework,
   ProjectInfo,
+  SourceRange,
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
 import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
@@ -45,6 +46,7 @@ import {
   topLevelRuleConfig,
   type ScanSession,
 } from "./scan-session.js";
+import type { ScanFileEntry } from "./source-inventory.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256, shellArgument } from "./utils.js";
 import {
@@ -635,10 +637,29 @@ function suppressionEntryBounds(
 
 export function applyReportEligibility(session: ScanSession): void {
   if (!session.scopedReport) return;
-  const eligibility = new Map(
+  const eligibility = new Map<string, ScanFileEntry["reportEligibility"]>(
     session.files.map((file) => [file.path, file.reportEligibility] as const),
   );
-  const sources = { get: (file: string) => session.handlesByPath.get(file)?.text };
+  // Files outside the source inventory, such as package.json and pnpm-lock.yaml, still carry
+  // Diagnostics and manifest evidence, so their changed lines count like a source file's.
+  const affected =
+    session.options.affectedFiles &&
+    new Set(session.options.affectedFiles.map((file) => resolve(session.root, file)));
+  for (const change of session.gitChanges?.files ?? []) {
+    if (!change.path) continue;
+    const path = resolve(session.root, change.path);
+    if (!eligibility.has(path) && (!affected || affected.has(path)))
+      eligibility.set(path, { kind: "changed-lines", ranges: change.reportRanges });
+  }
+  const texts = new Map<string, string | undefined>();
+  const sources = {
+    get(file: string) {
+      const handle = session.handlesByPath.get(file);
+      if (handle) return handle.text;
+      if (!texts.has(file)) texts.set(file, readTextOrUndefined(file));
+      return texts.get(file);
+    },
+  };
   // Parser evidence about files outside the change belongs to the full run, not this report.
   if (session.project.evidenceGaps)
     session.project.evidenceGaps = session.project.evidenceGaps.filter(
@@ -646,19 +667,42 @@ export function applyReportEligibility(session: ScanSession): void {
         (gap.source !== "script-parser" && gap.source !== "vue-sfc-parser") ||
         gap.files.some((file) => eligibility.get(file)),
     );
+  const onChangedLine = (file: string, range: SourceRange) => {
+    const fileEligibility = eligibility.get(file);
+    if (!fileEligibility) return false;
+    if (fileEligibility.kind === "file") return true;
+    const endLine = diagnosticEndLine(range, sources.get(file));
+    return fileEligibility.ranges.some(
+      (changed) => range.line <= changed.endLine && endLine >= changed.startLine,
+    );
+  };
   session.diagnostics = session.diagnostics.filter((diagnostic) => {
     const locations = [diagnostic, ...(diagnostic.related ?? [])];
-    return locations.some((location) => {
-      const fileEligibility = eligibility.get(location.file);
-      if (!fileEligibility) return false;
-      if (fileEligibility.kind === "file") return true;
-      if (!location.range) return diagnostic.range === undefined;
-      const endLine = diagnosticEndLine(location.range, sources.get(location.file));
-      return fileEligibility.ranges.some(
-        (range) => location.range!.line <= range.endLine && endLine >= range.startLine,
-      );
+    const located = locations.some((location) => {
+      if (location.range) return onChangedLine(location.file, location.range);
+      return diagnostic.range === undefined && eligibility.get(location.file) !== undefined;
     });
+    // A manifest or lockfile entry is the cause of the finding even when the finding is
+    // reported elsewhere, such as a lockfile route that reaches a second copy.
+    return (
+      located ||
+      (diagnostic.evidence ?? []).some(
+        (item) =>
+          item.kind === "manifest" &&
+          item.file !== undefined &&
+          item.range !== undefined &&
+          onChangedLine(item.file, item.range),
+      )
+    );
   });
+}
+
+function readTextOrUndefined(file: string): string | undefined {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 function diagnosticEndLine(range: NonNullable<Diagnostic["range"]>, source?: string): number {

@@ -1,5 +1,4 @@
 import { closeSync, openSync, readSync } from "node:fs";
-import { matchesGlob } from "node:path";
 import { relative, resolve } from "pathe";
 import type { DoctorConfig } from "../config.js";
 import type { DoctorRunOptions } from "../config.js";
@@ -112,15 +111,9 @@ async function selectGitOrAllFiles(
   memo?: SourceInventoryMemo,
 ): Promise<SourceInventorySelection> {
   if (options.changed || options.since) {
-    const include = config.include ?? defaultIncludeForProject(project);
-    const exclude = [...DEFAULT_EXCLUDE, ...(config.exclude ?? [])];
-    const git = await collectGitChangeInventory(
-      root,
-      options.since,
-      (path) =>
-        include.some((pattern) => matchesGlob(path, pattern)) &&
-        !exclude.some((pattern) => matchesGlob(path, pattern)),
-    );
+    // Every changed file counts, not only source files: manifest Rules report into package.json
+    // and read pnpm-lock.yaml, and a full run reports there too.
+    const git = await collectGitChangeInventory(root, options.since);
     if (git.status === "unavailable") return { files: [], git };
     // Changed files are analyzed with the whole inventory, so cross-file Rules and analyses see
     // the same project as a full run; only the reported Diagnostics are limited to changed lines.

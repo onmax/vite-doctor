@@ -71,7 +71,6 @@ const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 export async function collectGitChangeInventory(
   root: string,
   since?: string,
-  includePath: (path: string) => boolean = () => true,
 ): Promise<GitChangeInventory> {
   const repository = await runGit(root, ["rev-parse", "--is-inside-work-tree"]);
   if (!repository.ok) {
@@ -100,7 +99,7 @@ export async function collectGitChangeInventory(
         since,
       );
     }
-    return collectUnbornRepositoryChanges(root, includePath);
+    return collectUnbornRepositoryChanges(root);
   }
 
   const base = since ? await resolveMergeBase(root, since) : head.stdout.trim();
@@ -128,9 +127,7 @@ export async function collectGitChangeInventory(
   if (untracked.status === "unavailable") return untracked;
 
   const changes: GitChangedFile[] = [];
-  for (const change of parseNameStatus(tracked.stdout).filter((change) =>
-    includePath(change.path ?? change.previousPath ?? ""),
-  )) {
+  for (const change of parseNameStatus(tracked.stdout)) {
     const diffPath = change.path ?? change.previousPath;
     const hunks = diffPath
       ? await collectFileHunks(
@@ -149,7 +146,7 @@ export async function collectGitChangeInventory(
     });
   }
 
-  for (const path of untracked.paths.filter(includePath)) {
+  for (const path of untracked.paths) {
     const absolute = resolve(root, path);
     if (!statSync(absolute, { throwIfNoEntry: false })?.isFile()) continue;
     const lineCount = currentLineCount(absolute);
@@ -173,10 +170,7 @@ export async function collectGitChangeInventory(
   };
 }
 
-async function collectUnbornRepositoryChanges(
-  root: string,
-  includePath: (path: string) => boolean,
-): Promise<GitChangeInventory> {
+async function collectUnbornRepositoryChanges(root: string): Promise<GitChangeInventory> {
   const cached = await runGit(root, ["ls-files", "--cached", "-z", "--"]);
   if (!cached.ok) {
     return unavailableInventory(
@@ -188,7 +182,6 @@ async function collectUnbornRepositoryChanges(
   if (untracked.status === "unavailable") return untracked;
 
   const paths = [...new Set([...splitNull(cached.stdout), ...untracked.paths])]
-    .filter(includePath)
     .filter((path) => statSync(resolve(root, path), { throwIfNoEntry: false })?.isFile())
     .sort();
   return {

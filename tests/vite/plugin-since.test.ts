@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "pathe";
+import { dirname, join } from "pathe";
 import { build, createLogger, createServer } from "vite";
 import { expect, test, vi } from "vite-plus/test";
 import {
@@ -10,6 +10,7 @@ import {
   defineDoctorExtension,
   defineRulePack,
 } from "../../src/core/index.ts";
+import { main } from "../../src/cli.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import { doctor } from "../../src/plugin.ts";
 
@@ -90,7 +91,7 @@ async function withRepository(run: (root: string) => Promise<void>) {
   }
 }
 
-async function buildReport(root: string, options: Parameters<typeof doctor>[0]) {
+async function buildReport(root: string, options: Parameters<typeof doctor>[0] = {}) {
   const logged: string[] = [];
   const logger = createLogger("silent");
   logger.warn = (message) => void logged.push(message);
@@ -101,19 +102,21 @@ async function buildReport(root: string, options: Parameters<typeof doctor>[0]) 
     customLogger: logger,
     plugins: [
       doctor({
-        ...options,
         mode: "warn",
         format: "json",
         cache: false,
         extends: ["fixture/plugin-since/recommended"],
         extensions: [extension],
+        ...options,
       }),
     ],
     build: { write: false, lib: { entry: join(root, "entry.ts"), formats: ["es"] } },
   });
   const report = logged.find((message) => message.trimStart().startsWith("{"));
   if (!report) throw new Error(`No Doctor report was logged: ${logged.join("\n")}`);
-  return JSON.parse(report) as { diagnostics: Array<{ location: { line: number } }> };
+  return JSON.parse(report) as {
+    diagnostics: Array<{ code: string; location: { path: string; line: number } }>;
+  };
 }
 
 async function cliLines(root: string, options: { since?: string; changed?: boolean }) {
@@ -198,3 +201,207 @@ test.each([{ changed: true }, { since: "main" }])(
     });
   },
 );
+
+const manifest = (value: object) => `${JSON.stringify(value, null, 2)}\n`;
+
+const auth = { name: "@x/auth", version: "1.0.0", peerDependencies: { "drizzle-orm": "^1.0.0" } };
+const realtime = {
+  name: "@x/realtime",
+  version: "1.0.0",
+  dependencies: { "@x/auth": "workspace:*", "old-ui": "1.0.0", vue: "^3.5.0" },
+};
+const email = { name: "@x/email", version: "1.0.0", dependencies: { vue: "^3.5.0" } };
+
+const lockfile = (oldUiVue: string) =>
+  [
+    "lockfileVersion: '9.0'",
+    "",
+    "importers:",
+    "",
+    "  .: {}",
+    "",
+    "  packages/auth: {}",
+    "",
+    "  packages/email:",
+    "    dependencies:",
+    "      vue:",
+    "        specifier: ^3.5.0",
+    "        version: 3.5.44",
+    "",
+    "  packages/realtime:",
+    "    dependencies:",
+    "      '@x/auth':",
+    "        specifier: workspace:*",
+    "        version: link:../auth",
+    "      old-ui:",
+    "        specifier: 1.0.0",
+    "        version: 1.0.0",
+    "      vue:",
+    "        specifier: ^3.5.0",
+    "        version: 3.5.44",
+    "",
+    "snapshots:",
+    "",
+    "  old-ui@1.0.0:",
+    "    dependencies:",
+    `      vue: ${oldUiVue}`,
+    "",
+    ...(oldUiVue === "3.5.44" ? [] : [`  vue@${oldUiVue}: {}`, ""]),
+    "  vue@3.5.44: {}",
+    "",
+  ].join("\n");
+
+/**
+ * A pnpm workspace whose committed state already has one PKG0007, at the "@x/auth" entry of
+ * packages/realtime/package.json (line 5).
+ */
+async function withWorkspace(
+  change: (root: string) => Promise<void>,
+  run: (root: string) => Promise<void>,
+) {
+  const root = await mkdtemp(join(tmpdir(), "doctor-since-workspace-"));
+  const write = async (file: string, text: string) => {
+    await mkdir(dirname(join(root, file)), { recursive: true });
+    await writeFile(join(root, file), text);
+  };
+  try {
+    await write("package.json", manifest({ private: true, type: "module" }));
+    await write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
+    await write("pnpm-lock.yaml", lockfile("3.5.44"));
+    await write("packages/auth/package.json", manifest(auth));
+    await write("packages/realtime/package.json", manifest(realtime));
+    await write("packages/email/package.json", manifest(email));
+    await write("entry.ts", "export const entry = 1;\n");
+    git(root, "init", "-q", "-b", "main");
+    git(root, "add", "-A");
+    git(
+      root,
+      "-c",
+      "user.name=Doctor",
+      "-c",
+      "user.email=doctor@example.test",
+      "commit",
+      "-qm",
+      "base",
+    );
+    git(root, "checkout", "-q", "-b", "feature");
+    await change(root);
+    await run(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+type ReportedDiagnostic = {
+  code: string;
+  message: string;
+  location: { path: string; line?: number };
+};
+
+const packageFindings = (diagnostics: ReportedDiagnostic[]) =>
+  diagnostics
+    .filter((item) => item.code.startsWith("PKG"))
+    .map((item) => `${item.code} ${item.location.path}:${item.location.line}`)
+    .sort();
+
+/** The same `since` run through the CLI Surface and the Vite Plugin Surface. */
+async function sinceFindings(root: string, since?: string) {
+  const writes: string[] = [];
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    await main(
+      [
+        ".",
+        "--extends",
+        "vite-doctor/package/recommended",
+        ...(since ? ["--since", since] : []),
+        "--format",
+        "json",
+        "--no-cache",
+        "--no-server",
+      ],
+      root,
+    );
+  } finally {
+    process.stdout.write = write;
+  }
+  const cli = JSON.parse(writes.join("")) as { diagnostics: ReportedDiagnostic[] };
+  const plugin = (await buildReport(root, {
+    since,
+    extends: ["vite-doctor/package/recommended"],
+    extensions: undefined,
+  })) as unknown as { diagnostics: ReportedDiagnostic[] };
+  expect(packageFindings(plugin.diagnostics)).toEqual(packageFindings(cli.diagnostics));
+  return { findings: packageFindings(cli.diagnostics), diagnostics: cli.diagnostics };
+}
+
+test("since reports a workspace finding on the changed package.json line", async () => {
+  await withWorkspace(
+    async (root) => {
+      await writeFile(
+        join(root, "packages/email/package.json"),
+        manifest({ ...email, dependencies: { "@x/auth": "workspace:*", vue: "^3.5.0" } }),
+      );
+    },
+    async (root) => {
+      expect((await sinceFindings(root)).findings).toEqual([
+        "PKG0007 packages/email/package.json:5",
+        "PKG0007 packages/realtime/package.json:5",
+      ]);
+      expect((await sinceFindings(root, "main")).findings).toEqual([
+        "PKG0007 packages/email/package.json:5",
+      ]);
+    },
+  );
+});
+
+test("since reports a duplicate singleton that only the lockfile change introduces", async () => {
+  await withWorkspace(
+    async (root) => {
+      await writeFile(join(root, "pnpm-lock.yaml"), lockfile("3.4.0"));
+    },
+    async (root) => {
+      expect((await sinceFindings(root, "main")).findings).toEqual([
+        "PKG0008 packages/realtime/package.json:6",
+      ]);
+    },
+  );
+});
+
+test("since reports a missing peer forwarded from a changed workspace dependency", async () => {
+  await withWorkspace(
+    async (root) => {
+      await writeFile(
+        join(root, "packages/auth/package.json"),
+        manifest({ ...auth, peerDependencies: { h3: "^1.15.0", ...auth.peerDependencies } }),
+      );
+    },
+    async (root) => {
+      const { findings, diagnostics } = await sinceFindings(root, "main");
+      expect(findings).toEqual(["PKG0007 packages/realtime/package.json:5"]);
+      expect(diagnostics.find((item) => item.code === "PKG0007")?.message).toContain('"h3"');
+    },
+  );
+});
+
+test("since stays quiet about workspace findings whose manifest entries did not change", async () => {
+  await withWorkspace(
+    async (root) => {
+      await writeFile(
+        join(root, "packages/realtime/package.json"),
+        manifest({ ...realtime, version: "1.0.1" }),
+      );
+      await writeFile(join(root, "entry.ts"), "export const entry = 2;\n");
+    },
+    async (root) => {
+      expect((await sinceFindings(root)).findings).toEqual([
+        "PKG0007 packages/realtime/package.json:5",
+      ]);
+      expect((await sinceFindings(root, "main")).findings).toEqual([]);
+    },
+  );
+});
