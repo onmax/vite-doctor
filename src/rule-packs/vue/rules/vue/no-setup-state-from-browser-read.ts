@@ -45,12 +45,11 @@ export const noSetupStateFromBrowserRead = createRule({
     let templateReads: Set<string> | undefined;
     return {
       CallExpression(node: AnyNode) {
-        const indexed = script
-          .nodes("CallExpression")
-          .find((call) => call.range?.[0] === node.start);
+        const indexed = script.nodeAt("CallExpression", node.start);
         const api = indexed && vueApiCall(script, indexed.callee, STATE_APIS);
+        if (!api) return;
         if (ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
-        if (!api || !isSetupScope(ctx, node)) return;
+        if (!isSetupScope(ctx, node)) return;
         const initial = unwrap(node.arguments?.[0]);
         if (!initial) return;
         const getter = api === "computed" && FUNCTION_TYPES.has(initial.type);

@@ -27,6 +27,8 @@ export interface IndexedScript extends ScriptScope {
   /** The nearest enclosing function, or `undefined` at module (and `<script setup>`) level. */
   owner(node: AnyNode): AnyNode;
   nodes(type: string): AnyNode[];
+  /** The outermost scope node of `type` starting at `offset`, which maps a visitor node onto this AST. */
+  nodeAt(type: string, offset: number): AnyNode | undefined;
 }
 
 export function indexedScript(ctx: RuleContext): IndexedScript | null {
@@ -55,6 +57,7 @@ export function indexScriptScope(scope: ScriptScope): IndexedScript {
     }
   };
   visit(scope.ast, undefined, undefined);
+  const byStart = new Map<string, Map<number, AnyNode>>();
   return {
     ast: scope.ast,
     scopeManager: scope.scopeManager,
@@ -65,6 +68,18 @@ export function indexScriptScope(scope: ScriptScope): IndexedScript {
     parent: (node) => parents.get(node),
     owner: (node) => owners.get(node),
     nodes: (type) => byType.get(type) ?? [],
+    nodeAt(type, offset) {
+      let starts = byStart.get(type);
+      if (!starts) {
+        byStart.set(type, (starts = new Map()));
+        // Pre-order keeps the outer node when several start together, as in `a()()`.
+        for (const node of byType.get(type) ?? []) {
+          const start = node.range?.[0];
+          if (start !== undefined && !starts.has(start)) starts.set(start, node);
+        }
+      }
+      return starts.get(offset);
+    },
   };
 }
 
