@@ -47,7 +47,7 @@ export const noDuplicateSingleton = createRule({
             ...(ctx.project.evidenceGaps ?? []),
             {
               source: "vite-doctor/package",
-              message: `${RULE_ID} reads pnpm lockfile version 9 only; pnpm-lock.yaml has another version.`,
+              message: `${RULE_ID} could not read pnpm-lock.yaml; expected a valid pnpm v9 lockfile with importers and snapshots. Check for malformed YAML or an unsupported lockfile format.`,
               files: [relative(ctx.project.root, lockfilePath)],
             },
           ];
@@ -148,11 +148,17 @@ export const noDuplicateSingleton = createRule({
                 range,
                 confidence: "manifest-backed",
                 evidence: [
-                  {
-                    kind: "manifest",
-                    file: lockfilePath,
-                    summary: `pnpm-lock.yaml importer ${importer} reaches ${routes.join("; ")}.`,
-                  },
+                  ...ordered.flatMap((version) => {
+                    const copy = copies.find(
+                      (item) => item.name === name && item.version === version,
+                    )!;
+                    return copy.spans.map((span) => ({
+                      kind: "manifest" as const,
+                      file: lockfilePath,
+                      range: ctx.helpers.rangeFromOffsets(lockfilePath, text, ...span),
+                      summary: `Part of the lockfile route to ${name} ${version}: ${copy.path.join(" > ")}.`,
+                    }));
+                  }),
                   {
                     kind: "manifest",
                     file: manifestFile,

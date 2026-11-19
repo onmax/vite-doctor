@@ -1,7 +1,12 @@
 import { subset } from "semver";
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
-import { inRunScope, manifestEntryRange, packageWorkspace } from "../manifests.js";
+import {
+  inRunScope,
+  manifestEntryRange,
+  manifestPropertyRange,
+  packageWorkspace,
+} from "../manifests.js";
 
 const RULE_ID = "package/no-unforwarded-peer";
 
@@ -71,6 +76,25 @@ export const noUnforwardedPeer = createRule({
                 const development = manifest.devDependencies?.[peer]
                   ? ` "${peer}" is only a development dependency of "${name}".`
                   : "";
+                const peerEvidence = [
+                  {
+                    path: ["peerDependencies", peer],
+                    summary: `peerDependencies["${peer}"] is "${specifier}".`,
+                  },
+                  {
+                    path: ["peerDependenciesMeta", peer, "optional"],
+                    summary: `peerDependenciesMeta["${peer}"].optional does not mark this peer as optional.`,
+                  },
+                  {
+                    path: ["dependencies", peer],
+                    summary: `dependencies["${peer}"] does not supply a compatible default.`,
+                  },
+                ].flatMap(({ path, summary }) => {
+                  const range = manifestPropertyRange(ctx, dependency.file, dependency.text, path);
+                  return range
+                    ? [{ kind: "manifest" as const, file: dependency.file, range, summary }]
+                    : [];
+                });
                 ctx.report(
                   diagnostics.PKG0007({
                     why: `"${name}" depends on "${dependencyName}", which requires the peer "${peer}" ("${specifier}"), but "${name}" does not declare "${peer}". An app that installs "${name}" gets no "${peer}" under strict peers, or a copy it does not share.${development}`,
@@ -91,11 +115,7 @@ export const noUnforwardedPeer = createRule({
                         range,
                         summary: `${field}["${dependencyName}"] and no peerDependencies, dependencies or optionalDependencies entry for ${peer}.`,
                       },
-                      {
-                        kind: "manifest",
-                        file: dependency.file,
-                        summary: `peerDependencies["${peer}"] is "${specifier}" and not optional.`,
-                      },
+                      ...peerEvidence,
                     ],
                   },
                 );

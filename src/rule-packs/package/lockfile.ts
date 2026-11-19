@@ -1,13 +1,19 @@
 import { posix } from "node:path";
-import { parse } from "yaml";
+import { isMap, isScalar, parseDocument, type Node } from "yaml";
 import { isRecord } from "./artifacts.js";
 
 type DependencyMap = Record<string, string>;
+type DependencyField = "dependencies" | "optionalDependencies" | "devDependencies";
+
+/** Offsets in pnpm-lock.yaml of one dependency entry, from its key to the end of its value. */
+export type LockfileSpan = readonly [start: number, end: number];
 
 interface LockEntry {
   dependencies?: DependencyMap;
   optionalDependencies?: DependencyMap;
   devDependencies?: DependencyMap;
+  /** Where each dependency is written, by field and dependency name. */
+  spans: Partial<Record<DependencyField, Record<string, LockfileSpan>>>;
 }
 
 export interface PnpmLockfile {
@@ -22,47 +28,74 @@ export interface ResolvedCopy {
   version: string;
   /** Dependency names from the importer to this copy, the importer path first. */
   path: string[];
+  /** The lockfile entry of each step of `path` after the importer, in the same order. */
+  spans: LockfileSpan[];
   /** The importer's package.json field that starts `path`. */
-  field: "dependencies" | "optionalDependencies" | "devDependencies";
+  field: DependencyField;
 }
+
+const FIELDS = ["dependencies", "optionalDependencies", "devDependencies"] as const;
 
 /**
  * pnpm v9 lockfiles. pnpm 11 can prepend a document for its own config dependencies, so the
  * last document with snapshots is the project's.
  */
 export function parsePnpmLockfile(text: string): PnpmLockfile | undefined {
-  const documents = text.split(/^---$/m).filter((document) => /^importers:/m.test(document));
-  for (const document of documents.reverse()) {
-    const value: unknown = parse(document);
+  const documents: Array<{ text: string; offset: number }> = [];
+  let offset = 0;
+  for (const separator of text.matchAll(/^---$/gm)) {
+    documents.push({ text: text.slice(offset, separator.index), offset });
+    offset = separator.index + separator[0].length;
+  }
+  documents.push({ text: text.slice(offset), offset });
+  for (const document of documents.filter((item) => /^importers:/m.test(item.text)).reverse()) {
+    const parsed = parseDocument(document.text);
+    if (parsed.errors.length) return undefined;
+    const value: unknown = parsed.toJS();
     if (!isRecord(value) || !String(value.lockfileVersion).startsWith("9")) continue;
-    if (!isRecord(value.importers) || !isRecord(value.snapshots)) continue;
+    const importers = parsed.get("importers", true);
+    const snapshots = parsed.get("snapshots", true);
+    if (!isMap(importers) || !isMap(snapshots)) continue;
     return {
-      importers: normalize(value.importers),
-      snapshots: normalize(value.snapshots),
+      importers: normalize(importers, document),
+      snapshots: normalize(snapshots, document),
     };
   }
   return undefined;
 }
 
-function normalize(entries: Record<string, unknown>): Record<string, LockEntry> {
+function normalize(
+  entries: Node,
+  document: { text: string; offset: number },
+): Record<string, LockEntry> {
   const result: Record<string, LockEntry> = {};
-  for (const [key, value] of Object.entries(entries)) {
-    if (!isRecord(value)) {
-      result[key] = {};
-      continue;
+  if (!isMap(entries)) return result;
+  for (const item of entries.items) {
+    if (!isScalar(item.key)) continue;
+    const entry: LockEntry = { spans: {} };
+    result[String(item.key.value)] = entry;
+    if (!isMap(item.value)) continue;
+    for (const field of FIELDS) {
+      const dependencies: unknown = item.value.get(field, true);
+      if (!isMap(dependencies)) continue;
+      const versions: DependencyMap = {};
+      const spans: Record<string, LockfileSpan> = {};
+      for (const dependency of dependencies.items) {
+        if (!isScalar(dependency.key)) continue;
+        const name = String(dependency.key.value);
+        const node = dependency.value;
+        const version = isMap(node) ? node.get("version") : isScalar(node) ? node.value : undefined;
+        if (typeof version !== "string") continue;
+        versions[name] = version;
+        const start = dependency.key.range?.[0];
+        let end = isMap(node) || isScalar(node) ? node.range?.[1] : undefined;
+        if (start === undefined || end === undefined) continue;
+        while (end > start && /\s/.test(document.text[end - 1]!)) end--;
+        spans[name] = [document.offset + start, document.offset + end];
+      }
+      entry[field] = versions;
+      entry.spans[field] = spans;
     }
-    const entry: LockEntry = {};
-    for (const field of ["dependencies", "optionalDependencies", "devDependencies"] as const) {
-      const dependencies = value[field];
-      if (!isRecord(dependencies)) continue;
-      entry[field] = Object.fromEntries(
-        Object.entries(dependencies).flatMap(([name, dependency]) => {
-          const version = isRecord(dependency) ? dependency.version : dependency;
-          return typeof version === "string" ? [[name, version]] : [];
-        }),
-      );
-    }
-    result[key] = entry;
   }
   return result;
 }
@@ -95,16 +128,26 @@ export function resolvedCopies(
     name: string;
     version: string;
     path: string[];
+    spans: LockfileSpan[];
     field: ResolvedCopy["field"];
   }> = [];
-  const fields = includeDevelopment
-    ? (["dependencies", "optionalDependencies", "devDependencies"] as const)
-    : (["dependencies", "optionalDependencies"] as const);
+  const step = (parent: LockEntry, field: DependencyField, name: string, spans: LockfileSpan[]) => {
+    const span = parent.spans[field]?.[name];
+    return span ? [...spans, span] : spans;
+  };
+  const fields = includeDevelopment ? FIELDS : (["dependencies", "optionalDependencies"] as const);
   for (const field of fields)
     for (const [name, version] of Object.entries(entry[field] ?? {}))
-      queue.push({ from: importer, name, version, path: [importer, name], field });
+      queue.push({
+        from: importer,
+        name,
+        version,
+        path: [importer, name],
+        spans: step(entry, field, name, []),
+        field,
+      });
   for (let index = 0; index < queue.length; index++) {
-    const { from, name, version, path, field } = queue[index]!;
+    const { from, name, version, path, spans, field } = queue[index]!;
     if (version.startsWith("link:")) {
       const target = posix.normalize(posix.join(from, version.slice("link:".length)));
       if (seen.has(`importer:${target}`)) continue;
@@ -112,13 +155,14 @@ export function resolvedCopies(
       const linkedEntry = lockfile.importers[target];
       if (!linkedEntry) continue;
       linked.push(target);
-      for (const dependencies of [linkedEntry.dependencies, linkedEntry.optionalDependencies])
-        for (const [child, childVersion] of Object.entries(dependencies ?? {}))
+      for (const childField of ["dependencies", "optionalDependencies"] as const)
+        for (const [child, childVersion] of Object.entries(linkedEntry[childField] ?? {}))
           queue.push({
             from: target,
             name: child,
             version: childVersion,
             path: [...path, child],
+            spans: step(linkedEntry, childField, child, spans),
             field,
           });
       continue;
@@ -127,15 +171,22 @@ export function resolvedCopies(
     if (select(name)) {
       const copy = version.replace(/\(.*$/, "");
       const id = `${name}\0${copy}`;
-      if (!copies.has(id)) copies.set(id, { name, version: copy, path, field });
+      if (!copies.has(id)) copies.set(id, { name, version: copy, path, spans, field });
     }
     if (seen.has(key)) continue;
     seen.add(key);
     const snapshot = lockfile.snapshots[key];
     if (!snapshot) continue;
-    for (const dependencies of [snapshot.dependencies, snapshot.optionalDependencies])
-      for (const [child, childVersion] of Object.entries(dependencies ?? {}))
-        queue.push({ from, name: child, version: childVersion, path: [...path, child], field });
+    for (const childField of ["dependencies", "optionalDependencies"] as const)
+      for (const [child, childVersion] of Object.entries(snapshot[childField] ?? {}))
+        queue.push({
+          from,
+          name: child,
+          version: childVersion,
+          path: [...path, child],
+          spans: step(snapshot, childField, child, spans),
+          field,
+        });
   }
   return { copies: [...copies.values()], linked };
 }

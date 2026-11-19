@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
-import { resolve } from "pathe";
+import { isAbsolute, relative, resolve } from "pathe";
 
 export type GitChangeKind =
   | "added"
@@ -71,7 +71,6 @@ const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 export async function collectGitChangeInventory(
   root: string,
   since?: string,
-  includePath: (path: string) => boolean = () => true,
 ): Promise<GitChangeInventory> {
   const repository = await runGit(root, ["rev-parse", "--is-inside-work-tree"]);
   if (!repository.ok) {
@@ -100,12 +99,53 @@ export async function collectGitChangeInventory(
         since,
       );
     }
-    return collectUnbornRepositoryChanges(root, includePath);
+    return collectUnbornRepositoryChanges(root);
   }
 
   const base = since ? await resolveMergeBase(root, since) : head.stdout.trim();
   if (typeof base !== "string") return base;
+  return collectChanges(root, base, since);
+}
 
+export async function collectExternalGitChanges(
+  root: string,
+  base: string | null,
+  files: string[],
+  since?: string,
+): Promise<GitChangeInventory> {
+  const prefix = await runGit(root, ["rev-parse", "--show-cdup"]);
+  if (!prefix.ok) {
+    return unavailableInventory(
+      "git-command-failed",
+      commandFailureMessage("Git could not locate the worktree root", prefix),
+      since,
+    );
+  }
+  const worktree = resolve(root, prefix.stdout.trim());
+  const paths = files
+    .map((file) => relative(worktree, file))
+    .filter((path) => path && path !== ".." && !path.startsWith("../") && !isAbsolute(path));
+  if (!paths.length) return { status: "available", base, files: [] };
+  const changes =
+    base === null
+      ? await collectUnbornRepositoryChanges(worktree, paths)
+      : await collectChanges(worktree, base, since, paths);
+  if (changes.status === "available") {
+    for (const change of changes.files) {
+      if (change.path) change.path = relative(root, resolve(worktree, change.path));
+      if (change.previousPath)
+        change.previousPath = relative(root, resolve(worktree, change.previousPath));
+    }
+  }
+  return changes;
+}
+
+async function collectChanges(
+  root: string,
+  base: string,
+  since?: string,
+  paths: string[] = [],
+): Promise<GitChangeInventory> {
   const tracked = await runGit(root, [
     "diff",
     "--name-status",
@@ -124,23 +164,28 @@ export async function collectGitChangeInventory(
     );
   }
 
-  const untracked = await listUntrackedFiles(root, since);
+  const untracked = await listUntrackedFiles(root, since, paths);
   if (untracked.status === "unavailable") return untracked;
 
-  const changes: GitChangedFile[] = [];
-  for (const change of parseNameStatus(tracked.stdout).filter((change) =>
-    includePath(change.path ?? change.previousPath ?? ""),
-  )) {
+  const selected = new Set(paths);
+  const trackedChanges = parseNameStatus(tracked.stdout).filter(
+    (change) => !selected.size || selected.has(change.path ?? change.previousPath ?? ""),
+  );
+  const fileHunks = await mapConcurrently(trackedChanges, (change) => {
     const diffPath = change.path ?? change.previousPath;
-    const hunks = diffPath
-      ? await collectFileHunks(
+    return diffPath
+      ? collectFileHunks(
           root,
           base,
           diffPath,
           change.path && change.previousPath ? change.previousPath : undefined,
           since,
         )
-      : { status: "available" as const, hunks: [] };
+      : Promise.resolve({ status: "available" as const, hunks: [] });
+  });
+  const changes: GitChangedFile[] = [];
+  for (const [index, change] of trackedChanges.entries()) {
+    const hunks = fileHunks[index]!;
     if (hunks.status === "unavailable") return hunks;
     changes.push({
       ...change,
@@ -149,21 +194,8 @@ export async function collectGitChangeInventory(
     });
   }
 
-  for (const path of untracked.paths.filter(includePath)) {
-    const absolute = resolve(root, path);
-    if (!statSync(absolute, { throwIfNoEntry: false })?.isFile()) continue;
-    const lineCount = currentLineCount(absolute);
-    changes.push({
-      kind: "untracked",
-      path,
-      hunks: [
-        {
-          previous: { startLine: 0, lineCount: 0 },
-          current: { startLine: 1, lineCount },
-        },
-      ],
-      reportRanges: lineCount ? [{ startLine: 1, endLine: lineCount }] : [],
-    });
+  for (const path of untracked.paths) {
+    changes.push(wholeFileChange(root, path, "untracked"));
   }
 
   return {
@@ -175,39 +207,57 @@ export async function collectGitChangeInventory(
 
 async function collectUnbornRepositoryChanges(
   root: string,
-  includePath: (path: string) => boolean,
+  selectedPaths: string[] = [],
 ): Promise<GitChangeInventory> {
-  const cached = await runGit(root, ["ls-files", "--cached", "-z", "--"]);
+  const cached = await runGit(root, [
+    "--literal-pathspecs",
+    "ls-files",
+    "--cached",
+    "-z",
+    "--",
+    ...selectedPaths,
+  ]);
   if (!cached.ok) {
     return unavailableInventory(
       "git-command-failed",
       commandFailureMessage("Git could not list staged files", cached),
     );
   }
-  const untracked = await listUntrackedFiles(root);
+  const untracked = await listUntrackedFiles(root, undefined, selectedPaths);
   if (untracked.status === "unavailable") return untracked;
 
-  const paths = [...new Set([...splitNull(cached.stdout), ...untracked.paths])]
-    .filter(includePath)
-    .filter((path) => statSync(resolve(root, path), { throwIfNoEntry: false })?.isFile())
-    .sort();
+  const untrackedPaths = new Set(untracked.paths);
+  const paths = [...new Set([...splitNull(cached.stdout), ...untrackedPaths])].sort();
   return {
     status: "available",
     base: null,
-    files: paths.map((path) => {
+    files: paths.map((path) =>
+      wholeFileChange(root, path, untrackedPaths.has(path) ? "untracked" : "added"),
+    ),
+  };
+}
+
+function wholeFileChange(root: string, path: string, kind: "added" | "untracked"): GitChangedFile {
+  let hunks: GitChangeHunk[] | undefined;
+  let ranges: ChangedLineRange[] | undefined;
+  return {
+    kind,
+    path,
+    get hunks() {
+      if (hunks) return hunks;
       const lineCount = currentLineCount(resolve(root, path));
-      return {
-        kind: untracked.paths.includes(path) ? "untracked" : "added",
-        path,
-        hunks: [
-          {
-            previous: { startLine: 0, lineCount: 0 },
-            current: { startLine: 1, lineCount },
-          },
-        ],
-        reportRanges: lineCount ? [{ startLine: 1, endLine: lineCount }] : [],
-      };
-    }),
+      return (hunks = lineCount
+        ? [
+            {
+              previous: { startLine: 0, lineCount: 0 },
+              current: { startLine: 1, lineCount },
+            },
+          ]
+        : []);
+    },
+    get reportRanges() {
+      return (ranges ??= rangesFromHunks(this.hunks));
+    },
   };
 }
 
@@ -243,8 +293,17 @@ async function resolveMergeBase(
 async function listUntrackedFiles(
   root: string,
   ref?: string,
+  paths: string[] = [],
 ): Promise<{ status: "available"; paths: string[] } | UnavailableGitChangeInventory> {
-  const result = await runGit(root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]);
+  const result = await runGit(root, [
+    "--literal-pathspecs",
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    ...paths,
+  ]);
   if (!result.ok) {
     return unavailableInventory(
       "git-command-failed",
@@ -263,12 +322,14 @@ async function collectFileHunks(
   ref?: string,
 ): Promise<{ status: "available"; hunks: GitChangeHunk[] } | UnavailableGitChangeInventory> {
   const result = await runGit(root, [
+    "--literal-pathspecs",
     "diff",
     "--unified=0",
     "--inter-hunk-context=0",
     "--no-color",
     "--no-ext-diff",
     "--no-textconv",
+    "--find-renames",
     base,
     "--",
     ...(previousPath ? [previousPath] : []),
@@ -328,6 +389,23 @@ function rangesFromHunks(hunks: GitChangeHunk[]): ChangedLineRange[] {
   return merged;
 }
 
+// Every changed file gets its own `git diff`, and a wide diff has hundreds; a few at a time keeps
+// that from dominating a --since run without flooding the machine with processes.
+const GIT_DIFF_CONCURRENCY = 8;
+
+async function mapConcurrently<T, R>(items: T[], map: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = Array.from({ length: items.length });
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await map(items[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(GIT_DIFF_CONCURRENCY, items.length) }, worker));
+  return results;
+}
+
 function parseNameStatus(output: string): TrackedChange[] {
   const fields = splitNull(output);
   const changes: TrackedChange[] = [];
@@ -377,6 +455,7 @@ function compareText(left: string, right: string): number {
 }
 
 function currentLineCount(file: string): number {
+  if (!statSync(file, { throwIfNoEntry: false })?.isFile()) return 0;
   const source = readFileSync(file, "utf8");
   if (!source) return 0;
   const newlineCount = source.match(/\n/g)?.length ?? 0;

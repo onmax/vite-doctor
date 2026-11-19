@@ -21,6 +21,7 @@ import type {
   FixEdit,
   DoctorFramework,
   ProjectInfo,
+  SourceRange,
 } from "../primitives.js";
 import type { GraphSummary } from "./cache-store.js";
 import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
@@ -37,6 +38,7 @@ import {
   type StaleBaseline,
 } from "./diagnostic-policy.js";
 import { hasRuleSourceCoverage } from "./facts.js";
+import { collectExternalGitChanges } from "./git-change-ranges.js";
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
@@ -46,6 +48,7 @@ import {
   topLevelRuleConfig,
   type ScanSession,
 } from "./scan-session.js";
+import { GitChangeUnavailableError, type ScanFileEntry } from "./source-inventory.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256, shellArgument } from "./utils.js";
 import {
@@ -76,12 +79,12 @@ export function applyRequestedFixes(session: ScanSession): AppliedFixes | undefi
   return applied;
 }
 
-export function applyPolicyFilters(session: ScanSession): void {
+export async function applyPolicyFilters(session: ScanSession): Promise<void> {
   session.diagnostics = settleDiagnosticIdentity(session.diagnostics);
   reportUnusedInlineSuppressions(session);
   reportUnusedConfigSuppressions(session);
   reportDefaultDeclarativeConfig(session);
-  applyReportEligibility(session);
+  await applyReportEligibility(session);
   applySeverityFilter(session);
   const result = applyDiagnosticPolicy(session);
   session.diagnostics = result.diagnostics;
@@ -657,12 +660,81 @@ function suppressionEntryBounds(
   return undefined;
 }
 
-export function applyReportEligibility(session: ScanSession): void {
+async function applyReportEligibility(session: ScanSession): Promise<void> {
   if (!session.scopedReport) return;
-  const eligibility = new Map(
+  const eligibility = new Map<string, ScanFileEntry["reportEligibility"]>(
     session.files.map((file) => [file.path, file.reportEligibility] as const),
   );
-  const sources = { get: (file: string) => session.handlesByPath.get(file)?.text };
+  // Files outside the source inventory, such as package.json and pnpm-lock.yaml, still carry
+  // Diagnostics and manifest evidence, so their changed lines count like a source file's.
+  const affected =
+    session.options.affectedFiles &&
+    new Set(session.options.affectedFiles.map((file) => resolve(session.root, file)));
+  for (const change of session.gitChanges?.files ?? []) {
+    if (!change.path) continue;
+    const path = resolve(session.root, change.path);
+    if (!eligibility.has(path) && (!affected || affected.has(path)))
+      eligibility.set(path, {
+        kind: "changed-lines",
+        get ranges() {
+          return change.reportRanges;
+        },
+      });
+  }
+  const projectRules = new Set(
+    session.enabledRules
+      .filter(
+        ({ meta }) =>
+          meta.execution === "manifest" ||
+          meta.execution === "workspace" ||
+          meta.reportScope === "project",
+      )
+      .map(({ meta }) => meta.id),
+  );
+  const manifestEvidence = (diagnostic: Diagnostic) =>
+    !projectRules.has(diagnostic.ruleId)
+      ? []
+      : (diagnostic.evidence ?? []).flatMap(({ kind, file, range }) =>
+          kind === "manifest" && file && range
+            ? [{ file: resolve(session.root, file), range }]
+            : [],
+        );
+  const external = new Map<string, NonNullable<ScanFileEntry["reportEligibility"]>>();
+  if (session.gitChanges) {
+    const files = new Set<string>();
+    for (const diagnostic of session.diagnostics) {
+      for (const { file } of manifestEvidence(diagnostic)) {
+        if (!isPathInside(session.root, file) && (!affected || affected.has(file))) files.add(file);
+      }
+    }
+    if (files.size) {
+      const changes = await collectExternalGitChanges(
+        session.root,
+        session.gitChanges.base,
+        [...files],
+        session.options.since,
+      );
+      if (changes.status === "unavailable") throw new GitChangeUnavailableError(changes);
+      for (const change of changes.files) {
+        if (!change.path) continue;
+        external.set(resolve(session.root, change.path), {
+          kind: "changed-lines",
+          get ranges() {
+            return change.reportRanges;
+          },
+        });
+      }
+    }
+  }
+  const texts = new Map<string, string | undefined>();
+  const sources = {
+    get(file: string) {
+      const handle = session.handlesByPath.get(file);
+      if (handle) return handle.text;
+      if (!texts.has(file)) texts.set(file, readTextOrUndefined(file));
+      return texts.get(file);
+    },
+  };
   // Parser evidence about files outside the change belongs to the full run, not this report.
   if (session.project.evidenceGaps)
     session.project.evidenceGaps = session.project.evidenceGaps.filter(
@@ -670,19 +742,41 @@ export function applyReportEligibility(session: ScanSession): void {
         (gap.source !== "script-parser" && gap.source !== "vue-sfc-parser") ||
         gap.files.some((file) => eligibility.get(file)),
     );
+  const onChangedLine = (
+    file: string,
+    range: SourceRange,
+    fileEligibility = eligibility.get(file),
+  ) => {
+    if (!fileEligibility) return false;
+    if (fileEligibility.kind === "file") return true;
+    const endLine = diagnosticEndLine(range, sources.get(file));
+    return fileEligibility.ranges.some(
+      (changed) => range.line <= changed.endLine && endLine >= changed.startLine,
+    );
+  };
   session.diagnostics = session.diagnostics.filter((diagnostic) => {
     const locations = [diagnostic, ...(diagnostic.related ?? [])];
-    return locations.some((location) => {
-      const fileEligibility = eligibility.get(location.file);
-      if (!fileEligibility) return false;
-      if (fileEligibility.kind === "file") return true;
-      if (!location.range) return diagnostic.range === undefined;
-      const endLine = diagnosticEndLine(location.range, sources.get(location.file));
-      return fileEligibility.ranges.some(
-        (range) => location.range!.line <= range.endLine && endLine >= range.startLine,
-      );
+    const located = locations.some((location) => {
+      if (location.range) return onChangedLine(location.file, location.range);
+      return diagnostic.range === undefined && eligibility.get(location.file) !== undefined;
     });
+    // A manifest or lockfile entry is the cause of the finding even when the finding is
+    // reported elsewhere, such as a lockfile route that reaches a second copy.
+    return (
+      located ||
+      manifestEvidence(diagnostic).some(({ file, range }) =>
+        onChangedLine(file, range, eligibility.get(file) ?? external.get(file)),
+      )
+    );
   });
+}
+
+function readTextOrUndefined(file: string): string | undefined {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 function diagnosticEndLine(range: NonNullable<Diagnostic["range"]>, source?: string): number {

@@ -120,9 +120,7 @@ function commit(root: string) {
 
 /** The specification of `--changed`: Diagnostics of a full run that touch a changed line. */
 async function filterToChangedLines(root: string, diagnostics: Diagnostic[]) {
-  const inventory = await collectGitChangeInventory(root, undefined, (path) =>
-    path.endsWith(".ts"),
-  );
+  const inventory = await collectGitChangeInventory(root);
   if (inventory.status !== "available") throw new Error("Expected a Git inventory.");
   const ranges = new Map(
     inventory.files.flatMap((file) =>
