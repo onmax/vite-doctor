@@ -84,6 +84,10 @@ test.each([
     "exported error normalizer (vitehub sandbox errors.ts)",
     "export function toSandboxError(error: unknown) { return error instanceof Error ? error : new Error('Sandbox failed') }",
   ],
+  [
+    "module-private error normalizer called with errors from an external callback",
+    "function toError(error: unknown) { return error instanceof Error ? error : new Error('failed') } export function run(work: () => void) { try { work() } catch (error) { throw toError(error) } }",
+  ],
 ])("reports %s", async (_name, source) => {
   expect(await count(source)).toBe(1);
 });
@@ -99,10 +103,6 @@ test.each([
   [
     "Array.isArray alternative",
     "export const f = (value: unknown) => Array.isArray(value) || value instanceof Array",
-  ],
-  [
-    "module-private error normalizer only called with caught errors",
-    "function toError(error: unknown) { return error instanceof Error ? error : new Error('failed') } export function run(work: () => void) { try { work() } catch (error) { throw toError(error) } }",
   ],
 ])("does not report %s", async (_name, source) => {
   expect(await count(source)).toBe(0);

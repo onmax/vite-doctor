@@ -35,6 +35,10 @@ test("is a Strict-only rule with generated documentation", () => {
 
 test.each([
   [
+    "prototype of a value from an injected constructor",
+    "function isDate(value: unknown) { return Object.getPrototypeOf(value) === Date.prototype } export function run(ForeignDate: typeof Date) { return isDate(new ForeignDate()) }",
+  ],
+  [
     "getPrototypeOf compared with Object.prototype",
     "export const isPlain = (value: unknown) => Object.getPrototypeOf(value) === Object.prototype",
   ],

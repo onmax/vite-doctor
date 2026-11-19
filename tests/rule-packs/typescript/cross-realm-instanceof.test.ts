@@ -207,26 +207,61 @@ test.each([
     "function f(value: unknown) { if (isResponseLike(value)) return value; return value instanceof Response ? value : undefined }",
   ],
   [
-    "fast path in a type guard that falls back to a try block (vitehub runtime response.ts:124)",
-    "export function isResponse(value: unknown): value is Response { if (value instanceof Response) return true; if (!isObject(value)) return false; try { return Object.prototype.toString.call(value) === '[object Response]' } catch { return false } }",
+    "fast path in a type guard that falls back to a brand check in a try block",
+    "export function isResponse(value: unknown): value is Response { if (value instanceof Response) return true; if (typeof value !== 'object' || value === null) return false; try { return Object.prototype.toString.call(value) === '[object Response]' } catch { return false } }",
   ],
   [
-    "fast path in a type guard that falls back to members (vitehub runtime request-context.ts:35)",
-    "export function isHostRequest(value: unknown): value is Request { if (value instanceof Request) return true; if (!isObject(value)) return false; const headers: unknown = Reflect.get(value, 'headers'); return typeof Reflect.get(value, 'url') === 'string' && isObject(headers) }",
+    "fast path in a type guard that falls back to a view check",
+    "export function isBytes(value: unknown): value is ArrayBufferView { if (value instanceof Uint8Array) return true; return ArrayBuffer.isView(value) }",
   ],
   [
     "view guard in the same || chain (vitehub internal http-request.ts:268)",
     "export function f(body: unknown) { if (tag(body) === '[object String]' || body instanceof Uint8Array || isArrayBuffer(body) || ArrayBuffer.isView(body)) return body }",
-  ],
-  [
-    "DOMException whose message only this file creates (vitehub agent provider-agent.ts:1545)",
-    "const controller = new AbortController(); controller.abort(new DOMException('[app] cleanup timed out.', 'TimeoutError')); export const timedOut = (error: unknown) => error instanceof DOMException && error.name === 'TimeoutError' && error.message === '[app] cleanup timed out.'",
   ],
 ])("does not report %s", async (_name, source) => {
   expect(await count(source)).toBe(0);
 });
 
 test.each([
+  [
+    "type guard whose fallback accepts a different type",
+    "export function isBytes(value: unknown): value is Uint8Array | string { if (value instanceof Uint8Array) return true; return typeof value === 'string' }",
+  ],
+  [
+    "local fallback that also relies on constructor identity",
+    "const isUint8Array = (value: any) => value.constructor === Uint8Array; export function f(value: unknown, ready: boolean) { return ready || value instanceof Uint8Array || isUint8Array(value) }",
+  ],
+  [
+    "shadowed ArrayBuffer.isView",
+    "export function f(value: unknown, ArrayBuffer: { isView(value: unknown): boolean }) { return value instanceof Uint8Array || ArrayBuffer.isView(value) }",
+  ],
+  [
+    "fallback brand check on a different subject",
+    "export function f(value: unknown, other: unknown): value is URL { if (value instanceof URL) return true; return Object.prototype.toString.call(other) === '[object URL]' }",
+  ],
+  ...["", "undefined", "void 0"].map((argument) => [
+    `potentially foreign default with argument '${argument}'`,
+    `import { runInNewContext } from 'node:vm'; function isBytes(value: unknown = runInNewContext('new Uint8Array(1)')) { return value instanceof Uint8Array } export const ok = isBytes(${argument})`,
+  ]),
+  [
+    "value from an injected constructor",
+    "function isResponse(value: unknown) { return value instanceof Response } export function run(FetchResponse: typeof Response) { return isResponse(new FetchResponse('ok')) }",
+  ],
+  ...[
+    "export function isResponse(value: unknown) { return value instanceof Response }",
+    "export const isResponse = (value: unknown) => value instanceof Response",
+  ].map((declaration) => [
+    `namespace member: ${declaration}`,
+    `export namespace adapter { ${declaration}; export const ok = isResponse(new Response('ok')) }`,
+  ]),
+  [
+    "named function expression that recurses with a foreign value",
+    "import { runInNewContext } from 'node:vm'; const check = function inner(value: unknown, retry: boolean): boolean { if (retry) return inner(runInNewContext('new Uint8Array(1)'), false); return value instanceof Uint8Array }; export const ok = check(new Uint8Array(1), true)",
+  ],
+  [
+    "DOMException from an unknown source with the same message as a local error",
+    "export const local = new DOMException('The operation was aborted.'); export const isAbort = (value: unknown) => value instanceof DOMException && value.message === 'The operation was aborted.'",
+  ],
   [
     "type guard whose only fallback is false",
     "export function isResponse(value: unknown): value is Response { if (value instanceof Response) return true; return false }",
@@ -294,8 +329,12 @@ test.each([
     "function toBlob(value: unknown) { return value instanceof Blob ? value : new Blob([String(value)]) } export const blob = toBlob('text')",
   ],
   [
-    "module-private helper only called with a caught error",
-    "function isAbort(error: unknown) { return error instanceof DOMException && error.name === 'AbortError' } export async function f() { try { await work() } catch (error) { if (isAbort(error)) return } }",
+    "module-private helper with a local default",
+    "function isAbort(error: unknown = new DOMException('aborted')) { return error instanceof DOMException } export const ok = isAbort(undefined) && isAbort()",
+  ],
+  [
+    "module-private helper with an unused default",
+    "function isBytes(value: unknown = elsewhere()) { return value instanceof Uint8Array } export const ok = isBytes(new Uint8Array(1))",
   ],
   [
     "module-private arrow helper",
