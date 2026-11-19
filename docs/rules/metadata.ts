@@ -287,8 +287,8 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/h3/prefer-nitro-h3": {
     description:
-      "Flags value imports and re-exports from h3 in Nitro 3 server code and in packages that declare nitro as a runtime dependency.",
-    why: "Nitro 3 imports every H3 utility from nitro/h3, which re-exports the h3 Nitro runs. In a Nuxt 5 app, server code from a package that imports values from h3 makes Nuxt treat it as Nitro v2 code, apply its Nitro v2 compatibility layer to the whole app, and warn NUXT_B9003 naming the package. In app server code, a bare h3 import resolves the h3 the app installs, which matches Nitro's only while the two ranges stay in step. Doctor runs this rule when the resolved Nitro is 3 or later, on server directories, and on packages whose dependencies, peerDependencies, or optionalDependencies declare a nitro range that excludes Nitro 2. It skips type-only imports, tests, and packages that only install nitro as a devDependency. Migration is a manual suggestion: matching export names do not prove compatible behavior. Review H3 v2 API changes and host compatibility aliases before changing imports.",
+      "Flags value imports and re-exports from h3 in Nitro 3 server code, in packages that declare nitro as a runtime dependency, and in the server runtime of Nuxt 5 module packages.",
+    why: "Nitro 3 imports every H3 utility from nitro/h3, which re-exports the h3 Nitro runs. In a Nuxt 5 app, server code from a package that imports values from h3 makes Nuxt treat it as Nitro v2 code, apply its Nitro v2 compatibility layer to the whole app, and warn NUXT_B9003 naming the package. In app server code, a bare h3 import resolves the h3 the app installs, which matches Nitro's only while the two ranges stay in step. Doctor runs this rule when the resolved Nitro is 3 or later, on server directories, on packages whose dependencies, peerDependencies, or optionalDependencies declare a nitro range that excludes Nitro 2, and on the server runtime a Nuxt module package adds to the app's Nitro (its `runtime/server` directory and the files its module entry passes to `addServerHandler` or `addServerPlugin`) when the package declares a nuxt range that excludes Nuxt 4. It skips type-only imports, tests, and packages that only install nitro as a devDependency. Migration is a manual suggestion: matching export names do not prove compatible behavior. Review H3 v2 API changes and host compatibility aliases before changing imports.",
     recommendedReplacement:
       'Import H3 values from "nitro/h3". Type-only imports from "h3" can stay.',
     examples: [
@@ -302,15 +302,15 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/dependencies/declare-nitro": {
     description:
-      "Flags published packages whose source imports nitro or a nitro/* subpath without declaring nitro in dependencies, peerDependencies, or optionalDependencies.",
-    why: "Consumers do not install a package's devDependencies, so a package that imports nitro/h3 without declaring nitro works in its own workspace but cannot resolve it under a strict install. Doctor requires a library entry point (exports, main, or module) and skips private packages, tests, type-only imports, and packages that declare nuxt or @nuxt/kit, which run inside a Nuxt app that installs Nitro.",
+      "Flags published packages whose source imports nitro or a nitro/* subpath without declaring nitro, and packages whose Nitro server code imports nitro while declaring it in dependencies or optionalDependencies instead of peerDependencies.",
+    why: "Consumers do not install a package's devDependencies, so a package that imports nitro/h3 without declaring nitro works in its own workspace but cannot resolve it under a strict install. A package whose code runs in the app's Nitro server and lists nitro in dependencies gets its own nitro when its range and the app's differ, so nitro/h3 and the other runtime entries resolve to a Nitro the app does not run. Doctor requires a library entry point (exports, main, or module) and skips private packages, tests, and type-only imports. A missing nitro is fine in packages that declare nuxt or @nuxt/kit, which run inside a Nuxt app that installs Nitro. nitro in dependencies is fine in Nitro apps (a nitro.config file) and in packages that import nitro/builder, nitro/vite or nitro/rsbuild to create the Nitro their code runs in; Doctor reports it only on runtime entries such as nitro, nitro/h3, nitro/runtime-config or nitro/storage.",
     recommendedReplacement:
       "Declare nitro in peerDependencies with the Nitro 3 range the package supports, and keep it in devDependencies for the package's own build and tests.",
     examples: [
       {
         title: "Declare the Nitro the package runs on",
         language: "json",
-        invalid: '{ "name": "@acme/blob", "devDependencies": { "nitro": "^3.0.0" } }',
+        invalid: '{ "name": "@acme/blob", "dependencies": { "nitro": "^3.0.0" } }',
         valid:
           '{ "name": "@acme/blob", "peerDependencies": { "nitro": "^3.0.0" }, "devDependencies": { "nitro": "^3.0.0" } }',
       },

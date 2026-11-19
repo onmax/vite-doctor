@@ -46,6 +46,18 @@ function workspace(packages: Record<string, object>, files: Record<string, strin
   };
 }
 
+/** A Nuxt module package built by the module builder, declaring `nuxt` as a peer when given a range. */
+function nuxtModulePackage(name: string, nuxtPeer?: string) {
+  return {
+    name,
+    type: "module",
+    exports: { ".": "./dist/module.mjs" },
+    dependencies: { "@nuxt/kit": "^5.0.0", h3: "^2.0.8" },
+    ...(nuxtPeer ? { peerDependencies: { nuxt: nuxtPeer } } : {}),
+    devDependencies: { "@nuxt/module-builder": "^1.0.0", nuxt: "^5.0.0" },
+  };
+}
+
 const blob = {
   name: "@acme/blob",
   exports: { ".": "./dist/index.mjs" },
@@ -201,6 +213,88 @@ export function ensure(value: unknown) { if (!value) throw createError({ status:
     expect(result.diagnostics[0]!.why).toContain("NUXT_B9003");
   });
 
+  test("reports server runtime that a Nuxt 5 module package registers into Nitro", async () => {
+    const result = await runRuleFixture({
+      rule: preferNitroH3Import,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.261103-rc", nuxt: "5.0.0" },
+      files: workspace(
+        {
+          "packages/docs": nuxtModulePackage("@acme/docs", ">=5.0.0-0"),
+          // A library whose Nuxt module is the `./nuxt` subpath, not the package entry.
+          "packages/content": {
+            name: "@acme/content",
+            type: "module",
+            exports: {
+              ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
+              "./nuxt": { types: "./dist/nuxt.d.ts", import: "./dist/nuxt.js" },
+            },
+            dependencies: { "@nuxt/kit": "^5.0.0" },
+            peerDependencies: { nuxt: ">=5.0.0-0" },
+          },
+        },
+        {
+          "packages/content/src/index.ts": 'export { createError } from "h3"',
+          "packages/content/src/nuxt.ts": `import { defineNuxtModule } from "@nuxt/kit"
+const contentModule = defineNuxtModule({ setup() {} })
+export default contentModule`,
+          "packages/content/src/runtime/server/raw.ts":
+            'import { defineHandler } from "h3"\nexport default defineHandler(() => "raw")',
+          "packages/docs/src/module.ts": `import { addServerHandler, addServerPlugin, createResolver, defineNuxtModule } from "@nuxt/kit"
+import { createError } from "h3"
+export default defineNuxtModule({
+  setup() {
+    const resolver = createResolver(import.meta.url)
+    if (!resolver) throw createError({ status: 500 })
+    addServerHandler({ route: "/api/page", handler: resolver.resolve("./runtime/server/page.js") })
+    addServerPlugin(resolver.resolve("./server/plugin"))
+  },
+})`,
+          "packages/docs/src/runtime/server/page.ts":
+            'import { defineHandler } from "h3"\nexport default defineHandler(() => "page")',
+          "packages/docs/src/server/plugin.ts":
+            'import { definePlugin } from "nitro"\nimport { getQuery } from "h3"\nexport default definePlugin(() => getQuery)',
+          "packages/docs/src/runtime/app/plugin.ts":
+            'import { createError } from "h3"\nexport default () => createError({})',
+          "packages/docs/src/utils.ts": 'export { createError } from "h3"',
+        },
+      ),
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.file).sort()).toEqual([
+      expect.stringMatching(/packages\/content\/src\/runtime\/server\/raw\.ts$/),
+      expect.stringMatching(/packages\/docs\/src\/runtime\/server\/page\.ts$/),
+      expect.stringMatching(/packages\/docs\/src\/server\/plugin\.ts$/),
+    ]);
+    expect(result.diagnostics[1]!.why).toContain("@acme/docs");
+  });
+
+  test("keeps h3 imports in Nuxt module server runtime that also supports Nuxt 4", async () => {
+    const result = await runRuleFixture({
+      rule: preferNitroH3Import,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.261103-rc", nuxt: "5.0.0" },
+      files: workspace(
+        {
+          "packages/compat": nuxtModulePackage("@acme/compat", "^4.0.0 || ^5.0.0"),
+          "packages/unknown": nuxtModulePackage("@acme/unknown"),
+        },
+        {
+          "packages/compat/src/module.ts":
+            'import { defineNuxtModule } from "@nuxt/kit"\nexport default defineNuxtModule({ setup() {} })',
+          "packages/compat/src/runtime/server/page.ts":
+            'import { defineEventHandler } from "h3"\nexport default defineEventHandler(() => "page")',
+          "packages/unknown/src/module.ts":
+            'import { defineNuxtModule } from "@nuxt/kit"\nexport default defineNuxtModule({ setup() {} })',
+          "packages/unknown/src/runtime/server/page.ts":
+            'import { defineEventHandler } from "h3"\nexport default defineEventHandler(() => "page")',
+        },
+      ),
+    });
+
+    expect(result.diagnostics).toEqual([]);
+  });
+
   test("suggests nitro/h3 without an edit when the installed Nitro does not prove the names", async () => {
     const result = await runRuleFixture({
       rule: preferNitroH3Import,
@@ -353,6 +447,94 @@ export const handler = defineHandler(() => { throw new HTTPError("no") })`,
     });
     expect(result.diagnostics[0]!.why).toContain("@acme/realtime");
     expect(result.diagnostics[0]!.why).toContain("devDependencies");
+  });
+
+  test("reports a package that ships into Nitro with nitro in dependencies instead of peers", async () => {
+    const result = await runRuleFixture({
+      rule: declareNitroDependency,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.261103-rc" },
+      files: workspace(
+        {
+          "packages/realtime": {
+            name: "@acme/realtime",
+            exports: { ".": "./dist/index.mjs" },
+            dependencies: { nitro: "catalog:nitro-compat" },
+          },
+          "packages/docs": {
+            ...nuxtModulePackage("@acme/docs", ">=5.0.0-0"),
+            optionalDependencies: { nitro: "^3.0.0" },
+          },
+        },
+        {
+          "packages/realtime/src/server.ts":
+            'import type { H3Event } from "nitro/h3"\nimport { HTTPError } from "nitro/h3"\nexport const fail = (event: H3Event) => new HTTPError(String(event))',
+          "packages/docs/src/runtime/server/page.ts":
+            'import { useRuntimeConfig } from "nitro/runtime-config"\nexport default () => useRuntimeConfig()',
+        },
+      ),
+    });
+
+    expect(
+      result.diagnostics.map((diagnostic) => [
+        diagnostic.code,
+        diagnostic.file,
+        diagnostic.range?.line,
+      ]),
+    ).toEqual([
+      ["NITRO0028", expect.stringMatching(/packages\/docs\/src\/runtime\/server\/page\.ts$/), 1],
+      ["NITRO0028", expect.stringMatching(/packages\/realtime\/src\/server\.ts$/), 2],
+    ]);
+    const realtime = result.diagnostics.find((diagnostic) =>
+      diagnostic.why.includes("@acme/realtime"),
+    );
+    expect(realtime!.why).toContain("dependencies");
+    expect(realtime!.suggestion).toContain("peerDependencies");
+  });
+
+  test("lets Nitro apps and packages that build their own Nitro depend on nitro", async () => {
+    const result = await runRuleFixture({
+      rule: declareNitroDependency,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.261103-rc" },
+      files: {
+        ...workspace(
+          {
+            // A deployable Nitro app with a start entry.
+            "packages/api": {
+              name: "@acme/api",
+              main: "./.output/server/index.mjs",
+              scripts: { build: "nitro build" },
+              dependencies: { nitro: "^3.0.0" },
+            },
+            // A framework that creates the Nitro its runtime code runs in.
+            "packages/start": {
+              name: "@acme/start",
+              exports: { ".": "./dist/index.mjs", "./server": "./dist/server.mjs" },
+              dependencies: { nitro: "^3.0.0" },
+            },
+            "packages/peer": {
+              name: "@acme/peer",
+              exports: { ".": "./dist/index.mjs" },
+              dependencies: { nitro: "^3.0.0" },
+              peerDependencies: { nitro: "^3.0.0" },
+            },
+          },
+          {
+            "packages/api/nitro.config.ts": 'export default { serverDir: "./server" }',
+            "packages/api/server/routes/index.ts":
+              'import { defineHandler } from "nitro/h3"\nexport default defineHandler(() => "ok")',
+            "packages/start/src/vite.ts":
+              'import { nitro } from "nitro/vite"\nexport const start = () => [nitro()]',
+            "packages/start/src/server.ts":
+              'import { defineHandler } from "nitro/h3"\nexport const handler = defineHandler(() => "ok")',
+            "packages/peer/src/index.ts": 'export { HTTPError } from "nitro/h3"',
+          },
+        ),
+      },
+    });
+
+    expect(result.diagnostics).toEqual([]);
   });
 
   test("ignores Nuxt layers, private packages, apps, tests and type-only imports", async () => {

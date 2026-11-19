@@ -3,6 +3,10 @@ import { minVersion, validRange } from "semver";
 import { parse } from "yaml";
 import type { RuleContext } from "../../../core/index.js";
 import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
+import {
+  detectPackageModule,
+  findDefaultNuxtModuleDefinition,
+} from "../../../core/internal/nuxt-module-inventory.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { owningWorkspacePackage } from "../../../core/internal/workspace-packages.js";
 import type { AnyNode } from "./shared.js";
@@ -80,10 +84,183 @@ export function runtimeDeclaration(manifest: PackageManifest, name: string): str
  * `pnpm-workspace.yaml`; a range Doctor cannot read leaves the decision to the resolved runtime.
  */
 export function declaresOnlyNitro3(ctx: RuleContext, declaration: string): boolean {
-  const range = resolveCatalog(ctx, "nitro", declaration)?.replace(/^npm:[^@]+@/, "");
+  return declaresAtLeastMajor(ctx, "nitro", declaration, 3);
+}
+
+function declaresAtLeastMajor(ctx: RuleContext, name: string, declaration: string, major: number) {
+  const range = resolveCatalog(ctx, name, declaration)?.replace(/^npm:[^@]+@/, "");
   if (!range || !validRange(range)) return true;
   const lowest = minVersion(range);
-  return !lowest || lowest.major >= 3;
+  return !lowest || lowest.major >= major;
+}
+
+/**
+ * Whether the package declares a runtime that excludes Nitro 2: a `nitro` range of Nitro 3 or
+ * later, or, without one, a `nuxt` range of Nuxt 5 or later. Nuxt 4 runs Nitro 2.
+ */
+export function declaresNitro3Host(ctx: RuleContext, manifest: PackageManifest): boolean {
+  if (runtimeDeclaration(manifest, "nitropack") !== undefined) return false;
+  const nitro = runtimeDeclaration(manifest, "nitro");
+  if (nitro !== undefined) return declaresOnlyNitro3(ctx, nitro);
+  const nuxt = runtimeDeclaration(manifest, "nuxt");
+  return nuxt !== undefined && declaresAtLeastMajor(ctx, "nuxt", nuxt, 5);
+}
+
+const SERVER_REGISTRATIONS = new Set([
+  "addServerHandler",
+  "addDevServerHandler",
+  "addServerPlugin",
+]);
+const SCRIPT_EXTENSIONS = [".ts", ".mts", ".js", ".mjs"];
+
+/**
+ * Whether `file` is server runtime that a Nuxt module package in `owner` adds to the app's Nitro:
+ * a file in its module's `runtime/server` directory, or one its module entry passes to
+ * `addServerHandler`, `addDevServerHandler` or `addServerPlugin` through `createResolver` or
+ * `new URL(..., import.meta.url)`.
+ */
+export function isModuleServerRuntime(ctx: RuleContext, owner: OwningPackage): boolean {
+  const entry = packageModuleEntry(ctx, owner);
+  if (!entry) return false;
+  const file = ctx.file.path;
+  if (isInside(join(entry, "..", "runtime", "server"), file)) return true;
+  return registeredServerFiles(ctx, entry).includes(file);
+}
+
+/**
+ * The source file of the Nuxt module a package ships: its main entry, as Project Inventory reads
+ * it, or a subpath export such as `./nuxt` whose `dist` target builds from a `src` file that
+ * default-exports `defineNuxtModule`.
+ */
+function packageModuleEntry(ctx: RuleContext, owner: OwningPackage): string | undefined {
+  const key = `nitro:package-module:${owner.dir}`;
+  const cached = ctx.cache.get<string | null>(key);
+  if (cached !== undefined) return cached ?? undefined;
+  let entry = detectPackageModule(owner.dir)?.entry;
+  const exports = owner.manifest.exports;
+  if (!entry && isRecord(exports)) {
+    for (const [subpath, target] of Object.entries(exports)) {
+      if (subpath === "." || !subpath.startsWith("./")) continue;
+      let value: unknown = target;
+      while (isRecord(value)) value = value.import ?? value.default;
+      const built =
+        typeof value === "string" ? value.match(/^\.\/dist\/(.+)\.[cm]?js$/)?.[1] : undefined;
+      const source = built && sourceFile(ctx, join(owner.dir, "src", `${built}.js`));
+      const text = source && ctx.fs.readText(source);
+      if (!source || !text?.includes("defineNuxtModule")) continue;
+      if (!findDefaultNuxtModuleDefinition(parseScript(source, text))) continue;
+      entry = source;
+      break;
+    }
+  }
+  ctx.cache.set(key, entry ?? null);
+  return entry;
+}
+
+function registeredServerFiles(ctx: RuleContext, entry: string): string[] {
+  const key = `nitro:module-server-files:${entry}`;
+  const cached = ctx.cache.get<string[]>(key);
+  if (cached) return cached;
+  const text = ctx.fs.readText(entry);
+  const ast = text && SERVER_REGISTRATIONS_RE.test(text) ? parseScript(entry, text) : null;
+  const files: string[] = [];
+  if (ast) {
+    const resolvers = new Set<string>();
+    const resolveFunctions = new Set<string>();
+    walk(ast, (node) => {
+      if (node.type === "VariableDeclarator" && isCreateResolverCall(node.init)) {
+        if (node.id?.type === "Identifier") resolvers.add(node.id.name);
+        for (const property of node.id?.type === "ObjectPattern" ? node.id.properties : [])
+          if (property.key?.name === "resolve" && property.value?.type === "Identifier")
+            resolveFunctions.add(property.value.name);
+      }
+    });
+    const target = (node: AnyNode): string | undefined => {
+      if (node?.type === "CallExpression") {
+        const callee = node.callee;
+        const resolverCall =
+          (callee?.type === "MemberExpression" &&
+            callee.object?.type === "Identifier" &&
+            resolvers.has(callee.object.name) &&
+            callee.property?.name === "resolve") ||
+          (callee?.type === "Identifier" && resolveFunctions.has(callee.name));
+        if (resolverCall) return relativeLiteral(node.arguments?.[0]);
+        if (callee?.type === "Identifier" && callee.name === "fileURLToPath")
+          return target(node.arguments?.[0]);
+      }
+      if (node?.type === "NewExpression" && node.callee?.name === "URL") {
+        const base = node.arguments?.[1];
+        const importMetaUrl =
+          base?.type === "MemberExpression" &&
+          base.object?.type === "MetaProperty" &&
+          base.property?.name === "url";
+        return importMetaUrl ? relativeLiteral(node.arguments?.[0]) : undefined;
+      }
+      return undefined;
+    };
+    walk(ast, (node) => {
+      if (node.type !== "CallExpression" || !SERVER_REGISTRATIONS.has(node.callee?.name)) return;
+      const argument = node.arguments?.[0];
+      const value =
+        node.callee.name === "addServerPlugin"
+          ? argument
+          : argument?.type === "ObjectExpression"
+            ? argument.properties?.find((property: AnyNode) => property.key?.name === "handler")
+                ?.value
+            : undefined;
+      const path = value && target(value);
+      const file = path && sourceFile(ctx, resolve(entry, "..", path));
+      if (file) files.push(file);
+    });
+  }
+  ctx.cache.set(key, files);
+  return files;
+}
+
+const SERVER_REGISTRATIONS_RE = /\badd(?:Dev)?Server(?:Handler|Plugin)\b/;
+
+function isCreateResolverCall(node: AnyNode): boolean {
+  return (
+    node?.type === "CallExpression" &&
+    node.callee?.type === "Identifier" &&
+    node.callee.name === "createResolver"
+  );
+}
+
+function relativeLiteral(node: AnyNode): string | undefined {
+  const value =
+    node?.type === "Literal" || node?.type === "StringLiteral"
+      ? node.value
+      : node?.type === "TemplateLiteral" && !node.expressions?.length
+        ? node.quasis?.[0]?.value?.cooked
+        : undefined;
+  return typeof value === "string" && value.startsWith(".") ? value : undefined;
+}
+
+/** The source file a registered path names; the module builder emits `.js` for `.ts` sources. */
+function sourceFile(ctx: RuleContext, path: string): string | undefined {
+  const base = path.replace(/\.[cm]?js$/, "");
+  const candidates = [
+    path,
+    ...SCRIPT_EXTENSIONS.map((extension) => `${base}${extension}`),
+    ...SCRIPT_EXTENSIONS.map((extension) => join(path, `index${extension}`)),
+  ];
+  return candidates.find((candidate) => ctx.fs.stat(candidate)?.isFile());
+}
+
+function walk(node: AnyNode, visit: (node: AnyNode) => void) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) walk(item, visit);
+    return;
+  }
+  if (typeof node.type === "string") visit(node);
+  for (const [key, value] of Object.entries(node))
+    if (key !== "parent" && value && typeof value === "object") walk(value, visit);
+}
+
+function isInside(dir: string, file: string) {
+  return file.startsWith(`${dir}/`);
 }
 
 function resolveCatalog(ctx: RuleContext, name: string, declaration: string) {
