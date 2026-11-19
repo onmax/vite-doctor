@@ -260,6 +260,10 @@ test.each([
     "const items = ref<{ id: { name: string } }[]>([])",
   ],
   [
+    '<input v-for="item in items">',
+    'import { loadItems } from "./data"; const items: { id: string }[] = loadItems()',
+  ],
+  [
     '<input v-for="item in items" :placeholder="item.name">',
     'const items = ref([{ name: "a" }]); const { children } = defineProps<{ items: { id: string }[]; children: string[] }>()',
   ],
@@ -333,6 +337,30 @@ test("suggests the id field from the item type", async () => {
   );
   expect(JSON.stringify(result.diagnostics[0])).toContain(':key=\\"todo.id\\"');
 });
+
+test.each([false, true])(
+  "uses only the setup props macro for key evidence (setup first: %s)",
+  async (setupFirst) => {
+    const normal = `<script lang="ts">
+function defineProps<T>(value: T) { return value }
+const table = defineProps<{ items: { id: number }[] }>({ items: [{ id: 1 }] })
+</script>`;
+    const setup = `<script setup lang="ts">
+withDefaults(defineProps<{ items?: { name: string }[] }>(), {
+  items: () => [{ name: 'A' }, { name: 'B' }],
+})
+</script>`;
+    const result = await project.run({
+      rule: requireVForKey,
+      files: {
+        "app.vue": `${setupFirst ? setup + normal : normal + setup}
+<template><input v-for="item in items" :placeholder="item.name"></template>`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.fix ?? null).toBeNull();
+  },
+);
 
 test.each([
   ["items", "const { children: items } = defineProps<{ children: { id: string }[] }>()"],

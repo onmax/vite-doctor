@@ -227,13 +227,14 @@ function distinctLiteralKeys(array: AnyNode): Set<string> {
   );
 }
 
-function setupFirst(body: AnyNode[], sfc: SfcHandle | undefined): AnyNode[] {
+function setupStatements(body: AnyNode[], sfc: SfcHandle | undefined): AnyNode[] {
   if (!sfc?.blockHashes.script) return body;
   const setupStart = sfc.blockOffsetToFileOffset("scriptSetup", 0);
   const scriptStart = sfc.blockOffsetToFileOffset("script", 0);
-  const isSetup = (statement: AnyNode) =>
-    statement.start >= setupStart && (setupStart > scriptStart || statement.start < scriptStart);
-  return [...body.filter(isSetup), ...body.filter((statement) => !isSetup(statement))];
+  return body.filter(
+    (statement) =>
+      statement.start >= setupStart && (setupStart > scriptStart || statement.start < scriptStart),
+  );
 }
 
 /** Fields the items of a `v-for` source have, read from its script literal or declared type. */
@@ -247,7 +248,7 @@ function itemFields(
   const match = /^(?:(props|\$props)\.)?([A-Za-z_$][\w$]*)$/.exec(source.trim());
   if (!program || !match) return fields;
   const [, viaProps, name] = match;
-  const body = setupFirst(program.body ?? [], sfc);
+  const body = setupStatements(program.body ?? [], sfc);
   const types = new Map<string, AnyNode>();
   for (const statement of body) {
     const declaration =
@@ -316,22 +317,23 @@ function itemFields(
   const inspect = (node: AnyNode) => {
     if (node.type === "VariableDeclarator" && !viaProps && node.id?.name === name) {
       let init = unwrapTs(node.init);
-      if (verify) addMembers(elementType(node.id.typeAnnotation?.typeAnnotation));
       if (init?.type === "CallExpression") {
+        const argument = unwrapTs(init.arguments?.[0]);
         if (
           verify &&
-          !["ref", "shallowRef", "reactive", "shallowReactive"].includes(init.callee?.name)
+          (argument?.type !== "ArrayExpression" ||
+            !["ref", "shallowRef", "reactive", "shallowReactive"].includes(init.callee?.name))
         )
           return;
         addMembers(elementType(typeArguments(init)?.[0]));
-        init = unwrapTs(init.arguments?.[0]);
+        init = argument;
       }
       if (init?.type === "ArrayExpression") {
         if (!verify) addLiteral(init);
         else if (init.elements.length) {
           fields.clear();
           for (const field of distinctLiteralKeys(init)) fields.add(field);
-        }
+        } else addMembers(elementType(node.id.typeAnnotation?.typeAnnotation));
       }
     }
     if (!verify && node.type === "CallExpression" && node.callee?.name === "defineProps") {
