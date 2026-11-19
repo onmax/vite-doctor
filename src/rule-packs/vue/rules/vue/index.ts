@@ -42,6 +42,7 @@ export { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assi
 export { noConstantComputed } from "./no-constant-computed.js";
 export { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
 export { noDupeVElseIf } from "./no-dupe-v-else-if.js";
+export { noUselessTemplateAttributes } from "./no-useless-template-attributes.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
@@ -87,6 +88,7 @@ import { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assi
 import { noConstantComputed } from "./no-constant-computed.js";
 import { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
 import { noDupeVElseIf } from "./no-dupe-v-else-if.js";
+import { noUselessTemplateAttributes } from "./no-useless-template-attributes.js";
 
 import { defineRulePack } from "../../../../core/index.js";
 
@@ -136,6 +138,7 @@ const rules = [
   noConstantComputed,
   noSetupStateFromBrowserRead,
   noDupeVElseIf,
+  noUselessTemplateAttributes,
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,
