@@ -2734,26 +2734,26 @@ export const ruleDocumentationMetadata = {
   },
   "vue/template/require-toggle-inside-transition": {
     description:
-      "Finds a <Transition> whose child is a native element with no v-if, v-else-if, v-else, v-show or bound :key, on the element or on a wrapping <template>. A <Transition> with appear, or with :appear bound to anything but false, is skipped. Children Doctor cannot read in full count as unknown and are never reported: <slot>, components (including <component :is>, <KeepAlive>, <RouterView> and <NuxtPage>, whose root may toggle), elements with is, a v-bind object spread, or a custom directive. <TransitionGroup> is not checked.",
-    why: "<Transition> runs enter and leave animations only when its child is inserted or removed: a v-if/v-else branch switching, v-show changing, or a :key change that replaces the element. A native element that stays mounted never enters or leaves, so the enter/leave classes and the CSS written for them never apply. Without appear, the first render does not animate either.",
+      "Finds a nested <Transition> with a native child that has no v-if, v-else-if, v-else, v-show or bound :key. It skips dynamic default slots, transitions that may inherit attributes at the component root, and transitions with appear or forwarded v-show. A v-bind spread, a dynamic binding name, or a custom directive on the transition or its child may enable animation, so these are skipped too. Components, <slot>, elements with is, and <TransitionGroup> are not checked.",
+    why: "<Transition> animates when its child enters or leaves: a v-if/v-else branch switches, v-show changes, or a :key change replaces the element. A static child never triggers those animations, and without appear it does not animate on mount. If a v-for produces multiple children, <Transition> warns and renders only the first item.",
     recommendedReplacement:
-      "Add v-if or v-show to the child so it enters and leaves, bind a :key that changes when the content should animate, add appear to animate on first render, or remove the <Transition> when no animation is wanted. Use <TransitionGroup> to animate a v-for list.",
+      "Add v-if or v-show to the child so it enters and leaves, bind a :key that changes when the content should animate, add appear to animate on first render, or remove the <Transition> when no animation is wanted. To animate a v-for list, use <TransitionGroup> and bind a stable, unique :key per item.",
     examples: [
       {
         title: "Toggle the transitioned element",
         language: "vue",
         invalid:
-          '<template>\n  <Transition name="fade">\n    <div class="toast">{{ message }}</div>\n  </Transition>\n</template>',
+          '<template>\n  <main>\n    <Transition name="fade">\n      <div class="toast">{{ message }}</div>\n    </Transition>\n  </main>\n</template>',
         valid:
-          '<template>\n  <Transition name="fade">\n    <div v-if="message" class="toast">{{ message }}</div>\n  </Transition>\n</template>',
+          '<template>\n  <main>\n    <Transition name="fade">\n      <div v-if="message" class="toast">{{ message }}</div>\n    </Transition>\n  </main>\n</template>',
       },
       {
         title: "Animate on first render with appear",
         language: "vue",
         invalid:
-          '<template>\n  <Transition name="slide">\n    <header class="hero" />\n  </Transition>\n</template>',
+          '<template>\n  <main>\n    <Transition name="slide">\n      <header class="hero" />\n    </Transition>\n  </main>\n</template>',
         valid:
-          '<template>\n  <Transition name="slide" appear>\n    <header class="hero" />\n  </Transition>\n</template>',
+          '<template>\n  <main>\n    <Transition name="slide" appear>\n      <header class="hero" />\n    </Transition>\n  </main>\n</template>',
       },
     ],
   },

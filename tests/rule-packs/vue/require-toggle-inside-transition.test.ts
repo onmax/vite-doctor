@@ -8,18 +8,22 @@ const RULE_ID = "vue/template/require-toggle-inside-transition";
 const project = createProjectFixture({ framework: "vue" });
 afterAll(() => project.dispose());
 
-function sfc(template: string) {
-  return `<template>${template}</template>`;
+function sfc(template: string, nested = true) {
+  return `<template>${nested ? `<main>${template}</main>` : template}</template>`;
 }
 
 /** Runs each template as its own SFC and returns the reported start tags by template. */
-async function reported(templates: string[]) {
-  const files = Object.fromEntries(templates.map((template, i) => [`T${i}.vue`, sfc(template)]));
+async function reported(templates: string[], nested = true) {
+  const files = Object.fromEntries(
+    templates.map((template, i) => [`T${i}.vue`, sfc(template, nested)]),
+  );
   const result = await project.run({ rule: requireToggleInsideTransition, files });
   return templates.map((template, i) =>
     result.diagnostics
       .filter((diagnostic) => diagnostic.file.endsWith(`T${i}.vue`))
-      .map((diagnostic) => sfc(template).slice(diagnostic.range!.start, diagnostic.range!.end)),
+      .map((diagnostic) =>
+        sfc(template, nested).slice(diagnostic.range!.start, diagnostic.range!.end),
+      ),
   );
 }
 
@@ -71,7 +75,9 @@ test("names the child and the fix in the Diagnostic", async () => {
     rule: requireToggleInsideTransition,
     files: {
       "Toast.vue": sfc('<Transition name="fade"><div class="toast">Hi</div></Transition>'),
-      "List.vue": sfc('<transition><li v-for="item in items">{{ item.text }}</li></transition>'),
+      "List.vue": sfc(
+        '<transition><template #default><li v-for="item in items">{{ item.text }}</li></template></transition>',
+      ),
     },
   });
   const byFile = Object.fromEntries(
@@ -88,9 +94,9 @@ test("names the child and the fix in the Diagnostic", async () => {
   });
   expect(byFile["Toast.vue"]!.fix).toBeUndefined();
   expect(byFile["List.vue"]).toMatchObject({
-    why: "<li> inside <transition> repeats with v-for instead of toggling. <transition> animates a single child entering or leaving, so this list never animates. Once the list has more than one item, Vue warns that <transition> can only be used on a single element and renders only the first item.",
+    why: "<li> inside <transition> repeats with v-for. When the list has more than one item, Vue warns that <transition> can only be used on a single element and renders only the first item.",
     suggestion:
-      "Replace <transition> with <TransitionGroup> to animate items of the v-for list, or move the v-for outside <transition> and toggle each item with v-if.",
+      "Replace <transition> with <TransitionGroup> and bind a stable, unique :key for each v-for item, or move the v-for outside <transition> and toggle each item with v-if.",
   });
 }, 30_000);
 
@@ -155,6 +161,42 @@ test("treats children it cannot read in full as unknown", async () => {
     "<Transition><template #extra><div /></template></Transition>",
   ];
   expect((await reported(unknown)).flat()).toEqual([]);
+}, 30_000);
+
+test("skips default slots whose availability is dynamic", async () => {
+  const dynamicSlots = [
+    '<Transition><template #default v-if="open"><div /></template></Transition>',
+    '<Transition><template #default v-for="item in items"><div /></template></Transition>',
+  ];
+  expect(await reported(dynamicSlots)).toEqual(dynamicSlots.map(() => []));
+}, 30_000);
+
+test("skips Transition when forwarded directives or unknown bindings can animate it", async () => {
+  const dynamicTransitions = [
+    '<Transition v-show="open"><div /></Transition>',
+    '<Transition v-custom="open"><div /></Transition>',
+    '<Transition :appear="false" v-bind="opts"><div /></Transition>',
+    '<Transition :appear="false" :[propName]="value"><div /></Transition>',
+  ];
+  expect(await reported(dynamicTransitions)).toEqual(dynamicTransitions.map(() => []));
+}, 30_000);
+
+test("skips root transitions that may inherit appear or directives", async () => {
+  const rootTransitions = [
+    "<Transition><div /></Transition>",
+    '<!-- root --><Transition :appear="false"><div /></Transition>',
+    '<div v-if="showFallback" /><Transition v-else><div /></Transition>',
+    '<template v-if="ready"><Transition><div /></Transition></template>',
+  ];
+  expect(await reported(rootTransitions, false)).toEqual(rootTransitions.map(() => []));
+}, 30_000);
+
+test("ignores literal and overridden Transition tags", async () => {
+  const otherTags = [
+    '<Transition is="vue:Card"><div /></Transition>',
+    "<section v-pre><Transition><div /></Transition></section>",
+  ];
+  expect(await reported(otherTags)).toEqual(otherTags.map(() => []));
 }, 30_000);
 
 test("is in the Recommended Preset", () => {
