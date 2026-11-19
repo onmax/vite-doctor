@@ -2682,7 +2682,7 @@ export const ruleDocumentationMetadata = {
   },
   "vue/template/no-dupe-v-else-if": {
     description:
-      'Flags a `v-else-if` branch whose condition repeats an earlier condition in the same `v-if` / `v-else-if` chain, or is fully covered by earlier conditions, for example `v-else-if="a"` after `v-if="a || b"`, or `v-else-if="a && b"` after `v-if="a"`. Doctor compares primitive literals, top-level `<script setup>` constants initialized with primitive literals, and supported expressions over them. In these expressions, spacing and parentheses do not matter, but `&&` / `||` operand order matters wherever their result is used as a value, such as in an equality comparison. Unknown reads, member access, or calls end the comparison. Branches in `v-for` and `v-slot` scopes are skipped because aliases can shadow setup bindings.',
+      'Flags a `v-else-if` branch whose condition repeats an earlier condition in the same `v-if` / `v-else-if` chain, or is fully covered by earlier conditions, for example `v-else-if="a"` after `v-if="a || b"`, or `v-else-if="a && b"` after `v-if="a"`. Doctor compares only reads Vue returns unchanged within one render: `<script setup>` bindings to `ref()`, `shallowRef()`, a getter-only `computed()` or `defineModel()` without a `get` option, props declared in `defineProps` (as a bare name, a destructured binding, or one level of `props.x`), and constants initialized with primitive literals. Over those it compares `!`, `typeof`, `void`, `===`, `!==`, `&&`, `||`, `??` and `?:`; arithmetic, relational and loose-equality operators and template literals count only over primitive constants and literals, because they can call `valueOf` on an object. Spacing and parentheses do not matter, but `&&` / `||` operand order matters wherever their result is used as a value. `customRef`, `reactive()` members, deeper member chains, imports, names that are also Vue template globals such as `Math`, calls and anything else end the comparison. Branches in `v-for` and `v-slot` scopes are skipped because aliases can shadow setup bindings.',
     why: "Vue renders the first branch of a chain whose condition is truthy, and evaluates the conditions in order within one render. A later condition that can only be truthy when an earlier one already is never gets its turn, so its element never renders. That is almost always a copy-paste mistake in the condition.",
     recommendedReplacement:
       "Change the later condition to the one the branch was meant to test. If the branch is no longer needed, remove it. Doctor offers no fix, because deleting the branch would hide the condition the author meant to write.",
@@ -2691,17 +2691,17 @@ export const ruleDocumentationMetadata = {
         title: "Test a different value in each branch",
         language: "vue",
         invalid:
-          "<script setup>\nconst status = 'loading'\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>\n</template>",
+          "<script setup>\nimport { ref } from 'vue'\n\nconst status = ref('idle')\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>\n</template>",
         valid:
-          "<script setup>\nconst status = 'loading'\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'error'\">Failed</p>\n</template>",
+          "<script setup>\nimport { ref } from 'vue'\n\nconst status = ref('idle')\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'error'\">Failed</p>\n</template>",
       },
       {
         title: "Do not test a branch the earlier condition already covers",
         language: "vue",
         invalid:
-          '<script setup>\nconst isAdmin = false\nconst isOwner = true\n</script>\n\n<template>\n  <Banner v-if="isAdmin || isOwner" />\n  <OwnerTools v-else-if="isOwner" />\n</template>',
+          '<script setup>\ndefineProps<{ isAdmin: boolean; isOwner: boolean }>()\n</script>\n\n<template>\n  <Banner v-if="isAdmin || isOwner" />\n  <OwnerTools v-else-if="isOwner" />\n</template>',
         valid:
-          '<script setup>\nconst isAdmin = false\nconst isOwner = true\n</script>\n\n<template>\n  <OwnerTools v-if="isOwner" />\n  <Banner v-else-if="isAdmin" />\n</template>',
+          '<script setup>\ndefineProps<{ isAdmin: boolean; isOwner: boolean }>()\n</script>\n\n<template>\n  <OwnerTools v-if="isOwner" />\n  <Banner v-else-if="isAdmin" />\n</template>',
       },
     ],
   },
