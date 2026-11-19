@@ -105,6 +105,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0042", ruleId: "vue/ssr/no-setup-state-from-browser-read" },
   { code: "VUE0044", ruleId: "vue/template/no-useless-template-attributes" },
   { code: "VUE0045", ruleId: "vue/template/require-v-for-key" },
+  { code: "VUE0046", ruleId: "vue/template/require-toggle-inside-transition" },
 
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },

@@ -267,8 +267,31 @@ test.each([
     '<input v-for="item in items" :placeholder="item.name">',
     "const { children: items } = defineProps<{ items: { id: string }[]; children: { name: string }[] }>()",
   ],
+  [
+    '<input v-for="item in items">',
+    'withDefaults(defineProps<{ items?: { id: string }[] }>(), { items: () => [{ id: "a" }, { id: "a" }] })',
+  ],
+  [
+    '<input v-for="item in items">',
+    'const { children: items = [{ id: "a" }, { id: "a" }] } = defineProps<{ children?: { id: string }[] }>()',
+  ],
 ])("does not suggest an unverified key for %s (%s)", async (template, script) => {
   const result = await diagnose(template, script);
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]!.fix ?? null).toBeNull();
+});
+
+test("does not use a normal script binding for a template prop of the same name", async () => {
+  const result = await project.run({
+    rule: requireVForKey,
+    files: {
+      "app.vue": `<script lang="ts">
+const items = [{ id: 1 }, { id: 2 }]
+export default { props: { items: Array } }
+</script>
+<template><input v-for="item in items" :placeholder="item.name"></template>`,
+    },
+  });
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]!.fix ?? null).toBeNull();
 });
@@ -286,6 +309,11 @@ test.each([
   ["items", "const props = defineProps<{ items: { id: string }[] }>()"],
   ["$props.items", "const props = defineProps<{ items: { id: string }[] }>()"],
   ["props.items", "const props = defineProps<{ items: { id: string }[] }>()"],
+  [
+    "items",
+    'withDefaults(defineProps<{ items?: { id: string }[] }>(), { items: () => [{ id: "a" }, { id: "b" }] })',
+  ],
+  ["items", "const { items = [] } = defineProps<{ items?: { id: string }[] }>()"],
 ])("suggests a key from the props binding %s", async (source, script) => {
   const result = await diagnose(`<input v-for="item in ${source}">`, script);
   expect(result.diagnostics[0]!.fix?.edits[0]?.text).toBe(' :key="item.id"');

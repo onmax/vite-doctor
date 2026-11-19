@@ -183,11 +183,14 @@ export function verifiedKeyExpression(
 ): string | undefined {
   const alias = aliasIdentifier(vFor.forParseResult!.value);
   if (!alias) return undefined;
+  const sfc = ctx.file.sfc;
   const fields =
     source?.type === "ArrayExpression"
       ? distinctLiteralKeys(source)
-      : itemFields(ctx.file.sfc?.getScriptAst("merged"), vFor.forParseResult!.source.content, true);
-  const field = KEY_FIELDS.find((name) => fields.has(name));
+      : sfc?.blockHashes.scriptSetup
+        ? itemFields(sfc.getScriptAst("merged"), vFor.forParseResult!.source.content, true)
+        : undefined;
+  const field = KEY_FIELDS.find((name) => fields?.has(name));
   return field ? `${alias}.${field}` : undefined;
 }
 
@@ -327,11 +330,33 @@ function itemFields(program: AnyNode, source: string, verify = false): Set<strin
   }
 
   let props: AnyNode;
-  const addProp = (call: AnyNode, prop: string) => {
-    const member = membersOf(typeArguments(call)?.[0]).find(
+  const addProp = (expression: AnyNode, prop: string, fallback?: AnyNode) => {
+    const member = membersOf(typeArguments(definePropsCall(expression))?.[0]).find(
       (entry) => !entry.computed && (entry.key?.name ?? entry.key?.value) === prop,
     );
     addMembers(elementType(member?.typeAnnotation?.typeAnnotation));
+    if (fallback) restrictToDefault(fallback);
+    if (expression.callee?.name === "withDefaults") {
+      const defaults = unwrapTs(expression.arguments?.[1]);
+      if (
+        defaults?.type !== "ObjectExpression" ||
+        defaults.properties.some((entry: AnyNode) => entry.type !== "Property" || entry.computed)
+      ) {
+        fields.clear();
+        return;
+      }
+      const property = defaults.properties.findLast(
+        (entry: AnyNode) => (entry.key.name ?? entry.key.value) === prop,
+      );
+      if (property) restrictToDefault(property.value);
+    }
+  };
+  const restrictToDefault = (expression: AnyNode) => {
+    let value = unwrapTs(expression);
+    if (value?.type === "ArrowFunctionExpression") value = unwrapTs(value.body);
+    if (value?.type === "ArrayExpression" && value.elements.length === 0) return;
+    const valid = value?.type === "ArrayExpression" ? distinctLiteralKeys(value) : undefined;
+    for (const field of fields) if (!valid?.has(field)) fields.delete(field);
   };
   const localName = viaProps ?? name;
   for (const statement of program.body ?? []) {
@@ -344,22 +369,27 @@ function itemFields(program: AnyNode, source: string, verify = false): Set<strin
     if (declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") {
       if (declaration.id?.name === localName) return fields;
     }
-    if (declaration?.type === "ExpressionStatement")
-      props = definePropsCall(declaration.expression) ?? props;
+    if (declaration?.type === "ExpressionStatement" && definePropsCall(declaration.expression))
+      props = declaration.expression;
     if (declaration?.type !== "VariableDeclaration") continue;
     for (const binding of declaration.declarations) {
       const call = definePropsCall(binding.init);
-      props = call ?? props;
+      if (call) props = binding.init;
       if (!bindingNames(binding.id).includes(localName)) continue;
       if (viaProps) {
-        if (binding.id.name === localName && call) addProp(call, name);
+        if (binding.id.name === localName && call) addProp(binding.init, name);
       } else if (call && binding.id.type === "ObjectPattern") {
         const property = binding.id.properties.find((entry: AnyNode) => {
           if (entry.type !== "Property" || entry.computed) return false;
           const value = entry.value.type === "AssignmentPattern" ? entry.value.left : entry.value;
           return value.type === "Identifier" && value.name === localName;
         });
-        if (property) addProp(call, property.key.name ?? property.key.value);
+        if (property)
+          addProp(
+            binding.init,
+            property.key.name ?? property.key.value,
+            property.value.type === "AssignmentPattern" ? property.value.right : undefined,
+          );
       } else inspect(binding);
       return fields;
     }
