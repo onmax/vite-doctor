@@ -144,7 +144,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "shadcn/require-static-classes": "Static classes",
 
   "typescript/boundaries/no-cross-realm-prototype-identity": "Prototype identity",
-  "typescript/boundaries/no-cross-realm-web-instanceof": "Built-in instanceof",
+  "typescript/boundaries/no-cross-realm-web-instanceof": "Web API instanceof",
+  "typescript/boundaries/no-cross-realm-builtin-instanceof": "Built-in instanceof",
   "typescript/boundaries/no-inherited-key-lookup": "Inherited keys",
   "typescript/boundaries/no-unvalidated-deserialization": "Deserialized values",
   "typescript/evidence/no-caller-chosen-result-type": "Caller-chosen types",

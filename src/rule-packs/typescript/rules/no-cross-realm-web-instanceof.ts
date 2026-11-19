@@ -1,25 +1,18 @@
 import { createRule } from "../../../core/index.js";
-import { isTypeScriptSource, parentOf, report, type AnyNode } from "./shared.js";
-import { createLocalEvidence, expression } from "./local-evidence.js";
-import {
-  REALM_CLASSES,
-  crossRealmOrigin,
-  hasRealmSafeAlternative,
-  realmSafeFix,
-  type LocalEvidence,
-} from "./cross-realm.js";
+import { isTypeScriptSource } from "./shared.js";
+import { WEB_PLATFORM_CLASSES, crossRealmInstanceofVisitor } from "./cross-realm.js";
 
 const ruleId = "typescript/boundaries/no-cross-realm-web-instanceof";
 
 export const noCrossRealmWebInstanceof = createRule({
   meta: {
     id: ruleId,
-    title: "Do not use instanceof for built-in values from another realm",
+    title: "Do not use instanceof for web platform values from another realm",
     description:
-      "Report instanceof checks against web platform and JavaScript built-in classes on values that may come from another JavaScript realm.",
-    why: "Every realm has its own Response, Request, Blob, URL, Date, Uint8Array, ArrayBuffer, Map, Set, Error and Array constructors. Values created by the Vite module runner, workerd or miniflare, Vitest environments, or a second copy of undici fail instanceof against this realm's class, so the check takes the wrong branch. This rule only reports values that crossed a boundary in this file: parameters typed unknown or any, results of calling a parameter, and module namespaces from import() or ssrLoadModule().",
+      "Report instanceof checks against web platform and binary data classes, such as Response, Request, Blob, URL, ArrayBuffer and Uint8Array, on values that may come from another JavaScript realm or another copy of the class.",
+    why: "Response, Request, Headers, Blob, URL, ArrayBuffer, Uint8Array and the other web platform classes have one constructor per realm, and often more than one per process: a second copy of undici such as Miniflare's, the Blob and URL of a Vitest DOM environment, a node:vm context or an iframe. A value built by any of them fails instanceof against this realm's class, so the check takes the wrong branch. This rule only reports values that crossed a boundary in this file: parameters typed unknown or any, results of calling a parameter, and module namespaces from import() or ssrLoadModule(). A parameter of a function that the file neither exports nor passes around is skipped when every call passes a literal, a new object or a caught error. JavaScript built-ins such as Error and Date are reported by typescript/boundaries/no-cross-realm-builtin-instanceof.",
     recommendedReplacement:
-      "Move the check into a guard helper such as isResponseLike(value) or isUint8Array(value) that checks the brand with Object.prototype.toString.call(value) or the members you use, and call it instead of instanceof. Use Array.isArray(value) for arrays.",
+      "Move the check into a guard helper such as isResponseLike(value) or isUint8Array(value) that checks the brand with Object.prototype.toString.call(value) or the members you use, and call it instead of instanceof.",
     examples: [
       {
         title: "Brand-check values from host callbacks",
@@ -41,54 +34,11 @@ export const noCrossRealmWebInstanceof = createRule({
   },
   create(ctx) {
     if (!isTypeScriptSource(ctx)) return;
-    let evidence: LocalEvidence;
-    return {
-      Program(node: AnyNode) {
-        evidence = createLocalEvidence(node);
-      },
-      BinaryExpression(node: AnyNode) {
-        if (node.operator !== "instanceof" || node.right?.type !== "Identifier") return;
-        const name = node.right.name;
-        if (!Object.hasOwn(REALM_CLASSES, name) || evidence.binding(node.right)) return;
-        const subject = expression(node.left, true);
-        if (subject?.type === "Identifier" && hasRealmSafeAlternative(node, name, subject.name))
-          return;
-        if (/Error$|^DOMException$/.test(name) && hasStringFallback(node, subject)) return;
-        const origin = crossRealmOrigin(evidence, node.left);
-        if (!origin) return;
-        report(
-          ctx,
-          node,
-          ruleId,
-          `This ${origin} can hold ${/^[AEIO]/.test(name) ? "an" : "a"} ${name} created in another realm (Vite module runner, workerd, Vitest environment, or a duplicated undici), where instanceof ${name} is false.`,
-          `Replace instanceof ${name} with ${realmSafeFix(name)}`,
-        );
-      },
-    };
+    return crossRealmInstanceofVisitor(
+      ctx,
+      ruleId,
+      WEB_PLATFORM_CLASSES,
+      "by another copy of the class (a second undici such as Miniflare's, a Vitest DOM environment, node:vm, or an iframe)",
+    );
   },
 });
-
-// `error instanceof Error ? error.message : String(error)` still reports the message of an error
-// from another realm, only with an "Error: " prefix, so the check costs nothing worth reporting.
-function hasStringFallback(node: AnyNode, subject: AnyNode): boolean {
-  let test = node;
-  while (parentOf(test)?.type === "ParenthesizedExpression") test = parentOf(test);
-  const conditional = parentOf(test);
-  if (conditional?.type !== "ConditionalExpression" || conditional.test !== test) return false;
-  const message = expression(conditional.consequent, true);
-  const fallback = expression(conditional.alternate, true);
-  const argument = expression(fallback?.arguments?.[0], true);
-  return (
-    message?.type === "MemberExpression" &&
-    !message.computed &&
-    message.property?.name === "message" &&
-    message.object?.type === "Identifier" &&
-    message.object.name === subject?.name &&
-    fallback?.type === "CallExpression" &&
-    expression(fallback.callee, true)?.type === "Identifier" &&
-    expression(fallback.callee, true).name === "String" &&
-    subject?.type === "Identifier" &&
-    argument?.type === "Identifier" &&
-    argument.name === subject.name
-  );
-}

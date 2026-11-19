@@ -1,4 +1,5 @@
-import { parentOf, type AnyNode } from "./shared.js";
+import type { RuleContext } from "../../../core/index.js";
+import { parentOf, report, type AnyNode } from "./shared.js";
 import { createLocalEvidence, expression } from "./local-evidence.js";
 
 export type LocalEvidence = ReturnType<typeof createLocalEvidence>;
@@ -39,7 +40,9 @@ const ERROR_SUBCLASSES = [
   "AggregateError",
 ];
 
-export const REALM_CLASSES: Record<string, RealmSafeCheck> = {
+// Web platform classes also differ inside one realm: a second undici copy, such as Miniflare's, or
+// the Blob and URL of a Vitest DOM environment each bring their own constructor.
+export const WEB_PLATFORM_CLASSES: Record<string, RealmSafeCheck> = {
   Response: {
     guard: "isResponseLike",
     check: "that checks the members you use, such as status, headers and body",
@@ -58,12 +61,20 @@ export const REALM_CLASSES: Record<string, RealmSafeCheck> = {
   URL: { guard: "isURL", check: brand("URL") },
   URLSearchParams: { guard: "isURLSearchParams", check: brand("URLSearchParams") },
   ReadableStream: { guard: "isReadableStreamLike", check: "that checks the getReader() method" },
-  Date: { guard: "isDate", check: brand("Date") },
   ArrayBuffer: { guard: "isArrayBuffer", check: brand("ArrayBuffer") },
   SharedArrayBuffer: { guard: "isSharedArrayBuffer", check: brand("SharedArrayBuffer") },
   ...Object.fromEntries(
     TYPED_ARRAYS.map((name) => [name, { guard: `is${name}`, check: view(name) }]),
   ),
+  DOMException: {
+    guard: "isDOMException",
+    check: brand("DOMException"),
+  },
+};
+
+// JavaScript built-ins only differ across a real realm boundary, such as node:vm or an iframe.
+export const BUILTIN_CLASSES: Record<string, RealmSafeCheck> = {
+  Date: { guard: "isDate", check: brand("Date") },
   Map: { guard: "isMap", check: brand("Map") },
   Set: { guard: "isSet", check: brand("Set") },
   WeakMap: { guard: "isWeakMap", check: brand("WeakMap") },
@@ -78,15 +89,16 @@ export const REALM_CLASSES: Record<string, RealmSafeCheck> = {
   ...Object.fromEntries(
     ERROR_SUBCLASSES.map((name) => [name, { guard: `is${name}`, check: errorName(name) }]),
   ),
-  DOMException: {
-    guard: "isDOMException",
-    check: brand("DOMException"),
-  },
   Array: { replacement: "Array.isArray(value), which is true for arrays from any realm" },
   Function: {
     replacement: "typeof value === 'function', which is true for functions from any realm",
   },
   Object: { replacement: "Object(value) === value, which is true for objects from any realm" },
+};
+
+export const REALM_CLASSES: Record<string, RealmSafeCheck> = {
+  ...WEB_PLATFORM_CLASSES,
+  ...BUILTIN_CLASSES,
 };
 
 // Realm-safe checks that also accept the class, such as isAsyncIterable() for streams in server
@@ -98,6 +110,200 @@ const GUARD_ALIASES: Record<string, string[]> = {
   ...Object.fromEntries(TYPED_ARRAYS.map((name) => [name, ["View"]])),
   ...Object.fromEntries(ERROR_SUBCLASSES.map((name) => [name, ["Error"]])),
 };
+
+/** Reports `value instanceof <class>` for the given classes when the value crossed a boundary. */
+export function crossRealmInstanceofVisitor(
+  ctx: RuleContext,
+  ruleId: string,
+  classes: Record<string, RealmSafeCheck>,
+  sources: string,
+) {
+  let evidence: LocalEvidence;
+  let messages: Map<string, Set<string>> | undefined;
+  let program: AnyNode;
+  return {
+    Program(node: AnyNode) {
+      evidence = createLocalEvidence(node);
+      program = node;
+      messages = undefined;
+    },
+    BinaryExpression(node: AnyNode) {
+      if (node.operator !== "instanceof" || node.right?.type !== "Identifier") return;
+      const name = node.right.name;
+      if (!Object.hasOwn(classes, name) || evidence.binding(node.right)) return;
+      const subject = expression(node.left, true);
+      if (
+        subject?.type === "Identifier" &&
+        (hasRealmSafeAlternative(node, name, subject.name) ||
+          hasGuardDisjunct(node, name, subject.name) ||
+          isTypeGuardFastPath(node, subject.name))
+      )
+        return;
+      if (/Error$|^DOMException$/.test(name) && hasStringFallback(node, subject)) return;
+      const localMessages = () => (messages ??= constructedMessages(program)).get(name);
+      if (subject?.type === "Identifier" && requiresLocalMessage(node, subject.name, localMessages))
+        return;
+      const origin = crossRealmOrigin(evidence, node.left);
+      if (!origin) return;
+      report(
+        ctx,
+        node,
+        ruleId,
+        `This ${origin} can hold ${/^[AEIO]/.test(name) ? "an" : "a"} ${name} created ${sources}, where instanceof ${name} is false.`,
+        `Replace instanceof ${name} with ${realmSafeFix(name)}`,
+      );
+    },
+  };
+}
+
+// `value instanceof Uint8Array || ArrayBuffer.isView(value)`: the guard alone already makes the
+// whole condition true for a value from another realm.
+function hasGuardDisjunct(node: AnyNode, className: string, subject: string): boolean {
+  let top = node;
+  while (
+    parentOf(top)?.type === "ParenthesizedExpression" ||
+    (parentOf(top)?.type === "LogicalExpression" && parentOf(top).operator === "||")
+  )
+    top = parentOf(top);
+  const disjuncts: AnyNode[] = [];
+  const collect = (current: AnyNode) => {
+    const value = expression(current, true);
+    if (value?.type === "LogicalExpression" && value.operator === "||") {
+      collect(value.left);
+      collect(value.right);
+    } else disjuncts.push(value);
+  };
+  collect(top);
+  return disjuncts.some(
+    (disjunct) =>
+      isGuardCall(disjunct, className, subject) ||
+      (["===", "=="].includes(disjunct?.operator) && isBrandCheck(disjunct, className, subject)),
+  );
+}
+
+// `function isResponse(value): value is Response { if (value instanceof Response) return true; ... }`
+// is the guard helper the fix asks for: instanceof is its fast path, and the statements after it
+// recognize the other realms.
+function isTypeGuardFastPath(node: AnyNode, subject: string): boolean {
+  let test = node;
+  while (parentOf(test)?.type === "ParenthesizedExpression") test = parentOf(test);
+  const statement = parentOf(test);
+  if (statement?.type !== "IfStatement" || statement.test !== test) return false;
+  const consequent =
+    statement.consequent?.type === "BlockStatement" && statement.consequent.body.length === 1
+      ? statement.consequent.body[0]
+      : statement.consequent;
+  if (consequent?.type !== "ReturnStatement") return false;
+  const returned = expression(consequent.argument, true);
+  if (returned?.type !== "Literal" || returned.value !== true) return false;
+  const body = parentOf(statement);
+  const fn = parentOf(body);
+  if (body?.type !== "BlockStatement" || !/Function/.test(fn?.type ?? "")) return false;
+  const predicate = fn.returnType?.typeAnnotation;
+  if (predicate?.type !== "TSTypePredicate" || predicate.parameterName?.name !== subject)
+    return false;
+  const later = body.body.slice(body.body.indexOf(statement) + 1);
+  return containsCall(later, (candidate) => {
+    if (candidate.type !== "ReturnStatement") return false;
+    const value = expression(candidate.argument, true);
+    return !(value?.type === "Literal" && value.value === false);
+  });
+}
+
+// `error instanceof DOMException && error.message === "[app] timed out."` only accepts the error
+// this file creates with `new DOMException("[app] timed out.")`.
+function requiresLocalMessage(
+  node: AnyNode,
+  subject: string,
+  localMessages: () => Set<string> | undefined,
+): boolean {
+  const conjuncts: AnyNode[] = [];
+  let top = node;
+  while (
+    parentOf(top)?.type === "ParenthesizedExpression" ||
+    (parentOf(top)?.type === "LogicalExpression" && parentOf(top).operator === "&&")
+  )
+    top = parentOf(top);
+  const collect = (current: AnyNode) => {
+    const value = expression(current, true);
+    if (value?.type === "LogicalExpression" && value.operator === "&&") {
+      collect(value.left);
+      collect(value.right);
+    } else conjuncts.push(value);
+  };
+  collect(top);
+  return conjuncts.some((conjunct) => {
+    if (conjunct?.type !== "BinaryExpression" || !["===", "=="].includes(conjunct.operator))
+      return false;
+    return [
+      [conjunct.left, conjunct.right],
+      [conjunct.right, conjunct.left],
+    ].some(([member, literal]) => {
+      const property = expression(member, true);
+      const text = expression(literal, true);
+      return (
+        property?.type === "MemberExpression" &&
+        !property.computed &&
+        property.property?.name === "message" &&
+        property.object?.type === "Identifier" &&
+        property.object.name === subject &&
+        text?.type === "Literal" &&
+        typeof text.value === "string" &&
+        Boolean(localMessages()?.has(text.value))
+      );
+    });
+  });
+}
+
+// The string messages of `new <Class>("message")` expressions in the file, by class name.
+function constructedMessages(program: AnyNode): Map<string, Set<string>> {
+  const messages = new Map<string, Set<string>>();
+  const visit = (node: AnyNode) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) return node.forEach(visit);
+    if (typeof node.type !== "string") return;
+    const message = expression(node.arguments?.[0], true);
+    if (
+      node.type === "NewExpression" &&
+      node.callee?.type === "Identifier" &&
+      message?.type === "Literal" &&
+      typeof message.value === "string"
+    ) {
+      const known = messages.get(node.callee.name) ?? new Set<string>();
+      messages.set(node.callee.name, known.add(message.value));
+    }
+    for (const [key, value] of Object.entries(node))
+      if (key !== "__doctorParent" && key !== "parent" && value && typeof value === "object")
+        visit(value);
+  };
+  visit(program);
+  return messages;
+}
+
+// `error instanceof Error ? error.message : String(error)` still reports the message of an error
+// from another realm, only with an "Error: " prefix, so the check costs nothing worth reporting.
+function hasStringFallback(node: AnyNode, subject: AnyNode): boolean {
+  let test = node;
+  while (parentOf(test)?.type === "ParenthesizedExpression") test = parentOf(test);
+  const conditional = parentOf(test);
+  if (conditional?.type !== "ConditionalExpression" || conditional.test !== test) return false;
+  const message = expression(conditional.consequent, true);
+  const fallback = expression(conditional.alternate, true);
+  const argument = expression(fallback?.arguments?.[0], true);
+  return (
+    message?.type === "MemberExpression" &&
+    !message.computed &&
+    message.property?.name === "message" &&
+    message.object?.type === "Identifier" &&
+    message.object.name === subject?.name &&
+    fallback?.type === "CallExpression" &&
+    expression(fallback.callee, true)?.type === "Identifier" &&
+    expression(fallback.callee, true).name === "String" &&
+    subject?.type === "Identifier" &&
+    argument?.type === "Identifier" &&
+    argument.name === subject.name
+  );
+}
 
 /** The fix sentence after "Replace <what> with". */
 export function realmSafeFix(className: string): string {
@@ -111,6 +317,7 @@ export function crossRealmOrigin(
   evidence: LocalEvidence,
   node: AnyNode,
   depth = 0,
+  seen = new Set<AnyNode>(),
 ): Origin | undefined {
   const value = expression(node, true);
   const direct = valueOrigin(evidence, value);
@@ -122,7 +329,9 @@ export function crossRealmOrigin(
   const binding = evidence.binding(value);
   if (!binding || binding.written) return undefined;
   if (binding.kind === "parameter")
-    return isUnknownOrAny(binding.annotation) ? "unknown parameter" : undefined;
+    return isUnknownOrAny(binding.annotation)
+      ? callerOrigin(evidence, binding, depth, seen)
+      : undefined;
   if (binding.kind !== "const" || binding.node.start >= value.start) return undefined;
   const init = binding.init ?? destructuredInit(binding.node);
   if (!init) return undefined;
@@ -131,12 +340,96 @@ export function crossRealmOrigin(
     if (origin) return origin;
     // `const alias = value` keeps the origin of the value it copies.
     if (expression(init, true)?.type === "Identifier" && depth < 4)
-      return crossRealmOrigin(evidence, init, depth + 1);
+      return crossRealmOrigin(evidence, init, depth + 1, seen);
   }
   // The module namespace itself is never a web value; only its exports are.
   if (binding.init && awaited(init)?.type !== "MemberExpression") return undefined;
   const root = memberRoot(init);
   return root && moduleOrigin(evidence, root) ? "loaded module" : undefined;
+}
+
+// A function that this file never exports or hands out only receives what its calls here pass.
+// When every call passes a value built in this realm, such as a literal, a new object or a caught
+// error, the check never sees a foreign value. Any other argument keeps the parameter a boundary.
+function callerOrigin(
+  evidence: LocalEvidence,
+  binding: { node: AnyNode; owner: AnyNode },
+  depth: number,
+  seen: Set<AnyNode>,
+): Origin | undefined {
+  const boundary = "unknown parameter";
+  if (seen.has(binding.node)) return undefined;
+  const fn = binding.owner;
+  const index = (fn?.params ?? []).findIndex(
+    (parameter: AnyNode) =>
+      parameter === binding.node ||
+      (parameter.type === "AssignmentPattern" && parameter.left === binding.node),
+  );
+  const name = functionName(evidence, fn);
+  if (index < 0 || !name || depth >= 4) return boundary;
+  const references = evidence.references(name);
+  if (!references.length) return boundary;
+  const next = new Set(seen).add(binding.node);
+  for (const reference of references) {
+    const call = evidence.parent(reference);
+    if (call?.type !== "CallExpression" || call.callee !== reference) return boundary;
+    const args = call.arguments ?? [];
+    if (args.slice(0, index + 1).some((arg: AnyNode) => arg.type === "SpreadElement"))
+      return boundary;
+    if (!args[index]) continue;
+    const origin = crossRealmOrigin(evidence, args[index], depth + 1, next);
+    if (origin) return origin;
+    if (!isLocalValue(evidence, args[index], next)) return boundary;
+  }
+  return undefined;
+}
+
+function isLocalValue(evidence: LocalEvidence, node: AnyNode, seen: Set<AnyNode>): boolean {
+  const value = expression(node, true);
+  if (
+    [
+      "Literal",
+      "TemplateLiteral",
+      "NewExpression",
+      "ObjectExpression",
+      "ArrayExpression",
+      "ArrowFunctionExpression",
+      "FunctionExpression",
+    ].includes(value?.type)
+  )
+    return true;
+  if (value?.type !== "Identifier") return false;
+  if (value.name === "undefined" && !evidence.binding(value)) return true;
+  const binding = evidence.binding(value);
+  if (!binding || binding.written) return false;
+  // A caught error counts as this realm's here, as it does at the catch site itself.
+  if (binding.kind === "other" && evidence.parent(binding.node)?.type === "CatchClause")
+    return true;
+  // An unknown parameter of a module-private caller is local when its own callers are.
+  if (binding.kind === "parameter")
+    return isUnknownOrAny(binding.annotation) && !crossRealmOrigin(evidence, value, 0, seen);
+  return (
+    binding.kind === "const" &&
+    binding.init !== undefined &&
+    binding.node.start < value.start &&
+    !seen.has(binding.node) &&
+    isLocalValue(evidence, binding.init, new Set(seen).add(binding.node))
+  );
+}
+
+// The binding of a module-private named function: `function f() {}` or `const f = () => {}`.
+function functionName(evidence: LocalEvidence, fn: AnyNode): AnyNode {
+  if (fn?.type === "FunctionDeclaration")
+    return evidence.parent(fn)?.type.startsWith("Export") ? undefined : fn.id;
+  let value = fn;
+  while (expression(evidence.parent(value), true) === value) value = evidence.parent(value);
+  const declarator = evidence.parent(value);
+  if (declarator?.type !== "VariableDeclarator" || declarator.init !== value) return undefined;
+  if (declarator.id?.type !== "Identifier") return undefined;
+  const declaration = evidence.parent(declarator);
+  if (declaration?.kind !== "const" || evidence.parent(declaration)?.type.startsWith("Export"))
+    return undefined;
+  return declarator.id;
 }
 
 // A guard on the same value next to the check already accepts other realms:

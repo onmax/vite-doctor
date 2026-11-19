@@ -34,7 +34,7 @@ test.each([
     "unknown parameter (vitehub runtime/src/response.ts)",
     "export function toResponse(value: unknown): Response { if (value instanceof Response) return value; return new Response(String(value)) }",
   ],
-  ["any parameter", "export const f = (value: any) => value instanceof Date"],
+  ["any parameter", "export const f = (value: any) => value instanceof URL"],
   [
     "awaited callback result (vitehub 451425205)",
     "async function run(authorize: (c: unknown) => Promise<unknown>, context: unknown) { const result = await authorize(context); if (result instanceof Response) return result }",
@@ -65,11 +65,11 @@ test.each([
   ],
   [
     "parameter typed unknown | undefined",
-    "export const f = (value: unknown | undefined) => value instanceof Date",
+    "export const f = (value: unknown | undefined) => value instanceof URL",
   ],
   [
     "const alias of an unknown parameter",
-    "function f(value: unknown) { const alias = value; return alias instanceof Date }",
+    "function f(value: unknown) { const alias = value; return alias instanceof URL }",
   ],
   [
     "guard for a different type",
@@ -85,7 +85,7 @@ test.each([
   ],
   [
     "guard that does not check the class",
-    "function f(value: unknown) { return value instanceof Date || isReady(value) }",
+    "function f(value: unknown) { return value instanceof URL || isReady(value) }",
   ],
   [
     "negated check",
@@ -107,25 +107,6 @@ test.each([
   ["other typed array", "export const f = (value: unknown) => value instanceof Float64Array"],
   ["SharedArrayBuffer", "export const f = (value: unknown) => value instanceof SharedArrayBuffer"],
   [
-    "Error message read with a literal fallback (vitehub source server.ts:65)",
-    "export const message = (cause: unknown) => cause instanceof Error ? cause.message : 'Invalid request.'",
-  ],
-  [
-    "Error code read (vitehub blob, fixed in 123883116d)",
-    "export const missing = (error: unknown) => error instanceof Error && 'code' in error && error.code === 'ENOENT'",
-  ],
-  ["Error subclass", "export const f = (error: unknown) => error instanceof AggregateError"],
-  ["Map", "export const f = (value: unknown) => value instanceof Map"],
-  ["Set", "export const f = (value: unknown) => value instanceof Set"],
-  ["RegExp", "export const f = (value: unknown) => value instanceof RegExp"],
-  ["Promise", "export const f = (value: unknown) => value instanceof Promise"],
-  ["Array", "export const f = (value: unknown) => value instanceof Array"],
-  [
-    "Function (vitehub console, fixed in f192a0b09e)",
-    "export function f(authorize: unknown) { if (!(authorize instanceof Function)) throw new TypeError('function') }",
-  ],
-  ["Object", "export const f = (value: any) => value instanceof Object"],
-  [
     "guard two statements away",
     "function f(value: unknown) { if (value instanceof Response) return value; log(); if (isResponseLike(value)) return value }",
   ],
@@ -134,19 +115,19 @@ test.each([
 });
 
 test.each([
-  ["typed parameter", "function f(value: Date) { return value instanceof Date }"],
+  ["typed parameter", "function f(value: URL) { return value instanceof URL }"],
   [
     "union parameter",
     "function f(value: Request | { url: string }) { return value instanceof Request }",
   ],
   ["catch parameter", "try { run() } catch (error) { if (error instanceof Response) throw error }"],
   [
-    "Error message with a String() fallback that keeps the text (vitehub browser errors.ts before 8142b1b78e)",
-    "export const message = (error: unknown) => error instanceof Error ? error.message : String(error)",
+    "DOMException message with a String() fallback that keeps the text",
+    "export const message = (error: unknown) => error instanceof DOMException ? error.message : String(error)",
   ],
   [
-    "Error in a catch parameter",
-    "try { run() } catch (error) { console.log(error instanceof Error ? error.message : error) }",
+    "DOMException in a catch parameter",
+    "try { run() } catch (error) { console.log(error instanceof DOMException ? error.message : error) }",
   ],
   [
     "local byte array",
@@ -158,7 +139,7 @@ test.each([
   ],
   [
     "method on a typed Map",
-    "export const f = (values: Map<string, unknown>) => values.get('at') instanceof Date",
+    "export const f = (values: Map<string, unknown>) => values.get('at') instanceof Blob",
   ],
   [
     "Node util.types guard (realm-safe)",
@@ -167,10 +148,6 @@ test.each([
   [
     "fast path in a brand-checking guard (vitehub runtime response.ts:124)",
     "export function isResponse(value: unknown): value is Response { if (value instanceof Response) return true; if (typeof value !== 'object' || value === null) return false; return Object.prototype.toString.call(value) === '[object Response]' }",
-  ],
-  [
-    "Array.isArray alternative",
-    "export const f = (value: unknown) => Array.isArray(value) || value instanceof Array",
   ],
   [
     "local class",
@@ -182,9 +159,9 @@ test.each([
   ],
   [
     "reassigned parameter",
-    "function f(value: unknown) { value = normalize(value); return value instanceof Date }",
+    "function f(value: unknown) { value = normalize(value); return value instanceof URL }",
   ],
-  ["local value", "const value = new Date(); export const ok = value instanceof Date"],
+  ["local value", "const value = new URL('https://x'); export const ok = value instanceof URL"],
   [
     "method on a typed web value",
     "function f(request: Request) { return request.clone() instanceof Request }",
@@ -229,17 +206,120 @@ test.each([
     "guard in the previous statement",
     "function f(value: unknown) { if (isResponseLike(value)) return value; return value instanceof Response ? value : undefined }",
   ],
+  [
+    "fast path in a type guard that falls back to a try block (vitehub runtime response.ts:124)",
+    "export function isResponse(value: unknown): value is Response { if (value instanceof Response) return true; if (!isObject(value)) return false; try { return Object.prototype.toString.call(value) === '[object Response]' } catch { return false } }",
+  ],
+  [
+    "fast path in a type guard that falls back to members (vitehub runtime request-context.ts:35)",
+    "export function isHostRequest(value: unknown): value is Request { if (value instanceof Request) return true; if (!isObject(value)) return false; const headers: unknown = Reflect.get(value, 'headers'); return typeof Reflect.get(value, 'url') === 'string' && isObject(headers) }",
+  ],
+  [
+    "view guard in the same || chain (vitehub internal http-request.ts:268)",
+    "export function f(body: unknown) { if (tag(body) === '[object String]' || body instanceof Uint8Array || isArrayBuffer(body) || ArrayBuffer.isView(body)) return body }",
+  ],
+  [
+    "DOMException whose message only this file creates (vitehub agent provider-agent.ts:1545)",
+    "const controller = new AbortController(); controller.abort(new DOMException('[app] cleanup timed out.', 'TimeoutError')); export const timedOut = (error: unknown) => error instanceof DOMException && error.name === 'TimeoutError' && error.message === '[app] cleanup timed out.'",
+  ],
 ])("does not report %s", async (_name, source) => {
+  expect(await count(source)).toBe(0);
+});
+
+test.each([
+  [
+    "type guard whose only fallback is false",
+    "export function isResponse(value: unknown): value is Response { if (value instanceof Response) return true; return false }",
+  ],
+  [
+    "fast path in a function that is not a type guard",
+    "export function hasBody(value: unknown): boolean { if (value instanceof Response) return true; return typeof value === 'string' }",
+  ],
+  [
+    "type guard for another parameter",
+    "export function isPair(value: unknown, other: unknown): other is Response { if (value instanceof Response) return true; return isResponseLike(other) }",
+  ],
+  [
+    "guard joined with && in the chain",
+    "export function f(body: unknown, ready: boolean) { return body instanceof Uint8Array || (ready && ArrayBuffer.isView(body)) }",
+  ],
+  [
+    "message created by another class",
+    "const failure = new Error('[app] cleanup timed out.'); export const timedOut = (error: unknown) => error instanceof DOMException && error.message === '[app] cleanup timed out.'",
+  ],
+  [
+    "message compared with || instead of &&",
+    "const failure = new DOMException('[app] timed out.'); export const timedOut = (error: unknown) => error instanceof DOMException || error === '[app] timed out.'",
+  ],
+])("still reports %s", async (_name, source) => {
+  expect(await count(source)).toBe(1);
+});
+
+test.each([
+  [
+    "module-private helper called with an unknown parameter",
+    "function isBlob(value: unknown) { return value instanceof Blob } export const f = (input: unknown) => isBlob(input)",
+  ],
+  [
+    "module-private helper called with a callback result",
+    "function isResponse(value: unknown) { return value instanceof Response } export async function f(handler: () => unknown) { return isResponse(await handler()) }",
+  ],
+  [
+    "module-private helper passed as a callback",
+    "function isBlob(value: unknown) { return value instanceof Blob } export const f = (values: unknown[]) => values.filter(isBlob)",
+  ],
+  [
+    "exported helper called with local values",
+    "export function isURL(value: unknown) { return value instanceof URL } isURL(new URL('https://x'))",
+  ],
+  [
+    "module-private helper called with a member of a typed value (vitehub workflow vercel.ts before ed31f8fe96)",
+    "function normalize(value: unknown) { if (!(value instanceof URL)) throw new Error('url'); return value } export const f = (run: { url: URL }) => normalize(run.url)",
+  ],
+  [
+    "module-private helper called with a typed parameter",
+    "function bytes(value: unknown) { return value instanceof Uint8Array ? value : Uint8Array.from(value as number[]) } export const f = (value: Uint8Array | number[]) => bytes(value)",
+  ],
+  [
+    "module-private helper called through another module-private helper with an unknown value",
+    "function isBlob(value: unknown) { return value instanceof Blob } function size(value: unknown) { return isBlob(value) ? 1 : 0 } export const f = (input: unknown) => size(input)",
+  ],
+])("follows the caller of a %s", async (_name, source) => {
+  expect(await count(source)).toBe(1);
+});
+
+test.each([
+  [
+    "module-private helper only called with local values",
+    "function toBlob(value: unknown) { return value instanceof Blob ? value : new Blob([String(value)]) } export const blob = toBlob('text')",
+  ],
+  [
+    "module-private helper only called with a caught error",
+    "function isAbort(error: unknown) { return error instanceof DOMException && error.name === 'AbortError' } export async function f() { try { await work() } catch (error) { if (isAbort(error)) return } }",
+  ],
+  [
+    "module-private arrow helper",
+    "const isURL = (value: unknown) => value instanceof URL; export const ok = isURL(new URL('https://x'))",
+  ],
+  [
+    "module-private helper that calls itself with its own local values",
+    "function size(value: unknown): number { return value instanceof Blob ? value.size : size(new Blob([])) } export const n = size('x')",
+  ],
+  [
+    "module-private helper called through another module-private helper with local values",
+    "function isBlob(value: unknown) { return value instanceof Blob } function size(value: unknown) { return isBlob(value) ? 1 : 0 } export const n = size(new Blob([]))",
+  ],
+])("does not report a %s", async (_name, source) => {
   expect(await count(source)).toBe(0);
 });
 
 test("reports a remediation that names a guard helper", async () => {
   const result = await project.run({
     rule: noCrossRealmWebInstanceof,
-    files: { "src/date.ts": "export const isDate = (value: unknown) => value instanceof Date" },
+    files: { "src/url.ts": "export const isURL = (value: unknown) => value instanceof URL" },
   });
   expect(result.diagnostics[0]).toMatchObject({ code: "TS0013", severity: "warn" });
-  expect(result.diagnostics[0]!.suggestion).toContain("[object Date]");
+  expect(result.diagnostics[0]!.suggestion).toContain("[object URL]");
 });
 
 test.each([
@@ -258,26 +338,6 @@ test.each([
   [
     "Uint8Array",
     "Replace instanceof Uint8Array with a guard helper, isUint8Array(value): value is Uint8Array, that returns ArrayBuffer.isView(value) && Object.prototype.toString.call(value) === '[object Uint8Array]'.",
-  ],
-  [
-    "Map",
-    "Replace instanceof Map with a guard helper, isMap(value): value is Map, that returns Object.prototype.toString.call(value) === '[object Map]'.",
-  ],
-  [
-    "Error",
-    "Replace instanceof Error with a guard helper, isError(value): value is Error, that returns Error.isError(value) where the runtime has it, or Object.prototype.toString.call(value) === '[object Error]'.",
-  ],
-  [
-    "TypeError",
-    "Replace instanceof TypeError with a guard helper, isTypeError(value): value is TypeError, that checks isError(value) and value.name === 'TypeError'.",
-  ],
-  [
-    "Array",
-    "Replace instanceof Array with Array.isArray(value), which is true for arrays from any realm.",
-  ],
-  [
-    "Function",
-    "Replace instanceof Function with typeof value === 'function', which is true for functions from any realm.",
   ],
 ])("suggests a %s guard helper that keeps the original meaning", async (name, suggestion) => {
   const result = await project.run({
@@ -323,16 +383,11 @@ test.each([
 });
 
 test.each([
-  `if (Object.prototype.toString.call(value) !== '[object Date]') return false; return value instanceof Date`,
-  `console.log(Object.prototype.toString.call(value) === '[object Date]'); return value instanceof Date`,
-  `return Object.prototype.toString.call(value) === '[object Date]' && value instanceof Date`,
   `return value instanceof DOMException || Object.prototype.toString.call(value) === '[object Error]'`,
   `return value instanceof DOMException || isError(value)`,
-  `if (Object.prototype.toString.call(value) === '[object Date]') return false; return value instanceof Date`,
-  `return value instanceof Date || Object.prototype.toString.call(value) !== '[object Date]'`,
-  `return value instanceof Error ? value.stack : String(value)`,
-  `return value instanceof Error ? value.cause : String(value)`,
-  `return value instanceof Error ? process(value) : String(value)`,
+  `if (Object.prototype.toString.call(value) !== '[object URL]') return false; return value instanceof URL`,
+  `return value instanceof URL || Object.prototype.toString.call(value) !== '[object URL]'`,
+  `return value instanceof DOMException ? value.stack : String(value)`,
 ])("reports identity checks without a usable fallback: %s", async (body) => {
   expect(await count(`function f(value: unknown) { ${body} }`)).toBe(1);
 });
