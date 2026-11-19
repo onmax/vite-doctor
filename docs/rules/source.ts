@@ -944,6 +944,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     );
   }
 
+  if (rule.id === "vue/template/require-v-for-key") {
+    add(
+      "Vue: maintaining state with key",
+      "https://vuejs.org/guide/essentials/list.html#maintaining-state-with-key",
+    );
+    add("Vue TransitionGroup", "https://vuejs.org/guide/built-ins/transition-group.html");
+    add(
+      "eslint-plugin-vue require-v-for-key",
+      "https://eslint.vuejs.org/rules/require-v-for-key.html",
+    );
+  }
+
   if (rule.id === "vue/template/prefer-true-attribute-shorthand") {
     add(
       "eslint-plugin-vue prefer-true-attribute-shorthand",
