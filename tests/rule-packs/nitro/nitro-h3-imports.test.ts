@@ -321,6 +321,10 @@ export default defineNuxtModule({ setup() {
   addServerHandler({ handler: fromOther('./status.ts') })
   addDevServerHandler({ handler: toPath(new URL('./dev.ts', import.meta.url)) })
   addNitroPlugin(resolver.resolve('runtime/plugin.ts'))
+  addServerHandler({ handler: { nitro3: resolver.resolve('./handlers/status'), nuxt: resolver.resolve('./handlers/status.portable') } })
+  addServerHandler({ handler: { nitro2: resolver.resolve('./handlers/legacy-only') } })
+  addDevServerHandler({ handler: { nitro3: process.env.HANDLER, nuxt: resolver.resolve('./runtime/server/fallback') } })
+  addNitroPlugin({ nitro3: resolver.resolve('./plugins/current'), nitro2: resolver.resolve('./runtime/server/legacy-plugin') })
   addServerHandler({ handler: resolver.resolve('./unproven.ts', process.env.HANDLER) })
   function shadowed(resolver: { resolve(path: string): string }) {
     addServerHandler({ handler: resolver.resolve('./unproven.ts') })
@@ -330,6 +334,12 @@ export default defineNuxtModule({ setup() {
             [
               "runtime/server/status.ts",
               "runtime/server/status.legacy.ts",
+              "runtime/server/fallback.ts",
+              "runtime/server/legacy-plugin.ts",
+              "handlers/status.ts",
+              "handlers/status.portable.ts",
+              "handlers/legacy-only.ts",
+              "plugins/current.ts",
               "other/status.ts",
               "status.ts",
               "dev.ts",
@@ -342,7 +352,10 @@ export default defineNuxtModule({ setup() {
     });
     expect(result.diagnostics.map(({ file }) => file).sort()).toEqual([
       expect.stringMatching(/dev\.ts$/),
+      expect.stringMatching(/handlers\/legacy-only\.ts$/),
+      expect.stringMatching(/handlers\/status\.ts$/),
       expect.stringMatching(/other\/status\.ts$/),
+      expect.stringMatching(/plugins\/current\.ts$/),
       expect.stringMatching(/runtime\/plugin\.ts$/),
       expect.stringMatching(/runtime\/server\/status\.ts$/),
     ]);
@@ -549,7 +562,7 @@ export const handler = defineHandler(() => { throw new HTTPError("no") })`,
         {
           "packages/realtime": {
             name: "@acme/realtime",
-            exports: { ".": "./dist/index.mjs" },
+            exports: { ".": "./dist/index.mjs", "./server": { import: "./dist/server.mjs" } },
             dependencies: { nitro: "catalog:nitro-compat" },
           },
           "packages/docs": {
@@ -559,7 +572,20 @@ export const handler = defineHandler(() => { throw new HTTPError("no") })`,
         },
         {
           "packages/realtime/src/server.ts":
-            'import type { H3Event } from "nitro/h3"\nimport { HTTPError } from "nitro/h3"\nimport { useRuntimeConfig } from "nitro/runtime-config"\nexport const fail = (event: H3Event) => new HTTPError(String(useRuntimeConfig(event)))',
+            'import type { H3Event } from "nitro/h3"\nimport { HTTPError } from "nitro/h3"\nimport { transport } from "./transport.js"\nimport type { Standalone } from "./standalone.js"\nexport const fail = (event: H3Event, _standalone?: Standalone) => transport(event) ?? new HTTPError("missing")',
+          "packages/realtime/src/transport.ts": 'export { getQuery as transport } from "nitro/h3"',
+          "packages/realtime/src/standalone.ts":
+            'import { H3 } from "nitro/h3"\nexport const app = new H3()\nexport type Standalone = typeof app',
+          "packages/realtime/src/vite.ts": `import type { Plugin } from "vite"
+import { writeFileSync } from "node:fs"
+export function realtime(): Plugin {
+  return { name: "realtime", config() {
+    const handler = "/generated/realtime.ts"
+    writeFileSync(handler, \`import { fail } from "@acme/realtime/server"
+export default (event) => fail(event)\`)
+    return { nitro: { handlers: [{ route: "/realtime", handler }] } }
+  } }
+}`,
           "packages/docs/src/module.ts":
             'import { defineNuxtModule } from "@nuxt/kit"\nexport default defineNuxtModule({ setup() {} })',
           "packages/docs/src/runtime/server/page.ts":
@@ -577,6 +603,7 @@ export const handler = defineHandler(() => { throw new HTTPError("no") })`,
     ).toEqual([
       ["NITRO0028", expect.stringMatching(/packages\/docs\/src\/runtime\/server\/page\.ts$/), 1],
       ["NITRO0028", expect.stringMatching(/packages\/realtime\/src\/server\.ts$/), 2],
+      ["NITRO0028", expect.stringMatching(/packages\/realtime\/src\/transport\.ts$/), 1],
     ]);
     const realtime = result.diagnostics.find((diagnostic) =>
       diagnostic.why.includes("@acme/realtime"),

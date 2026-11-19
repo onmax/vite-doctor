@@ -16,6 +16,7 @@ import {
 } from "./nitro-package.js";
 import { hasViteNitroPlugin } from "./server-layout.js";
 import { type AnyNode, createRule } from "./shared.js";
+import { isViteServerRuntime } from "./vite-server-runtime.js";
 
 const RULE_ID = "nitro/dependencies/declare-nitro";
 const NITRO_SPECIFIER = /^nitro(?:\/|$)/;
@@ -72,7 +73,8 @@ export const declareNitroDependency = createRule({
       if (installedIn) {
         const coupled =
           isHostRuntimeReference(node) ||
-          (source.value === "nitro/h3" && (moduleRuntime === "server" || hasHostRuntime));
+          (source.value === "nitro/h3" &&
+            (moduleRuntime === "server" || hasHostRuntime || isViteServerRuntime(ctx, owner)));
         if (!coupled || moduleRuntime === "unselected" || ownsNitro(ctx, owner)) return;
       }
       reported = true;

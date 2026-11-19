@@ -110,6 +110,8 @@ export function declaresNitro3Host(ctx: RuleContext, manifest: PackageManifest):
 
 const SERVER_HANDLERS = new Set(["addServerHandler", "addDevServerHandler"]);
 const SERVER_PLUGINS = new Set(["addServerPlugin", "addNitroPlugin"]);
+const NITRO_HANDLER_VARIANTS = ["nitro3", "nuxt", "nitro2"];
+const NITRO_PLUGIN_VARIANTS = ["nitro3", "nitro2"];
 const SCRIPT_EXTENSIONS = [".ts", ".mts", ".js", ".mjs"];
 
 /**
@@ -289,20 +291,34 @@ function registeredServerFiles(ctx: RuleContext, entry: string): RegisteredServe
       const file = path && sourceFile(ctx, path);
       if (file) into.add(file);
     };
+    const addRegistration = (value: AnyNode, precedence: string[]) => {
+      if (value?.type !== "ObjectExpression") {
+        add(value, files.selected);
+        return;
+      }
+      if (
+        value.properties.some(
+          (property: AnyNode) =>
+            property.type !== "Property" ||
+            property.computed ||
+            !precedence.includes(propertyName(property.key) ?? ""),
+        )
+      )
+        return;
+      const [selected, ...unselected] = precedence
+        .map((name) => objectProperty(value, name))
+        .filter(Boolean);
+      add(selected, files.selected);
+      for (const variant of unselected) add(variant, files.unselected);
+    };
     walk(ast, (node) => {
       if (node.type !== "CallExpression") return;
       const name = kit(node.callee);
       if (!name) return;
       const argument = node.arguments?.[0];
-      if (SERVER_PLUGINS.has(name)) add(argument, files.selected);
-      if (!SERVER_HANDLERS.has(name)) return;
-      const handler = objectProperty(argument, "handler");
-      if (handler?.type !== "ObjectExpression") {
-        add(handler, files.selected);
-        return;
-      }
-      add(objectProperty(handler, "nuxt"), files.selected);
-      add(objectProperty(handler, "nitro2"), files.unselected);
+      if (SERVER_PLUGINS.has(name)) addRegistration(argument, NITRO_PLUGIN_VARIANTS);
+      if (SERVER_HANDLERS.has(name))
+        addRegistration(objectProperty(argument, "handler"), NITRO_HANDLER_VARIANTS);
     });
   }
   ctx.cache.set(key, files);
@@ -313,7 +329,7 @@ function propertyName(node: AnyNode): string | undefined {
   return node?.type === "Identifier" ? node.name : stringLiteral(node);
 }
 
-function objectProperty(node: AnyNode, name: string): AnyNode {
+export function objectProperty(node: AnyNode, name: string): AnyNode {
   if (node?.type !== "ObjectExpression") return undefined;
   const property = node.properties.findLast(
     (property: AnyNode) =>
@@ -333,7 +349,7 @@ function stringLiteral(node: AnyNode): string | undefined {
 }
 
 /** The source file a registered path names; the module builder emits `.js` for `.ts` sources. */
-function sourceFile(ctx: RuleContext, path: string): string | undefined {
+export function sourceFile(ctx: RuleContext, path: string): string | undefined {
   const base = path.replace(/\.[cm]?js$/, "");
   const candidates = [
     path,
@@ -343,7 +359,7 @@ function sourceFile(ctx: RuleContext, path: string): string | undefined {
   return candidates.find((candidate) => ctx.fs.stat(candidate)?.isFile());
 }
 
-function walk(node: AnyNode, visit: (node: AnyNode) => void) {
+export function walk(node: AnyNode, visit: (node: AnyNode) => void) {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
     for (const item of node) walk(item, visit);
