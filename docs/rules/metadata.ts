@@ -2682,10 +2682,10 @@ export const ruleDocumentationMetadata = {
   },
   "vue/template/no-useless-template-attributes": {
     description:
-      "Flags attributes and directives on a `<template>` with `v-if`, `v-else-if`, `v-else`, `v-for` or `v-slot`, which Vue drops without a warning.",
-    why: "A `<template>` with a structural directive renders only its children. Vue never applies any other attribute or directive on it, so an `id`, `class`, listener, `ref` or directive there never reaches the page, and CSS, anchors, tests or code that rely on it find nothing. `key`, `v-memo` and `v-once` still work there and are not reported.",
+      "Flags attributes and directives Vue does not apply on a `<template>` with `v-if`, `v-else-if`, `v-else`, `v-for` or `v-slot`.",
+    why: "A structural `<template>` renders its children, not an element that can receive an `id`, `class`, listener, `ref` or native `slot` attribute. `key` and `v-memo` still work on a non-slot `<template v-for>`. `v-once` still works on non-slot `v-if` and `v-for` templates unless they are `v-else-if` or `v-else` branches. The rule also skips `v-cloak` and legacy Vue 2 `slot-scope` and `scope` attributes.",
     recommendedReplacement:
-      "Move the attribute onto the element inside the `<template>` it was meant for, or wrap the children in an element that carries it.",
+      "Apply the attribute or directive to an intended rendered target that supports it. Keep `v-show` separate from branch selection: hiding an element should not unmount it or select another branch.",
     examples: [
       {
         title: "Put the id on a rendered element",

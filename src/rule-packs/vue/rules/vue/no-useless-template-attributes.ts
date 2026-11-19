@@ -1,8 +1,4 @@
-import type {
-  TemplateAttributeNode,
-  TemplateDirectiveNode,
-  TemplateElementNode,
-} from "../../../../core/index.js";
+import type { TemplateAttributeNode, TemplateDirectiveNode } from "../../../../core/index.js";
 import { TemplateNodeType } from "../../../../core/rule-authoring.js";
 import { createRule } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -10,11 +6,8 @@ import { diagnostics } from "../../diagnostics.js";
 const RULE_ID = "vue/template/no-useless-template-attributes";
 
 const STRUCTURAL_DIRECTIVES = new Set(["if", "else-if", "else", "for", "slot"]);
-// Vue still reads these on a structural <template>: `v-memo` and `v-once` cache its children,
-// and `v-cloak` has no effect on any element compiled from an SFC.
-const KEPT_DIRECTIVES = new Set(["memo", "once", "cloak"]);
 // Vue 2 slot syntax. Doctor targets Vue 3 and leaves migration leftovers to the upgrade.
-const VUE2_SLOT_ATTRIBUTES = new Set(["slot", "slot-scope", "scope"]);
+const VUE2_SLOT_ATTRIBUTES = new Set(["slot-scope", "scope"]);
 
 type Prop = TemplateAttributeNode | TemplateDirectiveNode;
 
@@ -23,10 +16,10 @@ export const noUselessTemplateAttributes = createRule({
     id: RULE_ID,
     title: "Do not put attributes on a structural <template>",
     description:
-      "Reports attributes and directives on a <template> with v-if, v-else-if, v-else, v-for or v-slot. Vue renders only that <template>'s children and drops everything else on it without a warning.",
-    why: "A <template> that carries v-if, v-else-if, v-else, v-for or v-slot is not rendered as an element. Vue drops any other attribute or directive on it, so an id, class, listener, ref or directive there never reaches the page, and CSS, anchors, tests or code that rely on it find nothing.",
+      "Reports attributes and directives Vue does not apply on a <template> with v-if, v-else-if, v-else, v-for or v-slot.",
+    why: "A structural <template> does not render an element. Attributes such as id, class, slot, listeners and refs never reach a rendered element, and key and caching directives only work on certain structural templates.",
     recommendedReplacement:
-      "Move the attribute onto the element inside the <template> it was meant for, or wrap the children in an element that carries it. Keep `key` on <template v-for>.",
+      "Apply the attribute or directive to an intended rendered target that supports it. Preserve branch selection when adding visibility, and keep working list keys on a non-slot <template v-for>.",
     examples: [
       {
         title: "Put the id on a rendered element",
@@ -49,18 +42,19 @@ export const noUselessTemplateAttributes = createRule({
       template: {
         element(node) {
           if (node.tag !== "template" || node.tagType !== 3) return;
-          const structural = node.props.find(isStructuralDirective);
-          if (!structural) return;
-          const owner = `<template ${propName(structural)}>`;
-          const target = onlyChildElement(node);
+          const structural = node.props.filter(isStructuralDirective);
+          const first = structural[0];
+          if (!first) return;
+          const directiveNames = new Set(structural.map((prop) => prop.name));
+          const owner = `<template ${propName(first)}>`;
 
           for (const prop of node.props) {
-            if (!isDropped(prop)) continue;
+            if (!isDropped(prop, directiveNames)) continue;
             const name = propName(prop);
             ctx.report(
               diagnostics.VUE0044({
-                why: `\`${name}\` on ${owner} is dropped. A <template> with ${propName(structural)} renders only its children, so Vue never applies \`${name}\` and gives no warning: ${effectOf(prop, name)}`,
-                fix: fixFor(prop, name, structural, target),
+                why: `\`${name}\` on ${owner} is dropped. A <template> with ${propName(first)} renders only its children, so Vue never applies \`${name}\`: ${effectOf(prop, name)}`,
+                fix: fixFor(prop, name),
               }),
               {
                 ruleId: RULE_ID,
@@ -81,12 +75,19 @@ function isStructuralDirective(prop: Prop): prop is TemplateDirectiveNode {
   return prop.type === TemplateNodeType.DIRECTIVE && STRUCTURAL_DIRECTIVES.has(prop.name);
 }
 
-function isDropped(prop: Prop): boolean {
-  if (prop.type === TemplateNodeType.ATTRIBUTE)
-    return prop.name !== "key" && !VUE2_SLOT_ATTRIBUTES.has(prop.name);
-  if (STRUCTURAL_DIRECTIVES.has(prop.name) || KEPT_DIRECTIVES.has(prop.name)) return false;
-  if (prop.name === "bind" && prop.arg?.isStatic)
-    return prop.arg.content !== "key" && prop.arg.content !== "slot";
+function isAttribute(prop: Prop, name: string): boolean {
+  return prop.type === TemplateNodeType.ATTRIBUTE
+    ? prop.name === name
+    : prop.name === "bind" && prop.arg?.isStatic === true && prop.arg.content === name;
+}
+
+function isDropped(prop: Prop, structural: ReadonlySet<string>): boolean {
+  const slot = structural.has("slot");
+  if (isAttribute(prop, "key")) return slot || !structural.has("for");
+  if (prop.type === TemplateNodeType.ATTRIBUTE) return !VUE2_SLOT_ATTRIBUTES.has(prop.name);
+  if (STRUCTURAL_DIRECTIVES.has(prop.name) || prop.name === "cloak") return false;
+  if (prop.name === "memo") return slot || !structural.has("for");
+  if (prop.name === "once") return slot || structural.has("else-if") || structural.has("else");
   return true;
 }
 
@@ -96,11 +97,9 @@ function propName(prop: Prop): string {
 }
 
 function effectOf(prop: Prop, name: string): string {
-  const isRef =
-    prop.type === TemplateNodeType.ATTRIBUTE
-      ? prop.name === "ref"
-      : prop.name === "bind" && prop.arg?.isStatic && prop.arg.content === "ref";
-  if (isRef) return "the template ref is never set and stays null.";
+  if (isAttribute(prop, "key")) return "the authored key does not control runtime identity.";
+  if (isAttribute(prop, "slot")) return "no rendered element is assigned to the named native slot.";
+  if (isAttribute(prop, "ref")) return "the template ref is never set and stays null.";
   if (prop.type === TemplateNodeType.ATTRIBUTE)
     return `no rendered element gets \`${name}\`, so CSS, anchors, tests and lookups such as document.getElementById that expect it find nothing.`;
   switch (prop.name) {
@@ -117,40 +116,33 @@ function effectOf(prop: Prop, name: string): string {
       return `\`${name}\` never replaces the content; the <template>'s own children render instead.`;
     case "model":
       return "v-model binds nothing, so no input updates the value.";
+    case "memo":
+      return "Vue does not memoize the children using these dependencies.";
+    case "once":
+      return "Vue does not cache the children as a one-time render.";
     default:
       return `the \`${name}\` directive's hooks never run.`;
   }
 }
 
-function fixFor(
-  prop: Prop,
-  name: string,
-  structural: TemplateDirectiveNode,
-  target: TemplateElementNode | undefined,
-): string {
-  if (
-    prop.type === TemplateNodeType.DIRECTIVE &&
-    prop.name === "show" &&
-    (structural.name === "if" || structural.name === "else-if")
-  )
-    return target
-      ? `Move \`${name}\` onto <${target.tag}> inside this <template>, or fold its condition into ${propName(structural)}.`
-      : `Fold the \`${name}\` condition into ${propName(structural)}, or put \`${name}\` on each element inside this <template>.`;
-  if (target)
-    return `Move \`${name}\` onto <${target.tag}>, the only element inside this <template>.`;
-  return `Wrap the children of this <template> in an element, such as a <div>, and put \`${name}\` on it, or move \`${name}\` onto the child element it was meant for.`;
-}
-
-/** The single element a moved attribute would land on, when the <template> renders nothing else. */
-function onlyChildElement(template: TemplateElementNode): TemplateElementNode | undefined {
-  let found: TemplateElementNode | undefined;
-  for (const child of template.children) {
-    if (child.type === TemplateNodeType.COMMENT) continue;
-    if (child.type === TemplateNodeType.TEXT && !child.content.trim()) continue;
-    if (child.type !== TemplateNodeType.ELEMENT || found) return undefined;
-    found = child;
+function fixFor(prop: Prop, name: string): string {
+  if (isAttribute(prop, "key"))
+    return `Put \`${name}\` on the rendered element or component whose identity it should control.`;
+  if (isAttribute(prop, "slot"))
+    return `Put \`${name}\` on the rendered element that should be assigned to the native slot.`;
+  if (prop.type === TemplateNodeType.DIRECTIVE) {
+    switch (prop.name) {
+      case "show":
+        return `Apply \`${name}\` to the intended rendered element or elements that support it. Keep visibility separate from branch selection so hiding content does not unmount it or select a different branch.`;
+      case "model":
+        return `Bind \`${name}\` to an intended form control or component that supports it, using a writable expression in that scope.`;
+      case "html":
+      case "text":
+        return `Apply \`${name}\` to a compatible rendered element whose content should be replaced, without template children of its own.`;
+      case "memo":
+      case "once":
+        return `Apply \`${name}\` to a compatible rendered element or component whose rendering should be cached.`;
+    }
   }
-  // A <slot> takes attributes as slot props and a nested <template> may drop them again.
-  if (!found || found.tagType === 2 || found.tag === "template") return undefined;
-  return found;
+  return `Apply \`${name}\` to the intended rendered element or component that supports it.`;
 }
