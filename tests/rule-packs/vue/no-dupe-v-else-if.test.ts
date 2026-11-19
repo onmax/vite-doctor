@@ -8,6 +8,9 @@ afterAll(() => project.dispose());
 const stableBindings =
   "const a = 1, b = 2, c = false, d = true, e = 0, f = false, foo = false, bar = true, baz = true, n = 2, open = true, wide = true, value = 'x', id = '1-2', status = 'loading', isAdmin = true, isOwner = false, isOpen = false, isPinned = true;";
 
+const refBindings =
+  "import { ref } from 'vue'; const a = ref(1), b = ref(2), c = ref(false), d = ref(true), e = ref(0), f = ref(false), foo = ref(false), bar = ref(true), baz = ref(true), n = ref(2);";
+
 function sfc(template: string, setup = stableBindings) {
   return `<script setup lang="ts">${setup}\n</script>\n<template>\n${template}\n</template>\n`;
 }
@@ -23,7 +26,7 @@ async function reportedBranches(template: string, setup?: string) {
 }
 
 // Valid cases from eslint-plugin-vue's no-dupe-v-else-if tests.
-test.each([
+const upstreamValid = [
   '<div v-if="foo" />\n<div v-else-if="bar" />\n<div v-else-if="baz" />',
   '<div v-if="foo">\n  <div v-else-if="foo" />\n</div>',
   '<div v-if="foo" />\n<div v-else-if="bar" />\n<div v-if="bar" />\n<div v-else-if="foo" />',
@@ -56,8 +59,14 @@ test.each([
   '<div v-if="a" /><div v-else-if="b && (a || c)" />',
   '<div v-if="a" /><div v-else-if="b && (c || d && a)" />',
   '<div v-if="a && b && c" /><div v-else-if="a && b && (c || d)" />',
-])("stays silent for upstream valid case %#", async (template) => {
+];
+
+test.each(upstreamValid)("stays silent for upstream valid case %#", async (template) => {
   expect(await reportedBranches(template)).toEqual([]);
+});
+
+test.each(upstreamValid)("stays silent for upstream valid case %# over refs", async (template) => {
+  expect(await reportedBranches(template, refBindings)).toEqual([]);
 });
 
 // Upstream reports these. Doctor skips any condition with a call, which can return a different
@@ -155,38 +164,364 @@ test.each([
 
 const vue = "import { computed, customRef, ref, shallowRef } from 'vue';";
 
+/** The confidence of each reported branch, in template order. */
+async function reportedConfidence(template: string, setup?: string) {
+  const result = await project.run({
+    rule: noDupeVElseIf,
+    files: { "app.vue": sfc(template, setup) },
+  });
+  return result.diagnostics.map((diagnostic) => diagnostic.confidence);
+}
+
+// Pullfrog's probes on #358. Vue 3.5 SSR renders the second branch in all three.
 test.each(["ref", "shallowRef"])(
-  "does not assume %s makes a customRef repeatable",
+  "does not report %s wrapping a customRef, which returns the customRef itself",
   async (wrap) => {
     const setup = `${vue} let reads = 0; const ready = ${wrap}(customRef(() => ({ get: () => ++reads === 2, set: () => {} })));`;
     expect(await reportedBranches('<p v-if="ready" /><p v-else-if="ready" />', setup)).toEqual([]);
   },
 );
 
-test("does not assume a getter-only computed leaves other reads unchanged", async () => {
+test("reports a getter-only computed that writes another read only as heuristic-high", async () => {
   const setup = `${vue} const ready = ref(false); const advance = computed(() => { ready.value = true; return false; });`;
   expect(
-    await reportedBranches(
+    await reportedConfidence(
       '<p v-if="ready || advance" /><p v-else-if="ready || advance" />',
       setup,
     ),
-  ).toEqual([]);
+  ).toEqual(["heuristic-high"]);
 });
 
 test.each([
   ["a ref", `${vue} const ready = ref(false);`, "ready"],
+  ["a ref without a value", `${vue} const ready = ref<boolean>();`, "ready"],
+  ["a ref holding an array", `${vue} const ready = ref([]);`, "ready"],
+  ["a ref holding an object", `${vue} const ready = ref({ open: true });`, "ready"],
   ["a shallowRef", `${vue} const ready = shallowRef(false);`, "ready"],
+  ["a renamed ref import", "import { ref as box } from 'vue'; const ready = box(false);", "ready"],
   ["a getter-only computed", `${vue} const ready = computed(() => false);`, "ready"],
+  [
+    "a computed with a function getter",
+    `${vue} const ready = computed(function () { return false; });`,
+    "ready",
+  ],
   ["a model", "const ready = defineModel<boolean>();", "ready"],
-  ["a bare prop", "defineProps<{ ready: boolean }>();", "ready"],
+  ["a named model", "const ready = defineModel<boolean>('ready', { required: true });", "ready"],
+  ["a bare type-based prop", "defineProps<{ ready: boolean }>();", "ready"],
+  [
+    "a bare prop with a mutable receiver",
+    "let props = defineProps<{ ready: boolean }>();",
+    "ready",
+  ],
+  ["a bare runtime prop", "defineProps({ ready: Boolean });", "ready"],
+  ["a bare array prop", "defineProps(['ready']);", "ready"],
   ["a destructured prop", "const { ready } = defineProps<{ ready: boolean }>();", "ready"],
+  [
+    "a renamed destructured prop",
+    "const { open: ready } = defineProps<{ open: boolean }>();",
+    "ready",
+  ],
+  [
+    "a reactive destructured prop with a default",
+    "const { open: ready = false } = defineProps<{ open?: boolean }>();",
+    "ready",
+  ],
   ["a props member", "const props = defineProps<{ ready: boolean }>();", "props.ready"],
-  ["an imported binding", "import { ready } from './state';", "ready"],
+  ["an optional props member", "const props = defineProps<{ ready: boolean }>();", "props?.ready"],
+  [
+    "a props member with defaults",
+    "const props = withDefaults(defineProps<{ ready?: boolean }>(), { ready: true });",
+    "props.ready",
+  ],
+])("reports %s as heuristic-high", async (_name, setup, condition) => {
+  expect(
+    await reportedConfidence(`<p v-if="${condition}" /><p v-else-if="${condition}" />`, setup),
+  ).toEqual(["heuristic-high"]);
+});
+
+test("reports the common ref status bug as heuristic-high and says when it holds", async () => {
+  const source = sfc(
+    "  <p v-if=\"status === 'loading'\">Loading</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>",
+    `${vue} const status = ref('idle');`,
+  );
+  const result = await project.run({ rule: noDupeVElseIf, files: { "app.vue": source } });
+  expect(result.diagnostics).toHaveLength(1);
+  const [diagnostic] = result.diagnostics;
+  expect(diagnostic!.code).toBe("VUE0043");
+  expect(diagnostic!.confidence).toBe("heuristic-high");
+  expect(diagnostic!.why).toBe(
+    '<p v-else-if="status === \'loading\'"> never renders as long as "status" returns the same value each time one render reads it, which holds for plain refs, computed values and props. It repeats the condition of the earlier v-if="status === \'loading\'" on line 4 in the same chain, so Vue only reaches this branch after that condition was falsy.',
+  );
+});
+
+test("names every non-constant read and mixes primitive constants into heuristic-high", async () => {
+  const source = sfc(
+    '  <A v-if="open && props.ready" />\n  <B v-else-if="props.ready && open && limit > 1" />',
+    `${vue} const open = ref(true); const limit = 2; const props = defineProps<{ ready: boolean }>();`,
+  );
+  const result = await project.run({ rule: noDupeVElseIf, files: { "app.vue": source } });
+  expect(result.diagnostics.map((diagnostic) => [diagnostic.confidence, diagnostic.why])).toEqual([
+    [
+      "heuristic-high",
+      '<B v-else-if="props.ready && open && limit > 1"> never renders as long as "props.ready" and "open" return the same value each time one render reads them, which holds for plain refs, computed values and props. Whenever it is truthy, the earlier v-if="open && props.ready" on line 4 in the same chain is truthy too, so Vue renders that branch instead.',
+    ],
+  ]);
+});
+
+test("reports heuristic-high when a ref branch sits between the repeated ones, and proven otherwise", async () => {
+  const source = sfc(
+    '  <A v-if="limit > 1" />\n  <B v-else-if="open" />\n  <C v-else-if="limit > 1" />',
+    `${vue} const limit = 2; const open = ref(false);`,
+  );
+  const result = await project.run({ rule: noDupeVElseIf, files: { "app.vue": source } });
+  expect(result.diagnostics.map((diagnostic) => [diagnostic.confidence, diagnostic.why])).toEqual([
+    [
+      "heuristic-high",
+      '<C v-else-if="limit > 1"> never renders as long as "open" returns the same value each time one render reads it, which holds for plain refs, computed values and props. It repeats the condition of the earlier v-if="limit > 1" on line 4 in the same chain, so Vue only reaches this branch after that condition was falsy.',
+    ],
+  ]);
+  expect(
+    await reportedConfidence(
+      '<p v-if="open" /><p v-else-if="limit > 1" /><p v-else-if="limit > 1" />',
+      `${vue} const limit = 2; const open = ref(false);`,
+    ),
+  ).toEqual(["proven"]);
+});
+
+test.each([
+  ["a customRef", `${vue} const ready = customRef(() => ({ get: () => true, set: () => {} }));`],
+  ["a toRef", "import { toRef } from 'vue'; const ready = toRef(() => false);"],
+  ["a ref of another ref", `${vue} const base = ref(false); const ready = ref(base);`],
+  ["a ref of a call", `${vue} const ready = ref(load());`],
+  ["a ref of an identifier", `${vue} const initial = false; const ready = ref(initial);`],
+  ["a let ref", `${vue} let ready = ref(false);`],
+  ["a ref not imported from vue", "import { ref } from './my-ref'; const ready = ref(false);"],
+  ["an unimported ref", "const ready = ref(false);"],
+  ["a writable computed", `${vue} const ready = computed({ get: () => false, set: () => {} });`],
+  ["a computed with a setter argument", `${vue} const ready = computed(() => false, {});`],
+  [
+    "a computed of an identifier",
+    `${vue} const getter = () => false; const ready = computed(getter);`,
+  ],
+  [
+    "a model with a getter",
+    "const ready = defineModel<boolean>({ get: (value) => value, set: (value) => value });",
+  ],
+  ["a model with only a setter", "const ready = defineModel<boolean>({ set: (value) => value });"],
+  ["a model with spread options", "const ready = defineModel<boolean>({ ...options });"],
+  ["an imported binding", "import { ready } from './state';"],
+  [
+    "a reactive member",
+    "import { reactive } from 'vue'; const state = reactive({ ready: false });",
+    "state.ready",
+  ],
+  ["a $-prefixed ref", `${vue} const $ready = ref(false);`, "$ready"],
+  ["an _-prefixed ref", `${vue} const _ready = ref(false);`, "_ready"],
   ["a $-prefixed constant", "const $ready = false;", "$ready"],
   ["an _-prefixed constant", "const _ready = false;", "_ready"],
+])("does not compare %s", async (_name, setup, condition = "ready") => {
+  expect(
+    await reportedBranches(`<p v-if="${condition}" /><p v-else-if="${condition}" />`, setup),
+  ).toEqual([]);
+});
+
+test.each([
+  [
+    "a deeper props chain",
+    "const props = defineProps<{ user: { ready: boolean } }>();",
+    "props.user.ready",
+  ],
+  ["a computed props key", "const props = defineProps<{ ready: boolean }>();", "props['ready']"],
+  ["an undeclared props key", "const props = defineProps<{ ready: boolean }>();", "props.other"],
+  ["a member of a ref", `${vue} const user = ref({ ready: true });`, "user.ready"],
+  ["$props", "defineProps<{ ready: boolean }>();", "$props.ready"],
 ])("does not compare %s", async (_name, setup, condition) => {
   expect(
     await reportedBranches(`<p v-if="${condition}" /><p v-else-if="${condition}" />`, setup),
+  ).toEqual([]);
+});
+
+test.each(["Math", "require"])(
+  "does not assume a %s ref always resolves to setup",
+  async (name) => {
+    expect(
+      await reportedBranches(
+        `<p v-if="${name}" /><p v-else-if="(${name})" />`,
+        `${vue} const ${name} = ref(false);`,
+      ),
+    ).toEqual([]);
+  },
+);
+
+test("does not treat an options API prop as a script setup prop", async () => {
+  const source = `<script lang="ts">export default { props: { ready: Boolean } };</script>${sfc('<p v-if="ready" /><p v-else-if="ready" />', "")}`;
+  const result = await project.run({ rule: noDupeVElseIf, files: { "app.vue": source } });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  ["a module ref import", "", ["heuristic-high"]],
+  [
+    "a shadowed module ref import",
+    "function ref() { let reads = 0; return customRef(() => ({ get: () => ++reads === 2, set() {} })); }",
+    [],
+  ],
+] as const)("resolves %s at the call site", async (_name, local, expected) => {
+  const source = `<script lang="ts">import { ref, customRef } from 'vue';</script>${sfc(
+    '<p v-if="ready" /><p v-else-if="ready" />',
+    `${local} const ready = ref(false);`,
+  )}`;
+  const result = await project.run({ rule: noDupeVElseIf, files: { "app.vue": source } });
+  expect(result.diagnostics.map(({ confidence }) => confidence)).toEqual(expected);
+});
+
+test.each(["reading >= 2", "reading == 2", "+reading >= 2", "`${reading}` === '2'"])(
+  "does not assume %s can coerce the same object twice safely",
+  async (condition) => {
+    expect(
+      await reportedBranches(
+        `<p v-if="${condition}" /><p v-else-if="${condition}" />`,
+        `${vue} let count = 0; const reading = shallowRef({ valueOf() { return ++count }, toString() { return String(++count) } });`,
+      ),
+    ).toEqual([]);
+  },
+);
+
+test.each(["reading", "reading === 2", "reading != null", "(reading ? 2 : 1) >= 2"])(
+  "still reports %s when evaluating it cannot coerce the read",
+  async (condition) => {
+    expect(
+      await reportedConfidence(
+        `<p v-if="${condition}" /><p v-else-if="${condition}" />`,
+        `${vue} const reading = shallowRef({ valueOf() { return 2 } });`,
+      ),
+    ).toEqual(["heuristic-high"]);
+  },
+);
+
+test.each([
+  ["const props = defineProps<{ ready: boolean }>(); const ready = false;", "props.ready"],
+  ["const props = defineProps({ ready: Boolean }); const ready = false;", "props.ready"],
+  ["const props = defineProps(['ready']); const ready = false;", "props.ready"],
+])("traces a declared prop independently of bare binding metadata: %s", async (setup, read) => {
+  expect(await reportedConfidence(`<p v-if="${read}" /><p v-else-if="${read}" />`, setup)).toEqual([
+    "heuristic-high",
+  ]);
+});
+
+test("skips a non-reactive destructured prop even with a primitive annotation", async () => {
+  expect(
+    await reportedConfidence(
+      '<p v-if="ready" /><p v-else-if="ready" />',
+      "const { open: ready } = withDefaults(defineProps<{ open?: boolean }>(), { open: false });",
+    ),
+  ).toEqual([]);
+});
+
+test.each(["sharedProps", "{ ...sharedProps }"])(
+  "reports a compiler-confirmed prop alias from %s",
+  async (declaration) => {
+    const result = await project.run({
+      rule: noDupeVElseIf,
+      files: {
+        "app.vue": sfc(
+          '<p v-if="ready" /><p v-else-if="ready" />',
+          `import { sharedProps } from './props'; const { enabled: ready } = defineProps(${declaration});`,
+        ),
+        "props.ts": "export const sharedProps = { enabled: Boolean };",
+      },
+    });
+    expect(result.diagnostics.map(({ confidence }) => confidence)).toEqual(["heuristic-high"]);
+  },
+);
+
+test("skips non-reactive destructured props that can unwrap a customRef", async () => {
+  expect(
+    await reportedConfidence(
+      '<p v-if="ready" /><p v-else-if="ready" />',
+      `import { customRef, type Ref } from 'vue';
+       const { ready } = withDefaults(defineProps<{ ready?: Ref<boolean> }>(), {
+         ready: () => {
+           let reads = 0;
+           return customRef(() => ({ get: () => ++reads === 2, set() {} }));
+         },
+       });`,
+    ),
+  ).toEqual([]);
+});
+
+test("skips a non-reactive destructured primitive prop with a customRef fallback", async () => {
+  expect(
+    await reportedConfidence(
+      `<p v-if="status === 'ready'">first</p><p v-else-if="status === 'ready'">second</p>`,
+      `import { customRef } from 'vue';
+       const { status = customRef<string>(() => {
+         let reads = 0;
+         return { get: () => ++reads === 1 ? 'waiting' : 'ready', set() {} };
+       }) } = withDefaults(defineProps<{ status?: string, variant?: string }>(), {
+         variant: 'compact',
+       });`,
+    ),
+  ).toEqual([]);
+});
+
+test("does not assume a mutable props receiver still holds the props object", async () => {
+  expect(
+    await reportedConfidence(
+      '<p v-if="props.ready" /><p v-else-if="props.ready" />',
+      "let props = defineProps<{ ready: boolean }>(); props = { get ready() { return Math.random() > 0.5; } };",
+    ),
+  ).toEqual([]);
+});
+
+test("observes changed prop type resolution config across runs", async () => {
+  const source = sfc(
+    '<p v-if="props.ready" /><p v-else-if="props.ready" />',
+    "import type { Props } from '#props'; const props = defineProps<Props>();",
+  );
+  const run = (target: string) =>
+    project.run({
+      rule: noDupeVElseIf,
+      run: { cache: false },
+      files: {
+        "app.vue": source,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "#props": [target] } } }),
+        "ready.ts": "export interface Props { ready: boolean }",
+        "other.ts": "export interface Props { other: boolean }",
+      },
+    });
+  expect((await run("./ready.ts")).diagnostics.map(({ confidence }) => confidence)).toEqual([
+    "heuristic-high",
+  ]);
+  expect((await run("./other.ts")).diagnostics).toEqual([]);
+});
+
+test("observes changed prop types after a failed compile", async () => {
+  const source = sfc(
+    '<p v-if="props.ready" /><p v-else-if="props.ready" />',
+    "import type { Props } from './recover'; const props = defineProps<Props>();",
+  );
+  const run = (type: string) =>
+    project.run({
+      rule: noDupeVElseIf,
+      run: { cache: false },
+      files: { "app.vue": source, "recover.ts": type },
+    });
+  expect((await run("export interface Other { ready: boolean }")).diagnostics).toEqual([]);
+  expect(
+    (await run("export interface Props { ready: boolean }")).diagnostics.map(
+      ({ confidence }) => confidence,
+    ),
+  ).toEqual(["heuristic-high"]);
+  expect((await run("export interface Props { other: boolean }")).diagnostics).toEqual([]);
+});
+
+test("does not compare a ref shadowed by a v-for alias", async () => {
+  expect(
+    await reportedBranches(
+      '<template v-for="ready in items"><p v-if="ready" /><p v-else-if="ready" /></template>',
+      `${vue} const ready = ref(false); const items = [true];`,
+    ),
   ).toEqual([]);
 });
 
@@ -227,7 +562,7 @@ test("does not treat a regular script constant as a template binding", async () 
 });
 
 // Invalid cases from eslint-plugin-vue's no-dupe-v-else-if tests, as the v-else-if branches reported.
-test.each<[string, number[]]>([
+const upstreamInvalid: Array<[string, number[]]> = [
   ['<div v-if="foo" />\n<div v-else-if="foo" />', [1]],
   [
     '<div v-if="a" />\n<div v-else-if="b" />\n<div v-else-if="c && d" />\n<div v-else-if="c && d" />',
@@ -319,9 +654,21 @@ test.each<[string, number[]]>([
   ['<div v-if="a" /><div v-else-if="a && a" />', [1]],
   ['<div v-if="a && a" /><div v-else-if="a && a" />', [1]],
   ['<div v-if="a && a" /><div v-else-if="a" />', [1]],
-])("reports upstream invalid case %#", async (template, branches) => {
+];
+
+test.each(upstreamInvalid)("reports upstream invalid case %#", async (template, branches) => {
   expect(await reportedBranches(template)).toEqual(branches);
 });
+
+test.each(upstreamInvalid)(
+  "checks upstream invalid case %# with ref bindings",
+  async (template, branches) => {
+    const expected = template.includes('v-if="1 < a"') ? [] : branches;
+    const confidence = template.includes('v-if="true"') ? "proven" : "heuristic-high";
+    expect(await reportedBranches(template, refBindings)).toEqual(expected);
+    expect(await reportedConfidence(template, refBindings)).toEqual(expected.map(() => confidence));
+  },
+);
 
 test.each([
   // Upstream compares tokens and keeps this valid; Doctor compares the parsed expression.
