@@ -246,6 +246,26 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       key: "diagnostics/DOC0032.md",
     },
     {
+      code: "DOC0039",
+      title: "DOC0039: Remove resolved baseline entries",
+      description:
+        "A full `--new-only` run found baseline entries whose Rule ran over their file and no longer reports their fingerprint.",
+      why: "A baseline should list only findings that still exist. A resolved entry hides nothing today, but if the same finding comes back with the same fingerprint, `--new-only` hides it again without a word. Doctor reports an entry only when it records its `ruleId` and `file`, its Rule ran over that file in a full Doctor Run, and the file was analyzed or no longer exists. Changed-file runs, Rule selections, analyses-only runs, severity thresholds above `info`, findings from workspace analyses, and disabled or inactive Rules never report this Diagnostic.",
+      fix: "Delete the fingerprints listed in the Diagnostic's evidence from the baseline, or rewrite it once the run reports nothing new: `vite-doctor . --baseline <file> --update-baseline`. Then commit the updated baseline.",
+      docsUrl: "https://vite-doctor.onmax.me/cli",
+      ruleId: "doctor/baseline/resolved-entries",
+      pack: "vite-doctor/core",
+      severity: "info",
+      category: "baseline",
+      source: "src/core/internal/diagnostics.ts",
+      sourceUrl: githubSourceUrl("src/core/internal/diagnostics.ts"),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0039",
+      key: "diagnostics/DOC0039.md",
+    },
+    {
       code: "DOC0022",
       title: "DOC0022: Resolve the runtime graph",
       description:
