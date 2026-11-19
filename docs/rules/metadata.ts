@@ -2732,6 +2732,31 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/template/require-toggle-inside-transition": {
+    description:
+      "Finds a <Transition> whose child is a native element with no v-if, v-else-if, v-else, v-show or bound :key, on the element or on a wrapping <template>. A <Transition> with appear, or with :appear bound to anything but false, is skipped. Children Doctor cannot read in full count as unknown and are never reported: <slot>, components (including <component :is>, <KeepAlive>, <RouterView> and <NuxtPage>, whose root may toggle), elements with is, a v-bind object spread, or a custom directive. <TransitionGroup> is not checked.",
+    why: "<Transition> runs enter and leave animations only when its child is inserted or removed: a v-if/v-else branch switching, v-show changing, or a :key change that replaces the element. A native element that stays mounted never enters or leaves, so the enter/leave classes and the CSS written for them never apply. Without appear, the first render does not animate either.",
+    recommendedReplacement:
+      "Add v-if or v-show to the child so it enters and leaves, bind a :key that changes when the content should animate, add appear to animate on first render, or remove the <Transition> when no animation is wanted. Use <TransitionGroup> to animate a v-for list.",
+    examples: [
+      {
+        title: "Toggle the transitioned element",
+        language: "vue",
+        invalid:
+          '<template>\n  <Transition name="fade">\n    <div class="toast">{{ message }}</div>\n  </Transition>\n</template>',
+        valid:
+          '<template>\n  <Transition name="fade">\n    <div v-if="message" class="toast">{{ message }}</div>\n  </Transition>\n</template>',
+      },
+      {
+        title: "Animate on first render with appear",
+        language: "vue",
+        invalid:
+          '<template>\n  <Transition name="slide">\n    <header class="hero" />\n  </Transition>\n</template>',
+        valid:
+          '<template>\n  <Transition name="slide" appear>\n    <header class="hero" />\n  </Transition>\n</template>',
+      },
+    ],
+  },
   "vue/template/no-index-key-on-stateful-list": {
     description:
       'Finds v-for lists keyed by the iteration index where the keyed element holds state: an element with v-model, a native input, textarea or select, a child of <TransitionGroup>, or a component whose source keeps local state. Doctor reads the component it resolves through a relative .vue import or the Nuxt component registry, and counts ref(), reactive(), defineModel(), Options API data(), v-model, form controls, <details>, transitions, and child components that keep state. A ref the template binds with ref="name" is a DOM handle and does not count. A component Doctor cannot read is reported, with low confidence, only when its name says it holds input or open state, such as UInput or SelectMenu.',
