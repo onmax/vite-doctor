@@ -42,6 +42,7 @@ export { noReactiveDestructure } from "./no-reactive-destructure.js";
 export { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
 export { noConstantComputed } from "./no-constant-computed.js";
 export { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
+export { noDupeVElseIf } from "./no-dupe-v-else-if.js";
 export { noUselessTemplateAttributes } from "./no-useless-template-attributes.js";
 export { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
 export { requireExplicitEmits } from "./require-explicit-emits.js";
@@ -90,6 +91,7 @@ import { noReactiveDestructure } from "./no-reactive-destructure.js";
 import { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
 import { noConstantComputed } from "./no-constant-computed.js";
 import { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
+import { noDupeVElseIf } from "./no-dupe-v-else-if.js";
 import { noUselessTemplateAttributes } from "./no-useless-template-attributes.js";
 import { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
 import { requireExplicitEmits } from "./require-explicit-emits.js";
@@ -142,6 +144,7 @@ const rules = [
   preferComputedOverWatchAssign,
   noConstantComputed,
   noSetupStateFromBrowserRead,
+  noDupeVElseIf,
   noUselessTemplateAttributes,
   requireToggleInsideTransition,
   requireExplicitEmits,
