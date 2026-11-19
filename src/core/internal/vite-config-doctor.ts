@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Visitor, type Node, type ObjectExpression, type Program } from "oxc-parser";
 import type { DoctorSerializableConfig } from "../primitives.js";
+import { loadTypeScript } from "./lazy-parsers.js";
 import { lineColumnAt } from "./line-index.js";
 import { parseScriptSync } from "./script.js";
 import { analyzeScriptProgram, type ScopeReference } from "./script-scope.js";
@@ -8,9 +9,9 @@ import { analyzeScriptProgram, type ScopeReference } from "./script-scope.js";
 export class ViteConfigDoctorError extends Error {}
 
 /**
- * Returns undefined when the file never names a `doctor` key or `vite-doctor`, or when a supported
- * export shape has no `doctor` key. Otherwise an indeterminate export or a nonliteral setting is a
- * config error.
+ * Returns undefined when the file names neither a `doctor` key nor a `vite-doctor` module, or when
+ * a supported export shape has no `doctor` key. Otherwise an indeterminate export or a nonliteral
+ * setting is a config error.
  */
 export function readViteConfigDoctor(
   file: string,
@@ -23,7 +24,7 @@ export function readViteConfigDoctor(
   });
   const error = errors.find((item) => item.severity === "Error");
   if (error) {
-    if (!source.includes("doctor")) return undefined;
+    if (!malformedConfigMentionsDoctor(file, source)) return undefined;
     throw indeterminate(source, error.labels[0]?.start ?? 0, "could not parse the file");
   }
   // Config that mentions neither cannot supply the key, so its export shape doesn't matter.
@@ -101,16 +102,73 @@ const viteConfigModules = new Set(["vite", "vite-plus", "vitest/config"]);
 
 function mentionsDoctor(program: Program): boolean {
   let found = false;
-  const check = (name: unknown) => {
-    if (name === "doctor" || (typeof name === "string" && /^vite-doctor(?:\/|$)/.test(name)))
-      found = true;
+  const checkKey = (key: Node, computed: boolean) => {
+    found ||= propertyName(unwrap(key), computed) === "doctor";
+  };
+  const checkModule = (source: Node | null | undefined) => {
+    if (source) found ||= isDoctorModule(propertyName(unwrap(source), true));
   };
   new Visitor({
-    Identifier: (node) => check(node.name),
-    Literal: (node) => check(node.value),
-    TemplateElement: (node) => check(node.value.cooked),
+    Property: (node) => checkKey(node.key, node.computed),
+    PropertyDefinition: (node) => checkKey(node.key, node.computed),
+    MethodDefinition: (node) => checkKey(node.key, node.computed),
+    MemberExpression: (node) => checkKey(node.property, node.computed),
+    ImportDeclaration: (node) => checkModule(node.source),
+    ExportNamedDeclaration: (node) => checkModule(node.source),
+    ExportAllDeclaration: (node) => checkModule(node.source),
+    ImportExpression: (node) => checkModule(node.source),
+    TSExternalModuleReference: (node) => checkModule(node.expression),
+    CallExpression: (node) => {
+      if (node.callee.type === "Identifier" && node.callee.name === "require") {
+        checkModule(node.arguments[0]);
+      }
+    },
   }).visit(program);
   return found;
+}
+
+function isDoctorModule(name: string | undefined): boolean {
+  return name === "vite-doctor" || name?.startsWith("vite-doctor/") === true;
+}
+
+function malformedConfigMentionsDoctor(file: string, source: string): boolean {
+  const ts = loadTypeScript();
+  const program = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const name = (
+    node: import("typescript").Node | undefined,
+    computed = false,
+  ): string | undefined => {
+    if (!node) return undefined;
+    if (ts.isComputedPropertyName(node)) return name(node.expression, true);
+    if (ts.isParenthesizedExpression(node)) return name(node.expression, computed);
+    if (ts.isStringLiteralLike(node) || (!computed && ts.isIdentifier(node))) return node.text;
+    return undefined;
+  };
+  const visit = (node: import("typescript").Node): true | undefined => {
+    const key = ts.isBindingElement(node)
+      ? ts.isObjectBindingPattern(node.parent) && !node.dotDotDotToken
+        ? (node.propertyName ?? node.name)
+        : undefined
+      : ts.isObjectLiteralElementLike(node) ||
+          ts.isClassElement(node) ||
+          ts.isPropertyAccessExpression(node)
+        ? node.name
+        : undefined;
+    if (
+      name(key) === "doctor" ||
+      (ts.isElementAccessExpression(node) && name(node.argumentExpression, true) === "doctor") ||
+      ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        isDoctorModule(name(node.moduleSpecifier, true))) ||
+      (ts.isExternalModuleReference(node) && isDoctorModule(name(node.expression, true))) ||
+      (ts.isCallExpression(node) &&
+        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(node.expression) && node.expression.text === "require")) &&
+        isDoctorModule(name(node.arguments[0], true)))
+    )
+      return true;
+    return ts.forEachChild(node, visit);
+  };
+  return visit(program) === true;
 }
 
 const commonJsMetadata = new Set(["filename", "id", "loaded", "path"]);

@@ -241,6 +241,14 @@ test.each([
     "import { mergeConfig } from 'vite'; import base from './vite.base'; export default mergeConfig(base, { base: '/' });",
   ],
   [
+    "a Vite+ task that runs vite-doctor",
+    "import { mergeConfig } from 'vite-plus'; import base from './vite.base'; export default mergeConfig(base, { run: { tasks: { 'check:doctor': { command: 'vite-doctor' } } } });",
+  ],
+  [
+    "unrelated bindings and values named doctor",
+    "import { mergeConfig } from 'vite'; const doctor = JSON.stringify('doctor'); export default mergeConfig({}, { define: { LABEL: doctor, PACKAGE: `vite-doctor` } });",
+  ],
+  [
     "defineConfig(identifier)",
     "import { defineConfig } from 'vite'; import shared from './vite.base'; export default defineConfig(shared);",
   ],
@@ -271,10 +279,22 @@ test.each([
   },
 );
 
-test("a vite.config.ts that does not parse is a config error only when it names doctor", async () => {
-  const root = fixture({ "vite.config.ts": "export default {" });
-  expect((await run(root)).report.error?.kind).not.toBe("config");
-  writeFileSync(join(root, "vite.config.ts"), "export default { doctor: {");
+test.each(["", "// see vite-doctor docs\n", 'const [doctor] = ["vite-doctor"];\n'])(
+  "a malformed vite.config.ts with no doctor key or import is incomplete: %s",
+  async (prefix) => {
+    const root = fixture({ "vite.config.ts": `${prefix}export default {` });
+    const { code, report } = await run(root);
+    expect(code).toBe(3);
+    expect(report.error?.kind).not.toBe("config");
+  },
+);
+
+test.each([
+  "export default { doctor: {",
+  String.raw`export default { "\u0064octor": {`,
+  'import "vite-doctor"; export default {',
+])("a malformed vite.config.ts that names doctor is a config error: %s", async (source) => {
+  const root = fixture({ "vite.config.ts": source });
   const { code, report } = await run(root);
   expect(code).toBe(2);
   expect(report.error).toMatchObject({ kind: "config", file: join(root, "vite.config.ts") });
@@ -299,6 +319,10 @@ test.each([
   "const config = {}; function unused() { config.doctor = {} } export default config;",
   "import { doctor } from 'vite-doctor/plugin'; import shared from './vite.base'; export default { ...shared, plugins: [doctor()] };",
   "import 'vite-doctor'; export { default } from './vite.base';",
+  "export { default } from 'vite-doctor/config';",
+  "export default import(`vite-doctor/config`);",
+  "export default require('vite-doctor/config');",
+  "export default mergeConfig({}, { [`doctor`]: {} });",
   "import { defineConfig } from 'vite'; export default defineConfig(({ command }) => { if (command === 'serve') return {}; return { doctor: { include: [] } }; });",
 ])("requires explicit config when the export is indeterminate: %s", async (source) => {
   const root = fixture({ "vite.config.ts": source });
