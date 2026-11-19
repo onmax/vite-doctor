@@ -2191,6 +2191,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/attrs/require-explicit-emits": {
+    description:
+      "Flags a template `$emit` of an undeclared event that runs in a handler for the native event of the same name, when that native event provably reaches the component's single native root element, where the parent's listener falls through.",
+    why: "Vue 3 treats a parent's `v-on` listener as a fallthrough attribute unless the child declares the event in `defineEmits` or `emits`. The listener then also lands on the child's root element as a native listener, so `$emit('click', id)` from a click handler runs the parent's `@click` handler twice: once with `id` and once with the `MouseEvent`. Doctor reports only when it can prove that path: the `$emit` runs in a `v-on` handler for the native event of the same name, the event name is a string literal, nothing declares it in the `defineEmits`, `emits`, `defineModel()` or `on<Event>` props Vue ends up with after merging `<script setup>` into the normal script, `inheritAttrs` stays on, and the template has a single native root. For a bubbling event, every element from the handler up to the root must be free of `.stop`, template refs, custom directives, object or dynamic listeners, and handlers that could reach the event object. A non-bubbling event such as `focus` counts only on the root itself. Components with declarations it cannot read, mixins, a shadowed `$emit`, multi-root templates and component roots are skipped.",
+    recommendedReplacement:
+      "Declare the event in `defineEmits` (or the `emits` option) so the parent's listener only receives the emitted event, or emit an event whose name is not a native DOM event when the parent should keep its native listener. Doctor skips once-only emitters (such as `@click.once`) because declaring their event would remove the parent's native callback on later clicks.",
+    examples: [
+      {
+        title: "Declare the emitted click event",
+        language: "vue",
+        invalid:
+          '<template>\n  <button type="button" @click="$emit(\'click\', id)">Open</button>\n</template>',
+        valid:
+          '<script setup lang="ts">\ndefineEmits([\'click\'])\n</script>\n\n<template>\n  <button type="button" @click="$emit(\'click\', id)">Open</button>\n</template>',
+      },
+    ],
+  },
   "vue/attrs/no-watch-use-attrs": {
     description:
       "Flags watch() calls whose source is the useAttrs() object itself, which Vue never re-runs.",

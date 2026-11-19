@@ -959,6 +959,17 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }
 
+  if (rule.id === "vue/attrs/require-explicit-emits") {
+    add(
+      "Vue declaring emitted events",
+      "https://vuejs.org/guide/components/events.html#declaring-emitted-events",
+    );
+    add(
+      "Vue v-on listener inheritance",
+      "https://vuejs.org/guide/components/attrs.html#v-on-listener-inheritance",
+    );
+  }
+
   if (rule.id === "vue/template/no-index-key-on-stateful-list") {
     add("Vue TransitionGroup", "https://vuejs.org/guide/built-ins/transition-group.html");
     add(

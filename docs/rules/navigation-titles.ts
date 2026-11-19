@@ -196,6 +196,7 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "vue/attrs/no-duplicate-attr-inheritance": "Duplicate $attrs",
   "vue/attrs/no-watch-use-attrs": "Watching attrs",
+  "vue/attrs/require-explicit-emits": "Undeclared emits",
 
   "vue/composables/require-use-prefix": "Composable names",
   "vue/i18n/no-untranslated-text": "Untranslated text",

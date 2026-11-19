@@ -48,6 +48,7 @@ export const vueDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0044", ruleId: "vue/template/no-useless-template-attributes" },
   { code: "VUE0045", ruleId: "vue/template/require-v-for-key" },
   { code: "VUE0046", ruleId: "vue/template/require-toggle-inside-transition" },
+  { code: "VUE0047", ruleId: "vue/attrs/require-explicit-emits" },
 ]);
 
 export const diagnostics = vueDiagnosticRegistry.diagnostics;
