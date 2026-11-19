@@ -21,7 +21,7 @@ export function isPostMountBranch(ctx: RuleContext, node: AnyNode): boolean {
     )
       continue;
     const variable = script.references.get(
-      script.nodes("Identifier").find((id) => id.range?.[0] === test.object.start),
+      script.nodeAt("Identifier", test.object.start),
     )?.resolved;
     const declaration = variable?.defs[0]?.node as AnyNode;
     const init = declaration?.init;
