@@ -261,6 +261,11 @@ test.each([
     "import { defineConfig } from 'vite'; export default defineConfig(({ command }) => { if (command === 'serve') { return { base: '/' }; } return { base: '/app/' }; });",
   ],
   ["a re-export", "export { default } from './vite.base';"],
+  ["an asserted non-Doctor key", "export default { ['base' as const]: '/app/' };"],
+  [
+    "a conditional export with a computed key only in a nested callback",
+    "export default ({ command }) => { const helper = () => { return { [command]: true }; }; if (command === 'serve') return {}; return { plugins: [helper()] }; };",
+  ],
   [
     "mergeConfig() and the doctor() plugin",
     "import { mergeConfig } from 'vite'\nimport { doctor } from 'vite-doctor/plugin'\nimport base from './vite.base'\nexport default mergeConfig(base, { plugins: [doctor()] })\n",
@@ -279,6 +284,10 @@ test.each([
   ],
   ["a re-export from vite-doctor/config", "export { default } from 'vite-doctor/config';"],
   ["a dynamic import of vite-doctor/config", "export default import(`vite-doctor/config`);"],
+  [
+    "an asserted dynamic import of vite-doctor/config",
+    'export default import(<const>"vite-doctor/config");',
+  ],
   ["a require of vite-doctor/config", "export default require('vite-doctor/config');"],
   [
     "doctor as a string value",
@@ -314,6 +323,8 @@ test.each([
 test.each([
   "export default { doctor: {",
   String.raw`export default { "\u0064octor": {`,
+  'export default { ["doctor" as const]: {',
+  'export default { [<const>"doctor"]: {',
   'import { defineDoctorConfig } from "vite-doctor"; export default {',
 ])("a malformed vite.config.ts that names doctor is a config error: %s", async (source) => {
   const root = fixture({ "vite.config.ts": source });
@@ -323,15 +334,44 @@ test.each([
   expect(report.error.message).toContain("line 1");
 });
 
-test("a computed key that may be doctor is a config error even when the file never spells it", async () => {
-  const root = fixture({
-    "vite.config.ts": "export default { ['doc' + 'tor']: { extends: [] } };\n",
-  });
+test.each([
+  ["a direct object", "export default { ['doc' + 'tor']: { extends: [] } };", 1],
+  [
+    "a conditional callback",
+    `import { defineConfig } from 'vite';
+import { doctor } from 'vite-doctor/plugin';
+export default defineConfig(({ command }) => {
+  if (command === 'serve') return { plugins: [doctor()] };
+  return { ['doc' + 'tor']: { extends: [] }, plugins: [doctor()] };
+});`,
+    5,
+  ],
+  [
+    "a conditional expression",
+    "export default ({ command }) => command === 'serve' ? {} : { ['doc' + 'tor']: { extends: [] } };",
+    1,
+  ],
+])("a computed key that may be doctor is a config error in %s", async (_, source, line) => {
+  const root = fixture({ "vite.config.ts": source });
   const { code, report } = await run(root);
   expect(code).toBe(2);
   expect(report.error).toMatchObject({ kind: "config", file: join(root, "vite.config.ts") });
-  expect(report.error.message).toContain("line 1");
+  expect(report.error.message).toContain(`line ${line},`);
 });
+
+test.each(['"doctor" as const', '<const>"doctor"'])(
+  "a computed Doctor key is read through %s",
+  async (key) => {
+    const root = fixture({
+      "vite.config.ts": viteConfigWithSecret(
+        `\n  [${key}]: { rules: { "${secretDefine}": "off" } },`,
+      ),
+    });
+    const { code, report } = await run(root, ["--rules", secretDefine]);
+    expect(code).toBe(0);
+    expect(report.diagnostics).toEqual([]);
+  },
+);
 
 test("a defineConfig(identifier) doctor key that needs code to evaluate names the file and line", async () => {
   const root = fixture({

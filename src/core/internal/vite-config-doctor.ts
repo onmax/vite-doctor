@@ -69,12 +69,20 @@ export function readViteConfigDoctor(
     const [definition, extra] = binding(node.callee)?.defs ?? [];
     return definition && !extra && helpers.has(definition.node) ? node.arguments[0] : undefined;
   };
-  const config =
+  const configRoot =
     exported &&
-    configObject(exported, body, references, (node) => helperArgument(node, viteHelpers));
+    resolveConfigRoot(exported, body, references, (node) => helperArgument(node, viteHelpers));
+  const config = configRoot && configObject(configRoot);
   if (!config) {
-    if (!named) return undefined;
-    throw indeterminate(source, exported?.start ?? 0, "the export is not a supported static form");
+    if (named)
+      throw indeterminate(
+        source,
+        exported?.start ?? 0,
+        "the export is not a supported static form",
+      );
+    const key = configRoot && unresolvedConfigKey(configRoot);
+    if (key) throw indeterminate(source, key.start, "a computed key may supply it");
+    return undefined;
   }
 
   const property = config.properties.findLast((item) => {
@@ -113,7 +121,7 @@ const viteConfigModules = new Set(["vite", "vite-plus", "vitest/config"]);
 function namesDoctorKey(program: Program): boolean {
   let found = false;
   const checkKey = (key: Node, computed: boolean) => {
-    found ||= propertyName(unwrap(key), computed) === "doctor";
+    found ||= propertyName(key, computed) === "doctor";
   };
   new Visitor({
     Property: (node) => checkKey(node.key, node.computed),
@@ -136,7 +144,14 @@ function malformedConfigNamesDoctorKey(file: string, source: string): boolean {
   ): string | undefined => {
     if (!node) return undefined;
     if (ts.isComputedPropertyName(node)) return name(node.expression, true);
-    if (ts.isParenthesizedExpression(node)) return name(node.expression, computed);
+    if (
+      ts.isParenthesizedExpression(node) ||
+      ts.isAsExpression(node) ||
+      ts.isTypeAssertionExpression(node) ||
+      ts.isSatisfiesExpression(node) ||
+      ts.isNonNullExpression(node)
+    )
+      return name(node.expression, computed);
     if (ts.isStringLiteralLike(node) || (!computed && ts.isIdentifier(node))) return node.text;
     return undefined;
   };
@@ -186,7 +201,6 @@ function commonJsExport(
           mutations.add(target);
           break;
         case "ChainExpression":
-        case "TSTypeAssertion":
           markMutation(target.expression);
           break;
         case "ArrayPattern":
@@ -246,12 +260,12 @@ function defaultExport(body: Node[]): Node | undefined {
   }
 }
 
-function configObject(
+function resolveConfigRoot(
   exported: Node,
   body: Node[],
   references: ReadonlyMap<unknown, ScopeReference>,
   helperArgument: (node: Node) => Node | undefined,
-): ObjectExpression | undefined {
+): Node | undefined {
   const constInit = (identifier: Node): Node | undefined => {
     const target = references.get(identifier)?.resolved;
     const [definition, extra] = target?.defs ?? [];
@@ -282,15 +296,25 @@ function configObject(
   };
   const resolveConst = (node: Node | undefined) =>
     node?.type === "Identifier" ? constInit(node) : node;
-  let node = resolveConst(unwrap(exported));
-  if (!node) return undefined;
-  node = resolveConst(unwrap(helperArgument(node) ?? node));
-  if (!node) return undefined;
-  if (
+  const node = resolveConst(unwrap(exported));
+  return node && resolveConst(unwrap(helperArgument(node) ?? node));
+}
+
+function isConfigFunction(
+  node: Node,
+): node is Extract<
+  Node,
+  { type: "ArrowFunctionExpression" | "FunctionExpression" | "FunctionDeclaration" }
+> {
+  return (
     node.type === "ArrowFunctionExpression" ||
     node.type === "FunctionExpression" ||
     node.type === "FunctionDeclaration"
-  ) {
+  );
+}
+
+function configObject(node: Node): ObjectExpression | undefined {
+  if (isConfigFunction(node)) {
     if (!node.body || ("generator" in node && node.generator)) return undefined;
     if (node.body.type === "BlockStatement") {
       const returned = node.body.body.at(-1);
@@ -313,10 +337,63 @@ function configObject(
   return node.type === "ObjectExpression" ? node : undefined;
 }
 
+function unresolvedConfigKey(root: Node): Node | undefined {
+  const checkValue = (expression: Node): Node | undefined => {
+    const value = unwrap(expression);
+    if (value.type === "ConditionalExpression")
+      return checkValue(value.consequent) ?? checkValue(value.alternate);
+    if (value.type === "ObjectExpression")
+      return value.properties.find(
+        (item) =>
+          item.type === "Property" && item.computed && propertyName(item.key, true) === undefined,
+      );
+  };
+  const checkReturns = (statement: Node | null | undefined): Node | undefined => {
+    switch (statement?.type) {
+      case "ReturnStatement":
+        return statement.argument ? checkValue(statement.argument) : undefined;
+      case "IfStatement":
+        return checkReturns(statement.consequent) ?? checkReturns(statement.alternate);
+      case "BlockStatement":
+        return checkStatements(statement.body);
+      case "SwitchStatement":
+        for (const branch of statement.cases) {
+          const key = checkStatements(branch.consequent);
+          if (key) return key;
+        }
+        return undefined;
+      case "TryStatement":
+        return (
+          checkReturns(statement.block) ??
+          checkReturns(statement.handler?.body) ??
+          checkReturns(statement.finalizer)
+        );
+      case "DoWhileStatement":
+      case "WhileStatement":
+      case "ForStatement":
+      case "ForInStatement":
+      case "ForOfStatement":
+      case "LabeledStatement":
+      case "WithStatement":
+        return checkReturns(statement.body);
+    }
+  };
+  const checkStatements = (statements: Node[]): Node | undefined => {
+    for (const statement of statements) {
+      const key = checkReturns(statement);
+      if (key) return key;
+    }
+  };
+  if (!isConfigFunction(root)) return checkValue(root);
+  if (!root.body || ("generator" in root && root.generator)) return undefined;
+  return root.body.type === "BlockStatement" ? checkReturns(root.body) : checkValue(root.body);
+}
+
 function unwrap(node: Node): Node {
   while (
     node.type === "ParenthesizedExpression" ||
     node.type === "TSAsExpression" ||
+    node.type === "TSTypeAssertion" ||
     node.type === "TSSatisfiesExpression" ||
     node.type === "TSNonNullExpression"
   ) {
@@ -326,6 +403,7 @@ function unwrap(node: Node): Node {
 }
 
 function propertyName(key: Node, computed = false): string | undefined {
+  if (computed) key = unwrap(key);
   if (!computed && key.type === "Identifier") return key.name;
   if (key.type === "Literal" && (typeof key.value === "string" || typeof key.value === "number"))
     return String(key.value);
