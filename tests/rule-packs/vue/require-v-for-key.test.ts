@@ -296,6 +296,36 @@ export default { props: { items: Array } }
   expect(result.diagnostics[0]!.fix ?? null).toBeNull();
 });
 
+test.each([
+  [false, "const items = [{ id: 1 }, { id: 2 }]", 'const items = [{ name: "a" }]'],
+  [true, "const items = [{ id: 1 }, { id: 2 }]", 'const items = [{ name: "a" }]'],
+  [
+    false,
+    "interface Item { id: string }",
+    "interface Item { name: string }; const items: Item[] = []",
+  ],
+  [
+    true,
+    "interface Item { id: string }",
+    "interface Item { name: string }; const items: Item[] = []",
+  ],
+])(
+  "prefers the setup declaration (setup first: %s; module: %s)",
+  async (setupFirst, moduleCode, setupCode) => {
+    const normal = `<script lang="ts">${moduleCode}</script>`;
+    const setup = `<script setup lang="ts">${setupCode}</script>`;
+    const result = await project.run({
+      rule: requireVForKey,
+      files: {
+        "app.vue": `${setupFirst ? setup + normal : normal + setup}
+<template><input v-for="item in items" :placeholder="item.name"></template>`,
+      },
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.fix ?? null).toBeNull();
+  },
+);
+
 test("suggests the id field from the item type", async () => {
   const result = await diagnose(
     '<TodoRow v-for="todo in todos" :todo="todo" />',

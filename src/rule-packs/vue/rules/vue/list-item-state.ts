@@ -2,6 +2,7 @@ import type {
   Confidence,
   DiagnosticEvidence,
   RuleContext,
+  SfcHandle,
   TemplateDirectiveNode,
   TemplateElementNode,
   TemplateParentNode,
@@ -188,7 +189,7 @@ export function verifiedKeyExpression(
     source?.type === "ArrayExpression"
       ? distinctLiteralKeys(source)
       : sfc?.blockHashes.scriptSetup
-        ? itemFields(sfc.getScriptAst("merged"), vFor.forParseResult!.source.content, true)
+        ? itemFields(sfc.getScriptAst("merged"), vFor.forParseResult!.source.content, true, sfc)
         : undefined;
   const field = KEY_FIELDS.find((name) => fields?.has(name));
   return field ? `${alias}.${field}` : undefined;
@@ -226,18 +227,34 @@ function distinctLiteralKeys(array: AnyNode): Set<string> {
   );
 }
 
+function setupFirst(body: AnyNode[], sfc: SfcHandle | undefined): AnyNode[] {
+  if (!sfc?.blockHashes.script) return body;
+  const setupStart = sfc.blockOffsetToFileOffset("scriptSetup", 0);
+  const scriptStart = sfc.blockOffsetToFileOffset("script", 0);
+  const isSetup = (statement: AnyNode) =>
+    statement.start >= setupStart && (setupStart > scriptStart || statement.start < scriptStart);
+  return [...body.filter(isSetup), ...body.filter((statement) => !isSetup(statement))];
+}
+
 /** Fields the items of a `v-for` source have, read from its script literal or declared type. */
-function itemFields(program: AnyNode, source: string, verify = false): Set<string> {
+function itemFields(
+  program: AnyNode,
+  source: string,
+  verify = false,
+  sfc?: SfcHandle,
+): Set<string> {
   const fields = new Set<string>();
   const match = /^(?:(props|\$props)\.)?([A-Za-z_$][\w$]*)$/.exec(source.trim());
   if (!program || !match) return fields;
   const [, viaProps, name] = match;
+  const body = setupFirst(program.body ?? [], sfc);
   const types = new Map<string, AnyNode>();
-  for (const statement of program.body ?? []) {
+  for (const statement of body) {
     const declaration =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
     if (
       declaration?.id?.name &&
+      (!sfc || !types.has(declaration.id.name)) &&
       (declaration.type === "TSInterfaceDeclaration" ||
         declaration.type === "TSTypeAliasDeclaration")
     )
@@ -359,7 +376,7 @@ function itemFields(program: AnyNode, source: string, verify = false): Set<strin
     for (const field of fields) if (!valid?.has(field)) fields.delete(field);
   };
   const localName = viaProps ?? name;
-  for (const statement of program.body ?? []) {
+  for (const statement of body) {
     const declaration =
       statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
     if (declaration?.type === "ImportDeclaration" && declaration.importKind !== "type") {
