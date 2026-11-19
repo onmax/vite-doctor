@@ -57,7 +57,10 @@ export const WEB_PLATFORM_CLASSES: Record<string, RealmSafeCheck> = {
     check: "that checks the members you use, such as arrayBuffer(), size and type",
   },
   File: { guard: "isFileLike", check: "that checks arrayBuffer(), size and name" },
-  FormData: { guard: "isFormData", check: brand("FormData") },
+  FormData: {
+    guard: "isFormDataLike",
+    check: "that checks the methods you use, such as get(), append() and entries()",
+  },
   URL: { guard: "isURL", check: brand("URL") },
   URLSearchParams: { guard: "isURLSearchParams", check: brand("URLSearchParams") },
   ReadableStream: { guard: "isReadableStreamLike", check: "that checks the getReader() method" },
@@ -67,8 +70,8 @@ export const WEB_PLATFORM_CLASSES: Record<string, RealmSafeCheck> = {
     TYPED_ARRAYS.map((name) => [name, { guard: `is${name}`, check: view(name) }]),
   ),
   DOMException: {
-    guard: "isDOMException",
-    check: brand("DOMException"),
+    guard: "isDOMExceptionLike",
+    check: "that checks the error fields you use, such as name and message",
   },
 };
 
@@ -482,8 +485,17 @@ export function hasRealmSafeAlternative(
   return false;
 }
 
-// A guard helper may keep instanceof as a fast path before it compares the brand of the same value:
-// `Object.prototype.toString.call(value) === "[object Response]"`.
+const COMPARABLE_WEB_TAGS = new Set([
+  "Response",
+  "Request",
+  "URL",
+  "URLSearchParams",
+  "ReadableStream",
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  ...TYPED_ARRAYS,
+]);
+
 function isBrandCheck(
   node: AnyNode,
   className: string,
@@ -491,6 +503,8 @@ function isBrandCheck(
   evidence?: LocalEvidence,
 ): boolean {
   if (node?.type !== "BinaryExpression" || !["===", "!==", "==", "!="].includes(node.operator))
+    return false;
+  if (Object.hasOwn(WEB_PLATFORM_CLASSES, className) && !COMPARABLE_WEB_TAGS.has(className))
     return false;
   const tags = [className, ...(className.endsWith("Error") ? ["Error"] : [])];
   return [

@@ -467,17 +467,35 @@ test.each([
   expect(await count(`function f(value: unknown) { ${body} }`)).toBe(1);
 });
 
-test("DOMException remediation uses its actual runtime brand", async () => {
+test.each([
+  `return value instanceof Blob || Object.prototype.toString.call(value) === '[object Blob]'`,
+  `return value instanceof Blob || hasBlobBrand(value)`,
+  `if (value instanceof Blob) return true; return Object.prototype.toString.call(value) === '[object Blob]'`,
+  `if (value instanceof Blob) return true; return hasBlobBrand(value)`,
+])("reports a Blob check when its fallback requires a tag: %s", async (body) => {
+  expect(
+    await count(`
+      const hasBlobBrand = (input: unknown) => Object.prototype.toString.call(input) === '[object Blob]'
+      export function f(value: unknown) { ${body} }
+    `),
+  ).toBe(1);
+});
+
+test.each(["File", "Headers", "FormData", "DOMException"])(
+  "reports a %s check when its fallback requires a tag",
+  async (name) => {
+    expect(
+      await count(
+        `export function f(value: unknown) { return value instanceof ${name} || Object.prototype.toString.call(value) === '[object ${name}]' }`,
+      ),
+    ).toBe(1);
+  },
+);
+
+test("DOMException remediation does not depend on an implementation's tag", async () => {
   const result = await project.run({
     rule: noCrossRealmWebInstanceof,
     files: { "src/dom.ts": "export const f = (value: unknown) => value instanceof DOMException" },
   });
-  const tag = Object.prototype.toString.call(new DOMException("aborted", "AbortError"));
-  expect(tag).toBe("[object DOMException]");
-  expect(result.diagnostics[0]!.suggestion).toContain(`=== '${tag}'`);
-  expect(
-    await count(
-      `function f(value: unknown) { return value instanceof DOMException || Object.prototype.toString.call(value) === '${tag}' }`,
-    ),
-  ).toBe(0);
+  expect(result.diagnostics[0]!.suggestion).toContain("name and message");
 });
