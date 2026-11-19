@@ -1,6 +1,8 @@
 import { dirname, relative, resolve } from "pathe";
 import { valid } from "semver";
 import { parse } from "yaml";
+import type { Expression, JsonSourceFile } from "typescript";
+import { loadTypeScript } from "../../core/internal/lazy-parsers.js";
 import type { RuleContext, SourceRange } from "../../core/primitives.js";
 import { isRecord, parsePackageManifest, type PackageManifest } from "./artifacts.js";
 
@@ -151,17 +153,41 @@ export function manifestEntryRange(
   field: DependencyField,
   name: string,
 ): SourceRange {
-  const fieldMatch = new RegExp(`"${field}"\\s*:\\s*\\{`).exec(text);
-  if (!fieldMatch) return ctx.helpers.rangeFromOffsets(file, text, 0, 0);
-  const objectStart = fieldMatch.index + fieldMatch[0].length;
-  const objectEnd = text.indexOf("}", objectStart);
-  const key = JSON.stringify(name).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
-  const entry = new RegExp(`${key}\\s*:\\s*"(?:[^"\\\\]|\\\\.)*"`, "g");
-  entry.lastIndex = objectStart;
-  const match = entry.exec(text);
-  if (!match || (objectEnd !== -1 && match.index > objectEnd))
-    return ctx.helpers.rangeFromOffsets(file, text, fieldMatch.index, objectStart - 1);
-  return ctx.helpers.rangeFromOffsets(file, text, match.index, match.index + match[0].length);
+  return (
+    manifestPropertyRange(ctx, file, text, [field, name]) ??
+    ctx.helpers.rangeFromOffsets(file, text, 0, 0)
+  );
+}
+
+export function manifestPropertyRange(
+  ctx: RuleContext,
+  file: string,
+  text: string,
+  path: string[],
+): SourceRange | undefined {
+  const ts = loadTypeScript();
+  const key = `package:manifest-source:${file}`;
+  let source = ctx.cache.get<JsonSourceFile>(key);
+  if (!source) {
+    source = ts.parseJsonText(file, text);
+    ctx.cache.set(key, source);
+  }
+  const statement = source.statements[0];
+  if (!statement || !ts.isExpressionStatement(statement)) return;
+  let value: Expression = statement.expression;
+  for (const [index, name] of path.entries()) {
+    if (!ts.isObjectLiteralExpression(value)) return;
+    const property = value.properties.findLast(
+      (member) =>
+        ts.isPropertyAssignment(member) &&
+        ts.isStringLiteral(member.name) &&
+        member.name.text === name,
+    );
+    if (!property || !ts.isPropertyAssignment(property)) return;
+    if (index === path.length - 1)
+      return ctx.helpers.rangeFromOffsets(file, text, property.getStart(source), property.end);
+    value = property.initializer;
+  }
 }
 
 /**

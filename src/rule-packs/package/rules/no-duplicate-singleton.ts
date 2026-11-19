@@ -152,24 +152,12 @@ export const noDuplicateSingleton = createRule({
                     const copy = copies.find(
                       (item) => item.name === name && item.version === version,
                     )!;
-                    // The first and last entries of a route are where a lockfile change that
-                    // adds this copy shows: a new dependency or link, or a new resolution.
-                    const spans = [...new Set([copy.spans[0], copy.spans.at(-1)])];
-                    return spans.flatMap((span, index) =>
-                      span
-                        ? [
-                            {
-                              kind: "manifest" as const,
-                              file: lockfilePath,
-                              range: ctx.helpers.rangeFromOffsets(lockfilePath, text, ...span),
-                              summary:
-                                index === spans.length - 1
-                                  ? `pnpm-lock.yaml resolves ${name} ${version} through ${copy.path.join(" > ")}.`
-                                  : `pnpm-lock.yaml importer ${importer} starts the route to ${name} ${version} at ${copy.path[1]}.`,
-                            },
-                          ]
-                        : [],
-                    );
+                    return copy.spans.map((span) => ({
+                      kind: "manifest" as const,
+                      file: lockfilePath,
+                      range: ctx.helpers.rangeFromOffsets(lockfilePath, text, ...span),
+                      summary: `Part of the lockfile route to ${name} ${version}: ${copy.path.join(" > ")}.`,
+                    }));
                   }),
                   {
                     kind: "manifest",

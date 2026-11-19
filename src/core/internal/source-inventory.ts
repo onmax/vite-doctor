@@ -119,15 +119,18 @@ async function selectGitOrAllFiles(
     // the same project as a full run; only the reported Diagnostics are limited to changed lines.
     const changed = new Map(
       git.files.flatMap((change) =>
-        change.path ? [[resolve(root, change.path), change.reportRanges] as const] : [],
+        change.path ? [[resolve(root, change.path), change] as const] : [],
       ),
     );
     const files = await selectAllFiles(root, config, project, memo);
     return {
       files: files.map((file) => {
-        const ranges = changed.get(file.path);
-        return ranges
-          ? { ...file, reportEligibility: { kind: "changed-lines" as const, ranges } }
+        const change = changed.get(file.path);
+        return change
+          ? {
+              ...file,
+              reportEligibility: { kind: "changed-lines" as const, ranges: change.reportRanges },
+            }
           : file;
       }),
       git,

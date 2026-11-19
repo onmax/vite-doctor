@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import { build, createLogger, createServer } from "vite";
@@ -258,6 +258,8 @@ const lockfile = (oldUiVue: string) =>
 async function withWorkspace(
   change: (root: string) => Promise<void>,
   run: (root: string) => Promise<void>,
+  baseAuth: object = auth,
+  baseLockfile = lockfile("3.5.44"),
 ) {
   const root = await mkdtemp(join(tmpdir(), "doctor-since-workspace-"));
   const write = async (file: string, text: string) => {
@@ -267,9 +269,10 @@ async function withWorkspace(
   try {
     await write("package.json", manifest({ private: true, type: "module" }));
     await write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
-    await write("pnpm-lock.yaml", lockfile("3.5.44"));
-    await write("packages/auth/package.json", manifest(auth));
+    await write("pnpm-lock.yaml", baseLockfile);
+    await write("packages/auth/package.json", manifest(baseAuth));
     await write("packages/realtime/package.json", manifest(realtime));
+    await write("packages/realtime/entry.ts", "export const entry = 1;\n");
     await write("packages/email/package.json", manifest(email));
     await write("entry.ts", "export const entry = 1;\n");
     git(root, "init", "-q", "-b", "main");
@@ -368,9 +371,164 @@ test("since reports a duplicate singleton that only the lockfile change introduc
       expect((await sinceFindings(root, "main")).findings).toEqual([
         "PKG0008 packages/realtime/package.json:6",
       ]);
+      const nested = join(root, "packages/realtime");
+      expect((await sinceFindings(nested)).findings).toContain("PKG0008 package.json:6");
+      expect((await sinceFindings(nested, "main")).findings).toEqual(["PKG0008 package.json:6"]);
     },
   );
 });
+
+test("since reports a duplicate introduced by an intermediate lockfile resolution", async () => {
+  const base = lockfile("3.5.44").replace(
+    "  old-ui@1.0.0:\n    dependencies:\n      vue: 3.5.44",
+    [
+      "  old-ui@1.0.0:",
+      "    dependencies:",
+      "      bridge: 1.0.0",
+      "  bridge@1.0.0:",
+      "    dependencies:",
+      "      vue: 3.5.44",
+      "  bridge@2.0.0:",
+      "    dependencies:",
+      "      vue: 3.4.0",
+      "  vue@3.4.0: {}",
+    ].join("\n"),
+  );
+  await withWorkspace(
+    (root) =>
+      writeFile(join(root, "pnpm-lock.yaml"), base.replace("bridge: 1.0.0", "bridge: 2.0.0")),
+    async (root) => {
+      expect((await sinceFindings(root)).findings).toContain(
+        "PKG0008 packages/realtime/package.json:6",
+      );
+      expect((await sinceFindings(root, "main")).findings).toEqual([
+        "PKG0008 packages/realtime/package.json:6",
+      ]);
+    },
+    auth,
+    base,
+  );
+});
+
+const authWithPeers = { ...auth, peerDependencies: { h3: "^1.0.0", ...auth.peerDependencies } };
+
+test.each([
+  [
+    "optional peer metadata",
+    { peerDependenciesMeta: { h3: { optional: true } } },
+    { peerDependenciesMeta: { h3: { optional: false } } },
+  ],
+  ["default dependency", { dependencies: { h3: "^1.0.0" } }, { dependencies: { h3: "^2.0.0" } }],
+])(
+  "since reports a peer made required by changed %s in a sibling manifest",
+  async (_, before, after) => {
+    await withWorkspace(
+      (root) =>
+        writeFile(
+          join(root, "packages/auth/package.json"),
+          manifest({ ...authWithPeers, ...after }),
+        ),
+      async (root) => {
+        const nested = join(root, "packages/realtime");
+        expect((await sinceFindings(root, "main")).findings).toEqual([
+          "PKG0007 packages/realtime/package.json:5",
+        ]);
+        const { findings, diagnostics } = await sinceFindings(nested, "main");
+        expect(findings).toEqual(["PKG0007 package.json:5"]);
+        expect(diagnostics.find((item) => item.code === "PKG0007")?.message).toContain('"h3"');
+      },
+      { ...authWithPeers, ...before },
+    );
+  },
+);
+
+test("since does not include an existing peer finding when another peer's metadata changes", async () => {
+  const before = {
+    ...authWithPeers,
+    peerDependenciesMeta: { h3: { optional: false }, "drizzle-orm": { optional: false } },
+  };
+  await withWorkspace(
+    (root) =>
+      writeFile(
+        join(root, "packages/auth/package.json"),
+        manifest({
+          ...before,
+          peerDependenciesMeta: {
+            ...before.peerDependenciesMeta,
+            "drizzle-orm": { optional: true },
+          },
+        }),
+      ),
+    async (root) => {
+      expect((await sinceFindings(root)).findings).toEqual([
+        "PKG0007 packages/realtime/package.json:5",
+      ]);
+      expect((await sinceFindings(root, "main")).findings).toEqual([]);
+    },
+    before,
+  );
+});
+
+test("since does not accept changed manifest evidence for a file-scoped Rule", async () => {
+  const localRule = createRule({
+    meta: { ...todoLines.meta, id: "fixture/local", reportScope: "file" },
+    create(ctx) {
+      if (ctx.file.relativePath !== "entry.ts") return;
+      ctx.report(allDiagnostics.DOC9999({ why: "File-local finding.", fix: "Fix it." }), {
+        range: ctx.range(0, 1),
+        evidence: [
+          {
+            kind: "manifest",
+            file: join(ctx.project.root, "package.json"),
+            range: { start: 0, end: 1, line: 1, column: 1 },
+            summary: "Manifest evidence.",
+          },
+        ],
+      });
+    },
+  });
+  const localExtension = defineDoctorExtension({
+    name: "fixture/local",
+    rulePacks: [
+      defineRulePack({
+        name: "fixture/local",
+        version: "0.0.0",
+        rules: [localRule],
+        presets: { recommended: [localRule.meta.id] },
+      }),
+    ],
+  });
+  await withRepository(async (root) => {
+    await writeFile(join(root, "package.json"), '{"type":"module","private":true}');
+    const options = {
+      root,
+      cache: false,
+      extends: ["fixture/local/recommended"],
+      extensions: [localExtension],
+    };
+    expect(
+      (await runViteDoctor(options)).diagnostics.some((item) => item.ruleId === localRule.meta.id),
+    ).toBe(true);
+    expect(
+      (await runViteDoctor({ ...options, since: "main" })).diagnostics.some(
+        (item) => item.ruleId === localRule.meta.id,
+      ),
+    ).toBe(false);
+  });
+});
+
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "changed ignores unreadable unrelated untracked files",
+  async () => {
+    await withRepository(async (root) => {
+      const scratch = join(root, "scratch.txt");
+      await writeFile(scratch, "unreadable\n");
+      await chmod(scratch, 0o000);
+      const report = await runViteDoctor({ root, changed: true, cache: false });
+      expect(report.scope).toMatchObject({ mode: "changed", files: 1 });
+    });
+  },
+);
 
 test("since reports a missing peer forwarded from a changed workspace dependency", async () => {
   await withWorkspace(

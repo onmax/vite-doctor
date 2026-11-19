@@ -37,6 +37,7 @@ import {
   type StaleBaseline,
 } from "./diagnostic-policy.js";
 import { hasRuleSourceCoverage } from "./facts.js";
+import { collectExternalGitChanges } from "./git-change-ranges.js";
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
@@ -46,7 +47,7 @@ import {
   topLevelRuleConfig,
   type ScanSession,
 } from "./scan-session.js";
-import type { ScanFileEntry } from "./source-inventory.js";
+import { GitChangeUnavailableError, type ScanFileEntry } from "./source-inventory.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256, shellArgument } from "./utils.js";
 import {
@@ -77,12 +78,12 @@ export function applyRequestedFixes(session: ScanSession): AppliedFixes | undefi
   return applied;
 }
 
-export function applyPolicyFilters(session: ScanSession): void {
+export async function applyPolicyFilters(session: ScanSession): Promise<void> {
   session.diagnostics = settleDiagnosticIdentity(session.diagnostics);
   reportUnusedInlineSuppressions(session);
   reportUnusedConfigSuppressions(session);
   reportDefaultDeclarativeConfig(session);
-  applyReportEligibility(session);
+  await applyReportEligibility(session);
   applySeverityFilter(session);
   const result = applyDiagnosticPolicy(session);
   session.diagnostics = result.diagnostics;
@@ -635,7 +636,7 @@ function suppressionEntryBounds(
   return undefined;
 }
 
-export function applyReportEligibility(session: ScanSession): void {
+async function applyReportEligibility(session: ScanSession): Promise<void> {
   if (!session.scopedReport) return;
   const eligibility = new Map<string, ScanFileEntry["reportEligibility"]>(
     session.files.map((file) => [file.path, file.reportEligibility] as const),
@@ -649,7 +650,57 @@ export function applyReportEligibility(session: ScanSession): void {
     if (!change.path) continue;
     const path = resolve(session.root, change.path);
     if (!eligibility.has(path) && (!affected || affected.has(path)))
-      eligibility.set(path, { kind: "changed-lines", ranges: change.reportRanges });
+      eligibility.set(path, {
+        kind: "changed-lines",
+        get ranges() {
+          return change.reportRanges;
+        },
+      });
+  }
+  const projectRules = new Set(
+    session.enabledRules
+      .filter(
+        ({ meta }) =>
+          meta.execution === "manifest" ||
+          meta.execution === "workspace" ||
+          meta.reportScope === "project",
+      )
+      .map(({ meta }) => meta.id),
+  );
+  const manifestEvidence = (diagnostic: Diagnostic) =>
+    !projectRules.has(diagnostic.ruleId)
+      ? []
+      : (diagnostic.evidence ?? []).flatMap(({ kind, file, range }) =>
+          kind === "manifest" && file && range
+            ? [{ file: resolve(session.root, file), range }]
+            : [],
+        );
+  const external = new Map<string, NonNullable<ScanFileEntry["reportEligibility"]>>();
+  if (session.gitChanges) {
+    const files = new Set<string>();
+    for (const diagnostic of session.diagnostics) {
+      for (const { file } of manifestEvidence(diagnostic)) {
+        if (!isPathInside(session.root, file) && (!affected || affected.has(file))) files.add(file);
+      }
+    }
+    if (files.size) {
+      const changes = await collectExternalGitChanges(
+        session.root,
+        session.gitChanges.base,
+        [...files],
+        session.options.since,
+      );
+      if (changes.status === "unavailable") throw new GitChangeUnavailableError(changes);
+      for (const change of changes.files) {
+        if (!change.path) continue;
+        external.set(resolve(session.root, change.path), {
+          kind: "changed-lines",
+          get ranges() {
+            return change.reportRanges;
+          },
+        });
+      }
+    }
   }
   const texts = new Map<string, string | undefined>();
   const sources = {
@@ -667,8 +718,11 @@ export function applyReportEligibility(session: ScanSession): void {
         (gap.source !== "script-parser" && gap.source !== "vue-sfc-parser") ||
         gap.files.some((file) => eligibility.get(file)),
     );
-  const onChangedLine = (file: string, range: SourceRange) => {
-    const fileEligibility = eligibility.get(file);
+  const onChangedLine = (
+    file: string,
+    range: SourceRange,
+    fileEligibility = eligibility.get(file),
+  ) => {
     if (!fileEligibility) return false;
     if (fileEligibility.kind === "file") return true;
     const endLine = diagnosticEndLine(range, sources.get(file));
@@ -686,12 +740,8 @@ export function applyReportEligibility(session: ScanSession): void {
     // reported elsewhere, such as a lockfile route that reaches a second copy.
     return (
       located ||
-      (diagnostic.evidence ?? []).some(
-        (item) =>
-          item.kind === "manifest" &&
-          item.file !== undefined &&
-          item.range !== undefined &&
-          onChangedLine(item.file, item.range),
+      manifestEvidence(diagnostic).some(({ file, range }) =>
+        onChangedLine(file, range, eligibility.get(file) ?? external.get(file)),
       )
     );
   });

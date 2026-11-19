@@ -50,6 +50,7 @@ export function parsePnpmLockfile(text: string): PnpmLockfile | undefined {
   documents.push({ text: text.slice(offset), offset });
   for (const document of documents.filter((item) => /^importers:/m.test(item.text)).reverse()) {
     const parsed = parseDocument(document.text);
+    if (parsed.errors.length) return undefined;
     const value: unknown = parsed.toJS();
     if (!isRecord(value) || !String(value.lockfileVersion).startsWith("9")) continue;
     const importers = parsed.get("importers", true);

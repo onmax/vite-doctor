@@ -108,7 +108,7 @@ test("reports two versions of a singleton reachable from one importer where the 
   });
   expect(manifest.slice(diagnostic!.range!.start, diagnostic!.range!.end)).toBe('"old-ui":"1.0.0"');
   expect(diagnostic!.evidence?.[0]?.file).toBe(join(root, "pnpm-lock.yaml"));
-  // Each copy cites the lockfile entries that start and end its route, so a --since run can
+  // Each copy cites the lockfile entries on its route, so a --since run can
   // report a duplicate that only a lockfile change adds.
   const lockfile = files["pnpm-lock.yaml"];
   expect(
@@ -226,6 +226,19 @@ test("adds configured singletons, follows aliases and reads multi-document lockf
   expect(diagnostics).toHaveLength(1);
   expect(diagnostics[0]!.message).toContain("@ai-sdk/gateway resolves to 3.0.2 and 3.0.1");
   expect(diagnostics[0]!.message).toContain("packages/agent > ai > @ai-sdk/gateway");
+});
+
+test("does not report duplicates from a malformed lockfile with duplicate snapshot keys", async () => {
+  const files = workspace(
+    { ".": { manifest: {}, dependencies: { vue: "3.5.44", "old-ui": "1.0.0" } } },
+    { "old-ui@1.0.0": { vue: "3.5.44" }, "vue@3.5.44": {}, "vue@3.4.0": {} },
+  );
+  files["pnpm-lock.yaml"] += "  'old-ui@1.0.0':\n    dependencies:\n      vue: '3.4.0'\n";
+  const { diagnostics } = await duplicates(files, {
+    name: "app",
+    dependencies: { vue: "3.5.44", "old-ui": "1.0.0" },
+  });
+  expect(diagnostics).toEqual([]);
 });
 
 test("reports nothing without a pnpm lockfile", async () => {

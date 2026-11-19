@@ -67,7 +67,7 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
   await runPhase(session, "graphRules", () => runGraphRules(session));
   await runPhase(session, "duplication", () => runDuplicationPhase(session));
   await runPhase(session, "health", () => runHealthPhase(session));
-  applyPolicyFilters(session);
+  await applyPolicyFilters(session);
   let fixes: ReturnType<typeof applyRequestedFixes> = undefined;
   await runPhase(session, "fixPlanning", () => {
     fixes = applyRequestedFixes(session);
