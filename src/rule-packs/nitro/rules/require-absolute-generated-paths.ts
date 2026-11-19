@@ -18,6 +18,12 @@ const FUNCTION_TYPES = new Set([
   "FunctionExpression",
   "ArrowFunctionExpression",
 ]);
+const STRAIGHT_LINE_STATEMENTS = new Set([
+  "VariableDeclaration",
+  "ExpressionStatement",
+  "FunctionDeclaration",
+  "EmptyStatement",
+]);
 const PATH_MODULES = new Set(["node:path", "path", "pathe"]);
 const FS_MODULES = new Set(["node:fs", "node:fs/promises", "fs", "fs/promises"]);
 const HANDLER_SHAPE_KEYS = new Set(["route", "middleware", "method", "lazy"]);
@@ -49,7 +55,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
     const kitNamespaces = new Set<string>();
     const strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }> = [];
     const declarations: Array<{ name: string; scope: AnyNode | undefined }> = [];
-    const kitCalls: Array<{ receiver: AnyNode; path: AnyNode }> = [];
+    const kitCalls: Array<{ call: AnyNode; receiver: AnyNode; path: AnyNode }> = [];
     const calls: AnyNode[] = [];
     const declare = (name: string, node: AnyNode) =>
       declarations.push({ name, scope: declarationScope(node) });
@@ -106,7 +112,11 @@ export const requireAbsoluteGeneratedPaths = createRule({
         if (callee?.type !== "MemberExpression" || callee.computed) return;
         if (KIT_PLUGIN_METHODS.has(callee.property?.name)) {
           if (node.arguments?.length)
-            kitCalls.push({ receiver: unwrapExpression(callee.object), path: node.arguments[0] });
+            kitCalls.push({
+              call: node,
+              receiver: unwrapExpression(callee.object),
+              path: node.arguments[0],
+            });
           return;
         }
         if (callee.property?.name !== "push" && callee.property?.name !== "unshift") return;
@@ -260,7 +270,7 @@ function resolveString(
 
 function reportKitPaths(
   ctx: RuleContext,
-  kitCalls: Array<{ receiver: AnyNode; path: AnyNode }>,
+  kitCalls: Array<{ call: AnyNode; receiver: AnyNode; path: AnyNode }>,
   calls: AnyNode[],
 ) {
   const scope = fileScriptScope(ctx);
@@ -335,15 +345,16 @@ function reportKitPaths(
   }
 
   const directCalls = new Set<number>();
-  const callers = new Map<number, Set<AnyNode>>();
+  const callers = new Map<number, AnyNode[]>();
   for (const call of calls) {
     const callee = unwrapExpression(call.callee);
     const helper = localHelper(definition(callee));
     if (!helper) continue;
     directCalls.add(start(callee));
-    const owners = callers.get(start(helper)) ?? new Set<AnyNode>();
-    owners.add(generationOwner(call));
-    callers.set(start(helper), owners);
+    if (helper.generator && callExecution(call).statement?.type === "ExpressionStatement") continue;
+    const sites = callers.get(start(helper)) ?? [];
+    sites.push(call);
+    callers.set(start(helper), sites);
   }
 
   const trackedHelpers = new Set<number>();
@@ -357,28 +368,58 @@ function reportKitPaths(
   }
 
   function writeRelationship(writer: AnyNode, registration: AnyNode) {
-    const pending = [writer];
-    const seen = new Set<AnyNode>();
+    const registrationOwner = generationOwner(registration);
+    const pending = [{ site: writer, proven: true }];
+    const seen = new Map<AnyNode, boolean>();
     let uncertain = false;
-    for (const owner of pending) {
-      if (owner === registration) return "related";
-      if (seen.has(owner)) continue;
-      seen.add(owner);
+    for (const { site, proven } of pending) {
+      if (seen.get(site) === true || (seen.has(site) && !proven)) continue;
+      seen.set(site, proven);
+      const owner = generationOwner(site);
+      const { expression, statement, awaited } = callExecution(site);
+      if (owner === registrationOwner) {
+        if (oppositeIfBranches(site, registration, owner)) continue;
+        const block = statement?.__doctorParent;
+        if (
+          proven &&
+          (site === writer || awaited) &&
+          statement?.type === "ExpressionStatement" &&
+          (block?.type === "BlockStatement" || block?.type === "Program") &&
+          start(site) < start(registration) &&
+          isWithin(registration, block)
+        )
+          return "related";
+        uncertain = true;
+        continue;
+      }
       if (
         !FUNCTION_TYPES.has(owner.type) ||
         !trackedHelpers.has(start(owner)) ||
         helperIsExported(owner)
       )
         uncertain = true;
-      if (FUNCTION_TYPES.has(owner.type))
-        for (const caller of callers.get(start(owner)) ?? []) pending.push(caller);
+      const executes =
+        proven &&
+        !owner.generator &&
+        (expression === owner.body ||
+          (statement &&
+            owner.body?.type === "BlockStatement" &&
+            statement.__doctorParent === owner.body &&
+            (site === writer || awaited || statement.type === "ReturnStatement") &&
+            owner.body.body
+              .slice(0, owner.body.body.indexOf(statement))
+              .every((previous: AnyNode) => STRAIGHT_LINE_STATEMENTS.has(previous.type))));
+      if (FUNCTION_TYPES.has(owner.type)) {
+        for (const caller of callers.get(start(owner)) ?? [])
+          pending.push({ site: caller, proven: executes });
+      }
     }
     return uncertain ? "unknown" : "unrelated";
   }
 
   const writes = new Map<
     string,
-    Array<{ root: AnyNode; owner: AnyNode; pathBinding: ReturnType<typeof definition> }>
+    Array<{ root: AnyNode; site: AnyNode; pathBinding: ReturnType<typeof definition> }>
   >();
   for (const call of calls) {
     const writer = importedFunction(call.callee);
@@ -400,21 +441,20 @@ function reportKitPaths(
     const matches = writes.get(text) ?? [];
     matches.push({
       root: constValue(dest.arguments[0]),
-      owner: generationOwner(call),
+      site: call,
       pathBinding: definition(writtenPath),
     });
     writes.set(text, matches);
   }
 
-  for (const { receiver, path } of kitCalls) {
+  for (const { call: registration, receiver, path } of kitCalls) {
     if (receiver?.type !== "Identifier") continue;
     const value = unwrapExpression(path);
     const text = staticStringValue(constValue(value));
     if (text === undefined) continue;
     const matches = writes.get(text);
     if (!matches) continue;
-    const owner = generationOwner(value);
-    const localWrites = matches.filter((write) => write.owner === owner);
+    const owner = generationOwner(registration);
 
     const init = constValue(receiver);
     const call = init?.type === "AwaitExpression" ? unwrapExpression(init.argument) : init;
@@ -437,7 +477,7 @@ function reportKitPaths(
       let related = false;
       let competing = false;
       for (const write of matches) {
-        const relationship = writeRelationship(write.owner, owner);
+        const relationship = writeRelationship(write.site, registration);
         if (relationship === "unrelated") continue;
         const writeRoot = staticStringValue(write.root);
         if (!writeRoot || !isAbsolute(writeRoot) || resolve(writeRoot, text) === loadedPath) {
@@ -450,6 +490,7 @@ function reportKitPaths(
     } else {
       const configDef = configParameter(config);
       const pathBinding = definition(value);
+      const localWrites = matches.filter((write) => generationOwner(write.site) === owner);
       const related = localWrites.length
         ? localWrites
         : matches.filter((write) => pathBinding && write.pathBinding === pathBinding);
@@ -474,6 +515,42 @@ function reportKitPaths(
     }
     reportPath(ctx, value, text, "plugin");
   }
+}
+
+function callExecution(call: AnyNode) {
+  let expression = outerExpression(call);
+  const awaited = expression.__doctorParent?.type === "AwaitExpression";
+  if (awaited) expression = outerExpression(expression.__doctorParent);
+  const parent = expression.__doctorParent;
+  const statement =
+    parent?.type === "ExpressionStatement" || parent?.type === "ReturnStatement"
+      ? parent
+      : undefined;
+  return { expression, statement, awaited };
+}
+
+function oppositeIfBranches(site: AnyNode, registration: AnyNode, owner: AnyNode) {
+  let oppositeBranch = false;
+  for (let child = site; child !== owner; child = child.__doctorParent) {
+    const parent = child.__doctorParent;
+    if (/^(?:For(?:In|Of)?|While|DoWhile)Statement$/.test(parent.type) && oppositeBranch)
+      return false;
+    if (parent.type !== "IfStatement") continue;
+    const opposite =
+      child === parent.consequent
+        ? parent.alternate
+        : child === parent.alternate
+          ? parent.consequent
+          : undefined;
+    if (opposite && isWithin(registration, opposite)) oppositeBranch = true;
+  }
+  return oppositeBranch;
+}
+
+function isWithin(node: AnyNode, ancestor: AnyNode) {
+  for (let current = node; current; current = current.__doctorParent)
+    if (current === ancestor) return true;
+  return false;
 }
 
 function helperIsExported(node: AnyNode) {
