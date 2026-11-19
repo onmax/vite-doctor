@@ -20,12 +20,24 @@ interface WorkspaceDiagnosticMetadata extends DiagnosticMetadata {
 export const defaultConfigDiagnosticMetadata = {
   code: "DOC0038",
   ruleId: "doctor/config/default-config-file",
-  title: "Delete the default doctor.config.json",
+  title: "Review the default doctor.config.json",
   description: "This automatically discovered doctor.config.json only restates Doctor's defaults.",
-  why: "Doctor activates Rule Packs from project dependencies and does not require a config file. This Diagnostic is only reported when deleting the file preserves the run's settings.",
-  fix: "Delete doctor.config.json. Add a Doctor config only when it changes rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
+  why: "Doctor activates Rule Packs from project dependencies and does not require a config file. This Diagnostic is only reported when this run's settings are the same without the file. It cannot see scripts or CI jobs that pass the file with --config.",
+  fix: "doctor.config.json restates Doctor's defaults; delete it unless a script or CI job passes it with --config. Add a Doctor config only when it changes rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
   severity: "info",
   category: "config",
+} as const satisfies DiagnosticMetadata;
+
+export const resolvedBaselineDiagnosticMetadata = {
+  code: "DOC0039",
+  ruleId: "doctor/baseline/resolved-entries",
+  title: "Remove resolved baseline entries",
+  description:
+    "A full `--new-only` run found baseline entries whose file Rule no longer reports their fingerprint.",
+  why: "A resolved entry hides nothing today, but if the same finding comes back, `--new-only` hides it again. Doctor requires Rule and file metadata and a full run covering that file (or proof the file no longer exists). Changed-file runs, Rule selections, analyses-only runs, baseline updates, and severity thresholds above `info` never report this Diagnostic. Entries from project-scoped Rules, workspace Rules and analyses, and Rules that are disabled, partial, or inactive are not reported.",
+  fix: "Delete only the fingerprints listed in the Diagnostic's evidence from the baseline. Leave the other entries in place and commit the updated baseline.",
+  severity: "info",
+  category: "baseline",
 } as const satisfies DiagnosticMetadata;
 
 export const workspaceDiagnosticMetadata = [
@@ -154,7 +166,11 @@ export const workspaceDiagnosticMetadata = [
 ] as const satisfies readonly WorkspaceDiagnosticMetadata[];
 
 const explainableMetadata: Array<DiagnosticMetadata & { analysis?: WorkspaceDiagnosticAnalysis }> =
-  [...workspaceDiagnosticMetadata, defaultConfigDiagnosticMetadata];
+  [
+    ...workspaceDiagnosticMetadata,
+    defaultConfigDiagnosticMetadata,
+    resolvedBaselineDiagnosticMetadata,
+  ];
 
 export const diagnosticMetadataByCode = new Map(
   explainableMetadata.map((metadata) => [metadata.code, metadata] as const),

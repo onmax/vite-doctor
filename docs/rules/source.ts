@@ -4,7 +4,10 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { ruleDocumentationMetadata } from "./metadata.js";
 import { ruleNavigationTitles } from "./navigation-titles.js";
-import { workspaceDiagnosticMetadata } from "../../src/core/diagnostic-metadata.js";
+import {
+  resolvedBaselineDiagnosticMetadata,
+  workspaceDiagnosticMetadata,
+} from "../../src/core/diagnostic-metadata.js";
 import { mcpRecommendedRuleIds } from "../../src/rule-packs/mcp/presets.js";
 import { piniaRecommendedRuleIds } from "../../src/rule-packs/pinia/presets.js";
 
@@ -246,6 +249,19 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       key: "diagnostics/DOC0032.md",
     },
     {
+      ...resolvedBaselineDiagnosticMetadata,
+      title: `${resolvedBaselineDiagnosticMetadata.code}: ${resolvedBaselineDiagnosticMetadata.title}`,
+      docsUrl: "https://vite-doctor.onmax.me/cli",
+      pack: "vite-doctor/core",
+      source,
+      sourceUrl: githubSourceUrl(source),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0039",
+      key: "diagnostics/DOC0039.md",
+    },
+    {
       code: "DOC0022",
       title: "DOC0022: Resolve the runtime graph",
       description:
@@ -288,11 +304,11 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
     },
     {
       code: "DOC0038",
-      title: "DOC0038: Delete the default doctor.config.json",
+      title: "DOC0038: Review the default doctor.config.json",
       description:
         "The project's `doctor.config.json` selects nothing beyond Doctor's defaults: it is empty, or holds only empty `rules`, `overrides`, `suppressions`, or `exclude`, or `extends: \"auto\"`.",
-      why: "Doctor activates Rule Packs from the project's dependencies. It only reports this Diagnostic for automatically discovered files whose removal preserves the run's settings. It skips changed-file runs, Rule selections, and analyses-only runs. `include: []` and `extends: []` are not defaults: they select no files or no Rules.",
-      fix: "Delete `doctor.config.json`. Add a Doctor config only when it changes rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
+      why: "Doctor activates Rule Packs from the project's dependencies. It only reports this Diagnostic for automatically discovered files whose removal preserves this run's settings, and it cannot see scripts or CI jobs that pass the file with `--config`. It skips changed-file runs, Rule selections, and analyses-only runs. `include: []` and `extends: []` are not defaults: they select no files or no Rules.",
+      fix: "`doctor.config.json` restates Doctor's defaults; delete it unless a script or CI job passes it with `--config`. Add a Doctor config only when it changes rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
       docsUrl: "https://vite-doctor.onmax.me/cli",
       ruleId: "doctor/config/default-config-file",
       pack: "vite-doctor/core",

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { SFCDescriptor } from "@vue/compiler-sfc";
 import type { SfcBlockHashes, SfcHandle, SourceRange } from "../primitives.js";
 import { lineColumnAt } from "./line-index.js";
 import { parseScriptResult, type ScriptParseLang } from "./script.js";
@@ -10,7 +11,7 @@ export async function parseSfcFile(
   file: string,
   source: string,
   hash = sha256(source),
-): Promise<SfcHandle & { errors: string[] }> {
+): Promise<SfcHandle & { descriptor: SFCDescriptor; errors: string[] }> {
   const { parse } = await optionalImport<typeof import("@vue/compiler-sfc")>("@vue/compiler-sfc");
   const { descriptor, errors } = parse(source, {
     filename: file,
