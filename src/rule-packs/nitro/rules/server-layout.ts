@@ -177,33 +177,15 @@ function configOptions(fs: RuleFileSystem, file: string): StaticConfigOption[] {
 }
 
 function viteConfigOptions(program: any): StaticConfigOption[] {
-  const pluginNames = new Set<string>();
-  const namespaceNames = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== "ImportDeclaration" || statement.source.value !== "nitro/vite") continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === "ImportSpecifier" && propertyKey(specifier.imported) === "nitro")
-        pluginNames.add(specifier.local.name);
-      if (specifier.type === "ImportNamespaceSpecifier") namespaceNames.add(specifier.local.name);
-    }
-  }
-  const expression = program.body.find(
-    (statement: any) => statement.type === "ExportDefaultDeclaration",
-  )?.declaration;
-  const config = unwrapConfig(expression);
+  const config = viteNitroConfig(program);
   if (!config) return [];
-  const pluginsProperty = config.properties.findLast(
-    (property: any) =>
-      property.type === "Property" && !property.computed && propertyKey(property.key) === "plugins",
-  );
-  const plugins = pluginsProperty?.value;
-  if (!hasNitroPlugin(plugins, pluginNames, namespaceNames)) return [];
-  const nitroProperty = config.properties.findLast(
+  const { properties, pluginsProperty, pluginNames, namespaceNames } = config;
+  const nitroProperty = properties.findLast(
     (property: any) =>
       property.type === "Property" && !property.computed && propertyKey(property.key) === "nitro",
   );
   const options: StaticConfigOption[] = [];
-  for (const property of config.properties) {
+  for (const property of properties) {
     if (property.type !== "Property" || property.computed) continue;
     const key = propertyKey(property.key);
     if (key === "nitro" && property === nitroProperty) {
@@ -215,6 +197,44 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
     collectNitroPluginOptions(property.value, pluginNames, namespaceNames, options);
   }
   return options;
+}
+
+export function hasViteNitroPlugin(program: Record<string, unknown>): boolean {
+  return viteNitroConfig(program) !== undefined;
+}
+
+function viteNitroConfig(program: any) {
+  const pluginNames = new Set<string>();
+  const namespaceNames = new Set<string>();
+  for (const statement of program.body) {
+    if (
+      statement.type !== "ImportDeclaration" ||
+      statement.source.value !== "nitro/vite" ||
+      statement.importKind === "type"
+    )
+      continue;
+    for (const specifier of statement.specifiers) {
+      if (
+        specifier.type === "ImportSpecifier" &&
+        specifier.importKind !== "type" &&
+        propertyKey(specifier.imported) === "nitro"
+      )
+        pluginNames.add(specifier.local.name);
+      if (specifier.type === "ImportNamespaceSpecifier") namespaceNames.add(specifier.local.name);
+    }
+  }
+  const expression = program.body.find(
+    (statement: any) => statement.type === "ExportDefaultDeclaration",
+  )?.declaration;
+  const config = unwrapConfig(expression);
+  if (!config) return undefined;
+  const pluginsProperty = config.properties.findLast(
+    (property: any) =>
+      property.type === "Property" && !property.computed && propertyKey(property.key) === "plugins",
+  );
+  const plugins = pluginsProperty?.value;
+  if (!hasNitroPlugin(plugins, pluginNames, namespaceNames)) return undefined;
+  return { properties: config.properties, pluginsProperty, pluginNames, namespaceNames };
 }
 
 function hasNitroPlugin(node: any, names: Set<string>, namespaces: Set<string>): boolean {

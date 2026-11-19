@@ -120,28 +120,31 @@ function findTopLevelInitializer(body: AnyNode[], name: string): AnyNode {
 export function detectPackageModule(root: string): NuxtModuleDefinition | undefined {
   const packageJson = readModulePackageJson(join(root, "package.json"));
   if (!packageJson) return undefined;
+  for (const entry of packageModuleCandidates(root, packageJson)) {
+    if (!isFile(entry) || !definesNuxtModule(entry)) continue;
+    const sourceDir = dirname(entry);
+    return {
+      kind: "package",
+      entry,
+      root: sourceDir,
+      runtimeDir: join(sourceDir, "runtime"),
+      layer: NUXT_CONFIG_FILES.some((file) => existsSync(join(root, file))),
+    };
+  }
+  return undefined;
+}
+
+export function packageModuleCandidates(root: string, packageJson: ModulePackageJson): string[] {
   const distEntries = packageEntryTargets(packageJson)
     .map((target) => target.replace(/^\.\//, ""))
     .map((target) => target.match(/^dist\/(.+)\.(?:mjs|cjs|js)$/)?.[1])
     .filter((name): name is string => Boolean(name));
   const hasModuleBuilder = Boolean(packageJson.devDependencies?.["@nuxt/module-builder"]);
-  if (!hasModuleBuilder && !distEntries.length) return undefined;
+  if (!hasModuleBuilder && !distEntries.length) return [];
   const names = [...new Set(["module", ...distEntries])];
-  for (const name of names) {
-    for (const extension of MODULE_EXTENSIONS) {
-      const entry = resolve(root, "src", `${name}.${extension}`);
-      if (!isFile(entry) || !definesNuxtModule(entry)) continue;
-      const sourceDir = dirname(entry);
-      return {
-        kind: "package",
-        entry,
-        root: sourceDir,
-        runtimeDir: join(sourceDir, "runtime"),
-        layer: NUXT_CONFIG_FILES.some((file) => existsSync(join(root, file))),
-      };
-    }
-  }
-  return undefined;
+  return names.flatMap((name) =>
+    MODULE_EXTENSIONS.map((extension) => resolve(root, "src", `${name}.${extension}`)),
+  );
 }
 
 async function detectLocalModules(appRoots: string[]): Promise<NuxtModuleDefinition[]> {

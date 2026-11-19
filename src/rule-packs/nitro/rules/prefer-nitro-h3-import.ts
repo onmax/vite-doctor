@@ -1,8 +1,10 @@
 import { diagnostics } from "../diagnostics.js";
 import {
+  declaresNitro3Host,
   declaresOnlyNitro3,
   installedNitroH3Exports,
   isLibrary,
+  moduleServerRuntime,
   isPackageRuntimeSource,
   isTypeOnlyModuleReference,
   owningPackage,
@@ -21,7 +23,7 @@ export const preferNitroH3Import = createRule({
     id: RULE_ID,
     title: "Import H3 through nitro/h3 in Nitro 3 server code",
     description:
-      "Flags value imports and re-exports from h3 in Nitro 3 server code and in packages that declare nitro as a runtime dependency.",
+      "Flags value imports and re-exports from h3 in Nitro 3 server code, in packages that declare nitro as a runtime dependency, and in the server runtime of Nuxt 5 module packages.",
     why: "Nitro 3 imports every H3 utility from nitro/h3, which re-exports the h3 Nitro runs. In a Nuxt 5 app, server code from a package that imports values from h3 makes Nuxt treat it as Nitro v2 code, apply its Nitro v2 compatibility layer to the whole app, and warn NUXT_B9003. In app server code, a bare h3 import resolves the h3 the app installs, which matches Nitro's only while the two ranges stay in step.",
     recommendedReplacement:
       'Import H3 values from "nitro/h3". Type-only imports from "h3" can stay.',
@@ -98,18 +100,22 @@ function nitroCodeScope(ctx: RuleContext): NitroCodeScope | undefined {
   if (runtimeDeclaration(owner.manifest, "nitropack") !== undefined) return undefined;
   const nitro = runtimeDeclaration(owner.manifest, "nitro");
   if (nitro !== undefined && !declaresOnlyNitro3(ctx, nitro)) return undefined;
+  const moduleRuntime = declaresNitro3Host(ctx, owner.manifest)
+    ? moduleServerRuntime(ctx, owner)
+    : undefined;
+  if (moduleRuntime === "unselected") return undefined;
   // Published Nuxt layers can have an entry point and still supply real server routes.
   // Keep their server evidence without treating the layer's client/library source as Nitro code.
-  if (owner.framework === "nuxt") {
-    if (
-      isOwnServerFile(owner) ||
-      (owner.dir === ctx.project.root && nitroServerFile(ctx, ctx.file.path))
-    )
-      return { kind: "app", dir };
-    return undefined;
-  }
-  if (nitro === undefined) return undefined;
-  return { kind: "package", dir, name: owner.manifest.name ?? "This package" };
+  if (
+    owner.framework === "nuxt" &&
+    (isOwnServerFile(owner) ||
+      (owner.dir === ctx.project.root && nitroServerFile(ctx, ctx.file.path)))
+  )
+    return { kind: "app", dir };
+  const name = owner.manifest.name ?? "This package";
+  if (nitro !== undefined && owner.framework !== "nuxt") return { kind: "package", dir, name };
+  if (moduleRuntime === "server") return { kind: "package", dir, name };
+  return undefined;
 }
 
 /** A Nuxt or Nitro workspace package's own `server/` directory, below the Doctor Run root. */
