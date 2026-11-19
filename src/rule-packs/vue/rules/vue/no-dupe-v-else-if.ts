@@ -47,11 +47,14 @@ const TRANSPARENT = new Set([
 ]);
 const FUNCTION_TYPES = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
 const REF_APIS = new Set(["ref", "shallowRef", "computed"]);
-// `isGloballyAllowed` in @vue/shared 3.5.
+// The names compiler-core's `canPrefix` leaves unprefixed: `isGloballyAllowed` in @vue/shared 3.5,
+// plus `require`.
 const TEMPLATE_GLOBALS = new Set(
-  "Infinity,undefined,NaN,isFinite,isNaN,parseFloat,parseInt,decodeURI,decodeURIComponent,encodeURI,encodeURIComponent,Math,Number,Date,Array,Object,Boolean,String,RegExp,Map,Set,JSON,Intl,BigInt,console,Error,Symbol".split(
-    ",",
-  ),
+  (
+    "Infinity,undefined,NaN,isFinite,isNaN,parseFloat,parseInt,decodeURI,decodeURIComponent," +
+    "encodeURI,encodeURIComponent,Math,Number,Date,Array,Object,Boolean,String,RegExp,Map,Set," +
+    "JSON,Intl,BigInt,console,Error,Symbol,require"
+  ).split(","),
 );
 
 /** `primitive` values never run user code when coerced; `value` reads may hold any value. */

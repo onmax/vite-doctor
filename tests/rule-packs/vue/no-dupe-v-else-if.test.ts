@@ -102,6 +102,21 @@ test.each([
   expect(await reportedBranches(template)).toEqual([]);
 });
 
+test.each(["Math", "require"])("does not assume %s always resolves to setup", async (name) => {
+  expect(
+    await reportedBranches(
+      `<p v-if="${name}" /><p v-else-if="(${name})" />`,
+      `const ${name} = false;`,
+    ),
+  ).toEqual([]);
+});
+
+test("recognizes a parenthesized primitive setup initializer", async () => {
+  expect(
+    await reportedBranches('<p v-if="ready" /><p v-else-if="ready" />', "const ready = ((true));"),
+  ).toEqual([1]);
+});
+
 test.each([
   ["a swapped disjunction used as a value", "(left || right) === 2", "(right || left) === 2"],
   ["a swapped conjunction used as a value", "(left && right) === 1", "(right && left) === 1"],
