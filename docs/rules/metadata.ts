@@ -2680,6 +2680,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/template/no-useless-template-attributes": {
+    description:
+      "Flags attributes and directives on a `<template>` with `v-if`, `v-else-if`, `v-else`, `v-for` or `v-slot`, which Vue drops without a warning.",
+    why: "A `<template>` with a structural directive renders only its children. Vue never applies any other attribute or directive on it, so an `id`, `class`, listener, `ref` or directive there never reaches the page, and CSS, anchors, tests or code that rely on it find nothing. `key`, `v-memo` and `v-once` still work there and are not reported.",
+    recommendedReplacement:
+      "Move the attribute onto the element inside the `<template>` it was meant for, or wrap the children in an element that carries it.",
+    examples: [
+      {
+        title: "Put the id on a rendered element",
+        language: "vue",
+        invalid:
+          '<template>\n  <template v-if="open" id="panel">\n    <section>{{ details }}</section>\n  </template>\n</template>',
+        valid:
+          '<template>\n  <template v-if="open">\n    <section id="panel">{{ details }}</section>\n  </template>\n</template>',
+      },
+    ],
+  },
   "vue/template/prefer-use-template-ref": {
     description:
       "Finds Vue template code that should use the supported use template ref pattern instead.",
