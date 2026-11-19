@@ -101,7 +101,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
         candidates.push({ node: handler.value, kind: "handler" });
       },
       CallExpression(node: AnyNode) {
-        if (node.arguments?.length) calls.push(node);
+        calls.push(node);
         const callee = unwrapExpression(node.callee);
         if (callee?.type !== "MemberExpression" || callee.computed) return;
         if (KIT_PLUGIN_METHODS.has(callee.property?.name)) {
@@ -269,9 +269,11 @@ function reportKitPaths(
   for (const reference of scope.references.values())
     if (reference.isValueReference) references.set(reference.identifier.range[0], reference);
 
+  const start = (node: AnyNode) => node.range?.[0] ?? node.start;
+
   function definition(node: AnyNode) {
     if (node?.type !== "Identifier") return undefined;
-    const variable = references.get(node.range?.[0] ?? node.start)?.resolved;
+    const variable = references.get(start(node))?.resolved;
     if (variable?.defs.length !== 1) return undefined;
     if (variable.references.some((reference) => reference.isWrite() && !reference.init))
       return undefined;
@@ -318,6 +320,60 @@ function reportKitPaths(
     }
     const def = definition(input);
     return def?.type === "Parameter" && def.node.params.includes(def.name) ? def : undefined;
+  }
+
+  function localHelper(def: ReturnType<typeof definition>) {
+    if (def?.type === "FunctionName" && def.node.type === "FunctionDeclaration") return def.node;
+    if (
+      def?.type !== "Variable" ||
+      def.parent.kind !== "const" ||
+      def.node.id.type !== "Identifier"
+    )
+      return undefined;
+    const init = unwrapExpression(def.node.init);
+    return FUNCTION_TYPES.has(init?.type) ? init : undefined;
+  }
+
+  const directCalls = new Set<number>();
+  const callers = new Map<number, Set<AnyNode>>();
+  for (const call of calls) {
+    const callee = unwrapExpression(call.callee);
+    const helper = localHelper(definition(callee));
+    if (!helper) continue;
+    directCalls.add(start(callee));
+    const owners = callers.get(start(helper)) ?? new Set<AnyNode>();
+    owners.add(generationOwner(call));
+    callers.set(start(helper), owners);
+  }
+
+  const trackedHelpers = new Set<number>();
+  for (const variable of scope.scopeManager.variables) {
+    const helper = variable.defs.length === 1 ? localHelper(variable.defs[0]) : undefined;
+    if (
+      helper &&
+      variable.references.every((ref) => ref.init || directCalls.has(start(ref.identifier)))
+    )
+      trackedHelpers.add(start(helper));
+  }
+
+  function writeRelationship(writer: AnyNode, registration: AnyNode) {
+    const pending = [writer];
+    const seen = new Set<AnyNode>();
+    let uncertain = false;
+    for (const owner of pending) {
+      if (owner === registration) return "related";
+      if (seen.has(owner)) continue;
+      seen.add(owner);
+      if (
+        !FUNCTION_TYPES.has(owner.type) ||
+        !trackedHelpers.has(start(owner)) ||
+        helperIsExported(owner)
+      )
+        uncertain = true;
+      if (FUNCTION_TYPES.has(owner.type))
+        for (const caller of callers.get(start(owner)) ?? []) pending.push(caller);
+    }
+    return uncertain ? "unknown" : "unrelated";
   }
 
   const writes = new Map<
@@ -378,14 +434,19 @@ function reportKitPaths(
       const nitroRoot = staticStringValue(constValue(rootOptions[0].value));
       if (!nitroRoot || !isAbsolute(nitroRoot)) continue;
       const loadedPath = resolve(nitroRoot, text);
-      if (
-        localWrites.length === 0 ||
-        !localWrites.every(({ root }) => {
-          const writeRoot = staticStringValue(root);
-          return writeRoot && isAbsolute(writeRoot) && resolve(writeRoot, text) !== loadedPath;
-        })
-      )
-        continue;
+      let related = false;
+      let competing = false;
+      for (const write of matches) {
+        const relationship = writeRelationship(write.owner, owner);
+        if (relationship === "unrelated") continue;
+        const writeRoot = staticStringValue(write.root);
+        if (!writeRoot || !isAbsolute(writeRoot) || resolve(writeRoot, text) === loadedPath) {
+          competing = true;
+          break;
+        }
+        if (relationship === "related") related = true;
+      }
+      if (!related || competing) continue;
     } else {
       const configDef = configParameter(config);
       const pathBinding = definition(value);
@@ -413,6 +474,16 @@ function reportKitPaths(
     }
     reportPath(ctx, value, text, "plugin");
   }
+}
+
+function helperIsExported(node: AnyNode) {
+  const parent = outerExpression(node).__doctorParent;
+  const declaration =
+    parent?.type === "VariableDeclarator" ? parent.__doctorParent?.__doctorParent : parent;
+  return (
+    declaration?.type === "ExportNamedDeclaration" ||
+    declaration?.type === "ExportDefaultDeclaration"
+  );
 }
 
 function generationOwner(node: AnyNode): AnyNode {

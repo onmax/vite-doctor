@@ -389,6 +389,39 @@ function unrelatedGenerator() {
   ).toEqual(["modules/roots.ts:15"]);
 });
 
+test("compares explicit Nitro roots with writes in called generator helpers", async () => {
+  const source = (writeRoot: string, installBody: string) => `import { resolve } from "node:path"
+import { writeFile } from "node:fs/promises"
+import type { Plugin } from "vite"
+import { createNitroServerKit } from "./nitro-kit"
+const entry = "./generated/plugin.ts"
+const generate = () => writeFile(resolve("${writeRoot}", entry), "")
+export async function install() {
+  const kit = createNitroServerKit({ rootDir: "/nitro" })
+  ${installBody}
+  kit.addPlugin(entry)
+}`;
+  const writeCopy = 'await writeFile(resolve("/vite", entry), "")';
+  expect(
+    await lines({
+      "modules/correct-helper.ts": source("/nitro", `await generate(); ${writeCopy}`),
+      "modules/wrong-helper.ts": source("/vite", "await generate()"),
+      "modules/shadowed-helper.ts": source(
+        "/nitro",
+        `const generate = other; await generate(); ${writeCopy}`,
+      ),
+      "modules/escaped-helper.ts": source(
+        "/nitro",
+        `const run = generate; await run(); ${writeCopy}`,
+      ),
+      "modules/nested-helper.ts": source(
+        "/nitro",
+        `function setup() { return generate() }; await setup(); ${writeCopy}`,
+      ),
+    }),
+  ).toEqual(["modules/shadowed-helper.ts:10", "modules/wrong-helper.ts:10"]);
+});
+
 test("leaves addPlugin calls on receivers not tied to Nitro alone", async () => {
   expect(
     await lines({
