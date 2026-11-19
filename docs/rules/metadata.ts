@@ -2680,6 +2680,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/template/no-useless-template-attributes": {
+    description:
+      "Flags attributes and directives Vue does not apply on a `<template>` with `v-if`, `v-else-if`, `v-else`, `v-for` or `v-slot`.",
+    why: "A structural `<template>` renders its children, not an element that can receive an `id`, `class`, listener, `ref` or native `slot` attribute. `key` and `v-memo` still work on a non-slot `<template v-for>`. `v-once` still works on non-slot `v-if` and `v-for` templates unless they are `v-else-if` or `v-else` branches. The rule also skips `v-cloak` and legacy Vue 2 `slot-scope` and `scope` attributes.",
+    recommendedReplacement:
+      "Apply the attribute or directive to an intended rendered target that supports it. Keep `v-show` separate from branch selection: hiding an element should not unmount it or select another branch.",
+    examples: [
+      {
+        title: "Put the id on a rendered element",
+        language: "vue",
+        invalid:
+          '<template>\n  <template v-if="open" id="panel">\n    <section>{{ details }}</section>\n  </template>\n</template>',
+        valid:
+          '<template>\n  <template v-if="open">\n    <section id="panel">{{ details }}</section>\n  </template>\n</template>',
+      },
+    ],
+  },
   "vue/template/prefer-use-template-ref": {
     description:
       "Finds Vue template code that should use the supported use template ref pattern instead.",
@@ -2734,7 +2751,7 @@ export const ruleDocumentationMetadata = {
   },
   "vue/template/require-toggle-inside-transition": {
     description:
-      "Finds a nested <Transition> with a native child that has no v-if, v-else-if, v-else, v-show or bound :key. It skips dynamic default slots, transitions that may inherit attributes at the component root, and transitions with appear or forwarded v-show. A v-bind spread, a dynamic binding name, or a custom directive on the transition or its child may enable animation, so these are skipped too. Components, <slot>, elements with is, and <TransitionGroup> are not checked.",
+      "Finds a <Transition> with a native child that has no v-if, v-else-if, v-else, v-show or bound :key. It skips dynamic default slots, transitions that may inherit attributes at the component root, and transitions with appear or forwarded v-show. A v-bind spread, a dynamic binding name, or a custom directive on the transition or its child may enable animation, so these are skipped too. Components, <slot>, elements with is, and <TransitionGroup> are not checked.",
     why: "<Transition> animates when its child enters or leaves: a v-if/v-else branch switches, v-show changes, or a :key change replaces the element. A static child never triggers those animations, and without appear it does not animate on mount. If a v-for produces multiple children, <Transition> warns and renders only the first item.",
     recommendedReplacement:
       "Add v-if or v-show to the child so it enters and leaves, bind a :key that changes when the content should animate, add appear to animate on first render, or remove the <Transition> when no animation is wanted. To animate a v-for list, use <TransitionGroup> and bind a stable, unique :key per item.",

@@ -1,4 +1,8 @@
-import type { TemplateDirectiveNode, TemplateElementNode } from "../../../../core/index.js";
+import type {
+  TemplateDirectiveNode,
+  TemplateElementNode,
+  TemplateParentNode,
+} from "../../../../core/index.js";
 import {
   findTemplateAttribute,
   findTemplateDirective,
@@ -31,7 +35,7 @@ export const requireToggleInsideTransition = createRule({
     id: RULE_ID,
     title: "Toggle the child of <Transition>",
     description:
-      "Reports a nested <Transition> whose native child never toggles or repeats with v-for instead of using <TransitionGroup>.",
+      "Reports a <Transition> whose native child never toggles or repeats with v-for instead of using <TransitionGroup>, unless the transition may inherit root attributes.",
     why: "<Transition> animates only when its child enters or leaves: a v-if/v-else branch switching, v-show changing, or a :key changing. A plain element that stays mounted never triggers enter or leave, so the enter/leave classes and CSS never apply. Without appear, the first render does not animate either.",
     recommendedReplacement:
       "Add v-if or v-show to the child, bind a :key that changes, add appear to animate on first render, or remove the <Transition>. For lists, use <TransitionGroup> with a stable, unique :key per item.",
@@ -60,7 +64,7 @@ export const requireToggleInsideTransition = createRule({
           const mayInheritAttrs =
             parent?.type === TemplateNodeType.ROOT ||
             (parent?.type === TemplateNodeType.ELEMENT && rootTemplateWrappers.has(parent));
-          if (mayInheritAttrs) {
+          if (mayInheritAttrs && !hasUnconditionalNativeSibling(parent, node)) {
             if (node.tagType === 3) rootTemplateWrappers.add(node);
             return;
           }
@@ -94,6 +98,27 @@ export const requireToggleInsideTransition = createRule({
     };
   },
 });
+
+function hasUnconditionalNativeSibling(
+  parent: TemplateParentNode,
+  node: TemplateElementNode,
+): boolean {
+  return parent.children.some(
+    (sibling) =>
+      sibling !== node &&
+      sibling.type === TemplateNodeType.ELEMENT &&
+      sibling.tagType === 0 &&
+      !sibling.props.some(
+        (prop) =>
+          prop.type === TemplateNodeType.DIRECTIVE &&
+          (prop.name === "if" ||
+            prop.name === "else-if" ||
+            prop.name === "else" ||
+            prop.name === "for" ||
+            prop.name === "is"),
+      ),
+  );
+}
 
 function mayAnimateThroughTransitionProps(transition: TemplateElementNode): boolean {
   if (findTemplateAttribute(transition, "appear")) return true;

@@ -187,8 +187,19 @@ test("skips root transitions that may inherit appear or directives", async () =>
     '<!-- root --><Transition :appear="false"><div /></Transition>',
     '<div v-if="showFallback" /><Transition v-else><div /></Transition>',
     '<template v-if="ready"><Transition><div /></Transition></template>',
+    '<slot /><Transition :appear="false"><div /></Transition>',
   ];
   expect(await reported(rootTransitions, false)).toEqual(rootTransitions.map(() => []));
+}, 30_000);
+
+test("reports transitions in root fragments with another unconditional element", async () => {
+  const fragments = [
+    '<header>Title</header><Transition :appear="false"><div /></Transition>',
+    "<Transition><div /></Transition><footer />",
+    '<header /><template v-if="ready"><Transition><div /></Transition></template>',
+    '<template v-if="ready"><header /><Transition><div /></Transition></template>',
+  ];
+  expect(await reported(fragments, false)).toEqual(fragments.map(() => ["<div />"]));
 }, 30_000);
 
 test("ignores literal and overridden Transition tags", async () => {
