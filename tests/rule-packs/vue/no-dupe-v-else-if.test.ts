@@ -5,13 +5,16 @@ import { noDupeVElseIf } from "../../../src/rule-packs/vue/rules/vue/no-dupe-v-e
 const project = createProjectFixture({ framework: "vue" });
 afterAll(() => project.dispose());
 
-function sfc(template: string) {
-  return `<script setup lang="ts">\n</script>\n<template>\n${template}\n</template>\n`;
+const stableBindings =
+  "const a = 1, b = 2, c = false, d = true, e = 0, f = false, foo = false, bar = true, baz = true, n = 2, open = true, wide = true, value = 'x', id = '1-2', status = 'loading', isAdmin = true, isOwner = false, isOpen = false, isPinned = true;";
+
+function sfc(template: string, setup = stableBindings) {
+  return `<script setup lang="ts">${setup}\n</script>\n<template>\n${template}\n</template>\n`;
 }
 
 /** The 1-based position, among the template's `v-else-if` attributes, of each reported branch. */
-async function reportedBranches(template: string) {
-  const source = sfc(template);
+async function reportedBranches(template: string, setup?: string) {
+  const source = sfc(template, setup);
   const result = await project.run({ rule: noDupeVElseIf, files: { "app.vue": source } });
   return result.diagnostics.map((diagnostic) => {
     const before = source.slice(0, diagnostic.range!.start);
@@ -97,6 +100,79 @@ test.each([
   ["swapped ?? operands", '<div v-if="a ?? b" /><div v-else-if="b ?? a" />'],
 ])("stays silent for %s", async (_name, template) => {
   expect(await reportedBranches(template)).toEqual([]);
+});
+
+test.each([
+  ["a swapped disjunction used as a value", "(left || right) === 2", "(right || left) === 2"],
+  ["a swapped conjunction used as a value", "(left && right) === 1", "(right && left) === 1"],
+])("does not match %s", async (_name, first, second) => {
+  expect(
+    await reportedBranches(
+      `<p v-if="${first}" /><p v-else-if="${second}" />`,
+      "const left = 1, right = 2;",
+    ),
+  ).toEqual([]);
+});
+
+test.each([
+  [
+    "a getter",
+    "let reads = 0; const state = { get ready() { return ++reads === 2; } };",
+    "state.ready",
+  ],
+  [
+    "an auto-unwrapped customRef",
+    "import { customRef } from 'vue'; let reads = 0; const ready = customRef(() => ({ get: () => ++reads === 2, set: () => {} }));",
+    "ready",
+  ],
+  ["a prop", "defineProps<{ ready: boolean }>();", "ready"],
+  [
+    "an effectful coercion",
+    "let reads = 0; const value = { valueOf() { return ++reads; } };",
+    "+value > 1",
+  ],
+  ["an unknown binding", "", "unknown"],
+  ["a fresh regular expression", "", "/ready/"],
+])("does not assume repeatability for %s", async (_name, setup, condition) => {
+  expect(
+    await reportedBranches(`<p v-if="${condition}" /><p v-else-if="${condition}" />`, setup),
+  ).toEqual([]);
+});
+
+test.each([
+  [
+    "a mutating function",
+    "let ready = false; function advance() { ready = true; return false; }",
+    "ready",
+    "advance()",
+  ],
+  ["delete", "const state = { pending: true };", "!state.pending", "(delete state.pending, false)"],
+  [
+    "an unverified intervening call",
+    "const ready = false; function advance() { return false; }",
+    "ready",
+    "advance()",
+  ],
+])("does not compare across %s", async (_name, setup, condition, intervening) => {
+  expect(
+    await reportedBranches(
+      `<p v-if="${condition}" /><p v-else-if="${intervening}" /><p v-else-if="${condition}" />`,
+      setup,
+    ),
+  ).toEqual([]);
+});
+
+test.each([
+  '<template v-for="value in items"><p v-if="value" /><p v-else-if="value" /></template>',
+  '<Widget v-slot="{ value }"><div><p v-if="value" /><p v-else-if="value" /></div></Widget>',
+])("does not treat template aliases as setup constants: %s", async (template) => {
+  expect(await reportedBranches(template)).toEqual([]);
+});
+
+test("does not treat a regular script constant as a template binding", async () => {
+  const source = `<script lang="ts">const ready = false; export default { computed: { ready() { return Math.random() > 0.5; } } };</script>${sfc('<p v-if="ready" /><p v-else-if="ready" />', "")}`;
+  const result = await project.run({ rule: noDupeVElseIf, files: { "app.vue": source } });
+  expect(result.diagnostics).toEqual([]);
 });
 
 // Invalid cases from eslint-plugin-vue's no-dupe-v-else-if tests, as the v-else-if branches reported.
@@ -206,22 +282,13 @@ test.each([
     '<template v-if="open"><p>A</p></template>\n<template v-else-if="open"><p>B</p></template>',
   ],
   [
-    "a member chain with a string",
-    "<p v-if=\"user.role === 'admin'\" /><p v-else-if=\"user.role === 'admin'\" />",
-  ],
-  ["optional chaining", '<p v-if="user?.profile?.name" /><p v-else-if="user?.profile?.name" />'],
-  ["a literal computed key", '<p v-if="items[0].done" /><p v-else-if="items[0].done" />'],
-  ["a stable computed key", '<p v-if="map[key]" /><p v-else-if="map[key]" />'],
-  ["this", '<p v-if="this.ready" /><p v-else-if="this.ready" />'],
-  [
     "typeof and unary operators",
     "<p v-if=\"typeof value === 'string'\" /><p v-else-if=\"typeof value === 'string'\" />",
   ],
-  ["negation", '<p v-if="!items.length" /><p v-else-if="!items.length" />'],
+  ["negation", '<p v-if="!(a || b)" /><p v-else-if="!(b || a)" />'],
   ["a conditional", '<p v-if="wide ? a : b" /><p v-else-if="wide ? a : b" />'],
   ["a template literal", '<p v-if="`${a}-${b}` === id" /><p v-else-if="`${a}-${b}` === id" />'],
   ["a TypeScript assertion", '<p v-if="(value as string)" /><p v-else-if="value!" />'],
-  ["$slots presence", '<p v-if="$slots.footer" /><p v-else-if="$slots.footer" />'],
 ])("reports a repeated condition with %s", async (_name, template) => {
   expect(await reportedBranches(template)).toEqual([1]);
 });
@@ -260,9 +327,11 @@ test("names every earlier branch that covers the condition", async () => {
 });
 
 test("names the covered operand of an && condition", async () => {
-  const source = sfc('  <A v-if="isOpen || isPinned" />\n  <B v-else-if="isPinned && wide" />');
+  const source = sfc(
+    '  <A v-if="isOpen || isPinned" />\n  <B v-else-if=" wide &amp;&amp; isPinned " />',
+  );
   const result = await project.run({ rule: noDupeVElseIf, files: { "app.vue": source } });
   expect(result.diagnostics.map((diagnostic) => diagnostic.why)).toEqual([
-    '<B v-else-if="isPinned && wide"> never renders. It requires "isPinned", which is only truthy when the earlier v-if="isOpen || isPinned" on line 4 in the same chain is truthy too, so Vue renders that branch instead.',
+    '<B v-else-if="wide && isPinned"> never renders. It requires "isPinned", which is only truthy when the earlier v-if="isOpen || isPinned" on line 4 in the same chain is truthy too, so Vue renders that branch instead.',
   ]);
 });

@@ -4,12 +4,35 @@ import type {
   TemplateElementNode,
 } from "../../../../core/index.js";
 import { findTemplateDirective, TemplateNodeType } from "../../../../core/rule-authoring.js";
+import type { SFCDescriptor } from "@vue/compiler-sfc";
 import { createRule, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/no-dupe-v-else-if";
 
-const STABLE_UNARY = new Set(["!", "-", "+", "typeof"]);
+const PRIMITIVE_UNARY = new Set(["!", "-", "+", "~", "typeof", "void"]);
+const PRIMITIVE_BINARY = new Set([
+  "===",
+  "!==",
+  "==",
+  "!=",
+  "<",
+  "<=",
+  ">",
+  ">=",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "**",
+  "&",
+  "|",
+  "^",
+  "<<",
+  ">>",
+  ">>>",
+]);
 const TRANSPARENT = new Set([
   "ChainExpression",
   "TSAsExpression",
@@ -38,7 +61,7 @@ export const noDupeVElseIf = createRule({
     id: RULE_ID,
     title: "Do not repeat a condition in a v-if / v-else-if chain",
     description:
-      "Reports a v-else-if branch whose condition repeats, or is fully covered by, earlier conditions in the same v-if / v-else-if chain. Only conditions whose value cannot change between the two evaluations are compared: identifiers, literals, member chains and operators over them.",
+      "Reports a v-else-if branch whose condition repeats, or is fully covered by, earlier conditions in the same v-if / v-else-if chain. Compares primitive literals, top-level script setup constants initialized with primitive literals, and supported expressions over them.",
     why: "Vue renders the first branch of a chain whose condition is truthy. A later branch whose condition can only be truthy when an earlier one already is never renders, which usually hides a copy-paste mistake in the condition.",
     recommendedReplacement:
       "Change the later condition to the one the branch was meant to test, or remove the branch.",
@@ -47,9 +70,9 @@ export const noDupeVElseIf = createRule({
         title: "Test a different value in each branch",
         language: "vue",
         invalid:
-          "<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>\n</template>",
+          "<script setup>\nconst status = 'loading'\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>\n</template>",
         valid:
-          "<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'error'\">Failed</p>\n</template>",
+          "<script setup>\nconst status = 'loading'\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'error'\">Failed</p>\n</template>",
       },
     ],
     category: "template",
@@ -60,12 +83,23 @@ export const noDupeVElseIf = createRule({
     requires: { template: true, vue: true },
   },
   create(ctx) {
+    const scoped = new WeakSet<TemplateElementNode>();
+    let bindings: ReadonlySet<string> | undefined;
     return {
       template: {
         element(node, parent) {
           if (!parent) return;
+          if (
+            hasTemplateScope(node) ||
+            (parent.type === TemplateNodeType.ELEMENT && scoped.has(parent))
+          ) {
+            scoped.add(node);
+            return;
+          }
           const elseIf = findTemplateDirective(node, "else-if");
-          const test = elseIf && stableTest(ctx, elseIf);
+          if (!elseIf) return;
+          bindings ??= primitiveSetupBindings(ctx);
+          const test = stableTest(ctx, elseIf, bindings);
           if (!test) return;
 
           const conditions: Condition[] = (
@@ -83,31 +117,28 @@ export const noDupeVElseIf = createRule({
             const sibling = siblings[index]!;
             if (sibling.type === TemplateNodeType.COMMENT) continue;
             if (sibling.type === TemplateNodeType.TEXT && !sibling.content.trim()) continue;
-            if (sibling.type !== TemplateNodeType.ELEMENT) return;
+            if (sibling.type !== TemplateNodeType.ELEMENT || hasTemplateScope(sibling)) return;
             const vIf = findTemplateDirective(sibling, "if");
             const directive = vIf ?? findTemplateDirective(sibling, "else-if");
             if (!directive) return;
 
-            const earlier = directive.exp && ctx.helpers.parseTemplateExpression(directive.exp);
-            // A write between the two evaluations can change what the later condition reads.
-            if (earlier && writes(earlier)) return;
-            if (earlier && isStable(earlier)) {
-              const branch: Branch = { directive, test: earlier };
-              const earlierOperands = split(earlier, "||").map((operand) => split(operand, "&&"));
-              for (const condition of conditions) {
-                condition.remaining = condition.remaining.filter((operand) => {
-                  const covered = earlierOperands.some((earlierAnd) =>
-                    earlierAnd.every((part) =>
-                      operand.andOperands.some((candidate) => isEqual(part, candidate)),
-                    ),
-                  );
-                  if (covered) condition.coveredBy.add(branch);
-                  return !covered;
-                });
-                if (condition.remaining.length === 0) {
-                  report(ctx, node, elseIf, test, condition);
-                  return;
-                }
+            const earlier = stableTest(ctx, directive, bindings);
+            if (!earlier) return;
+            const branch: Branch = { directive, test: earlier };
+            const earlierOperands = split(earlier, "||").map((operand) => split(operand, "&&"));
+            for (const condition of conditions) {
+              condition.remaining = condition.remaining.filter((operand) => {
+                const covered = earlierOperands.some((earlierAnd) =>
+                  earlierAnd.every((part) =>
+                    operand.andOperands.some((candidate) => isEqual(part, candidate, true)),
+                  ),
+                );
+                if (covered) condition.coveredBy.add(branch);
+                return !covered;
+              });
+              if (condition.remaining.length === 0) {
+                report(ctx, node, elseIf, test, condition);
+                return;
               }
             }
             if (vIf) return;
@@ -125,7 +156,8 @@ function report(
   test: AnyNode,
   condition: Condition,
 ) {
-  const source = elseIf.exp!.content.trim();
+  const { content, loc } = elseIf.exp!;
+  const source = content.trim();
   const branches = [...condition.coveredBy].sort(
     (a, b) => a.directive.loc.start.offset - b.directive.loc.start.offset,
   );
@@ -134,8 +166,12 @@ function report(
     described.length === 1
       ? `the earlier ${described[0]}`
       : `one of the earlier ${described.slice(0, -1).join(", ")} or ${described.at(-1)}`;
-  const repeats = branches.length === 1 && isEqual(branches[0]!.test, test);
-  const operand = ctx.file.text.slice(condition.node.start, condition.node.end);
+  const repeats = branches.length === 1 && isEqual(branches[0]!.test, test, true);
+  const contentStart = loc.start.offset + Math.max(loc.source.indexOf(content), 0);
+  const operand = content.slice(
+    condition.node.start - contentStart,
+    condition.node.end - contentStart,
+  );
   const reason = repeats
     ? `It repeats the condition of the earlier ${described[0]} in the same chain, so Vue only reaches this branch after that condition was falsy.`
     : condition.node === test
@@ -162,9 +198,41 @@ function describeBranch(branch: Branch): string {
   return `${name}="${branch.directive.exp!.content.trim()}" on line ${branch.directive.loc.start.line}`;
 }
 
-function stableTest(ctx: RuleContext, directive: TemplateDirectiveNode): AnyNode {
+function hasTemplateScope(node: TemplateElementNode): boolean {
+  return Boolean(findTemplateDirective(node, "for") || findTemplateDirective(node, "slot"));
+}
+
+function primitiveSetupBindings(ctx: RuleContext): ReadonlySet<string> {
+  const bindings = new Set<string>();
+  const sfc = ctx.file.sfc;
+  const setup = (sfc?.descriptor as SFCDescriptor | undefined)?.scriptSetup;
+  if (!setup || setup.src) return bindings;
+  const script = sfc?.getScriptAst("merged") as AnyNode;
+  for (const statement of script?.body ?? []) {
+    if (
+      statement.start < setup.loc.start.offset ||
+      statement.end > setup.loc.end.offset ||
+      statement.type !== "VariableDeclaration" ||
+      statement.kind !== "const" ||
+      statement.declare
+    )
+      continue;
+    for (const declaration of statement.declarations) {
+      if (declaration.id.type === "Identifier" && isPrimitiveLiteral(unwrap(declaration.init))) {
+        bindings.add(declaration.id.name);
+      }
+    }
+  }
+  return bindings;
+}
+
+function stableTest(
+  ctx: RuleContext,
+  directive: TemplateDirectiveNode,
+  bindings: ReadonlySet<string>,
+): AnyNode {
   const test = directive.exp && ctx.helpers.parseTemplateExpression(directive.exp);
-  return test && isStable(test) ? test : null;
+  return test && isStable(test, bindings) ? test : null;
 }
 
 function unwrap(node: AnyNode): AnyNode {
@@ -184,78 +252,75 @@ function split(node: AnyNode, operator: "&&" | "||"): AnyNode[] {
     : [node];
 }
 
-/** True when the expression reads the same value each time it is evaluated within one render. */
-function isStable(node: AnyNode): boolean {
+function isPrimitiveLiteral(node: AnyNode): boolean {
+  return (
+    node?.type === "Literal" &&
+    !node.regex &&
+    (node.bigint !== undefined ||
+      node.value === null ||
+      typeof node.value === "string" ||
+      typeof node.value === "number" ||
+      typeof node.value === "boolean")
+  );
+}
+
+function isStable(node: AnyNode, bindings: ReadonlySet<string>): boolean {
   node = unwrap(node);
   switch (node?.type) {
     case "Identifier":
+      return bindings.has(node.name);
     case "Literal":
-    case "ThisExpression":
-      return true;
-    case "MemberExpression":
-      return isStable(node.object) && (!node.computed || isStable(node.property));
+      return isPrimitiveLiteral(node);
     case "UnaryExpression":
-      return STABLE_UNARY.has(node.operator) && isStable(node.argument);
+      return PRIMITIVE_UNARY.has(node.operator) && isStable(node.argument, bindings);
     case "BinaryExpression":
+      return (
+        PRIMITIVE_BINARY.has(node.operator) &&
+        isStable(node.left, bindings) &&
+        isStable(node.right, bindings)
+      );
     case "LogicalExpression":
-      return isStable(node.left) && isStable(node.right);
+      return isStable(node.left, bindings) && isStable(node.right, bindings);
     case "ConditionalExpression":
-      return isStable(node.test) && isStable(node.consequent) && isStable(node.alternate);
+      return (
+        isStable(node.test, bindings) &&
+        isStable(node.consequent, bindings) &&
+        isStable(node.alternate, bindings)
+      );
     case "TemplateLiteral":
-      return node.expressions.every(isStable);
+      return node.expressions.every((expression: AnyNode) => isStable(expression, bindings));
     default:
       return false;
   }
 }
 
-function writes(node: AnyNode): boolean {
-  if (!node || typeof node !== "object") return false;
-  if (Array.isArray(node)) return node.some(writes);
-  if (node.type === "AssignmentExpression" || node.type === "UpdateExpression") return true;
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "parent" || key.startsWith("_")) continue;
-    if (value && typeof value === "object" && writes(value)) return true;
-  }
-  return false;
-}
-
-/** Structural equality on stable expressions; `&&` and `||` are commutative in a boolean test. */
-function isEqual(left: AnyNode, right: AnyNode): boolean {
+function isEqual(left: AnyNode, right: AnyNode, truthinessOnly = false): boolean {
   const a = unwrap(left);
   const b = unwrap(right);
   if (!a || !b || a.type !== b.type) return false;
   switch (a.type) {
     case "Identifier":
       return a.name === b.name;
-    case "ThisExpression":
-      return true;
     case "Literal":
-      if (a.regex || b.regex)
-        return a.regex?.pattern === b.regex?.pattern && a.regex?.flags === b.regex?.flags;
       if (a.bigint !== undefined || b.bigint !== undefined) return a.bigint === b.bigint;
       return Object.is(a.value, b.value);
-    case "MemberExpression":
-      return (
-        a.computed === b.computed &&
-        Boolean(a.optional) === Boolean(b.optional) &&
-        isEqual(a.object, b.object) &&
-        (a.computed ? isEqual(a.property, b.property) : a.property.name === b.property.name)
-      );
     case "UnaryExpression":
-      return a.operator === b.operator && isEqual(a.argument, b.argument);
+      return a.operator === b.operator && isEqual(a.argument, b.argument, a.operator === "!");
     case "BinaryExpression":
       return a.operator === b.operator && isEqual(a.left, b.left) && isEqual(a.right, b.right);
-    case "LogicalExpression":
+    case "LogicalExpression": {
+      const canSwap = truthinessOnly && (a.operator === "&&" || a.operator === "||");
       return (
         a.operator === b.operator &&
-        ((isEqual(a.left, b.left) && isEqual(a.right, b.right)) ||
-          (a.operator !== "??" && isEqual(a.left, b.right) && isEqual(a.right, b.left)))
+        ((isEqual(a.left, b.left, canSwap) && isEqual(a.right, b.right, truthinessOnly)) ||
+          (canSwap && isEqual(a.left, b.right, true) && isEqual(a.right, b.left, true)))
       );
+    }
     case "ConditionalExpression":
       return (
-        isEqual(a.test, b.test) &&
-        isEqual(a.consequent, b.consequent) &&
-        isEqual(a.alternate, b.alternate)
+        isEqual(a.test, b.test, true) &&
+        isEqual(a.consequent, b.consequent, truthinessOnly) &&
+        isEqual(a.alternate, b.alternate, truthinessOnly)
       );
     case "TemplateLiteral":
       return (
