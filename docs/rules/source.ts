@@ -4,7 +4,10 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { ruleDocumentationMetadata } from "./metadata.js";
 import { ruleNavigationTitles } from "./navigation-titles.js";
-import { workspaceDiagnosticMetadata } from "../../src/core/diagnostic-metadata.js";
+import {
+  resolvedBaselineDiagnosticMetadata,
+  workspaceDiagnosticMetadata,
+} from "../../src/core/diagnostic-metadata.js";
 import { mcpRecommendedRuleIds } from "../../src/rule-packs/mcp/presets.js";
 import { piniaRecommendedRuleIds } from "../../src/rule-packs/pinia/presets.js";
 
@@ -244,6 +247,19 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       examples: [],
       path: "/diagnostics/DOC0032",
       key: "diagnostics/DOC0032.md",
+    },
+    {
+      ...resolvedBaselineDiagnosticMetadata,
+      title: `${resolvedBaselineDiagnosticMetadata.code}: ${resolvedBaselineDiagnosticMetadata.title}`,
+      docsUrl: "https://vite-doctor.onmax.me/cli",
+      pack: "vite-doctor/core",
+      source,
+      sourceUrl: githubSourceUrl(source),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0039",
+      key: "diagnostics/DOC0039.md",
     },
     {
       code: "DOC0022",

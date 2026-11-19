@@ -161,6 +161,13 @@ test("stale baselines have a public diagnostic reference", async () => {
   expect(await diagnosticsCollectionSource.getItem(diagnostic!.key)).toContain("--update-baseline");
 });
 
+test("resolved baseline entries have a public diagnostic reference", async () => {
+  const diagnostic = getDiagnosticDocuments().find((item) => item.code === "DOC0039");
+
+  expect(diagnostic?.ruleId).toBe("doctor/baseline/resolved-entries");
+  expect(await diagnosticsCollectionSource.getItem(diagnostic!.key)).toContain("Changed-file runs");
+});
+
 test("unresolved runtime inventory has a public diagnostic reference", async () => {
   const diagnostic = getDiagnosticDocuments().find((item) => item.code === "DOC0022");
 
