@@ -688,6 +688,26 @@ export const realtime = (): Plugin => ({
     ["config.nitro ??= { handlers: [{ handler: health }] }", ["example"]],
     ["config.nitro &&= { handlers: [{ handler: health }] }", ["health"]],
     ["config.nitro = getNitroOptions(); config.nitro ||= { handlers: [{ handler: health }] }", []],
+    [
+      'config.nitro = {}; config.nitro["handlers"] = []; config.nitro.handlers ??= [{ handler: health }]',
+      [],
+    ],
+    ['config["nitro"] = {}; config.nitro["handlers"] ??= [{ handler: health }]', ["health"]],
+    [
+      "config.nitro = {}; const options = config.nitro; options.handlers = []; config.nitro.handlers ||= [{ handler: health }]",
+      [],
+    ],
+    ["delete config.nitro.handlers; config.nitro.handlers &&= [{ handler: health }]", []],
+    [
+      "if (enabled) config.nitro.handlers = []; config.nitro.handlers ??= [{ handler: health }]",
+      [],
+    ],
+    ["configure(config.nitro); config.nitro.handlers &&= [{ handler: health }]", []],
+    [
+      "const options = config; config.nitro = {}; options.nitro.handlers = []; config.nitro.handlers ||= [{ handler: health }]",
+      [],
+    ],
+    ["configure(config); return { nitro: { handlers: [{ handler: health }] } }", ["health"]],
   ])("uses the Nitro handler list after %s", async (update, expected) => {
     const result = await runRuleFixture({
       rule: declareNitroDependency,

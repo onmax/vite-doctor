@@ -177,16 +177,19 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
         return normalize(text);
     };
     const registered = new Set<HandlerPath>();
+    const returned = new Set<HandlerPath>();
+    const modeledConfigReads = new Set<AnyNode>();
+    let hasUnmodeledConfigUse = false;
     let nitroState: ValueState = "unknown";
     let handlersState: ValueState = "unknown";
-    const register = (handlers: AnyNode[]) => {
+    const register = (handlers: AnyNode[], paths = registered) => {
       for (const handler of handlers) {
         const target = path(objectProperty(handler, "handler"));
-        if (target !== undefined) registered.add(target);
+        if (target !== undefined) paths.add(target);
       }
     };
-    const registerArray = (node: AnyNode) => {
-      if (node?.type === "ArrayExpression") register(node.elements);
+    const registerArray = (node: AnyNode, paths = registered) => {
+      if (node?.type === "ArrayExpression") register(node.elements, paths);
     };
     const replaceHandlers = (node: AnyNode, state = valueState(node)) => {
       handlersState = state;
@@ -220,6 +223,17 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
     };
     const nitro = (node: AnyNode) => isMember(node, "nitro") && config(node.object);
     const handlers = (node: AnyNode) => isMember(node, "handlers") && nitro(node.object);
+    const checkConfigUses = (statement: AnyNode) => {
+      if (!hook || hasUnmodeledConfigUse) return;
+      walk(statement, (node) => {
+        if (isMember(node, "root")) modeledConfigReads.add(node.object);
+        if (node.type !== "Identifier" || modeledConfigReads.has(node)) return;
+        const defs = references.get(node)?.resolved?.defs;
+        if (defs?.some((def) => def.type === "Parameter" && def.name === callback.params[0]))
+          hasUnmodeledConfigUse = true;
+      });
+      modeledConfigReads.clear();
+    };
 
     const evaluate = (node: AnyNode, awaited = false): HandlerPath | undefined => {
       if (node?.type === "AwaitExpression") return evaluate(node.argument, true);
@@ -233,6 +247,7 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
           (isMember(node.callee, "push") || isMember(node.callee, "unshift")) &&
           handlers(node.callee.object)
         ) {
+          modeledConfigReads.add(node.callee.object.object.object);
           register(node.arguments);
         } else {
           const def = binding(node.callee);
@@ -254,7 +269,8 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
         }
       } else if (node?.type === "AssignmentExpression") {
         const replacesNitro = nitro(node.left);
-        if (replacesNitro || handlers(node.left)) {
+        if (!hasUnmodeledConfigUse && (replacesNitro || handlers(node.left))) {
+          modeledConfigReads.add(replacesNitro ? node.left.object : node.left.object.object);
           const taken =
             node.operator === "="
               ? true
@@ -269,26 +285,33 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
     };
     const result = (node: AnyNode) => {
       if (hook === "config")
-        registerArray(objectProperty(objectProperty(node, "nitro"), "handlers"));
-      return evaluate(node);
+        registerArray(objectProperty(objectProperty(node, "nitro"), "handlers"), returned);
+      const value = evaluate(node);
+      checkConfigUses(node);
+      return value;
     };
     const run = (body: AnyNode): HandlerPath | undefined => {
       if (body.type !== "BlockStatement") return result(body);
       for (const statement of body.body as AnyNode[]) {
         if (statement.type === "ReturnStatement") return result(statement.argument);
         if (statement.type === "ExpressionStatement") evaluate(statement.expression);
-        if (statement.type !== "VariableDeclaration") continue;
-        for (const declaration of statement.declarations as AnyNode[]) {
-          const value = evaluate(declaration.init);
-          if (statement.kind === "const" && declaration.id.type === "Identifier")
-            values.set(declaration.id, value ?? {});
+        if (statement.type === "VariableDeclaration") {
+          for (const declaration of statement.declarations as AnyNode[]) {
+            const value = evaluate(declaration.init);
+            if (statement.kind === "const" && declaration.id.type === "Identifier")
+              values.set(declaration.id, value ?? {});
+          }
         }
+        checkConfigUses(statement);
       }
     };
 
     const value = run(callback.body);
     active.delete(callback);
-    for (const target of registered) {
+    if (!hasUnmodeledConfigUse) {
+      for (const target of registered) returned.add(target);
+    }
+    for (const target of returned) {
       const generated = writes.get(target);
       if (!generated) continue;
       const parsed = parseScriptResult("generated.ts", generated);
@@ -320,7 +343,10 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
 }
 
 function isMember(node: AnyNode, name: string): boolean {
-  return node?.type === "MemberExpression" && !node.computed && node.property?.name === name;
+  return (
+    node?.type === "MemberExpression" &&
+    (node.computed ? node.property?.value === name : node.property?.name === name)
+  );
 }
 
 function esmExportTarget(target: unknown): string | null | undefined {
