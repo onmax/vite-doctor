@@ -28,6 +28,7 @@ import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
 import { defaultConfigDiagnosticMetadata } from "../diagnostic-metadata.js";
 import {
   applyDiagnosticPolicy,
+  canMatchBroadConfigSuppression,
   InlineSuppressionIndex,
   settleDiagnosticIdentity,
   matchesSuppressionFile,
@@ -93,15 +94,17 @@ export async function applyPolicyFilters(session: ScanSession): Promise<void> {
 }
 
 function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): void {
-  if (session.options.severity === "error") return;
+  const ruleId = "doctor/baseline/stale-fingerprint-scheme";
+  const severity = configuredDiagnosticSeverity(session, ruleId, baseline.file, "warn");
+  if (!severity || !meetsMinimumSeverity(session, severity)) return;
   const path = relative(session.root, baseline.file) || baseline.file;
   const writer =
     baseline.fingerprintScheme === undefined
       ? "does not record the fingerprint scheme it was written with"
       : `was written with fingerprint scheme ${baseline.fingerprintScheme}`;
   const warning = normalizeDiagnosticFromRuleCode({
-    ruleId: "doctor/baseline/stale-fingerprint-scheme",
-    severity: "warn",
+    ruleId,
+    severity,
     category: "baseline",
     file: baseline.file,
     why: `Baseline "${path}"${baseline.doctorVersion ? ` (Doctor ${baseline.doctorVersion})` : ""} ${writer}, but this Doctor uses fingerprint scheme ${FINGERPRINT_SCHEME}. Recorded findings whose fingerprints changed are reported as new by --new-only.`,
@@ -121,8 +124,11 @@ function reportResolvedBaselineEntries(
 ): void {
   const { options, root } = session;
   if (session.scopedReport || options.rules || options.analyses) return;
-  // A threshold above info drops findings before the baseline sees them, and hides this report.
-  if (options.severity && severityRank(options.severity) > severityRank("info")) return;
+  // A threshold above info drops findings before the baseline sees them, so resolution is unproven.
+  if (!meetsMinimumSeverity(session, "info")) return;
+  const ruleId = "doctor/baseline/resolved-entries";
+  const severity = configuredDiagnosticSeverity(session, ruleId, baseline.file, "info");
+  if (!severity) return;
   const reported = new Set(
     [...session.diagnostics, ...session.suppressedDiagnostics].map(
       (diagnostic) => diagnostic.fingerprint,
@@ -154,8 +160,8 @@ function reportResolvedBaselineEntries(
   const path = relative(root, baseline.file) || baseline.file;
   const findings = resolved.length === 1 ? "1 finding" : `${resolved.length} findings`;
   const diagnostic = normalizeDiagnosticFromRuleCode({
-    ruleId: "doctor/baseline/resolved-entries",
-    severity: "info",
+    ruleId,
+    severity,
     category: "baseline",
     file: baseline.file,
     why: `Baseline "${path}" records ${findings} that this full Doctor Run no longer reports. While the entries stay, --new-only hides the same findings if they come back.`,
@@ -263,12 +269,24 @@ function reportUnusedInlineSuppressions(session: ScanSession): void {
           unknown.push({ id });
       }
       if (!unused.length && !unknown.length) continue;
-      const fix = inlineSuppressionFix(
-        handle.text,
-        directive,
-        [...unused, ...unknown.map((item) => item.id)],
-        sameLineCount > (directive.nextLine ? 0 : 1),
-      );
+      const unusedRuleId = "doctor/inline/unused-suppression";
+      const unknownRuleId = "doctor/inline/unknown-suppression-rule";
+      const removable = (ruleId: string) => {
+        const severity = configuredDiagnosticSeverity(session, ruleId, file, "info");
+        return severity !== undefined && meetsMinimumSeverity(session, severity);
+      };
+      const removed = [
+        ...(unused.length && removable(unusedRuleId) ? unused : []),
+        ...(unknown.length && removable(unknownRuleId) ? unknown.map(({ id }) => id) : []),
+      ];
+      const fix = removed.length
+        ? inlineSuppressionFix(
+            handle.text,
+            directive,
+            removed,
+            sameLineCount > (directive.nextLine ? 0 : 1),
+          )
+        : undefined;
       const text = handle.text.slice(directive.start, directive.list.end);
       const range = {
         start: directive.start,
@@ -277,7 +295,7 @@ function reportUnusedInlineSuppressions(session: ScanSession): void {
       };
       if (unused.length)
         pushDiagnostic(session, {
-          ruleId: "doctor/inline/unused-suppression",
+          ruleId: unusedRuleId,
           severity: "info",
           category: "suppression",
           file,
@@ -290,7 +308,7 @@ function reportUnusedInlineSuppressions(session: ScanSession): void {
         });
       if (unknown.length)
         pushDiagnostic(session, {
-          ruleId: "doctor/inline/unknown-suppression-rule",
+          ruleId: unknownRuleId,
           severity: "info",
           category: "suppression",
           file,
@@ -409,8 +427,14 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
       (typeof effectiveExtends === "string"
         ? selectsActivated(effectiveExtends)
         : effectiveExtends.some(selectsActivated))) &&
-    !Object.values(session.config.rules ?? {}).includes("off") &&
-    !session.ruleOverrides.length;
+    ![...session.ruleConfigs].some(
+      ([ruleId, config]) => !config.enabled && canMatchBroadConfigSuppression(ruleId),
+    ) &&
+    !session.ruleOverrides.some(
+      (override) =>
+        override.selects.size > 0 ||
+        [...override.rules.keys()].some(canMatchBroadConfigSuppression),
+    );
   const workspaceRoots = new Set(workspacePackages.map((item) => item.root));
   const coversWorkspace = (scope: ReadonlySet<string> | undefined): boolean =>
     !scope || [...workspaceRoots].every((root) => scope.has(root));
@@ -762,12 +786,15 @@ function diagnosticEndLine(range: NonNullable<Diagnostic["range"]>, source?: str
 }
 
 function applySeverityFilter(session: ScanSession): void {
-  const minimum = session.options.severity;
-  if (!minimum) return;
-  const minRank = severityRank(minimum);
-  session.diagnostics = session.diagnostics.filter(
-    (diagnostic) => severityRank(diagnostic.severity) >= minRank,
+  if (!session.options.severity) return;
+  session.diagnostics = session.diagnostics.filter((diagnostic) =>
+    meetsMinimumSeverity(session, diagnostic.severity),
   );
+}
+
+function meetsMinimumSeverity(session: ScanSession, severity: DoctorSeverity): boolean {
+  const minimum = session.options.severity;
+  return !minimum || severityRank(severity) >= severityRank(minimum);
 }
 
 function severityRank(severity: DoctorSeverity): number {
@@ -998,6 +1025,16 @@ function nearestAnchor(source: string, offset: number): string {
   return last ? (last[1] ?? last[2] ?? last[3] ?? last[4] ?? "file") : "file";
 }
 
+function configuredDiagnosticSeverity(
+  session: ScanSession,
+  ruleId: string,
+  file: string,
+  fallback: DoctorSeverity,
+): DoctorSeverity | undefined {
+  const config = fileRuleConfig(session, ruleId, file);
+  return config.enabled ? (config.severity ?? fallback) : undefined;
+}
+
 export function pushDiagnostic(
   session: ScanSession,
   diagnostic: Partial<Diagnostic> & {
@@ -1010,7 +1047,14 @@ export function pushDiagnostic(
     file: string;
   },
 ): void {
-  const normalized = normalizeDiagnosticFromRuleCode(diagnostic);
+  const severity = configuredDiagnosticSeverity(
+    session,
+    diagnostic.ruleId,
+    diagnostic.file,
+    diagnostic.severity,
+  );
+  if (!severity) return;
+  const normalized = normalizeDiagnosticFromRuleCode({ ...diagnostic, severity });
   session.diagnostics.push({
     ...normalized,
     fingerprint:

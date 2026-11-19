@@ -233,6 +233,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/style/prefer-type-props": "Type-based props",
   "vue/template/html-button-has-type": "Button type",
   "vue/template/no-v-if-with-v-for": "v-if with v-for",
+  "vue/template/no-dupe-v-else-if": "Duplicate v-else-if",
   "vue/template/no-useless-template-attributes": "Template attributes",
   "vue/template/no-index-key-on-stateful-list": "Stateful list keys",
   "vue/template/require-toggle-inside-transition": "Transition toggle",

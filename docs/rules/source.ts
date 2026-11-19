@@ -978,6 +978,13 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     );
   }
 
+  if (rule.id === "vue/template/no-dupe-v-else-if") {
+    add(
+      "eslint-plugin-vue no-dupe-v-else-if",
+      "https://eslint.vuejs.org/rules/no-dupe-v-else-if.html",
+    );
+  }
+
   if (rule.id === "vue/template/require-v-for-key") {
     add(
       "Vue: maintaining state with key",

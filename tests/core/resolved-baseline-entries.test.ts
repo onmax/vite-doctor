@@ -244,6 +244,22 @@ test("a config suppression hides DOC0039", async () => {
   ]);
 });
 
+test("DOC0039 uses the baseline path's config without relaxing coverage", async () => {
+  const entry = { ruleId, file: "src/removed.ts", fingerprint: "gone" };
+  const diagnosticId = "doctor/baseline/resolved-entries";
+  const config: DoctorConfig = {
+    rules: { [diagnosticId]: "off" },
+    overrides: [{ files: ["baseline.json"], rules: { [diagnosticId]: "error" } }],
+  };
+  expect((await runAgainst([entry], { config: { rules: config.rules } })).diagnostics).toEqual([]);
+  expect((await runAgainst([entry], { config })).diagnostics).toMatchObject([
+    { code: "DOC0039", severity: "error" },
+  ]);
+  expect((await runAgainst([entry], { config, run: { severity: "error" } })).diagnostics).toEqual(
+    [],
+  );
+});
+
 test("a baseline from another fingerprint scheme reports DOC0032 instead", async () => {
   const result = await runProjectFixture({
     framework: "vite",

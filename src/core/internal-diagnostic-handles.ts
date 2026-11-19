@@ -55,8 +55,12 @@ export const doctorInternalDiagnostics = defineDiagnostics({
       fix: 'Use "blocker", "error", "warn", "info", or "off".',
     },
     DOC0020: {
-      why: (params: { ruleId: string }) => `Invalid config for rule "${params.ruleId}".`,
-      fix: 'Use "off", a severity string, or a [severity, options] tuple.',
+      why: (params: { ruleId: string; reason?: string }) =>
+        `Invalid config for rule "${params.ruleId}"${params.reason ? `: ${params.reason}` : "."}`,
+      fix: (params: { ruleId: string; doctorRuleIds?: string }) =>
+        params.doctorRuleIds
+          ? `Remove "${params.ruleId}" from the config. Doctor Rule IDs that config can set are ${params.doctorRuleIds}, and they take "off" or a severity string.`
+          : 'Use "off", a severity string, or a [severity, options] tuple.',
     },
     DOC0021: {
       why: (params: { ruleId: string; code?: string }) =>

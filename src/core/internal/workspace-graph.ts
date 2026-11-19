@@ -10,7 +10,7 @@ import type {
   VirtualRootNode,
   WorkspaceGraph,
 } from "../primitives.js";
-import { fileRuleConfig, type ScanSession } from "./scan-session.js";
+import type { ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { pushDiagnostic } from "./diagnostics.js";
 import { walkAstFacts } from "./facts.js";
@@ -1009,7 +1009,5 @@ function reportWorkspaceDiagnostic(
     .map((item) => item.trim())
     .filter(Boolean);
   if (wanted?.length && !wanted.some((pattern) => nativeMatch(diagnostic.ruleId, pattern))) return;
-  const config = fileRuleConfig(session, diagnostic.ruleId, diagnostic.file);
-  if (config.enabled === false) return;
-  pushDiagnostic(session, { ...diagnostic, severity: config.severity ?? diagnostic.severity });
+  pushDiagnostic(session, diagnostic);
 }

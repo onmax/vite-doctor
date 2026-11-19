@@ -41,6 +41,7 @@ import {
 import { nativeMatch, sha256 } from "./utils.js";
 import { owningWorkspacePackage, packageFrameworks } from "./workspace-packages.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
+import { reportedDoctorRuleIds } from "../diagnostic-registry.js";
 import {
   activatingWorkspacePackages,
   evaluateRuleApplicability,
@@ -142,9 +143,12 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
-  const ruleConfigs = resolveRuleConfigs(config.rules);
+  const registeredRules = new Map(
+    registry.rules.map((rule) => [rule.meta.id, rule.meta.execution]),
+  );
+  const ruleConfigs = resolveRuleConfigs(registeredRules, config.rules);
   const activations = resolveRulePackActivations(registry.packs, project);
-  const ruleOverrides = resolveRuleOverrides(config, registry);
+  const ruleOverrides = resolveRuleOverrides(config, registry, registeredRules);
   const selection = selectRules(
     registry,
     ruleConfigs,
@@ -655,10 +659,16 @@ function rulePackKey(pack: RulePack): string {
 }
 
 function resolveRuleConfigs(
+  registeredRules: ReadonlyMap<string, DoctorRule["meta"]["execution"]>,
   rules: Record<string, DoctorRuleConfig> = {},
 ): Map<string, ResolvedRuleConfig> {
   const resolved = new Map<string, ResolvedRuleConfig>();
   for (const [ruleId, value] of Object.entries(rules)) {
+    if (
+      ruleId.startsWith("doctor/") &&
+      (reportedDoctorRuleIds.has(ruleId) || !registeredRules.has(ruleId))
+    )
+      assertConfigurableDoctorRule(ruleId, value);
     if (value === "off") {
       resolved.set(ruleId, { enabled: false });
       continue;
@@ -679,12 +689,30 @@ function resolveRuleConfigs(
   return resolved;
 }
 
+// Doctor reports its own Diagnostics outside any Rule, so only their severity is configurable;
+// config naming any other Doctor Rule ID would otherwise be silently ignored.
+function assertConfigurableDoctorRule(ruleId: string, value: DoctorRuleConfig): void {
+  const doctorRuleIds = [...reportedDoctorRuleIds].join(", ");
+  if (!reportedDoctorRuleIds.has(ruleId))
+    throw doctorInternalDiagnostics.DOC0020({
+      ruleId,
+      reason: "it is not a Diagnostic that a Doctor Run reports, so config cannot change it",
+      doctorRuleIds,
+    });
+  if (Array.isArray(value))
+    throw doctorInternalDiagnostics.DOC0020({
+      ruleId,
+      reason: "Doctor Rule IDs take no options",
+      doctorRuleIds,
+    });
+}
+
 function resolveRuleOverrides(
   config: DoctorConfig,
   registry: RuleRegistry,
+  registeredRules: ReadonlyMap<string, DoctorRule["meta"]["execution"]>,
 ): ResolvedRuleOverride[] {
   if (!config.overrides?.length) return [];
-  const executionKinds = new Map(registry.rules.map((rule) => [rule.meta.id, rule.meta.execution]));
   return (config.overrides ?? []).map((override, index) => {
     const invalid = (reason: string) => doctorInternalDiagnostics.DOC0035({ index, reason });
     if (typeof override !== "object" || override === null || Array.isArray(override))
@@ -711,9 +739,9 @@ function resolveRuleOverrides(
       (typeof rules !== "object" || rules === null || Array.isArray(rules))
     )
       throw invalid("`rules` must be an object keyed by Rule ID.");
-    const resolved = resolveRuleConfigs(rules);
+    const resolved = resolveRuleConfigs(registeredRules, rules);
     for (const [ruleId, ruleConfig] of resolved) {
-      const execution = executionKinds.get(ruleId);
+      const execution = registeredRules.get(ruleId);
       if (ruleConfig.options !== undefined && execution && execution !== "file")
         throw invalid(
           `set options for ${execution} Rule "${ruleId}" in top-level \`rules\`, not in an override.`,

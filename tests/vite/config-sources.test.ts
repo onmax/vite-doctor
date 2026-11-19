@@ -463,6 +463,21 @@ test("DOC0038 does not suggest deleting an explicitly selected config", async ()
   );
 });
 
+test("DOC0038 takes its severity from inherited config, not the default JSON file", async () => {
+  const settings = { rules: { "doctor/config/default-config-file": "error" } };
+  const root = fixture({
+    "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
+    ".nuxt/doctor.manifest.json": JSON.stringify({ doctorConfig: settings }),
+    "doctor.config.json": "{}",
+  });
+  const { report } = await run(root);
+  expect(report.diagnostics).toContainEqual(
+    expect.objectContaining({ code: "DOC0038", severity: "error" }),
+  );
+  writeFileSync(join(root, "doctor.config.json"), JSON.stringify(settings));
+  expect(codes((await run(root)).report)).not.toContain("DOC0038");
+});
+
 test("DOC0038 does not suggest restoring an inherited exclusion", async () => {
   const root = fixture({
     "package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0" } }),
