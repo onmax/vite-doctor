@@ -10,6 +10,14 @@ import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/no-dupe-v-else-if";
 
+const VUE_UNPREFIXED_IDENTIFIERS = new Set(
+  (
+    "Infinity,undefined,NaN,isFinite,isNaN,parseFloat,parseInt,decodeURI,decodeURIComponent," +
+    "encodeURI,encodeURIComponent,Math,Number,Date,Array,Object,Boolean,String,RegExp,Map,Set," +
+    "JSON,Intl,BigInt,console,Error,Symbol,require"
+  ).split(","),
+);
+
 const PRIMITIVE_UNARY = new Set(["!", "-", "+", "~", "typeof", "void"]);
 const PRIMITIVE_BINARY = new Set([
   "===",
@@ -34,6 +42,7 @@ const PRIMITIVE_BINARY = new Set([
   ">>>",
 ]);
 const TRANSPARENT = new Set([
+  "ParenthesizedExpression",
   "ChainExpression",
   "TSAsExpression",
   "TSSatisfiesExpression",
@@ -218,7 +227,11 @@ function primitiveSetupBindings(ctx: RuleContext): ReadonlySet<string> {
     )
       continue;
     for (const declaration of statement.declarations) {
-      if (declaration.id.type === "Identifier" && isPrimitiveLiteral(unwrap(declaration.init))) {
+      if (
+        declaration.id.type === "Identifier" &&
+        !VUE_UNPREFIXED_IDENTIFIERS.has(declaration.id.name) &&
+        isPrimitiveLiteral(unwrap(declaration.init))
+      ) {
         bindings.add(declaration.id.name);
       }
     }
