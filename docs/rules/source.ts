@@ -939,6 +939,13 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     );
   }
 
+  if (rule.id === "vue/template/no-useless-template-attributes") {
+    add(
+      "eslint-plugin-vue no-useless-template-attributes",
+      "https://eslint.vuejs.org/rules/no-useless-template-attributes.html",
+    );
+  }
+
   if (rule.id === "vue/component/max-props") {
     add(
       "vuejs-ai vue-best-practices: component boundaries",
@@ -957,6 +964,13 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add(
       "eslint-plugin-vue require-v-for-key",
       "https://eslint.vuejs.org/rules/require-v-for-key.html",
+    );
+  }
+
+  if (rule.id === "vue/template/require-toggle-inside-transition") {
+    add(
+      "eslint-plugin-vue require-toggle-inside-transition",
+      "https://eslint.vuejs.org/rules/require-toggle-inside-transition.html",
     );
   }
 
