@@ -2697,6 +2697,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/template/no-useless-template-attributes": {
+    description:
+      "Flags attributes and directives Vue does not apply on a `<template>` with `v-if`, `v-else-if`, `v-else`, `v-for` or `v-slot`.",
+    why: "A structural `<template>` renders its children, not an element that can receive an `id`, `class`, listener, `ref` or native `slot` attribute. `key` and `v-memo` still work on a non-slot `<template v-for>`. `v-once` still works on non-slot `v-if` and `v-for` templates unless they are `v-else-if` or `v-else` branches. The rule also skips `v-cloak` and legacy Vue 2 `slot-scope` and `scope` attributes.",
+    recommendedReplacement:
+      "Apply the attribute or directive to an intended rendered target that supports it. Keep `v-show` separate from branch selection: hiding an element should not unmount it or select another branch.",
+    examples: [
+      {
+        title: "Put the id on a rendered element",
+        language: "vue",
+        invalid:
+          '<template>\n  <template v-if="open" id="panel">\n    <section>{{ details }}</section>\n  </template>\n</template>',
+        valid:
+          '<template>\n  <template v-if="open">\n    <section id="panel">{{ details }}</section>\n  </template>\n</template>',
+      },
+    ],
+  },
   "vue/template/prefer-use-template-ref": {
     description:
       "Finds Vue template code that should use the supported use template ref pattern instead.",

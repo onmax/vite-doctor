@@ -923,6 +923,13 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     );
   }
 
+  if (rule.id === "vue/template/no-useless-template-attributes") {
+    add(
+      "eslint-plugin-vue no-useless-template-attributes",
+      "https://eslint.vuejs.org/rules/no-useless-template-attributes.html",
+    );
+  }
+
   if (rule.id === "vue/component/max-props") {
     add(
       "vuejs-ai vue-best-practices: component boundaries",
