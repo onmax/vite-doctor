@@ -5,6 +5,7 @@ import type {
 } from "../../../../core/index.js";
 import { findTemplateDirective, TemplateNodeType } from "../../../../core/rule-authoring.js";
 import { loadTypeScript, loadVueCompilerSfc } from "../../../../core/internal/lazy-parsers.js";
+import { scriptScope } from "../../../../core/internal/script-scope.js";
 import type { SFCDescriptor } from "@vue/compiler-sfc";
 import { createRule, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -318,9 +319,26 @@ function heuristicSetupReads(
   setupStatements: AnyNode[],
   readable: (name: string) => boolean,
 ): HeuristicReads {
-  const bindings = compiledBindings(ctx, descriptor);
-  if (!bindings) return NO_HEURISTIC_READS;
+  const declarators = constDeclarators(setupStatements);
+  const propsCall = [
+    ...declarators.map((declaration) => declaration.init),
+    ...setupStatements
+      .filter((statement) => statement.type === "ExpressionStatement")
+      .map((statement) => statement.expression),
+  ]
+    .map(definePropsCall)
+    .find(Boolean);
+  const compiled = compileSetup(ctx, descriptor, propsCall);
+  if (!compiled) return NO_HEURISTIC_READS;
+  const { bindings, propKeys } = compiled;
 
+  const setup = descriptor.scriptSetup!;
+  const setupScope = descriptor.script
+    ? scriptScope(ctx, setup.content, /^(jsx|tsx)$/.test(setup.lang ?? "") ? "tsx" : "ts")
+    : null;
+  const setupVariables = setupScope?.scopeManager.scopes.find(
+    (scope) => scope.type === "module",
+  )?.set;
   const vueImports = new Map<string, string>();
   for (const statement of statements) {
     if (
@@ -331,71 +349,132 @@ function heuristicSetupReads(
       continue;
     for (const specifier of statement.specifiers) {
       if (specifier.type === "ImportSpecifier" && specifier.importKind !== "type") {
-        vueImports.set(specifier.local.name, specifier.imported.name ?? specifier.imported.value);
+        const local = specifier.local.name;
+        if (statement.start < setup.loc.start.offset || statement.end > setup.loc.end.offset) {
+          if (!setupVariables || setupVariables.get(local)?.isValueVariable) continue;
+        }
+        vueImports.set(local, specifier.imported.name ?? specifier.imported.value);
       }
     }
   }
 
   const names = new Set<string>();
   const propsObjects = new Set<string>();
-  const declarators = constDeclarators(setupStatements);
   for (const declaration of declarators) {
+    const init = unwrap(declaration.init);
+    const props = definePropsCall(init);
+    if (props && declaration.id.type === "ObjectPattern") {
+      for (const property of declaration.id.properties) {
+        if (property.type !== "Property") continue;
+        const key = staticKey(property);
+        const local =
+          property.value.type === "AssignmentPattern" ? property.value.left : property.value;
+        if (
+          key !== undefined &&
+          propKeys.has(key) &&
+          local.type === "Identifier" &&
+          readable(local.name) &&
+          ["props", "props-aliased", "setup-const"].includes(bindings[local.name] ?? "")
+        )
+          names.add(local.name);
+      }
+    }
     if (declaration.id.type !== "Identifier" || !readable(declaration.id.name)) continue;
     const name = declaration.id.name;
-    const init = unwrap(declaration.init);
     if (bindings[name] === "setup-ref" && isRepeatableRef(init, vueImports)) names.add(name);
     // Vue reports `defineProps()` as setup-reactive-const and `withDefaults()` as setup-const.
-    if (
-      (bindings[name] === "setup-reactive-const" || bindings[name] === "setup-const") &&
-      isPropsMacro(init)
-    ) {
+    if ((bindings[name] === "setup-reactive-const" || bindings[name] === "setup-const") && props) {
       propsObjects.add(name);
     }
   }
 
-  const propKeys = new Set<string>();
-  const declaresProps =
-    declarators.some((declaration) => isPropsMacro(unwrap(declaration.init))) ||
-    setupStatements.some(
-      (statement) =>
-        statement.type === "ExpressionStatement" && isPropsMacro(unwrap(statement.expression)),
-    );
-  if (declaresProps) {
-    for (const [name, type] of Object.entries(bindings)) {
-      if (type !== "props" && type !== "props-aliased") continue;
-      if (type === "props") propKeys.add(name);
-      if (readable(name)) names.add(name);
-    }
+  for (const key of propKeys) {
+    if (bindings[key] === "props" && readable(key)) names.add(key);
   }
-  return { names, propsObjects: declaresProps ? propsObjects : new Set(), propKeys };
+  return { names, propsObjects, propKeys };
 }
 
-function compiledBindings(
+function compileSetup(
   ctx: RuleContext,
   descriptor: SFCDescriptor,
-): Record<string, string | undefined> | null {
+  propsCall: AnyNode,
+): { bindings: Record<string, string | undefined>; propKeys: Set<string> } | null {
   const sfc = loadVueCompilerSfc();
   if (!typeScriptRegistered) {
     sfc.registerTS(() => loadTypeScript());
     typeScriptRegistered = true;
   }
-  try {
-    const compiled = sfc.compileScript(descriptor, {
-      id: ctx.file.hash,
-      isProd: false,
-      fs: {
-        fileExists: (file) => ctx.fs.stat(file)?.isFile() ?? false,
-        readFile: (file) => ctx.fs.readText(file),
-        realpath: (file) => ctx.fs.realpath(file) ?? file,
+  const inputs = new Set([descriptor.filename]);
+  const options = {
+    id: ctx.file.hash,
+    isProd: false,
+    fs: {
+      fileExists(file: string) {
+        const exists = ctx.fs.stat(file)?.isFile() ?? false;
+        if (exists) inputs.add(file);
+        return exists;
       },
-    });
-    for (const dep of compiled.deps ?? []) sfc.invalidateTypeCache(dep);
-    return (compiled.bindings as Record<string, string | undefined> | undefined) ?? null;
+      readFile(file: string) {
+        inputs.add(file);
+        return ctx.fs.readText(file);
+      },
+      realpath(file: string) {
+        const path = ctx.fs.realpath(file) ?? file;
+        inputs.add(path);
+        return path;
+      },
+    },
+  };
+  try {
+    const compiled = sfc.compileScript(descriptor, options);
+    for (const dep of compiled.deps ?? []) inputs.add(dep);
+    if (!compiled.bindings) return null;
+    let propKeys = runtimePropKeys(unwrap(propsCall?.arguments[0]));
+    if (propsCall?.typeArguments) {
+      const setup = descriptor.scriptSetup!;
+      const statements = compiled.scriptSetupAst ?? [];
+      for (const statement of statements) {
+        const expressions =
+          statement.type === "VariableDeclaration"
+            ? statement.declarations.map((declaration) => declaration.init)
+            : statement.type === "ExpressionStatement"
+              ? [statement.expression]
+              : [];
+        for (const expression of expressions) {
+          const call = definePropsCall(expression);
+          if (call?.start !== propsCall.start - setup.loc.start.offset) continue;
+          const type = call.typeParameters?.params[0];
+          if (!type) continue;
+          const resolved = sfc.resolveTypeElements(
+            {
+              filename: descriptor.filename,
+              source: setup.content,
+              ast: [...(compiled.scriptAst ?? []), ...statements],
+              options,
+              error(message) {
+                throw new Error(message);
+              },
+              warn() {},
+              helper: (key) => `_${key}`,
+              getString: (node) => setup.content.slice(node.start ?? 0, node.end ?? 0),
+              propsTypeDecl: type,
+              propsRuntimeDefaults: undefined,
+              propsDestructuredBindings: {},
+              emitsTypeDecl: undefined,
+              isCE: false,
+            },
+            type,
+          );
+          propKeys = new Set(Object.keys(resolved.props));
+        }
+      }
+    }
+    return { bindings: compiled.bindings as Record<string, string | undefined>, propKeys };
   } catch {
     return null;
   } finally {
-    // compileScript caches type scopes by file name across runs; drop them so edits are seen.
-    sfc.invalidateTypeCache(descriptor.filename);
+    // Type scopes and resolution configs are cached even when compilation throws.
+    for (const file of inputs) sfc.invalidateTypeCache(file);
   }
 }
 
@@ -456,16 +535,44 @@ function isModelArgument(argument: AnyNode): boolean {
   );
 }
 
-function isPropsMacro(node: AnyNode): boolean {
-  if (node?.type !== "CallExpression" || node.callee.type !== "Identifier") return false;
-  if (node.callee.name === "defineProps") return true;
+function definePropsCall(node: AnyNode): AnyNode {
+  node = unwrap(node);
+  if (node?.type !== "CallExpression" || node.callee.type !== "Identifier") return undefined;
+  if (node.callee.name === "defineProps") return node;
+  if (node.callee.name !== "withDefaults") return undefined;
   const inner = unwrap(node.arguments[0]);
-  return (
-    node.callee.name === "withDefaults" &&
+  if (
     inner?.type === "CallExpression" &&
     inner.callee.type === "Identifier" &&
     inner.callee.name === "defineProps"
-  );
+  )
+    return inner;
+}
+
+function staticKey(property: AnyNode): string | undefined {
+  if (!property.computed && property.key.type === "Identifier") return property.key.name;
+  if (property.key.type === "Literal" && ["string", "number"].includes(typeof property.key.value)) {
+    return String(property.key.value);
+  }
+}
+
+function runtimePropKeys(node: AnyNode): Set<string> {
+  if (node?.type === "ArrayExpression") {
+    return new Set(
+      node.elements.flatMap((item: AnyNode) =>
+        item?.type === "Literal" && typeof item.value === "string" ? [item.value] : [],
+      ),
+    );
+  }
+  if (node?.type === "ObjectExpression") {
+    return new Set(
+      node.properties.flatMap((property: AnyNode) => {
+        const key = property.type === "Property" ? staticKey(property) : undefined;
+        return key === undefined ? [] : [key];
+      }),
+    );
+  }
+  return new Set();
 }
 
 function declaredNames(statement: AnyNode): string[] {
@@ -545,34 +652,49 @@ function all(...levels: Stability[]): Stability {
   return levels.includes(UNKNOWN) ? UNKNOWN : (Math.max(...levels) as Stability);
 }
 
-function stabilityOf(node: AnyNode, reads: Reads): Stability {
+function stabilityOf(node: AnyNode, reads: Reads, requirePrimitive = false): Stability {
   node = unwrap(node);
   switch (node?.type) {
     case "Identifier":
       if (reads.proven.has(node.name)) return PROVEN;
-      return reads.heuristic().names.has(node.name) ? HEURISTIC : UNKNOWN;
+      return !requirePrimitive && reads.heuristic().names.has(node.name) ? HEURISTIC : UNKNOWN;
     case "MemberExpression":
-      return isPropsMember(node, reads) ? HEURISTIC : UNKNOWN;
+      return !requirePrimitive && isPropsMember(node, reads) ? HEURISTIC : UNKNOWN;
     case "Literal":
       return isPrimitiveLiteral(node) ? PROVEN : UNKNOWN;
     case "UnaryExpression":
-      return PRIMITIVE_UNARY.has(node.operator) ? stabilityOf(node.argument, reads) : UNKNOWN;
-    case "BinaryExpression":
-      return PRIMITIVE_BINARY.has(node.operator)
-        ? all(stabilityOf(node.left, reads), stabilityOf(node.right, reads))
+      return PRIMITIVE_UNARY.has(node.operator)
+        ? stabilityOf(node.argument, reads, ["-", "+", "~"].includes(node.operator))
         : UNKNOWN;
+    case "BinaryExpression": {
+      if (!PRIMITIVE_BINARY.has(node.operator)) return UNKNOWN;
+      const coerces =
+        node.operator !== "===" &&
+        node.operator !== "!==" &&
+        !(
+          ["==", "!="].includes(node.operator) &&
+          [node.left, node.right].some((operand) => {
+            const value = unwrap(operand);
+            return value.type === "Literal" && value.value === null && value.bigint === undefined;
+          })
+        );
+      return all(stabilityOf(node.left, reads, coerces), stabilityOf(node.right, reads, coerces));
+    }
     case "LogicalExpression":
-      return all(stabilityOf(node.left, reads), stabilityOf(node.right, reads));
+      return all(
+        stabilityOf(node.left, reads, requirePrimitive),
+        stabilityOf(node.right, reads, requirePrimitive),
+      );
     case "ConditionalExpression":
       return all(
         stabilityOf(node.test, reads),
-        stabilityOf(node.consequent, reads),
-        stabilityOf(node.alternate, reads),
+        stabilityOf(node.consequent, reads, requirePrimitive),
+        stabilityOf(node.alternate, reads, requirePrimitive),
       );
     case "TemplateLiteral":
       return all(
         PROVEN,
-        ...node.expressions.map((expression: AnyNode) => stabilityOf(expression, reads)),
+        ...node.expressions.map((expression: AnyNode) => stabilityOf(expression, reads, true)),
       );
     default:
       return UNKNOWN;
