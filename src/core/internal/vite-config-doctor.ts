@@ -9,9 +9,9 @@ import { analyzeScriptProgram, type ScopeReference } from "./script-scope.js";
 export class ViteConfigDoctorError extends Error {}
 
 /**
- * Returns undefined when the file names neither a `doctor` key nor a `vite-doctor` module, or when
- * a supported export shape has no `doctor` key. Otherwise an indeterminate export or a nonliteral
- * setting is a config error.
+ * Returns undefined when a supported export shape has no `doctor` key, or when the file never
+ * names a `doctor` key or `defineDoctorConfig` and its top-level config has no unresolved computed
+ * key. Otherwise an indeterminate export or a nonliteral setting is a config error.
  */
 export function readViteConfigDoctor(
   file: string,
@@ -24,11 +24,12 @@ export function readViteConfigDoctor(
   });
   const error = errors.find((item) => item.severity === "Error");
   if (error) {
-    if (!malformedConfigMentionsDoctor(file, source)) return undefined;
+    if (!malformedConfigNamesDoctorKey(file, source)) return undefined;
     throw indeterminate(source, error.labels[0]?.start ?? 0, "could not parse the file");
   }
-  // Config that mentions neither cannot supply the key, so its export shape doesn't matter.
-  if (!mentionsDoctor(program)) return undefined;
+  // Config that never names the key can only supply it through a computed key, so other export
+  // shapes it can't read don't matter.
+  const named = namesDoctorKey(program);
   const references = new Map<unknown, ScopeReference>();
   const sourceType = program.sourceType === "module" ? "module" : "script";
   for (const scope of analyzeScriptProgram(program, sourceType).scopes) {
@@ -71,17 +72,24 @@ export function readViteConfigDoctor(
   const config =
     exported &&
     configObject(exported, body, references, (node) => helperArgument(node, viteHelpers));
-  if (!config)
+  if (!config) {
+    if (!named) return undefined;
     throw indeterminate(source, exported?.start ?? 0, "the export is not a supported static form");
+  }
 
   const property = config.properties.findLast((item) => {
     const name = item.type === "Property" ? propertyName(item.key, item.computed) : undefined;
-    if (name === undefined || (name === "__proto__" && item.type === "Property" && !item.computed))
+    if (
+      name === undefined ||
+      (name === "__proto__" && item.type === "Property" && !item.computed)
+    ) {
+      if (!named && !(item.type === "Property" && name === undefined)) return false;
       throw indeterminate(
         source,
         item.start,
         "a spread, computed key, or custom prototype may supply it",
       );
+    }
     return name === "doctor";
   });
   if (!property || property.type !== "Property") return undefined;
@@ -100,38 +108,26 @@ export function readViteConfigDoctor(
 
 const viteConfigModules = new Set(["vite", "vite-plus", "vitest/config"]);
 
-function mentionsDoctor(program: Program): boolean {
+// Importing vite-doctor or the doctor() plugin cannot add a `doctor` key, and neither can a
+// "doctor" string value. A key, a member write, or defineDoctorConfig() can.
+function namesDoctorKey(program: Program): boolean {
   let found = false;
   const checkKey = (key: Node, computed: boolean) => {
     found ||= propertyName(unwrap(key), computed) === "doctor";
-  };
-  const checkModule = (source: Node | null | undefined) => {
-    if (source) found ||= isDoctorModule(propertyName(unwrap(source), true));
   };
   new Visitor({
     Property: (node) => checkKey(node.key, node.computed),
     PropertyDefinition: (node) => checkKey(node.key, node.computed),
     MethodDefinition: (node) => checkKey(node.key, node.computed),
     MemberExpression: (node) => checkKey(node.property, node.computed),
-    ImportDeclaration: (node) => checkModule(node.source),
-    ExportNamedDeclaration: (node) => checkModule(node.source),
-    ExportAllDeclaration: (node) => checkModule(node.source),
-    ImportExpression: (node) => checkModule(node.source),
-    TSExternalModuleReference: (node) => checkModule(node.expression),
-    CallExpression: (node) => {
-      if (node.callee.type === "Identifier" && node.callee.name === "require") {
-        checkModule(node.arguments[0]);
-      }
+    Identifier: (node) => {
+      found ||= node.name === "defineDoctorConfig";
     },
   }).visit(program);
   return found;
 }
 
-function isDoctorModule(name: string | undefined): boolean {
-  return name === "vite-doctor" || name?.startsWith("vite-doctor/") === true;
-}
-
-function malformedConfigMentionsDoctor(file: string, source: string): boolean {
+function malformedConfigNamesDoctorKey(file: string, source: string): boolean {
   const ts = loadTypeScript();
   const program = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const name = (
@@ -157,13 +153,7 @@ function malformedConfigMentionsDoctor(file: string, source: string): boolean {
     if (
       name(key) === "doctor" ||
       (ts.isElementAccessExpression(node) && name(node.argumentExpression, true) === "doctor") ||
-      ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-        isDoctorModule(name(node.moduleSpecifier, true))) ||
-      (ts.isExternalModuleReference(node) && isDoctorModule(name(node.expression, true))) ||
-      (ts.isCallExpression(node) &&
-        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-          (ts.isIdentifier(node.expression) && node.expression.text === "require")) &&
-        isDoctorModule(name(node.arguments[0], true)))
+      (ts.isIdentifier(node) && node.text === "defineDoctorConfig")
     )
       return true;
     return ts.forEachChild(node, visit);
