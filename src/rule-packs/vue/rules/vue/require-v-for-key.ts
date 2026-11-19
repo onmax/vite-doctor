@@ -58,8 +58,9 @@ export const requireVForKey = createRule({
           if (!vFor?.forParseResult || iterationMayHaveKey(node)) return;
 
           const source = ctx.helpers.parseTemplateExpression(vFor.forParseResult.source);
-          const transition = inTransitionGroup(node, parents) && unkeyedTransitionChild(node);
-          if (transition ? emptySource(source) : fixedSource(source)) return;
+          if (emptySource(source)) return;
+          const transition = inTransitionGroup(node, parents) && unkeyedTransitionChild(ctx, node);
+          if (!transition && fixedSource(source)) return;
           const own = transition
             ? ({ reason: "transition", tag: node.tag } as const)
             : ownStatefulReason(ctx, node, false);
@@ -158,7 +159,7 @@ function inTransitionGroup(
  * TransitionGroup flattens fragments, propagating their keys. Slot outlets can supply unknown
  * keys, and text and comments do not trigger the warning.
  */
-function unkeyedTransitionChild(node: TemplateElementNode): boolean {
+function unkeyedTransitionChild(ctx: RuleContext, node: TemplateElementNode): boolean {
   if (node.tagType === 2) return false;
   if (node.tagType !== 3) return true;
   return node.children.some(
@@ -166,7 +167,8 @@ function unkeyedTransitionChild(node: TemplateElementNode): boolean {
       child.type === TemplateNodeType.ELEMENT &&
       !hasConditional(child) &&
       !iterationMayHaveKey(child) &&
-      unkeyedTransitionChild(child),
+      !hasEmptyLoop(ctx, child) &&
+      unkeyedTransitionChild(ctx, child),
   );
 }
 
@@ -218,9 +220,14 @@ function emptySource(node: AnyNode): boolean {
   );
 }
 
+function hasEmptyLoop(ctx: RuleContext, element: TemplateElementNode): boolean {
+  const source = findTemplateDirective(element, "for")?.forParseResult?.source;
+  return !!source && emptySource(ctx.helpers.parseTemplateExpression(source));
+}
+
 function descendantState(ctx: RuleContext, element: TemplateElementNode): Stateful | null {
   for (const child of element.children) {
-    if (child.type !== TemplateNodeType.ELEMENT) continue;
+    if (child.type !== TemplateNodeType.ELEMENT || hasEmptyLoop(ctx, child)) continue;
     const stateful = ownStatefulReason(ctx, child, false) ?? descendantState(ctx, child);
     if (stateful) return stateful;
   }

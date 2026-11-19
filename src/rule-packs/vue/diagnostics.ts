@@ -45,6 +45,7 @@ export const vueDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0035", ruleId: "vue/template/no-index-key-on-stateful-list" },
   { code: "VUE0041", ruleId: "vue/reactivity/no-constant-computed" },
   { code: "VUE0042", ruleId: "vue/ssr/no-setup-state-from-browser-read" },
+  { code: "VUE0044", ruleId: "vue/template/no-useless-template-attributes" },
   { code: "VUE0045", ruleId: "vue/template/require-v-for-key" },
 ]);
 

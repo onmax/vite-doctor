@@ -90,6 +90,11 @@ test.each([
     "a text-only transition fragment",
     '<TransitionGroup><template v-for="item in items">{{ item.name }}</template></TransitionGroup>',
   ],
+  ["an empty nested loop with state", '<div v-for="item in items"><input v-for="n in []"></div>'],
+  [
+    "an empty nested transition loop",
+    '<TransitionGroup><template v-for="item in items"><li v-for="n in []">{{ n }}</li></template></TransitionGroup>',
+  ],
 ])("stays silent for %s", async (_name, template) => {
   const result = await diagnose(template);
   expect(result.diagnostics).toEqual([]);
@@ -101,6 +106,7 @@ test.each([
   ["an input with v-model", '<input v-for="item in items" v-model="item.name">'],
   ["a native input", '<input v-for="item in items" :placeholder="item.label">'],
   ["a textarea", '<textarea v-for="item in items" />'],
+  ["a fixed nested loop with state", '<div v-for="item in items"><input v-for="n in 1"></div>'],
   [
     "a TransitionGroup child",
     '<TransitionGroup tag="ul"><li v-for="item in items">{{ item.text }}</li></TransitionGroup>',
@@ -162,6 +168,7 @@ test("reports const array bindings that can be mutated in place", async () => {
 test.each([
   '<TransitionGroup><li v-for="n in 3">{{ n }}</li></TransitionGroup>',
   '<TransitionGroup><template #default><li v-for="item in items">{{ item.name }}</li></template></TransitionGroup>',
+  '<TransitionGroup><template v-for="item in items"><li v-for="n in 1">{{ n }}</li></template></TransitionGroup>',
 ])("reports a proven transition warning for %s", async (template) => {
   const result = await diagnose(template);
   expect(result.diagnostics).toHaveLength(1);
