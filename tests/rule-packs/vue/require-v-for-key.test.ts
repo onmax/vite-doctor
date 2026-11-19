@@ -227,15 +227,16 @@ test("reports a component Doctor cannot read whose name says it holds input, wit
   expect(result.diagnostics[0]!.why).toContain("could not read <UInput>");
 });
 
-test("suggests a key on the item's distinct literal id field", async () => {
+test("names the item's distinct literal id field without editing the template", async () => {
   const template = '<TodoRow v-for="todo in items" :todo-id="todo.id" />';
   const result = await diagnose(template, "const items = ref([{ id: 1 }, { id: 2 }])");
   const [diagnostic] = result.diagnostics;
-  expect(diagnostic!.suggestion).toContain(':key="todo.id"');
-  expect(diagnostic!.fix?.kind).toBe("suggestion");
-  const [edit] = diagnostic!.fix!.edits;
-  expect(edit!.text).toBe(' :key="todo.id"');
-  expect(edit!.range.start).toBe(edit!.range.end);
+  expect(diagnostic!.suggestion).toContain('such as :key="todo.id"');
+  expect(diagnostic!.fix ?? null).toBeNull();
+});
+
+test("is not marked fixable", () => {
+  expect(requireVForKey.meta.fixable).toBe(false);
 });
 
 test.each([
@@ -279,9 +280,10 @@ test.each([
     '<input v-for="item in items">',
     'const { children: items = [{ id: "a" }, { id: "a" }] } = defineProps<{ children?: { id: string }[] }>()',
   ],
-])("does not suggest an unverified key for %s (%s)", async (template, script) => {
+])("does not name an unverified key for %s (%s)", async (template, script) => {
   const result = await diagnose(template, script);
   expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]!.suggestion).toContain("such as its id");
   expect(result.diagnostics[0]!.fix ?? null).toBeNull();
 });
 
@@ -297,7 +299,7 @@ export default { props: { items: Array } }
     },
   });
   expect(result.diagnostics).toHaveLength(1);
-  expect(result.diagnostics[0]!.fix ?? null).toBeNull();
+  expect(result.diagnostics[0]!.suggestion).toContain("such as its id");
 });
 
 test.each([
@@ -326,7 +328,7 @@ test.each([
       },
     });
     expect(result.diagnostics).toHaveLength(1);
-    expect(result.diagnostics[0]!.fix ?? null).toBeNull();
+    expect(result.diagnostics[0]!.suggestion).toContain("such as its id");
   },
 );
 
@@ -358,7 +360,7 @@ withDefaults(defineProps<{ items?: { name: string }[] }>(), {
       },
     });
     expect(result.diagnostics).toHaveLength(1);
-    expect(result.diagnostics[0]!.fix ?? null).toBeNull();
+    expect(result.diagnostics[0]!.suggestion).toContain("such as its id");
   },
 );
 
@@ -372,12 +374,13 @@ test.each([
     'withDefaults(defineProps<{ items?: { id: string }[] }>(), { items: () => [{ id: "a" }, { id: "b" }] })',
   ],
   ["items", "const { items = [] } = defineProps<{ items?: { id: string }[] }>()"],
-])("suggests a key from the props binding %s", async (source, script) => {
+])("names a key from the props binding %s", async (source, script) => {
   const result = await diagnose(`<input v-for="item in ${source}">`, script);
-  expect(result.diagnostics[0]!.fix?.edits[0]?.text).toBe(' :key="item.id"');
+  expect(result.diagnostics[0]!.suggestion).toContain('such as :key="item.id"');
+  expect(result.diagnostics[0]!.fix ?? null).toBeNull();
 });
 
-test("offers no edit and never the index when the item shows no id", async () => {
+test("never names the index when the item shows no id", async () => {
   const result = await diagnose('<Row v-for="(row, index) in items" :label="row.label" />');
   const [diagnostic] = result.diagnostics;
   expect(diagnostic!.suggestion).toContain("a stable, unique field of the item");

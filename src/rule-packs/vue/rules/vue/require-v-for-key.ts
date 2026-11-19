@@ -43,7 +43,7 @@ export const requireVForKey = createRule({
     category: "template",
     severity: "warn",
     confidence: "heuristic-medium",
-    fixable: "suggestion",
+    fixable: false,
     docsUrl: "https://vuejs.org/guide/essentials/list.html#maintaining-state-with-key",
     requires: { template: true, vue: true },
   },
@@ -70,13 +70,10 @@ export const requireVForKey = createRule({
           const keyExpression = hasLocalTemplateScope(node, parents)
             ? undefined
             : verifiedKeyExpression(ctx, vFor, source);
-          const insertAt = vFor.loc.end.offset;
           ctx.report(
             diagnostics.VUE0045({
               why: whyFor(stateful, node, vFor, !own),
-              fix: keyExpression
-                ? `Add :key="${keyExpression}" to <${node.tag} v-for>, or bind another stable, unique field of the item. Do not key it by the v-for index, which keeps the same problem.`
-                : `Bind :key on <${node.tag} v-for> to a stable, unique field of the item, such as its id. Do not key it by the v-for index, which keeps the same problem.`,
+              fix: `Bind :key on <${node.tag} v-for> to a stable, unique field of the item, such as ${keyExpression ? `:key="${keyExpression}"` : "its id"}. Do not key it by the v-for index, which keeps the same problem.`,
             }),
             {
               ruleId: RULE_ID,
@@ -86,19 +83,6 @@ export const requireVForKey = createRule({
               range: ctx.range(vFor),
               ...statefulReportOptions(stateful),
               ...(stateful.reason === "transition" ? { confidence: "proven" as const } : {}),
-              ...(keyExpression
-                ? {
-                    fix: {
-                      kind: "suggestion" as const,
-                      edits: [
-                        {
-                          range: { start: insertAt, end: insertAt },
-                          text: ` :key="${keyExpression}"`,
-                        },
-                      ],
-                    },
-                  }
-                : {}),
             },
           );
         },
