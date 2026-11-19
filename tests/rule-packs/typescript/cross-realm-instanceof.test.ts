@@ -145,6 +145,18 @@ test.each([
     "Node util.types guard (realm-safe)",
     "import { types } from 'node:util'; export const f = (value: unknown) => value instanceof Uint8Array || types.isUint8Array(value)",
   ],
+  ...["* as util", "util", "{ default as util }"].map((specifier) => [
+    `Node util.types guard via ${specifier}`,
+    `import ${specifier} from 'node:util'; export const f = (value: unknown) => value instanceof Uint8Array || util.types.isUint8Array(value)`,
+  ]),
+  [
+    "same-file brand helper in a disjunct",
+    "function hasByteBrand(input: unknown) { return Object.prototype.toString.call(input) === '[object Uint8Array]' } export const f = (value: unknown) => value instanceof Uint8Array || hasByteBrand(value)",
+  ],
+  [
+    "same-file brand helper after a fast path",
+    "const hasByteBrand = (input: unknown) => Object.prototype.toString.call(input) === '[object Uint8Array]'; export function f(value: unknown): value is Uint8Array { if (value instanceof Uint8Array) return true; return hasByteBrand(value) }",
+  ],
   [
     "fast path in a brand-checking guard (vitehub runtime response.ts:124)",
     "export function isResponse(value: unknown): value is Response { if (value instanceof Response) return true; if (typeof value !== 'object' || value === null) return false; return Object.prototype.toString.call(value) === '[object Response]' }",
@@ -230,6 +242,30 @@ test.each([
   [
     "local fallback that also relies on constructor identity",
     "const isUint8Array = (value: any) => value.constructor === Uint8Array; export function f(value: unknown, ready: boolean) { return ready || value instanceof Uint8Array || isUint8Array(value) }",
+  ],
+  [
+    "similarly named util import from a different module",
+    "import * as util from './util'; export const f = (value: unknown) => value instanceof Uint8Array || util.types.isUint8Array(value)",
+  ],
+  [
+    "Node util guard applied to a different argument",
+    "import { types } from 'node:util'; export const f = (value: unknown, other: unknown) => value instanceof Uint8Array || types.isUint8Array(other, value)",
+  ],
+  [
+    "same-file helper with a negated brand check",
+    "const hasByteBrand = (input: unknown) => Object.prototype.toString.call(input) !== '[object Uint8Array]'; export const f = (value: unknown) => value instanceof Uint8Array || hasByteBrand(value)",
+  ],
+  [
+    "same-file helper with a shadowed Object",
+    "const Object = { prototype: { toString: () => '[object String]' } }; const hasByteBrand = (input: unknown) => Object.prototype.toString.call(input) === '[object Uint8Array]'; export const f = (value: unknown) => value instanceof Uint8Array || hasByteBrand(value)",
+  ],
+  [
+    "guard branch that rejects foreign values",
+    "const hasByteBrand = (input: unknown) => Object.prototype.toString.call(input) === '[object Uint8Array]'; export function f(value: unknown): boolean { if (value instanceof Uint8Array) return true; if (hasByteBrand(value)) return false; return false }",
+  ],
+  [
+    "same-file helper whose later parameter default changes the input",
+    "function hasByteBrand(input: unknown, unused = (input = null)) { return Object.prototype.toString.call(input) === '[object Uint8Array]' } export const f = (value: unknown) => value instanceof Uint8Array || hasByteBrand(value)",
   ],
   [
     "shadowed ArrayBuffer.isView",

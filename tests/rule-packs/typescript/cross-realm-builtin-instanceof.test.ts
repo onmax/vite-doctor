@@ -85,6 +85,10 @@ test.each([
     "export function toSandboxError(error: unknown) { return error instanceof Error ? error : new Error('Sandbox failed') }",
   ],
   [
+    "overwritten Error.isError alternative",
+    "Error.isError = () => false; export const f = (value: unknown) => value instanceof Error || Error.isError(value)",
+  ],
+  [
     "module-private error normalizer called with errors from an external callback",
     "function toError(error: unknown) { return error instanceof Error ? error : new Error('failed') } export function run(work: () => void) { try { work() } catch (error) { throw toError(error) } }",
   ],
@@ -103,6 +107,10 @@ test.each([
   [
     "Array.isArray alternative",
     "export const f = (value: unknown) => Array.isArray(value) || value instanceof Array",
+  ],
+  [
+    "Error.isError alternative",
+    "export const f = (value: unknown) => value instanceof Error || Error.isError(value)",
   ],
 ])("does not report %s", async (_name, source) => {
   expect(await count(source)).toBe(0);

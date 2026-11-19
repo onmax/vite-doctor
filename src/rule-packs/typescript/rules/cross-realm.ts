@@ -173,7 +173,7 @@ function hasGuardDisjunct(
   collect(top);
   return disjuncts.some(
     (disjunct) =>
-      isIntrinsicGuard(disjunct, className, subject, evidence) ||
+      isVerifiedGuardCall(disjunct, className, subject, evidence) ||
       (["===", "=="].includes(disjunct?.operator) &&
         isBrandCheck(disjunct, className, subject, evidence)),
   );
@@ -451,7 +451,9 @@ export function hasRealmSafeAlternative(
     const branch = sibling.consequent;
     const last = branch?.type === "BlockStatement" ? branch.body.at(-1) : branch;
     if (last?.type !== "ReturnStatement") return false;
-    if (!isBrand(expression(sibling.test, true))) return true;
+    const test = expression(sibling.test, true);
+    if (!isBrand(test) && !(evidence && isVerifiedGuardCall(test, className, subject, evidence)))
+      return true;
     const result = expression(last.argument, true);
     return (
       (result?.type === "Literal" && result.value === true) ||
@@ -529,7 +531,6 @@ function isBrandCall(node: AnyNode, subject: string, evidence?: LocalEvidence): 
   return argument?.type === "Identifier" && argument.name === subject;
 }
 
-// `isUint8Array(value)` and `types.isUint8Array(value)` from node:util both count.
 function isGuardCall(
   node: AnyNode,
   className: string,
@@ -539,20 +540,8 @@ function isGuardCall(
   if (node?.type !== "CallExpression") return false;
   const callee = expression(node.callee, true);
   if (evidence) {
-    if (isIntrinsicGuard(node, className, subject, evidence)) return true;
-    if (callee?.type === "Identifier") {
-      if (evidence.binding(callee)) return false;
-    } else if (callee?.type === "MemberExpression") {
-      const binding = evidence.binding(callee.object);
-      const specifier = binding && evidence.parent(binding.node);
-      const imported = specifier && evidence.parent(specifier);
-      if (
-        specifier?.type !== "ImportSpecifier" ||
-        specifier.imported?.name !== "types" ||
-        !["node:util", "util"].includes(imported?.source?.value)
-      )
-        return false;
-    }
+    if (isVerifiedGuardCall(node, className, subject, evidence)) return true;
+    if (callee?.type !== "Identifier" || evidence.binding(callee)) return false;
   }
   const name =
     callee?.type === "Identifier"
@@ -570,7 +559,7 @@ function isGuardCall(
   );
 }
 
-function isIntrinsicGuard(
+function isVerifiedGuardCall(
   node: AnyNode,
   className: string,
   subject: string,
@@ -578,23 +567,109 @@ function isIntrinsicGuard(
 ): boolean {
   if (node?.type !== "CallExpression" || node.optional) return false;
   const callee = expression(node.callee, true);
-  const receiver = callee?.object;
   const argument = expression(node.arguments[0], true);
+  if (argument?.type !== "Identifier" || argument.name !== subject) return false;
+  if (callee?.type === "Identifier") return isLocalBrandGuard(callee, className, evidence);
+  if (callee?.type !== "MemberExpression" || callee.computed || callee.optional) return false;
+  const receiver = expression(callee.object, true);
+  const method = callee.property.name;
+  if (isNodeTypesGuard(receiver, method, className, evidence)) return true;
   if (
-    callee?.type !== "MemberExpression" ||
-    callee.computed ||
     receiver?.type !== "Identifier" ||
     evidence.binding(receiver) ||
-    evidence.propertyWritten(receiver.name, callee.property.name) ||
-    argument?.type !== "Identifier" ||
-    argument.name !== subject
+    evidence.propertyWritten(receiver.name, method)
   )
     return false;
   return (
-    (receiver.name === "ArrayBuffer" &&
-      callee.property.name === "isView" &&
-      TYPED_ARRAYS.includes(className)) ||
-    (receiver.name === "Array" && callee.property.name === "isArray" && className === "Array")
+    (receiver.name === "ArrayBuffer" && method === "isView" && TYPED_ARRAYS.includes(className)) ||
+    (receiver.name === "Array" && method === "isArray" && className === "Array") ||
+    (receiver.name === "Error" && method === "isError" && className === "Error")
+  );
+}
+
+const NODE_TYPES_CLASSES = new Set([
+  ...TYPED_ARRAYS,
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  "Date",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Promise",
+  "RegExp",
+]);
+
+function isNodeTypesGuard(
+  receiver: AnyNode,
+  method: string,
+  className: string,
+  evidence: LocalEvidence,
+): boolean {
+  if (
+    !(NODE_TYPES_CLASSES.has(className) && method === `is${className}`) &&
+    !(TYPED_ARRAYS.includes(className) && method === "isArrayBufferView") &&
+    !(["ArrayBuffer", "SharedArrayBuffer"].includes(className) && method === "isAnyArrayBuffer") &&
+    !(className === "Error" && method === "isNativeError")
+  )
+    return false;
+  const qualified = receiver?.type === "MemberExpression";
+  if (qualified && (receiver.optional || receiver.computed || receiver.property.name !== "types"))
+    return false;
+  const identifier = qualified ? expression(receiver.object, true) : receiver;
+  const binding = evidence.binding(identifier);
+  const specifier = binding && evidence.parent(binding.node);
+  const declaration = specifier && evidence.parent(specifier);
+  if (
+    declaration?.type !== "ImportDeclaration" ||
+    !["node:util", "util"].includes(declaration.source.value)
+  )
+    return false;
+  if (!qualified)
+    return (
+      specifier.type === "ImportSpecifier" &&
+      specifier.imported?.name === "types" &&
+      !evidence.propertyWritten(identifier.name, method)
+    );
+  return (
+    (specifier.type === "ImportDefaultSpecifier" ||
+      specifier.type === "ImportNamespaceSpecifier" ||
+      (specifier.type === "ImportSpecifier" && specifier.imported?.name === "default")) &&
+    !evidence.propertyWritten(identifier.name, "types")
+  );
+}
+
+function isLocalBrandGuard(callee: AnyNode, className: string, evidence: LocalEvidence): boolean {
+  const binding = evidence.binding(callee);
+  if (!binding || binding.written) return false;
+  const declaration = evidence.parent(binding.node);
+  const fn =
+    binding.kind === "const" && declaration?.id === binding.node
+      ? expression(binding.init, true)
+      : declaration?.type === "FunctionDeclaration" &&
+          !evidence.references(binding.node).some(evidence.written)
+        ? declaration
+        : undefined;
+  if (
+    !["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(fn?.type) ||
+    fn.async ||
+    fn.generator ||
+    fn.params.length !== 1 ||
+    fn.params[0]?.type !== "Identifier"
+  )
+    return false;
+  const body = fn.body;
+  const result = expression(
+    body?.type === "BlockStatement"
+      ? body.body.length === 1 && body.body[0].type === "ReturnStatement"
+        ? body.body[0].argument
+        : undefined
+      : body,
+    true,
+  );
+  return (
+    ["===", "=="].includes(result?.operator) &&
+    isBrandCheck(result, className, fn.params[0].name, evidence)
   );
 }
 
