@@ -80,8 +80,6 @@ export function readViteConfigDoctor(
         exported?.start ?? 0,
         "the export is not a supported static form",
       );
-    const key = configRoot && unresolvedConfigKey(configRoot, references);
-    if (key) throw indeterminate(source, key.start, "a computed key may supply it");
     return undefined;
   }
 
@@ -260,10 +258,11 @@ function defaultExport(body: Node[]): Node | undefined {
   }
 }
 
-function singleUseConst(
+function topLevelConstValue(
   identifier: Node,
+  body: Node[],
   references: ReadonlyMap<unknown, ScopeReference>,
-): { declaration: Node; value: Node } | undefined {
+): Node | undefined {
   const target = references.get(identifier)?.resolved;
   const [definition, extra] = target?.defs ?? [];
   if (
@@ -280,11 +279,11 @@ function singleUseConst(
     )
   )
     return undefined;
-  const declaration = definition.parent as unknown as Node;
-  if (declaration.type !== "VariableDeclaration") return undefined;
+  const declaration = body.find((statement) => statement === (definition.parent as unknown));
+  if (declaration?.type !== "VariableDeclaration") return undefined;
   const declarator = declaration.declarations.find((item) => item === (definition.node as unknown));
   if (declarator?.id.type !== "Identifier" || !declarator.init) return undefined;
-  return { declaration, value: unwrap(declarator.init) };
+  return unwrap(declarator.init);
 }
 
 function resolveConfigRoot(
@@ -293,11 +292,8 @@ function resolveConfigRoot(
   references: ReadonlyMap<unknown, ScopeReference>,
   helperArgument: (node: Node) => Node | undefined,
 ): Node | undefined {
-  const resolveConst = (node: Node) => {
-    if (node.type !== "Identifier") return node;
-    const result = singleUseConst(node, references);
-    return result && body.includes(result.declaration) ? result.value : undefined;
-  };
+  const resolveConst = (node: Node) =>
+    node.type === "Identifier" ? topLevelConstValue(node, body, references) : node;
   const node = resolveConst(unwrap(exported));
   return node && resolveConst(unwrap(helperArgument(node) ?? node));
 }
@@ -337,98 +333,6 @@ function configObject(node: Node): ObjectExpression | undefined {
     }
   }
   return node.type === "ObjectExpression" ? node : undefined;
-}
-
-function unresolvedConfigKey(
-  root: Node,
-  references: ReadonlyMap<unknown, ScopeReference>,
-): Node | undefined {
-  const checkValue = (expression: Node, resolveBinding = true): Node | undefined => {
-    let value = unwrap(expression);
-    if (resolveBinding && value.type === "Identifier") {
-      const result = singleUseConst(value, references);
-      if (!result || result.declaration.end > value.start) return undefined;
-      value = result.value;
-      resolveBinding = false;
-    }
-    if (value.type === "ConditionalExpression")
-      return (
-        checkValue(value.consequent, resolveBinding) ?? checkValue(value.alternate, resolveBinding)
-      );
-    if (value.type === "ObjectExpression")
-      return value.properties.find(
-        (item) =>
-          item.type === "Property" && item.computed && propertyName(item.key, true) === undefined,
-      );
-  };
-  const checkReturns = (statement: Node | null | undefined): Node | undefined => {
-    switch (statement?.type) {
-      case "ReturnStatement":
-        return statement.argument ? checkValue(statement.argument) : undefined;
-      case "IfStatement":
-        return checkReturns(statement.consequent) ?? checkReturns(statement.alternate);
-      case "BlockStatement":
-        return checkStatements(statement.body);
-      case "SwitchStatement":
-        for (const branch of statement.cases) {
-          const key = checkStatements(branch.consequent);
-          if (key) return key;
-        }
-        return undefined;
-      case "TryStatement": {
-        const finalizer = statement.finalizer;
-        if (finalizer && definitelyOverridesReturn(finalizer)) return checkReturns(finalizer);
-        return (
-          checkReturns(statement.block) ??
-          checkReturns(statement.handler?.body) ??
-          checkReturns(finalizer)
-        );
-      }
-      case "DoWhileStatement":
-      case "WhileStatement":
-      case "ForStatement":
-      case "ForInStatement":
-      case "ForOfStatement":
-      case "LabeledStatement":
-      case "WithStatement":
-        return checkReturns(statement.body);
-    }
-  };
-  const checkStatements = (statements: Node[]): Node | undefined => {
-    for (const statement of statements) {
-      const key = checkReturns(statement);
-      if (key) return key;
-      if (definitelyOverridesReturn(statement)) break;
-    }
-  };
-  if (!isConfigFunction(root)) return checkValue(root);
-  if (!root.body || ("generator" in root && root.generator)) return undefined;
-  return root.body.type === "BlockStatement" ? checkReturns(root.body) : checkValue(root.body);
-}
-
-function definitelyOverridesReturn(statement: Node): boolean {
-  switch (statement.type) {
-    case "ReturnStatement":
-    case "ThrowStatement":
-      return true;
-    case "IfStatement":
-      return (
-        !!statement.alternate &&
-        definitelyOverridesReturn(statement.consequent) &&
-        definitelyOverridesReturn(statement.alternate)
-      );
-    case "BlockStatement":
-      for (const child of statement.body) {
-        if (definitelyOverridesReturn(child)) return true;
-        if (
-          child.type !== "VariableDeclaration" &&
-          child.type !== "ExpressionStatement" &&
-          child.type !== "EmptyStatement"
-        )
-          return false;
-      }
-  }
-  return false;
 }
 
 function unwrap(node: Node): Node {

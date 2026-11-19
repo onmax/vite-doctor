@@ -271,6 +271,22 @@ test.each([
     "export default ({ mode }) => { try { return { [mode]: '/app/' }; } finally { return { base: '/' }; } };",
   ],
   [
+    "a local config object discarded by conditional finally returns",
+    `export default ({ command, mode }) => {
+  try {
+    const config = { [mode]: '/unused/' };
+    return config;
+  } finally {
+    if (command === 'serve') return { base: '/' };
+    return { base: '/app/' };
+  }
+};`,
+  ],
+  [
+    "a computed key in a conditional return",
+    "export default ({ command, mode }) => command === 'serve' ? {} : { [mode]: '/app/' };",
+  ],
+  [
     "mergeConfig() and the doctor() plugin",
     "import { mergeConfig } from 'vite'\nimport { doctor } from 'vite-doctor/plugin'\nimport base from './vite.base'\nexport default mergeConfig(base, { plugins: [doctor()] })\n",
   ],
@@ -359,34 +375,9 @@ test.each([
 test.each([
   ["a direct object", "export default { ['doc' + 'tor']: { extends: [] } };", 1],
   [
-    "a conditional callback",
-    `import { defineConfig } from 'vite';
-import { doctor } from 'vite-doctor/plugin';
-export default defineConfig(({ command }) => {
-  if (command === 'serve') return { plugins: [doctor()] };
-  return { ['doc' + 'tor']: { extends: [] }, plugins: [doctor()] };
-});`,
-    5,
-  ],
-  [
-    "a conditional expression",
-    "export default ({ command }) => command === 'serve' ? {} : { ['doc' + 'tor']: { extends: [] } };",
-    1,
-  ],
-  [
-    "a conditional callback returning a local const",
-    `export default ({ command }) => {
-  if (command === 'serve') return {};
-  const config = { ['doc' + 'tor']: { extends: [] } };
-  return config;
-};`,
-    3,
-  ],
-  [
-    "a try return that finally can leave intact",
-    `export default ({ command }) => {
-  try { return { ['doc' + 'tor']: { extends: [] } }; }
-  finally { if (command === 'serve') return {}; }
+    "a single statically resolved callback return",
+    `export default ({ mode }) => {
+  return { [mode]: '/app/' };
 };`,
     2,
   ],
@@ -396,6 +387,21 @@ export default defineConfig(({ command }) => {
   expect(code).toBe(2);
   expect(report.error).toMatchObject({ kind: "config", file: join(root, "vite.config.ts") });
   expect(report.error.message).toContain(`line ${line},`);
+});
+
+test("a named Doctor key still blocks unsupported conditional exports", async () => {
+  const root = fixture({
+    "vite.config.ts": `import { defineConfig } from 'vite';
+export default defineConfig(({ command }) => {
+  if (command === 'serve') return {};
+  return { ['doctor' as const]: { extends: [] } };
+});`,
+    "doctor.config.json": '{"extends":[]}',
+  });
+  const { code, report } = await run(root);
+  expect(code).toBe(2);
+  expect(report.error).toMatchObject({ kind: "config", file: join(root, "vite.config.ts") });
+  expect(report.error.message).toContain("line 2,");
 });
 
 test.each(['"doctor" as const', '<const>"doctor"'])(
