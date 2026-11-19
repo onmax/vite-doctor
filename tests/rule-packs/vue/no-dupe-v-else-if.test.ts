@@ -221,6 +221,11 @@ test.each([
     "const { open: ready } = defineProps<{ open: boolean }>();",
     "ready",
   ],
+  [
+    "a reactive destructured prop with a default",
+    "const { open: ready = false } = defineProps<{ open?: boolean }>();",
+    "ready",
+  ],
   ["a props member", "const props = defineProps<{ ready: boolean }>();", "props.ready"],
   ["an optional props member", "const props = defineProps<{ ready: boolean }>();", "props?.ready"],
   [
@@ -398,14 +403,19 @@ test.each([
   ["const props = defineProps<{ ready: boolean }>(); const ready = false;", "props.ready"],
   ["const props = defineProps({ ready: Boolean }); const ready = false;", "props.ready"],
   ["const props = defineProps(['ready']); const ready = false;", "props.ready"],
-  [
-    "const { open: ready } = withDefaults(defineProps<{ open?: boolean }>(), { open: false });",
-    "ready",
-  ],
 ])("traces a declared prop independently of bare binding metadata: %s", async (setup, read) => {
   expect(await reportedConfidence(`<p v-if="${read}" /><p v-else-if="${read}" />`, setup)).toEqual([
     "heuristic-high",
   ]);
+});
+
+test("skips a non-reactive destructured prop even with a primitive annotation", async () => {
+  expect(
+    await reportedConfidence(
+      '<p v-if="ready" /><p v-else-if="ready" />',
+      "const { open: ready } = withDefaults(defineProps<{ open?: boolean }>(), { open: false });",
+    ),
+  ).toEqual([]);
 });
 
 test.each(["sharedProps", "{ ...sharedProps }"])(
@@ -435,6 +445,21 @@ test("skips non-reactive destructured props that can unwrap a customRef", async 
            let reads = 0;
            return customRef(() => ({ get: () => ++reads === 2, set() {} }));
          },
+       });`,
+    ),
+  ).toEqual([]);
+});
+
+test("skips a non-reactive destructured primitive prop with a customRef fallback", async () => {
+  expect(
+    await reportedConfidence(
+      `<p v-if="status === 'ready'">first</p><p v-else-if="status === 'ready'">second</p>`,
+      `import { customRef } from 'vue';
+       const { status = customRef<string>(() => {
+         let reads = 0;
+         return { get: () => ++reads === 1 ? 'waiting' : 'ready', set() {} };
+       }) } = withDefaults(defineProps<{ status?: string, variant?: string }>(), {
+         variant: 'compact',
        });`,
     ),
   ).toEqual([]);

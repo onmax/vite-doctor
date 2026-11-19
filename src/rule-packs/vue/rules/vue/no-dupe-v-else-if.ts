@@ -332,7 +332,7 @@ function heuristicSetupReads(
     .find(Boolean);
   const compiled = compileSetup(ctx, descriptor, propsCall);
   if (!compiled) return NO_HEURISTIC_READS;
-  const { bindings, propKeys, primitivePropKeys } = compiled;
+  const { bindings, propKeys } = compiled;
 
   const setup = descriptor.scriptSetup!;
   const setupScope = descriptor.script
@@ -373,13 +373,7 @@ function heuristicSetupReads(
           property.value.type === "AssignmentPattern" ? property.value.left : property.value;
         if (key === undefined || local.type !== "Identifier" || !readable(local.name)) continue;
         const binding = bindings[local.name];
-        if (
-          binding === "props" ||
-          binding === "props-aliased" ||
-          (binding === "setup-const" && primitivePropKeys.has(key))
-        ) {
-          names.add(local.name);
-        }
+        if (binding === "props" || binding === "props-aliased") names.add(local.name);
       }
     }
     if (declaration.id.type !== "Identifier" || !readable(declaration.id.name)) continue;
@@ -404,7 +398,6 @@ function compileSetup(
 ): {
   bindings: Record<string, string | undefined>;
   propKeys: Set<string>;
-  primitivePropKeys: Set<string>;
 } | null {
   const sfc = loadVueCompilerSfc();
   if (!typeScriptRegistered) {
@@ -437,7 +430,6 @@ function compileSetup(
     for (const dep of compiled.deps ?? []) inputs.add(dep);
     if (!compiled.bindings) return null;
     let propKeys = runtimePropKeys(unwrap(propsCall?.arguments[0]));
-    const primitivePropKeys = new Set<string>();
     if (propsCall?.typeArguments) {
       const setup = descriptor.scriptSetup!;
       const statements = compiled.scriptSetupAst ?? [];
@@ -474,21 +466,12 @@ function compileSetup(
             type,
           );
           propKeys = new Set(Object.keys(resolved.props));
-          for (const [key, prop] of Object.entries(resolved.props)) {
-            if (
-              prop.type === "TSPropertySignature" &&
-              isPrimitivePropType(prop.typeAnnotation?.typeAnnotation)
-            ) {
-              primitivePropKeys.add(key);
-            }
-          }
         }
       }
     }
     return {
       bindings: compiled.bindings as Record<string, string | undefined>,
       propKeys,
-      primitivePropKeys,
     };
   } catch {
     return null;
@@ -496,13 +479,6 @@ function compileSetup(
     // Type scopes and resolution configs are cached even when compilation throws.
     for (const file of inputs) sfc.invalidateTypeCache(file);
   }
-}
-
-function isPrimitivePropType(node: AnyNode): boolean {
-  if (node?.type === "TSUnionType") return node.types.every(isPrimitivePropType);
-  return /^(TSBoolean|TSString|TSNumber|TSBigInt|TSSymbol|TSNull|TSUndefined)Keyword$/.test(
-    node?.type ?? "",
-  );
 }
 
 function constDeclarators(statements: AnyNode[]): AnyNode[] {
