@@ -5,7 +5,6 @@ import type {
   TemplateRootNode,
 } from "../../../../core/index.js";
 import {
-  findTemplateAttribute,
   findTemplateDirective,
   templateDirectiveBindings,
   TemplateNodeType,
@@ -310,15 +309,17 @@ function emitCandidates(dom: DomTree, root: TemplateElementNode) {
   for (const element of dom.native) {
     for (const prop of element.props) {
       if (prop.type !== TemplateNodeType.DIRECTIVE || prop.name !== "on") continue;
-      const event = listenerEvent(prop);
-      const bubbles = event === null ? undefined : NATIVE_EVENTS.get(event);
+      const listener = templateListener(prop, element);
+      if (!listener) continue;
+      const { event, capture } = listener;
+      const bubbles = NATIVE_EVENTS.get(event);
       if (bubbles === undefined || (!bubbles && element !== root)) continue;
       // A capture handler runs before the target, so descendants could still stop the event.
-      if (hasModifier(prop, "capture")) continue;
+      if (capture) continue;
       const handler = readHandler(prop);
       if (!handler.readable) continue;
       for (const emit of handler.emits) {
-        if (domEventName(emit.name) !== event) continue;
+        if (fallthroughEvent(emit.name) !== event) continue;
         if (emitShadowed(element, dom.parents)) continue;
         candidates.push({ emit, element, event });
       }
@@ -327,16 +328,25 @@ function emitCandidates(dom: DomTree, root: TemplateElementNode) {
   return candidates;
 }
 
-/** The event a `v-on` directive listens for, as runtime-dom binds it, or `null` for a dynamic or object `v-on`. */
-function listenerEvent(directive: TemplateDirectiveNode): string | null {
+/** Resolve the compiler's static `v-on` key and runtime-dom's event name and capture option. */
+function templateListener(directive: TemplateDirectiveNode, element: TemplateElementNode) {
   const arg = directive.arg;
   if (arg?.type !== TemplateNodeType.SIMPLE_EXPRESSION || !arg.isStatic) return null;
-  const event = domEventName(arg.content) ?? arg.content;
-  if (event === "click") {
-    if (hasModifier(directive, "right")) return "contextmenu";
-    if (hasModifier(directive, "middle")) return "mouseup";
+  const preserveCase = element.tagType === 0 && /[A-Z]/.test(arg.content);
+  let key = preserveCase ? arg.content : capitalize(camelize(arg.content));
+  if (!preserveCase && key === "Click") {
+    if (hasModifier(directive, "right")) key = "Contextmenu";
+    else if (hasModifier(directive, "middle")) key = "Mouseup";
   }
-  return event;
+  let capture = hasModifier(directive, "capture");
+  const optionSuffix = /(Once|Passive|Capture)$/;
+  let suffix = optionSuffix.exec(key);
+  while (suffix && suffix.index > 0) {
+    capture ||= suffix[0] === "Capture";
+    key = key.slice(0, suffix.index);
+    suffix = optionSuffix.exec(key);
+  }
+  return { event: preserveCase ? key : hyphenate(key), capture };
 }
 
 function hasModifier(directive: TemplateDirectiveNode, name: string): boolean {
@@ -385,15 +395,16 @@ function pathIsClear(
       if (prop.name === "bind") {
         const arg = prop.arg;
         if (arg?.type !== TemplateNodeType.SIMPLE_EXPRESSION || !arg.isStatic) return false;
-        if (/^on[A-Z]/.test(arg.content) || (!isRoot && arg.content === "ref")) return false;
+        if (arg.content.startsWith("on") || (!isRoot && arg.content === "ref")) return false;
         continue;
       }
       if (prop.name !== "on") continue;
-      const listens = listenerEvent(prop);
-      if (listens === null) return false;
-      if (listens !== event) continue;
-      // `.stop` on the root itself does not keep the event from the root's other listeners.
-      if (!isRoot && hasModifier(prop, "stop")) return false;
+      const listener = templateListener(prop, current);
+      if (!listener) return false;
+      if (listener.event !== event) continue;
+      // A root capture listener can stop the click before it reaches the descendant emitter.
+      if ((!isRoot || (listener.capture && element !== root)) && hasModifier(prop, "stop"))
+        return false;
       if (!readHandler(prop).readable) return false;
     }
     if (isRoot) return true;
@@ -531,7 +542,7 @@ function decodeEntity(entity: string): string | undefined {
  * The DOM event a parent's listener for `name` binds when it falls through: Vue's `emit` looks up
  * `on` + capitalize(camelize(name)), and runtime-dom hyphenates what follows `on`.
  */
-function domEventName(name: string): string | undefined {
+function fallthroughEvent(name: string): string | undefined {
   if (!name || name.includes(":")) return undefined;
   return hyphenate(capitalize(camelize(name)));
 }

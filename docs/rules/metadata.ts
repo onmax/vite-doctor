@@ -166,7 +166,7 @@ export const ruleDocumentationMetadata = {
       "Finds Nitro handlers and plugins that Vite plugins, Nuxt modules or Nitro modules register with relative paths.",
     why: "Nitro does not resolve a registered path against the file that registers it. Nitro 2 and Nitro 3 resolve handler and plugin paths against Nitro’s project rootDir. A generated file written to resolve(root, '.vitehub/handler.ts') but registered as '.vitehub/handler.ts' only works while every root happens to match, and it breaks for monorepos, custom srcDir or Vite roots, and Nitro 2.",
     recommendedReplacement:
-      "Register the same absolute path you write the file to, for example resolve(root, '.generated/handler.ts'), or resolve files shipped with the package with createResolver(import.meta.url). Doctor checks files that import from vite, nitro, nitropack, @nuxt/kit or @nuxt/schema, and skips config files, tests, app and server runtime directories, and arguments of @nuxt/kit helpers, which nuxt/module/resolve-runtime-paths reports. It reports handler objects with a route, middleware, method or lazy key, and nitro plugins arrays, whose path is a literal or const starting with ./, ../ or a dot directory such as .nuxt/.",
+      "Register the same absolute path you write the file to, for example resolve(root, '.generated/handler.ts'), or resolve files shipped with the package with createResolver(import.meta.url). Doctor checks files that import from vite, nitro, nitropack, @nuxt/kit or @nuxt/schema, and skips config files, tests, app and server runtime directories, and arguments of @nuxt/kit helpers, which nuxt/module/resolve-runtime-paths reports. It checks relative literals and const paths in handler objects with a route, middleware, method or lazy key, and in Nitro plugins arrays. For addPlugin and addServerPlugin calls on builders created by named imports of createNitroServerKit or createNitroConfigKit, Doctor compares an explicit Nitro root with writes on the registration path, including straight-line writes in awaited local helpers. It skips the Diagnostic when a competing write might already reach Nitro's destination. When the Nitro options come from a parameter, Doctor also checks separate helpers that share the same path constant when there is a single matching write and the roots come from separate inputs that can diverge.",
     examples: [
       {
         title: "Register generated handlers with the path they were written to",
@@ -2763,6 +2763,31 @@ export const ruleDocumentationMetadata = {
         language: "vue",
         invalid: '<template>\n  <MyCmp :my-prop="myProp" />\n</template>',
         valid: '<template>\n  <MyCmp :my-prop="selectedValue" />\n</template>',
+      },
+    ],
+  },
+  "vue/template/require-toggle-inside-transition": {
+    description:
+      "Finds a <Transition> with a native child that has no v-if, v-else-if, v-else, v-show or bound :key. It skips dynamic default slots, transitions that may inherit attributes at the component root, and transitions with appear or forwarded v-show. A v-bind spread, a dynamic binding name, or a custom directive on the transition or its child may enable animation, so these are skipped too. Components, <slot>, elements with is, and <TransitionGroup> are not checked.",
+    why: "<Transition> animates when its child enters or leaves: a v-if/v-else branch switches, v-show changes, or a :key change replaces the element. A static child never triggers those animations, and without appear it does not animate on mount. If a v-for produces multiple children, <Transition> warns and renders only the first item.",
+    recommendedReplacement:
+      "Add v-if or v-show to the child so it enters and leaves, bind a :key that changes when the content should animate, add appear to animate on first render, or remove the <Transition> when no animation is wanted. To animate a v-for list, use <TransitionGroup> and bind a stable, unique :key per item.",
+    examples: [
+      {
+        title: "Toggle the transitioned element",
+        language: "vue",
+        invalid:
+          '<template>\n  <main>\n    <Transition name="fade">\n      <div class="toast">{{ message }}</div>\n    </Transition>\n  </main>\n</template>',
+        valid:
+          '<template>\n  <main>\n    <Transition name="fade">\n      <div v-if="message" class="toast">{{ message }}</div>\n    </Transition>\n  </main>\n</template>',
+      },
+      {
+        title: "Animate on first render with appear",
+        language: "vue",
+        invalid:
+          '<template>\n  <main>\n    <Transition name="slide">\n      <header class="hero" />\n    </Transition>\n  </main>\n</template>',
+        valid:
+          '<template>\n  <main>\n    <Transition name="slide" appear>\n      <header class="hero" />\n    </Transition>\n  </main>\n</template>',
       },
     ],
   },

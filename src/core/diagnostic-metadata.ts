@@ -20,10 +20,10 @@ interface WorkspaceDiagnosticMetadata extends DiagnosticMetadata {
 export const defaultConfigDiagnosticMetadata = {
   code: "DOC0038",
   ruleId: "doctor/config/default-config-file",
-  title: "Delete the default doctor.config.json",
+  title: "Review the default doctor.config.json",
   description: "This automatically discovered doctor.config.json only restates Doctor's defaults.",
-  why: "Doctor activates Rule Packs from project dependencies and does not require a config file. This Diagnostic is only reported when deleting the file preserves the run's settings.",
-  fix: "Delete doctor.config.json. Add a Doctor config only when it changes rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
+  why: "Doctor activates Rule Packs from project dependencies and does not require a config file. This Diagnostic is only reported when this run's settings are the same without the file. It cannot see scripts or CI jobs that pass the file with --config.",
+  fix: "doctor.config.json restates Doctor's defaults; delete it unless a script or CI job passes it with --config. Add a Doctor config only when it changes rules, per-path overrides, suppressions, include or exclude globs, or Config Extends presets.",
   severity: "info",
   category: "config",
 } as const satisfies DiagnosticMetadata;

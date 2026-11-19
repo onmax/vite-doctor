@@ -415,12 +415,20 @@ describe("two script blocks", () => {
 describe("the DOM path to the root", () => {
   test.each([
     [
+      "a case-sensitive native listener for Click rather than click",
+      `<script setup>defineEmits(['other'])</script>\n<template>\n  <button @Click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
       "an intermediate .stop",
       `<template>\n  <div>\n    <div @click.stop>\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
     ],
     [
       "an intermediate .capture.stop",
       `<template>\n  <div>\n    <div @click.capture.stop>\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "a root capture listener that stops the event before it reaches the emitter",
+      `<template>\n  <div @clickCapture.stop>\n    <button @click="$emit('click', 1)">x</button>\n  </div>\n</template>`,
     ],
     [
       "an intermediate method handler",
@@ -433,6 +441,14 @@ describe("the DOM path to the root", () => {
     [
       "an intermediate onClick binding",
       `<template>\n  <div>\n    <div :onClick="handler">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    ...["on:click", "onclick"].map((key) => [
+      `an intermediate ${key} binding`,
+      `<template>\n  <div>\n    <div :${key}="handler">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ]),
+    [
+      "an intermediate click listener with a literal Once suffix and .stop",
+      `<template>\n  <div>\n    <div @clickOnce.stop>\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
     ],
     [
       "an intermediate object v-on",
@@ -511,6 +527,10 @@ describe("the DOM path to the root", () => {
   });
 
   test.each([
+    [
+      "an intermediate .stop for Click rather than click",
+      `<template>\n  <div>\n    <div @Click.stop>\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
     [
       "an intermediate .prevent, which does not stop propagation",
       `<template>\n  <div>\n    <div @click.prevent>\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
