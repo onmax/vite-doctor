@@ -13,7 +13,7 @@ import type {
 import type { GraphSummary } from "./cache-store.js";
 import { projectWorkspacePackages } from "./applicability.js";
 import { componentUsageGraph } from "./component-inventory.js";
-import { loadSourceFile, sourceFacts, sourceShape } from "./facts.js";
+import { canRunRuleOnFile, loadSourceFile, sourceFacts, sourceShape } from "./facts.js";
 import type { RuleInputFrame } from "./rule-inputs.js";
 import { assertKnownRuleHooks } from "./rule-hooks.js";
 import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
@@ -502,15 +502,4 @@ function createEmptySourceFileHandle(
       return false;
     },
   };
-}
-
-function canRunRuleOnFile(rule: DoctorRule, file: SourceFileHandle): boolean {
-  if (rule.meta.sourceKinds && !rule.meta.sourceKinds.includes(file.sourceKind)) return false;
-  const requires = rule.meta.requires;
-  if (!requires) return true;
-  const shape = sourceShape(file) ?? 0;
-  if (requires.sfc && !(shape & 1)) return false;
-  if (requires.template && !(shape & 4)) return false;
-  if (requires.script && !(shape & 2)) return false;
-  return true;
 }

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { relative } from "pathe";
 import type {
   DoctorHelpers,
+  DoctorRule,
   DynamicImportFact,
   ExportFact,
   FileFacts,
@@ -28,8 +29,11 @@ interface ParsedSource {
   sfc: SourceFileHandle["sfc"];
   scriptAst: Record<string, unknown> | null;
   templateAst: TemplateRootNode | null;
+  shape: number;
   gaps: EvidenceGap[];
 }
+
+const sourceShapeFlags = { sfc: 1, script: 2, template: 4, noScript: 8, noTemplate: 16 };
 
 interface SourceState {
   session: ScanSession;
@@ -117,7 +121,7 @@ async function prepareSourceFile(
     entry: file,
     text,
     parsed,
-    shape: shapeOf(parsed),
+    shape: parsed.shape,
     fileId,
   };
   const handle = createSourceHandle(session, file, content.hash, state);
@@ -143,7 +147,7 @@ export async function loadSourceFile(handle: SourceFileHandle): Promise<void> {
   if (!state || state.parsed) return;
   state.parsed = await parseSource(state.entry, handle.text, handle.hash);
   if (state.shape !== undefined) return;
-  state.shape = shapeOf(state.parsed);
+  state.shape = state.parsed.shape;
   state.facts = createFileFacts(
     state.session,
     state.entry,
@@ -162,8 +166,33 @@ export async function loadSourceFile(handle: SourceFileHandle): Promise<void> {
   );
 }
 
+export function canRunRuleOnFile(rule: DoctorRule, file: SourceFileHandle): boolean {
+  return matchesRuleSource(rule, file, false);
+}
+
+export function hasRuleSourceCoverage(rule: DoctorRule, file: SourceFileHandle): boolean {
+  return matchesRuleSource(rule, file, true);
+}
+
+function matchesRuleSource(
+  rule: DoctorRule,
+  file: SourceFileHandle,
+  allowAbsentSyntax: boolean,
+): boolean {
+  if (rule.meta.sourceKinds && !rule.meta.sourceKinds.includes(file.sourceKind)) return false;
+  const requires = rule.meta.requires;
+  if (!requires) return true;
+  const shape = sourceShape(file) ?? 0;
+  const { sfc, script, template, noScript, noTemplate } = sourceShapeFlags;
+  if (requires.sfc && !(shape & sfc)) return false;
+  if (requires.template && !(shape & (template | (allowAbsentSyntax ? noTemplate : 0))))
+    return false;
+  if (requires.script && !(shape & (script | (allowAbsentSyntax ? noScript : 0)))) return false;
+  return true;
+}
+
 /**
- * Bit 1: SFC, bit 2: script AST, bit 4: template AST, known without parsing cached files.
+ * Syntax availability and proven absence, known without parsing cached files.
  * Undefined for a file a scoped run has not parsed yet.
  */
 export function sourceShape(handle: SourceFileHandle): number | undefined {
@@ -274,7 +303,8 @@ async function parseSource(file: ScanFileEntry, text: string, hash: string): Pro
   const absolute = file.path;
   const gaps: EvidenceGap[] = [];
   const isVueSfc = absolute.endsWith(".vue");
-  if (isVueSfc && !text.trim()) return { sfc: undefined, scriptAst: null, templateAst: null, gaps };
+  if (isVueSfc && !text.trim())
+    return { sfc: undefined, scriptAst: null, templateAst: null, shape: 0, gaps };
   const sfc = isVueSfc ? await parseOptionalSfc(absolute, text, hash) : undefined;
   if (sfc?.errors.length) {
     gaps.push({
@@ -299,12 +329,19 @@ async function parseSource(file: ScanFileEntry, text: string, hash: string): Pro
       files: [absolute],
     });
   }
+  const scriptAst = parsedScript?.ast ?? null;
   const templateAst = sfc?.getTemplateAst() ?? null;
-  return { sfc, scriptAst: parsedScript?.ast ?? null, templateAst, gaps };
-}
-
-function shapeOf(parsed: ParsedSource): number {
-  return (parsed.sfc ? 1 : 0) | (parsed.scriptAst ? 2 : 0) | (parsed.templateAst ? 4 : 0);
+  const descriptor = sfc?.errors.length === 0 ? sfc.descriptor : undefined;
+  const scriptAbsent = isVueSfc
+    ? descriptor && !descriptor.script && !descriptor.scriptSetup
+    : !parsedScript;
+  const shape =
+    (sfc ? sourceShapeFlags.sfc : 0) |
+    (scriptAst ? sourceShapeFlags.script : 0) |
+    (templateAst ? sourceShapeFlags.template : 0) |
+    (scriptAbsent ? sourceShapeFlags.noScript : 0) |
+    (descriptor && !descriptor.template ? sourceShapeFlags.noTemplate : 0);
+  return { sfc, scriptAst, templateAst, shape, gaps };
 }
 
 function addEvidenceGaps(session: ScanSession, gaps: readonly EvidenceGap[]): void {

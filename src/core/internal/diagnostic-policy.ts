@@ -41,6 +41,15 @@ export interface DiagnosticPolicyResult {
   suppressedDiagnostics: Diagnostic[];
   /** Set when `newOnly` filters through a baseline written with another fingerprint scheme. */
   staleBaseline?: StaleBaseline;
+  /** Set when `newOnly` filters through a baseline written with the current fingerprint scheme. */
+  baseline?: { file: string; entries: BaselineEntry[] };
+}
+
+export interface BaselineEntry {
+  fingerprint: string;
+  ruleId?: string;
+  /** As recorded, usually relative to the project root. */
+  file?: string;
 }
 
 export interface StaleBaseline {
@@ -51,6 +60,7 @@ export interface StaleBaseline {
 
 interface Baseline extends StaleBaseline {
   fingerprints: Set<string>;
+  entries: BaselineEntry[];
 }
 
 export interface BaselineWriteHooks {
@@ -159,10 +169,9 @@ export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticP
   if (input.options.updateBaseline && input.options.baseline)
     writeBaseline(input.root, input.options.baseline, [...nextDiagnostics, ...suppressed]);
 
+  const filtering = baseline && input.options.newOnly && !input.options.updateBaseline;
   const stale =
-    baseline &&
-    input.options.newOnly &&
-    !input.options.updateBaseline &&
+    filtering &&
     baseline.fingerprints.size > 0 &&
     baseline.fingerprintScheme !== FINGERPRINT_SCHEME;
   return {
@@ -175,6 +184,10 @@ export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticP
           doctorVersion: baseline.doctorVersion,
         }
       : undefined,
+    baseline:
+      filtering && baseline.fingerprintScheme === FINGERPRINT_SCHEME
+        ? { file: baseline.file, entries: baseline.entries }
+        : undefined,
   };
 }
 
@@ -238,6 +251,7 @@ function readBaseline(root: string, baseline?: string): Baseline | undefined {
   let entries: unknown[];
   let fingerprintScheme: number | undefined;
   let doctorVersion: string | undefined;
+  let report = false;
   if (Array.isArray(json)) entries = json;
   else if (json && typeof json === "object" && "diagnostics" in json) {
     const scheme = "fingerprintScheme" in json ? json.fingerprintScheme : undefined;
@@ -247,6 +261,7 @@ function readBaseline(root: string, baseline?: string): Baseline | undefined {
     if ("reportVersion" in json) {
       if (json.reportVersion !== 3 && json.reportVersion !== 4)
         throw invalid("Expected Doctor JSON report version 3 or 4.");
+      report = true;
       if ("version" in json && typeof json.version === "string") doctorVersion = json.version;
     } else if ("version" in json && json.version === 2) {
       if (scheme === undefined) throw invalid('Baseline version 2 requires "fingerprintScheme".');
@@ -262,15 +277,41 @@ function readBaseline(root: string, baseline?: string): Baseline | undefined {
     entries = [...json.diagnostics, ...(suppressedEntries ?? [])];
   } else throw invalid('Expected an array or an object containing a "diagnostics" array.');
 
-  const fingerprints = new Set<string>();
+  const recorded = new Map<string, BaselineEntry>();
   for (const [index, entry] of entries.entries()) {
-    const fingerprint =
-      entry && typeof entry === "object" && "fingerprint" in entry ? entry.fingerprint : entry;
+    const object = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+    const fingerprint = "fingerprint" in object ? object.fingerprint : entry;
     if (typeof fingerprint !== "string" || !fingerprint.length)
       throw invalid(`Entry ${index + 1} must contain a non-empty string fingerprint.`);
-    fingerprints.add(fingerprint);
+    if (recorded.has(fingerprint)) continue;
+    const location = object.location;
+    const reportPath =
+      report && location && typeof location === "object" && "path" in location
+        ? location.path
+        : undefined;
+    recorded.set(fingerprint, {
+      fingerprint,
+      ruleId:
+        typeof object.ruleId === "string"
+          ? object.ruleId
+          : report && typeof object.rule === "string"
+            ? object.rule
+            : undefined,
+      file:
+        typeof object.file === "string"
+          ? object.file
+          : typeof reportPath === "string"
+            ? reportPath
+            : undefined,
+    });
   }
-  return { file, fingerprints, fingerprintScheme, doctorVersion };
+  return {
+    file,
+    fingerprints: new Set(recorded.keys()),
+    entries: [...recorded.values()],
+    fingerprintScheme,
+    doctorVersion,
+  };
 }
 
 export function writeBaseline(
