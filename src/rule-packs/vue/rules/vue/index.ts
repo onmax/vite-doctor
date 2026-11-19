@@ -41,6 +41,7 @@ export { noReactiveDestructure } from "./no-reactive-destructure.js";
 export { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
 export { noConstantComputed } from "./no-constant-computed.js";
 export { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
+export { requireExplicitEmits } from "./require-explicit-emits.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
@@ -85,6 +86,7 @@ import { noReactiveDestructure } from "./no-reactive-destructure.js";
 import { preferComputedOverWatchAssign } from "./prefer-computed-over-watch-assign.js";
 import { noConstantComputed } from "./no-constant-computed.js";
 import { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
+import { requireExplicitEmits } from "./require-explicit-emits.js";
 
 import { defineRulePack } from "../../../../core/index.js";
 
@@ -133,6 +135,7 @@ const rules = [
   preferComputedOverWatchAssign,
   noConstantComputed,
   noSetupStateFromBrowserRead,
+  requireExplicitEmits,
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,
@@ -155,6 +158,7 @@ const strictOnlyRules = [
   noPropRelay,
   noUnpassedProps,
   preferStableListProps,
+  requireExplicitEmits,
 ];
 
 const vueRulePack = defineRulePack({

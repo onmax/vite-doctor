@@ -2191,6 +2191,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/attrs/require-explicit-emits": {
+    description:
+      "Flags a template `$emit` of an undeclared event when the parent's listener for it also falls through as a native DOM listener on the component's single native root element.",
+    why: "Vue 3 treats a parent's `v-on` listener as a fallthrough attribute unless the child declares the event in `defineEmits` or `emits`. The listener then also lands on the child's root element as a native listener, so `$emit('click', id)` from a click handler runs the parent's `@click` handler twice: once with `id` and once with the `MouseEvent`. Doctor reports only when it can prove that path: a string event name that is a native DOM event, no matching `defineEmits`, `emits`, `defineModel()` or `on<Event>` prop, `inheritAttrs` left on, and a single native root that receives that event. Components with emits or props it cannot read statically, mixins, multi-root templates and component roots are skipped.",
+    recommendedReplacement:
+      "Declare the event in `defineEmits` (or the `emits` option) so the parent's listener only receives the emitted event, or emit an event whose name is not a native DOM event when the parent should keep its native listener.",
+    examples: [
+      {
+        title: "Declare the emitted click event",
+        language: "vue",
+        invalid:
+          '<template>\n  <button type="button" @click="$emit(\'click\', id)">Open</button>\n</template>',
+        valid:
+          '<script setup lang="ts">\ndefineEmits([\'click\'])\n</script>\n\n<template>\n  <button type="button" @click="$emit(\'click\', id)">Open</button>\n</template>',
+      },
+    ],
+  },
   "vue/attrs/no-watch-use-attrs": {
     description:
       "Flags watch() calls whose source is the useAttrs() object itself, which Vue never re-runs.",
