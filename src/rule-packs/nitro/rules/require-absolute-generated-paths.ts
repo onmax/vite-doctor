@@ -378,7 +378,6 @@ function reportKitPaths(
       const owner = generationOwner(site);
       const { expression, statement, awaited } = callExecution(site);
       if (owner === registrationOwner) {
-        if (oppositeIfBranches(site, registration, owner)) continue;
         const block = statement?.__doctorParent;
         if (
           proven &&
@@ -527,24 +526,6 @@ function callExecution(call: AnyNode) {
       ? parent
       : undefined;
   return { expression, statement, awaited };
-}
-
-function oppositeIfBranches(site: AnyNode, registration: AnyNode, owner: AnyNode) {
-  let oppositeBranch = false;
-  for (let child = site; child !== owner; child = child.__doctorParent) {
-    const parent = child.__doctorParent;
-    if (/^(?:For(?:In|Of)?|While|DoWhile)Statement$/.test(parent.type) && oppositeBranch)
-      return false;
-    if (parent.type !== "IfStatement") continue;
-    const opposite =
-      child === parent.consequent
-        ? parent.alternate
-        : child === parent.alternate
-          ? parent.consequent
-          : undefined;
-    if (opposite && isWithin(registration, opposite)) oppositeBranch = true;
-  }
-  return oppositeBranch;
 }
 
 function isWithin(node: AnyNode, ancestor: AnyNode) {

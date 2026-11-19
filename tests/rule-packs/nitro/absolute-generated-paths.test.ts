@@ -466,11 +466,37 @@ export async function install(serve: boolean) {
         "if (serve) { await generate(); kit.addPlugin(entry) }",
       ),
     }),
-  ).toEqual([
-    "modules/inactive-competing-generator.ts:9",
-    "modules/opposite-competing-branch.ts:9",
-    "modules/same-branch.ts:9",
-  ]);
+  ).toEqual(["modules/inactive-competing-generator.ts:9", "modules/same-branch.ts:9"]);
+});
+
+test("keeps competing writes that can run in an earlier invocation", async () => {
+  const source = (earlierRoot: string) => `import { resolve } from "node:path"
+import { writeFileSync } from "node:fs"
+import type { Plugin } from "vite"
+import { createNitroServerKit } from "./nitro-kit"
+const entry = "./generated/plugin.ts"
+function generate() {
+  writeFileSync(resolve("${earlierRoot}", entry), "")
+}
+async function configure(phase: "generate" | "register") {
+  if (phase === "generate") {
+    await generate()
+  } else {
+    const kit = createNitroServerKit({ rootDir: "/nitro" })
+    writeFileSync(resolve("/vite", entry), "")
+    kit.addPlugin(entry)
+  }
+}
+export async function install() {
+  await configure("generate")
+  await configure("register")
+}`;
+  expect(
+    await lines({
+      "modules/matching-earlier-write.ts": source("/nitro"),
+      "modules/mismatching-earlier-write.ts": source("/other"),
+    }),
+  ).toEqual(["modules/mismatching-earlier-write.ts:15"]);
 });
 
 test("leaves addPlugin calls on receivers not tied to Nitro alone", async () => {
