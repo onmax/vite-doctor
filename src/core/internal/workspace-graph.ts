@@ -1009,7 +1009,5 @@ function reportWorkspaceDiagnostic(
     .map((item) => item.trim())
     .filter(Boolean);
   if (wanted?.length && !wanted.some((pattern) => nativeMatch(diagnostic.ruleId, pattern))) return;
-  const config = fileRuleConfig(session, diagnostic.ruleId, diagnostic.file);
-  if (config.enabled === false) return;
-  pushDiagnostic(session, { ...diagnostic, severity: config.severity ?? diagnostic.severity });
+  pushDiagnostic(session, diagnostic);
 }

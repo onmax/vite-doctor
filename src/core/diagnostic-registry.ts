@@ -44,3 +44,17 @@ export const coreDiagnosticRegistry = defineDoctorDiagnostics([
 
 export const diagnostics = coreDiagnosticRegistry.diagnostics;
 export const diagnosticCodesByRuleId = coreDiagnosticRegistry.codesByRuleId;
+
+/**
+ * Doctor-owned Rule IDs that a Doctor Run reports as Diagnostics, so Rule config can set their
+ * severity or turn them off. Every other `doctor/` Rule ID names an error Doctor throws.
+ */
+export const reportedDoctorRuleIds: ReadonlySet<string> = new Set([
+  "doctor/inventory/unresolved-runtime",
+  "doctor/baseline/stale-fingerprint-scheme",
+  "doctor/config/unused-suppression",
+  "doctor/inventory/empty-sfc",
+  "doctor/inline/unused-suppression",
+  "doctor/inline/unknown-suppression-rule",
+  "doctor/config/default-config-file",
+]);

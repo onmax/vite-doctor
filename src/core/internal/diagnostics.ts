@@ -37,7 +37,7 @@ import {
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
-import { markSession, type ScanSession } from "./scan-session.js";
+import { fileRuleConfig, markSession, type ScanSession } from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256, shellArgument } from "./utils.js";
 import {
@@ -84,15 +84,19 @@ export function applyPolicyFilters(session: ScanSession): void {
 // The baseline is not a source file, so this skips scope filtering but still honors the
 // severity threshold and the same suppression policy as every other Diagnostic.
 function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): void {
-  if (session.options.severity === "error") return;
+  const ruleId = "doctor/baseline/stale-fingerprint-scheme";
+  const config = fileRuleConfig(session, ruleId, baseline.file);
+  const severity = config.severity ?? "warn";
+  const minimum = session.options.severity;
+  if (!config.enabled || (minimum && severityRank(severity) < severityRank(minimum))) return;
   const path = relative(session.root, baseline.file) || baseline.file;
   const writer =
     baseline.fingerprintScheme === undefined
       ? "does not record the fingerprint scheme it was written with"
       : `was written with fingerprint scheme ${baseline.fingerprintScheme}`;
   const warning = normalizeDiagnosticFromRuleCode({
-    ruleId: "doctor/baseline/stale-fingerprint-scheme",
-    severity: "warn",
+    ruleId,
+    severity,
     category: "baseline",
     file: baseline.file,
     why: `Baseline "${path}"${baseline.doctorVersion ? ` (Doctor ${baseline.doctorVersion})` : ""} ${writer}, but this Doctor uses fingerprint scheme ${FINGERPRINT_SCHEME}. Recorded findings whose fingerprints changed are reported as new by --new-only.`,
@@ -837,7 +841,12 @@ export function pushDiagnostic(
     file: string;
   },
 ): void {
-  const normalized = normalizeDiagnosticFromRuleCode(diagnostic);
+  const config = fileRuleConfig(session, diagnostic.ruleId, diagnostic.file);
+  if (!config.enabled) return;
+  const normalized = normalizeDiagnosticFromRuleCode({
+    ...diagnostic,
+    severity: config.severity ?? diagnostic.severity,
+  });
   session.diagnostics.push({
     ...normalized,
     fingerprint:

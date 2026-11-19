@@ -41,6 +41,7 @@ import {
 import { nativeMatch, sha256 } from "./utils.js";
 import { owningWorkspacePackage, packageFrameworks } from "./workspace-packages.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
+import { reportedDoctorRuleIds } from "../diagnostic-registry.js";
 import {
   activatingWorkspacePackages,
   evaluateRuleApplicability,
@@ -659,6 +660,7 @@ function resolveRuleConfigs(
 ): Map<string, ResolvedRuleConfig> {
   const resolved = new Map<string, ResolvedRuleConfig>();
   for (const [ruleId, value] of Object.entries(rules)) {
+    if (ruleId.startsWith("doctor/")) assertConfigurableDoctorRule(ruleId, value);
     if (value === "off") {
       resolved.set(ruleId, { enabled: false });
       continue;
@@ -677,6 +679,24 @@ function resolveRuleConfigs(
     throw doctorInternalDiagnostics.DOC0020({ ruleId });
   }
   return resolved;
+}
+
+// Doctor reports its own Diagnostics outside any Rule, so only their severity is configurable;
+// config naming any other Doctor Rule ID would otherwise be silently ignored.
+function assertConfigurableDoctorRule(ruleId: string, value: DoctorRuleConfig): void {
+  const doctorRuleIds = [...reportedDoctorRuleIds].join(", ");
+  if (!reportedDoctorRuleIds.has(ruleId))
+    throw doctorInternalDiagnostics.DOC0020({
+      ruleId,
+      reason: "it is not a Diagnostic that a Doctor Run reports, so config cannot change it",
+      doctorRuleIds,
+    });
+  if (Array.isArray(value))
+    throw doctorInternalDiagnostics.DOC0020({
+      ruleId,
+      reason: "Doctor Rule IDs take no options",
+      doctorRuleIds,
+    });
 }
 
 function resolveRuleOverrides(
