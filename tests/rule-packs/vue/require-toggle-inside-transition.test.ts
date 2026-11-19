@@ -202,6 +202,24 @@ test("reports transitions in root fragments with another unconditional element",
   expect(await reported(fragments, false)).toEqual(fragments.map(() => ["<div />"]));
 }, 30_000);
 
+test("reports the same root fragments when they have thousands of siblings", async () => {
+  const widgets = "<AppWidget />".repeat(2000);
+  const templates = [
+    `${widgets}<Transition><div /></Transition>`,
+    `${widgets}<header /><Transition><div /></Transition>`,
+    `<header />${widgets}<Transition><div /></Transition>${widgets}<Transition><p /></Transition>`,
+    `${widgets}<template v-if="ready"><header /><Transition><div /></Transition></template>`,
+    `<header />${widgets}<template v-if="ready"><Transition><div /></Transition></template>`,
+  ];
+  expect(await reported(templates, false)).toEqual([
+    [],
+    ["<div />"],
+    ["<div />", "<p />"],
+    ["<div />"],
+    ["<div />"],
+  ]);
+}, 30_000);
+
 test("ignores literal and overridden Transition tags", async () => {
   const otherTags = [
     '<Transition is="vue:Card"><div /></Transition>',

@@ -58,6 +58,18 @@ export const requireToggleInsideTransition = createRule({
   },
   create(ctx) {
     const rootTemplateWrappers = new WeakSet<TemplateElementNode>();
+    const unconditionalNativeCounts = new WeakMap<TemplateParentNode, number>();
+    const hasUnconditionalNativeSibling = (
+      parent: TemplateParentNode,
+      node: TemplateElementNode,
+    ) => {
+      let count = unconditionalNativeCounts.get(parent);
+      if (count === undefined) {
+        count = parent.children.filter(isUnconditionalNative).length;
+        unconditionalNativeCounts.set(parent, count);
+      }
+      return count > (isUnconditionalNative(node) ? 1 : 0);
+    };
     return {
       template: {
         element(node, parent) {
@@ -99,24 +111,19 @@ export const requireToggleInsideTransition = createRule({
   },
 });
 
-function hasUnconditionalNativeSibling(
-  parent: TemplateParentNode,
-  node: TemplateElementNode,
-): boolean {
-  return parent.children.some(
-    (sibling) =>
-      sibling !== node &&
-      sibling.type === TemplateNodeType.ELEMENT &&
-      sibling.tagType === 0 &&
-      !sibling.props.some(
-        (prop) =>
-          prop.type === TemplateNodeType.DIRECTIVE &&
-          (prop.name === "if" ||
-            prop.name === "else-if" ||
-            prop.name === "else" ||
-            prop.name === "for" ||
-            prop.name === "is"),
-      ),
+function isUnconditionalNative(child: TemplateParentNode["children"][number]): boolean {
+  return (
+    child.type === TemplateNodeType.ELEMENT &&
+    child.tagType === 0 &&
+    !child.props.some(
+      (prop) =>
+        prop.type === TemplateNodeType.DIRECTIVE &&
+        (prop.name === "if" ||
+          prop.name === "else-if" ||
+          prop.name === "else" ||
+          prop.name === "for" ||
+          prop.name === "is"),
+    )
   );
 }
 
