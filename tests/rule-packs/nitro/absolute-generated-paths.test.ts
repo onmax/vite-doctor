@@ -326,3 +326,52 @@ export default kit.defineNuxtModule({
     }),
   ).toEqual([]);
 });
+
+test("reports relative plugins added through a Nitro config kit (vitehub workspace/src/hosts/vite/plugin.ts:653)", async () => {
+  expect(
+    await lines({
+      "packages/workspace/src/hosts/vite/plugin.ts": `import { resolve } from "pathe"
+import type { Plugin } from "vite"
+const generatedNitroWorkspacePlugin = ".vitehub/nitro/workspace/plugin.ts"
+function mergeNitroWorkspaceConfig(value: unknown, dev: boolean) {
+  const kit = createNitroServerKit(value)
+  kit.addPlugin(generatedNitroWorkspacePlugin, dev ? "start" : "end")
+  return kit.config
+}
+async function install(config: Record<string, unknown>, root: string) {
+  const kit = await createNitroConfigKit(config)
+  kit.addPlugin("./.vitehub/nitro/workspace/other.ts")
+  kit.addPlugin(resolve(root, generatedNitroWorkspacePlugin))
+}
+function addPlugins(kit: NitroServerKit, builder: ReturnType<typeof createNitroServerKit>) {
+  kit.addPlugin(".vitehub/nitro/typed.ts")
+  builder.addServerPlugin("../generated/plugin.ts")
+}`,
+    }),
+  ).toEqual(["vite/plugin.ts:6", "vite/plugin.ts:11", "vite/plugin.ts:15", "vite/plugin.ts:16"]);
+});
+
+test("leaves addPlugin calls on receivers not tied to Nitro alone", async () => {
+  expect(
+    await lines({
+      "modules/app-plugins.ts": `import * as kit from "@nuxt/kit"
+import { addPlugin } from "@nuxt/kit"
+import type { Plugin } from "vite"
+const markdown = createMarkdownParser()
+export default kit.defineNuxtModule({
+  setup() {
+    kit.addPlugin("./runtime/app/plugin")
+    addPlugin("./runtime/app/other")
+    markdown.addPlugin("./plugins/anchors.ts")
+    builder.addPlugin("./generated/plugin.ts")
+  },
+})
+export function nitroConfig(nitro: unknown) {
+  const kit = createNitroServerKit(nitro)
+  const register = (kit: { addPlugin(path: string): void }) => kit.addPlugin("./generated/shadowed.ts")
+  nitro.addPlugin("./generated/untyped.ts")
+  return kit.config
+}`,
+    }),
+  ).toEqual([]);
+});

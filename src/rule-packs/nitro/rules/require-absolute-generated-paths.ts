@@ -10,6 +10,8 @@ const NUXT_KIT_SOURCES = new Set(["@nuxt/kit", "nuxt/kit"]);
 const INTEGRATION_SOURCE_RE =
   /^(?:vite|nitro|nitropack|@nuxt\/kit|nuxt\/kit|@nuxt\/schema)(?:\/|$)/;
 
+const KIT_PLUGIN_METHODS = new Set(["addPlugin", "addServerPlugin"]);
+const NITRO_NAME_RE = /nitro/i;
 const HANDLER_SHAPE_KEYS = new Set(["route", "middleware", "method", "lazy"]);
 const CONFIG_FILE_RE = /(?:^|\/)(?:nuxt|nitro|vite|vitest|app)\.config\.[cm]?[jt]s$/;
 const TEST_FILE_RE = /(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -28,7 +30,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
     docsUrl: "https://nitro.build/config#handlers",
     requires: { script: true },
     activationScope: "workspace",
-    prefilter: { names: ["handler", "plugins"] },
+    prefilter: { names: ["handler", "plugins", "addPlugin", "addServerPlugin"] },
   },
   create(ctx) {
     const path = ctx.file.relativePath.replace(/\\/g, "/");
@@ -39,12 +41,23 @@ export const requireAbsoluteGeneratedPaths = createRule({
     const kitNamespaces = new Set<string>();
     const strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }> = [];
     const declarations: Array<{ name: string; scope: AnyNode | undefined }> = [];
+    // Bindings that hold a Nitro config builder, such as `const kit = createNitroServerKit(nitro)`.
+    const nitroKits: Array<{ name: string; scope: AnyNode | undefined }> = [];
+    const kitCalls: AnyNode[] = [];
     const declare = (name: string, node: AnyNode) =>
       declarations.push({ name, scope: declarationScope(node) });
     const declareFunction = (node: AnyNode) => {
       if (node.id?.name) declare(node.id.name, node);
-      for (const parameter of node.params ?? [])
+      for (const parameter of node.params ?? []) {
         for (const name of patternNames(parameter)) declare(name, parameter);
+        const typed = parameter.type === "TSParameterProperty" ? parameter.parameter : parameter;
+        if (
+          typed?.type === "Identifier" &&
+          typed.typeAnnotation &&
+          NITRO_NAME_RE.test(sourceForNode(typed.typeAnnotation, ctx.file.text))
+        )
+          nitroKits.push({ name: typed.name, scope: declarationScope(typed) });
+      }
     };
     const candidates: Array<{ node: AnyNode; kind: "handler" | "plugin" }> = [];
     return {
@@ -62,6 +75,8 @@ export const requireAbsoluteGeneratedPaths = createRule({
         for (const name of patternNames(node.id)) declare(name, node.id);
         if (node.id?.type !== "Identifier" || node.__doctorParent?.kind !== "const") return;
         const value = unwrapExpression(node.init);
+        if (isNitroKitFactoryCall(value))
+          nitroKits.push({ name: node.id.name, scope: lexicalScope(node) });
         if (staticStringValue(value) !== undefined)
           strings.push({ name: node.id.name, scope: lexicalScope(node), value });
       },
@@ -91,6 +106,10 @@ export const requireAbsoluteGeneratedPaths = createRule({
       CallExpression(node: AnyNode) {
         const callee = unwrapExpression(node.callee);
         if (callee?.type !== "MemberExpression" || callee.computed) return;
+        if (KIT_PLUGIN_METHODS.has(callee.property?.name)) {
+          if (node.arguments?.length) kitCalls.push(node);
+          return;
+        }
         if (callee.property?.name !== "push" && callee.property?.name !== "unshift") return;
         const target = unwrapExpression(callee.object);
         if (target?.type !== "MemberExpression" || target.property?.name !== "plugins") return;
@@ -120,6 +139,11 @@ export const requireAbsoluteGeneratedPaths = createRule({
       },
       "Program:exit"() {
         if (!integration) return;
+        for (const call of kitCalls) {
+          const receiver = unwrapExpression(call.callee.object);
+          if (receiver?.type === "Identifier" && resolveBinding(receiver, nitroKits, declarations))
+            candidates.push({ node: call.arguments[0], kind: "plugin" });
+        }
         for (const { node, kind } of candidates) {
           const value = unwrapExpression(node);
           // A name declared more than once may resolve to another scope's value, so skip it.
@@ -236,6 +260,22 @@ function resolveString(
   strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }>,
   declarations: Array<{ name: string; scope: AnyNode | undefined }>,
 ) {
+  return resolveBinding(value, strings, declarations)?.value;
+}
+
+function isNitroKitFactoryCall(node: AnyNode): boolean {
+  const call = node?.type === "AwaitExpression" ? unwrapExpression(node.argument) : node;
+  if (call?.type !== "CallExpression") return false;
+  const callee = unwrapExpression(call.callee);
+  const name = callee?.type === "MemberExpression" ? callee.property?.name : callee?.name;
+  return typeof name === "string" && NITRO_NAME_RE.test(name);
+}
+
+function resolveBinding<T extends { name: string; scope: AnyNode | undefined }>(
+  value: AnyNode,
+  bindings: T[],
+  declarations: Array<{ name: string; scope: AnyNode | undefined }>,
+): T | undefined {
   const scope = lexicalScope(value);
   const visible = declarations.filter(
     (item) => item.name === value.name && isScopeInside(scope, item.scope),
@@ -243,14 +283,13 @@ function resolveString(
   if (!visible.length) return undefined;
   const nearest = Math.max(...visible.map((item) => scopeDepth(item.scope)));
   if (visible.filter((item) => scopeDepth(item.scope) === nearest).length !== 1) return undefined;
-  const match = strings.find(
+  return bindings.find(
     (item) =>
       item.name === value.name &&
       item.scope &&
       scopeDepth(item.scope) === nearest &&
       isScopeInside(scope, item.scope),
   );
-  return match?.value;
 }
 
 function patternNames(pattern: AnyNode): string[] {
