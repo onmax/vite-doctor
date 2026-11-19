@@ -81,11 +81,15 @@ test.each([
   ["a numeric range", '<Row v-for="n in 5" />'],
   ["an inline array literal", "<Row v-for=\"label in ['a', 'b']\" :label />"],
   ["a string literal", "<input v-for=\"letter in 'abc'\">"],
+  ["a static template string", '<input v-for="letter in `abc`">'],
   [
-    "a nested keyed list inside an unkeyed wrapper",
-    '<div v-for="row in items"><Cell v-for="cell in row.cells" :key="cell.id" /></div>',
+    "a conditional transition fragment",
+    '<TransitionGroup><li v-if="show" v-for="item in items">{{ item.name }}</li></TransitionGroup>',
   ],
-  ["a keyed descendant", '<li v-for="item in items"><Row :key="item.id" /></li>'],
+  [
+    "a text-only transition fragment",
+    '<TransitionGroup><template v-for="item in items">{{ item.name }}</template></TransitionGroup>',
+  ],
 ])("stays silent for %s", async (_name, template) => {
   const result = await diagnose(template);
   expect(result.diagnostics).toEqual([]);
@@ -111,26 +115,67 @@ test.each([
     '<li v-for="item in items"><label><input v-model="item.done" type="checkbox"></label></li>',
   ],
   ["props list", '<Row v-for="item in props.items" />'],
+  [
+    "a dropped spread on the structural template",
+    '<template v-for="item in items" v-bind="item"><input :placeholder="item.name"></template>',
+  ],
+  [
+    "a spread on one of several template children",
+    '<template v-for="item in items"><input v-bind="item"><hr></template>',
+  ],
+  [
+    "a keyed loop in a structural template",
+    '<template v-for="item in items"><li v-for="child in item.children" :key="child.id"/><input :placeholder="item.name"></template>',
+  ],
+  [
+    "a keyed loop inside a native wrapper",
+    '<div v-for="row in items"><Cell v-for="cell in row.cells" :key="cell.id" /></div>',
+  ],
+  ["a keyed descendant", '<li v-for="item in items"><Row :key="item.id" /></li>'],
+  ["a spread over a mutable array", '<input v-for="item in [...items]" :placeholder="item.name">'],
+  ["an interpolated string source", '<input v-for="letter in `a${suffix}`">'],
 ])("reports %s", async (_name, template) => {
   const result = await diagnose(template);
   expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([RULE_ID]);
   expect(result.diagnostics[0]!.code).toBe("VUE0045");
 });
 
-test("reports only the inner list when both levels are unkeyed", async () => {
+test("reports both unkeyed levels that can independently lose state", async () => {
   const result = await diagnose(
     '<div v-for="row in items"><Cell v-for="cell in row.cells" :cell="cell" /></div>',
   );
-  expect(result.diagnostics).toHaveLength(1);
-  expect(result.diagnostics[0]!.why).toContain('<Cell v-for="cell in row.cells">');
+  expect(result.diagnostics).toHaveLength(2);
+  expect(result.diagnostics.map(({ why }) => why)).toEqual([
+    expect.stringContaining('<div v-for="row in items">'),
+    expect.stringContaining('<Cell v-for="cell in row.cells">'),
+  ]);
 });
 
-test("skips top-level const array literals that never change", async () => {
+test("reports const array bindings that can be mutated in place", async () => {
   const result = await diagnose(
     '<Row v-for="tab in tabs" :label="tab" />',
-    "const tabs = ['Profile', 'Billing'] as const",
+    "const tabs = ['Profile', 'Billing']; function reorder() { tabs.reverse() }",
   );
-  expect(result.diagnostics).toEqual([]);
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test.each([
+  '<TransitionGroup><li v-for="n in 3">{{ n }}</li></TransitionGroup>',
+  '<TransitionGroup><template #default><li v-for="item in items">{{ item.name }}</li></template></TransitionGroup>',
+])("reports a proven transition warning for %s", async (template) => {
+  const result = await diagnose(template);
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]!.confidence).toBe("proven");
+  expect(result.diagnostics[0]!.why).toContain("children must be keyed");
+});
+
+test("keeps state-reuse advice when a conditional supplies a transition key", async () => {
+  const result = await diagnose(
+    '<TransitionGroup><input v-if="show" v-for="item in items"></TransitionGroup>',
+  );
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]!.confidence).toBe("heuristic-medium");
+  expect(result.diagnostics[0]!.why).not.toContain("children must be keyed");
 });
 
 test("names the failure mode and the state the component keeps", async () => {
@@ -165,15 +210,42 @@ test("reports a component Doctor cannot read whose name says it holds input, wit
   expect(result.diagnostics[0]!.why).toContain("could not read <UInput>");
 });
 
-test("suggests a key on the item's id field", async () => {
+test("suggests a key on the item's distinct literal id field", async () => {
   const template = '<TodoRow v-for="todo in items" :todo-id="todo.id" />';
-  const result = await diagnose(template);
+  const result = await diagnose(template, "const items = ref([{ id: 1 }, { id: 2 }])");
   const [diagnostic] = result.diagnostics;
   expect(diagnostic!.suggestion).toContain(':key="todo.id"');
   expect(diagnostic!.fix?.kind).toBe("suggestion");
   const [edit] = diagnostic!.fix!.edits;
   expect(edit!.text).toBe(' :key="todo.id"');
   expect(edit!.range.start).toBe(edit!.range.end);
+});
+
+test.each([
+  [
+    '<div v-for="item in items"><input><span v-for="item in children">{{ item.id }}</span></div>',
+    'const items = ref([{ name: "a" }])',
+  ],
+  [
+    '<div v-for="item in items"><input :placeholder="choices.map(item => item.id).join()"></div>',
+    "const items = ref([])",
+  ],
+  [
+    '<input v-for="item in items" :placeholder="item.name">',
+    'const items = ref([{ id: 1, name: "a" }, { id: 1, name: "b" }])',
+  ],
+  [
+    '<input v-for="item in items" :placeholder="item.id">',
+    "const items = ref<{ id?: string }[]>([])",
+  ],
+  [
+    '<input v-for="item in items" :placeholder="item.id.name">',
+    "const items = ref<{ id: { name: string } }[]>([])",
+  ],
+])("does not suggest an unverified key for %s (%s)", async (template, script) => {
+  const result = await diagnose(template, script);
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]!.fix ?? null).toBeNull();
 });
 
 test("suggests the id field from the item type", async () => {

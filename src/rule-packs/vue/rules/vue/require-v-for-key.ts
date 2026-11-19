@@ -2,6 +2,7 @@ import type {
   RuleContext,
   TemplateDirectiveNode,
   TemplateElementNode,
+  TemplateParentNode,
 } from "../../../../core/index.js";
 import {
   findTemplateAttribute,
@@ -10,16 +11,15 @@ import {
 } from "../../../../core/rule-authoring.js";
 import {
   ownStatefulReason,
-  stableKeyExpression,
-  statefulReason,
   statefulReportOptions,
-  unchangingSourceCheck,
+  verifiedKeyExpression,
   type Stateful,
 } from "./list-item-state.js";
-import { createRule } from "./shared.js";
+import { createRule, type AnyNode } from "./shared.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/require-v-for-key";
+const TRANSITION_GROUP_TAGS = new Set(["TransitionGroup", "transition-group"]);
 
 export const requireVForKey = createRule({
   meta: {
@@ -48,29 +48,34 @@ export const requireVForKey = createRule({
     requires: { template: true, vue: true },
   },
   create(ctx) {
-    const isUnchangingSource = unchangingSourceCheck(ctx);
+    const parents = new WeakMap<TemplateElementNode, TemplateParentNode>();
 
     return {
       template: {
         element(node, parent) {
+          if (parent) parents.set(node, parent);
           const vFor = findTemplateDirective(node, "for");
-          if (!vFor?.forParseResult || mayHaveKey(node)) return;
-          if (node.tagType === 3 && node.children.some((child) => mayHaveKey(child))) return;
-          if (isUnchangingSource(vFor)) return;
+          if (!vFor?.forParseResult || iterationMayHaveKey(node)) return;
 
-          const own = statefulReason(ctx, node, parent);
+          const source = ctx.helpers.parseTemplateExpression(vFor.forParseResult.source);
+          const transition = inTransitionGroup(node, parents) && unkeyedTransitionChild(node);
+          if (transition ? emptySource(source) : fixedSource(source)) return;
+          const own = transition
+            ? ({ reason: "transition", tag: node.tag } as const)
+            : ownStatefulReason(ctx, node, false);
           const stateful = own ?? descendantState(ctx, node);
           if (!stateful) return;
-          const inside = !own || node.tagType === 3;
 
-          const keyExpression = stableKeyExpression(ctx, vFor, node);
+          const keyExpression = hasLocalTemplateScope(node, parents)
+            ? undefined
+            : verifiedKeyExpression(ctx, vFor, source);
           const insertAt = vFor.loc.end.offset;
           ctx.report(
             diagnostics.VUE0045({
-              why: whyFor(stateful, node, vFor, inside),
+              why: whyFor(stateful, node, vFor, !own),
               fix: keyExpression
                 ? `Add :key="${keyExpression}" to <${node.tag} v-for>, or bind another stable, unique field of the item. Do not key it by the v-for index, which keeps the same problem.`
-                : `Bind :key on <${node.tag} v-for> to a stable, unique field of the item, such as its id. Doctor found no id field on the item to name here. Do not key it by the v-for index, which keeps the same problem.`,
+                : `Bind :key on <${node.tag} v-for> to a stable, unique field of the item, such as its id. Do not key it by the v-for index, which keeps the same problem.`,
             }),
             {
               ruleId: RULE_ID,
@@ -101,27 +106,121 @@ export const requireVForKey = createRule({
   },
 });
 
-/** A `key`, `:key`, or a binding such as `v-bind="item"` that may carry one. */
-function mayHaveKey(node: TemplateElementNode["children"][number]): boolean {
-  if (node.type !== TemplateNodeType.ELEMENT) return false;
-  if (findTemplateAttribute(node, "key")) return true;
+function hasExplicitKey(node: TemplateElementNode): boolean {
+  return !!(findTemplateAttribute(node, "key") || findTemplateDirective(node, "bind", "key"));
+}
+
+function mayBindKey(node: TemplateElementNode): boolean {
   return node.props.some(
     (prop) =>
       prop.type === TemplateNodeType.DIRECTIVE &&
       prop.name === "bind" &&
-      (!prop.arg || !prop.arg.isStatic || prop.arg.content === "key"),
+      (!prop.arg || !prop.arg.isStatic),
   );
 }
 
+function hasConditional(node: TemplateElementNode): boolean {
+  return !!(
+    findTemplateDirective(node, "if") ||
+    findTemplateDirective(node, "else-if") ||
+    findTemplateDirective(node, "else")
+  );
+}
+
+function iterationMayHaveKey(node: TemplateElementNode): boolean {
+  if (hasExplicitKey(node)) return true;
+  if (node.tagType !== 3) return mayBindKey(node);
+  return node.children.some(
+    (child) =>
+      child.type === TemplateNodeType.ELEMENT &&
+      !findTemplateDirective(child, "for") &&
+      !hasConditional(child) &&
+      (hasExplicitKey(child) ||
+        (node.children.length === 1 && child.tagType !== 3 && mayBindKey(child))),
+  );
+}
+
+function inTransitionGroup(
+  node: TemplateElementNode,
+  parents: WeakMap<TemplateElementNode, TemplateParentNode>,
+): boolean {
+  if (hasConditional(node) || findTemplateDirective(node, "slot")) return false;
+  let parent = parents.get(node);
+  if (parent?.type === TemplateNodeType.ELEMENT && parent.tagType === 3) {
+    const slot = findTemplateDirective(parent, "slot");
+    if (!slot || (slot.arg && (!slot.arg.isStatic || slot.arg.content !== "default"))) return false;
+    parent = parents.get(parent);
+  }
+  return parent?.type === TemplateNodeType.ELEMENT && TRANSITION_GROUP_TAGS.has(parent.tag);
+}
+
 /**
- * State rendered inside an unkeyed item, such as a component in a `<li v-for>`. Vue patches those
- * descendants in place along with the item. A keyed descendant or a nested v-for has its own
- * identity, so the walk stops there.
+ * TransitionGroup flattens fragments, propagating their keys. Slot outlets can supply unknown
+ * keys, and text and comments do not trigger the warning.
  */
+function unkeyedTransitionChild(node: TemplateElementNode): boolean {
+  if (node.tagType === 2) return false;
+  if (node.tagType !== 3) return true;
+  return node.children.some(
+    (child) =>
+      child.type === TemplateNodeType.ELEMENT &&
+      !hasConditional(child) &&
+      !iterationMayHaveKey(child) &&
+      unkeyedTransitionChild(child),
+  );
+}
+
+function hasLocalTemplateScope(
+  node: TemplateElementNode,
+  parents: WeakMap<TemplateElementNode, TemplateParentNode>,
+): boolean {
+  for (
+    let parent = parents.get(node);
+    parent?.type === TemplateNodeType.ELEMENT;
+    parent = parents.get(parent)
+  ) {
+    if (findTemplateDirective(parent, "for") || findTemplateDirective(parent, "slot")) return true;
+  }
+  return false;
+}
+
+function fixedSource(node: AnyNode): boolean {
+  return (
+    (node?.type === "Literal" &&
+      (typeof node.value === "string" ||
+        (typeof node.value === "number" && Number.isInteger(node.value) && node.value >= 0))) ||
+    (node?.type === "TemplateLiteral" && !node.expressions.length) ||
+    (node?.type === "ArrayExpression" && node.elements.every(fixedValue))
+  );
+}
+
+function fixedValue(node: AnyNode): boolean {
+  if (!node || node.type === "Literal" || fixedSource(node)) return true;
+  return (
+    node.type === "ObjectExpression" &&
+    node.properties.every(
+      (property: AnyNode) =>
+        property.type === "Property" &&
+        !property.computed &&
+        property.kind === "init" &&
+        fixedValue(property.value),
+    )
+  );
+}
+
+function emptySource(node: AnyNode): boolean {
+  return (
+    (node?.type === "Literal" && (node.value === "" || node.value === 0)) ||
+    (node?.type === "ArrayExpression" && node.elements.length === 0) ||
+    (node?.type === "TemplateLiteral" &&
+      !node.expressions.length &&
+      node.quasis[0]?.value.cooked === "")
+  );
+}
+
 function descendantState(ctx: RuleContext, element: TemplateElementNode): Stateful | null {
   for (const child of element.children) {
     if (child.type !== TemplateNodeType.ELEMENT) continue;
-    if (findTemplateDirective(child, "for") || mayHaveKey(child)) continue;
     const stateful = ownStatefulReason(ctx, child, false) ?? descendantState(ctx, child);
     if (stateful) return stateful;
   }
@@ -137,7 +236,14 @@ function whyFor(
   const item = `<${element.tag} ${vFor.loc.source}>`;
   if (stateful.reason === "transition")
     return `${item} inside <TransitionGroup> has no key. <TransitionGroup> sets transition hooks only on keyed children and warns "<TransitionGroup> children must be keyed." in development, so these items enter, leave and move without animating.`;
-  const prefix = `${item} has no key${inside ? ` and renders <${stateful.tag}>` : ""}. Without a key Vue patches the list in place: when items are inserted, removed or reordered,`;
+  const summary = `${item} has no key${inside ? ` and renders <${stateful.tag}>` : ""}.`;
+  const reuse =
+    "Without a key Vue patches the list in place: when items are inserted, removed or reordered,";
+  if (inside) {
+    const evidence = stateful.evidence ? ` ${stateful.evidence}.` : "";
+    return `${summary}${evidence} ${reuse} state in <${stateful.tag}> can stay with the old position or be lost when Vue replaces the subtree. Descendant keys do not key the outer item.`;
+  }
+  const prefix = `${summary} ${reuse}`;
   switch (stateful.reason) {
     case "component":
       return `${item} has no key${inside ? ` and renders <${stateful.tag}>` : ""}. ${stateful.evidence}. Without a key Vue patches the list in place: when items are inserted, removed or reordered, each <${stateful.tag}> instance stays at its position and only gets new props, so that local state ends up on a different item.`;

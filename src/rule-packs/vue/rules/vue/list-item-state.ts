@@ -176,8 +176,55 @@ export function stableKeyExpression(
   return field ? `${alias}.${field}` : undefined;
 }
 
+export function verifiedKeyExpression(
+  ctx: RuleContext,
+  vFor: TemplateDirectiveNode,
+  source: AnyNode,
+): string | undefined {
+  const alias = aliasIdentifier(vFor.forParseResult!.value);
+  if (!alias) return undefined;
+  const fields =
+    source?.type === "ArrayExpression"
+      ? distinctLiteralKeys(source)
+      : itemFields(ctx.file.sfc?.getScriptAst("merged"), vFor.forParseResult!.source.content, true);
+  const field = KEY_FIELDS.find((name) => fields.has(name));
+  return field ? `${alias}.${field}` : undefined;
+}
+
+function distinctLiteralKeys(array: AnyNode): Set<string> {
+  if (!array.elements.length) return new Set();
+  return new Set(
+    KEY_FIELDS.filter((field) => {
+      const values = new Set<string | number>();
+      return array.elements.every((item: AnyNode) => {
+        const object = unwrapTs(item);
+        if (
+          object?.type !== "ObjectExpression" ||
+          object.properties.some(
+            (prop: AnyNode) => prop.type !== "Property" || prop.computed || prop.kind !== "init",
+          )
+        )
+          return false;
+        const property = object.properties.findLast(
+          (prop: AnyNode) => (prop.key.name ?? prop.key.value) === field,
+        );
+        const literal = unwrapTs(property?.value);
+        const value = literal?.value;
+        if (
+          literal?.type !== "Literal" ||
+          (typeof value !== "string" && (typeof value !== "number" || !Number.isFinite(value))) ||
+          values.has(value)
+        )
+          return false;
+        values.add(value);
+        return true;
+      });
+    }),
+  );
+}
+
 /** Fields the items of a `v-for` source have, read from its script literal or declared type. */
-function itemFields(program: AnyNode, source: string): Set<string> {
+function itemFields(program: AnyNode, source: string, verify = false): Set<string> {
   const fields = new Set<string>();
   const match = /^(?:(props|\$props)\.)?([A-Za-z_$][\w$]*)$/.exec(source.trim());
   if (!program || !match) return fields;
@@ -218,7 +265,17 @@ function itemFields(program: AnyNode, source: string): Set<string> {
   const addMembers = (type: AnyNode) => {
     for (const member of membersOf(type)) {
       const key = member.key?.name ?? member.key?.value;
-      if (typeof key === "string") fields.add(key);
+      if (
+        typeof key === "string" &&
+        (!verify ||
+          (member.type === "TSPropertySignature" &&
+            !member.optional &&
+            !member.computed &&
+            ["TSStringKeyword", "TSNumberKeyword", "TSSymbolKeyword"].includes(
+              member.typeAnnotation?.typeAnnotation?.type,
+            )))
+      )
+        fields.add(key);
     }
   };
   const addLiteral = (array: AnyNode) => {
@@ -236,14 +293,26 @@ function itemFields(program: AnyNode, source: string): Set<string> {
     );
     for (const key of first) if (rest.every((keys: Set<string>) => keys.has(key))) fields.add(key);
   };
-  walk(program, (node) => {
+  const inspect = (node: AnyNode) => {
     if (node.type === "VariableDeclarator" && !viaProps && node.id?.name === name) {
       let init = unwrapTs(node.init);
+      if (verify) addMembers(elementType(node.id.typeAnnotation?.typeAnnotation));
       if (init?.type === "CallExpression") {
+        if (
+          verify &&
+          !["ref", "shallowRef", "reactive", "shallowReactive"].includes(init.callee?.name)
+        )
+          return;
         addMembers(elementType(typeArguments(init)?.[0]));
         init = unwrapTs(init.arguments?.[0]);
       }
-      if (init?.type === "ArrayExpression") addLiteral(init);
+      if (init?.type === "ArrayExpression") {
+        if (!verify) addLiteral(init);
+        else if (init.elements.length) {
+          fields.clear();
+          for (const field of distinctLiteralKeys(init)) fields.add(field);
+        }
+      }
     }
     if (node.type === "CallExpression" && node.callee?.name === "defineProps") {
       for (const member of membersOf(typeArguments(node)?.[0])) {
@@ -251,7 +320,23 @@ function itemFields(program: AnyNode, source: string): Set<string> {
           addMembers(elementType(member.typeAnnotation?.typeAnnotation));
       }
     }
-  });
+  };
+  if (verify) {
+    for (const statement of program.body ?? []) {
+      const declaration =
+        statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+      if (declaration?.type === "ExpressionStatement") inspect(declaration.expression);
+      if (declaration?.type !== "VariableDeclaration") continue;
+      for (const binding of declaration.declarations) {
+        inspect(binding);
+        if (
+          binding.init?.type === "CallExpression" &&
+          (viaProps ? binding.id?.name === viaProps : binding.id?.type === "ObjectPattern")
+        )
+          inspect(binding.init);
+      }
+    }
+  } else walk(program, inspect);
   return fields;
 }
 
