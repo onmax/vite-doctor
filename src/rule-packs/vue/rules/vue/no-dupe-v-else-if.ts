@@ -320,17 +320,19 @@ function heuristicSetupReads(
   readable: (name: string) => boolean,
 ): HeuristicReads {
   const declarators = constDeclarators(setupStatements);
-  const propsCall = [
-    ...declarators.map((declaration) => declaration.init),
-    ...setupStatements
-      .filter((statement) => statement.type === "ExpressionStatement")
-      .map((statement) => statement.expression),
-  ]
+  const propsCall = setupStatements
+    .flatMap((statement) =>
+      statement.type === "VariableDeclaration" && !statement.declare
+        ? statement.declarations.map((declaration: AnyNode) => declaration.init)
+        : statement.type === "ExpressionStatement"
+          ? [statement.expression]
+          : [],
+    )
     .map(definePropsCall)
     .find(Boolean);
   const compiled = compileSetup(ctx, descriptor, propsCall);
   if (!compiled) return NO_HEURISTIC_READS;
-  const { bindings, propKeys } = compiled;
+  const { bindings, propKeys, primitivePropKeys } = compiled;
 
   const setup = descriptor.scriptSetup!;
   const setupScope = descriptor.script
@@ -369,14 +371,15 @@ function heuristicSetupReads(
         const key = staticKey(property);
         const local =
           property.value.type === "AssignmentPattern" ? property.value.left : property.value;
+        if (key === undefined || local.type !== "Identifier" || !readable(local.name)) continue;
+        const binding = bindings[local.name];
         if (
-          key !== undefined &&
-          propKeys.has(key) &&
-          local.type === "Identifier" &&
-          readable(local.name) &&
-          ["props", "props-aliased", "setup-const"].includes(bindings[local.name] ?? "")
-        )
+          binding === "props" ||
+          binding === "props-aliased" ||
+          (binding === "setup-const" && primitivePropKeys.has(key))
+        ) {
           names.add(local.name);
+        }
       }
     }
     if (declaration.id.type !== "Identifier" || !readable(declaration.id.name)) continue;
@@ -398,7 +401,11 @@ function compileSetup(
   ctx: RuleContext,
   descriptor: SFCDescriptor,
   propsCall: AnyNode,
-): { bindings: Record<string, string | undefined>; propKeys: Set<string> } | null {
+): {
+  bindings: Record<string, string | undefined>;
+  propKeys: Set<string>;
+  primitivePropKeys: Set<string>;
+} | null {
   const sfc = loadVueCompilerSfc();
   if (!typeScriptRegistered) {
     sfc.registerTS(() => loadTypeScript());
@@ -430,6 +437,7 @@ function compileSetup(
     for (const dep of compiled.deps ?? []) inputs.add(dep);
     if (!compiled.bindings) return null;
     let propKeys = runtimePropKeys(unwrap(propsCall?.arguments[0]));
+    const primitivePropKeys = new Set<string>();
     if (propsCall?.typeArguments) {
       const setup = descriptor.scriptSetup!;
       const statements = compiled.scriptSetupAst ?? [];
@@ -466,16 +474,35 @@ function compileSetup(
             type,
           );
           propKeys = new Set(Object.keys(resolved.props));
+          for (const [key, prop] of Object.entries(resolved.props)) {
+            if (
+              prop.type === "TSPropertySignature" &&
+              isPrimitivePropType(prop.typeAnnotation?.typeAnnotation)
+            ) {
+              primitivePropKeys.add(key);
+            }
+          }
         }
       }
     }
-    return { bindings: compiled.bindings as Record<string, string | undefined>, propKeys };
+    return {
+      bindings: compiled.bindings as Record<string, string | undefined>,
+      propKeys,
+      primitivePropKeys,
+    };
   } catch {
     return null;
   } finally {
     // Type scopes and resolution configs are cached even when compilation throws.
     for (const file of inputs) sfc.invalidateTypeCache(file);
   }
+}
+
+function isPrimitivePropType(node: AnyNode): boolean {
+  if (node?.type === "TSUnionType") return node.types.every(isPrimitivePropType);
+  return /^(TSBoolean|TSString|TSNumber|TSBigInt|TSSymbol|TSNull|TSUndefined)Keyword$/.test(
+    node?.type ?? "",
+  );
 }
 
 function constDeclarators(statements: AnyNode[]): AnyNode[] {

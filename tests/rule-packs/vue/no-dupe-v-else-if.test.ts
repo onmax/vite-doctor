@@ -208,6 +208,11 @@ test.each([
   ["a model", "const ready = defineModel<boolean>();", "ready"],
   ["a named model", "const ready = defineModel<boolean>('ready', { required: true });", "ready"],
   ["a bare type-based prop", "defineProps<{ ready: boolean }>();", "ready"],
+  [
+    "a bare prop with a mutable receiver",
+    "let props = defineProps<{ ready: boolean }>();",
+    "ready",
+  ],
   ["a bare runtime prop", "defineProps({ ready: Boolean });", "ready"],
   ["a bare array prop", "defineProps(['ready']);", "ready"],
   ["a destructured prop", "const { ready } = defineProps<{ ready: boolean }>();", "ready"],
@@ -401,6 +406,47 @@ test.each([
   expect(await reportedConfidence(`<p v-if="${read}" /><p v-else-if="${read}" />`, setup)).toEqual([
     "heuristic-high",
   ]);
+});
+
+test.each(["sharedProps", "{ ...sharedProps }"])(
+  "reports a compiler-confirmed prop alias from %s",
+  async (declaration) => {
+    const result = await project.run({
+      rule: noDupeVElseIf,
+      files: {
+        "app.vue": sfc(
+          '<p v-if="ready" /><p v-else-if="ready" />',
+          `import { sharedProps } from './props'; const { enabled: ready } = defineProps(${declaration});`,
+        ),
+        "props.ts": "export const sharedProps = { enabled: Boolean };",
+      },
+    });
+    expect(result.diagnostics.map(({ confidence }) => confidence)).toEqual(["heuristic-high"]);
+  },
+);
+
+test("skips non-reactive destructured props that can unwrap a customRef", async () => {
+  expect(
+    await reportedConfidence(
+      '<p v-if="ready" /><p v-else-if="ready" />',
+      `import { customRef, type Ref } from 'vue';
+       const { ready } = withDefaults(defineProps<{ ready?: Ref<boolean> }>(), {
+         ready: () => {
+           let reads = 0;
+           return customRef(() => ({ get: () => ++reads === 2, set() {} }));
+         },
+       });`,
+    ),
+  ).toEqual([]);
+});
+
+test("does not assume a mutable props receiver still holds the props object", async () => {
+  expect(
+    await reportedConfidence(
+      '<p v-if="props.ready" /><p v-else-if="props.ready" />',
+      "let props = defineProps<{ ready: boolean }>(); props = { get ready() { return Math.random() > 0.5; } };",
+    ),
+  ).toEqual([]);
 });
 
 test("observes changed prop type resolution config across runs", async () => {
