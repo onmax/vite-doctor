@@ -267,6 +267,10 @@ test.each([
     "export default ({ command }) => { const helper = () => { return { [command]: true }; }; if (command === 'serve') return {}; return { plugins: [helper()] }; };",
   ],
   [
+    "a computed key in a return discarded by finally",
+    "export default ({ mode }) => { try { return { [mode]: '/app/' }; } finally { return { base: '/' }; } };",
+  ],
+  [
     "mergeConfig() and the doctor() plugin",
     "import { mergeConfig } from 'vite'\nimport { doctor } from 'vite-doctor/plugin'\nimport base from './vite.base'\nexport default mergeConfig(base, { plugins: [doctor()] })\n",
   ],
@@ -306,6 +310,24 @@ test.each([
   const withJson = await run(root);
   expect(withJson.report.error).toBeUndefined();
   expect(codes(withJson.report)).toContain("DOC0038");
+});
+
+test("a Doctor key from an imported base does not block automatic JSON discovery", async () => {
+  const root = fixture({
+    "vite.base.ts": `export default { doctor: { rules: { "${secretDefine}": "off" } } };`,
+    "vite.config.ts": `import shared from './vite.base';
+export default { ...shared, define: { SECRET_KEY: JSON.stringify('secret') } };`,
+  });
+  const defaults = await run(root, ["--rules", secretDefine]);
+  expect(codes(defaults.report)).toContain("VITE0005");
+
+  writeFileSync(
+    join(root, "doctor.config.json"),
+    JSON.stringify({ rules: { [secretDefine]: "off" } }),
+  );
+  const withJson = await run(root, ["--rules", secretDefine]);
+  expect(withJson.code).toBe(0);
+  expect(withJson.report.diagnostics).toEqual([]);
 });
 
 test.each([
@@ -350,6 +372,23 @@ export default defineConfig(({ command }) => {
     "a conditional expression",
     "export default ({ command }) => command === 'serve' ? {} : { ['doc' + 'tor']: { extends: [] } };",
     1,
+  ],
+  [
+    "a conditional callback returning a local const",
+    `export default ({ command }) => {
+  if (command === 'serve') return {};
+  const config = { ['doc' + 'tor']: { extends: [] } };
+  return config;
+};`,
+    3,
+  ],
+  [
+    "a try return that finally can leave intact",
+    `export default ({ command }) => {
+  try { return { ['doc' + 'tor']: { extends: [] } }; }
+  finally { if (command === 'serve') return {}; }
+};`,
+    2,
   ],
 ])("a computed key that may be doctor is a config error in %s", async (_, source, line) => {
   const root = fixture({ "vite.config.ts": source });
