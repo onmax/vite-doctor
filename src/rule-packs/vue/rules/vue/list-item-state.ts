@@ -17,7 +17,7 @@ import {
   nameSuggestsState,
   resolveComponentFile,
 } from "./component-state.js";
-import type { AnyNode } from "./shared.js";
+import { bindingNames, type AnyNode } from "./shared.js";
 
 const KEY_FIELDS = ["id", "uuid", "key"];
 const DYNAMIC_COMPONENT_TAGS = new Set(["component", "Component"]);
@@ -314,30 +314,64 @@ function itemFields(program: AnyNode, source: string, verify = false): Set<strin
         }
       }
     }
-    if (node.type === "CallExpression" && node.callee?.name === "defineProps") {
+    if (!verify && node.type === "CallExpression" && node.callee?.name === "defineProps") {
       for (const member of membersOf(typeArguments(node)?.[0])) {
         if ((member.key?.name ?? member.key?.value) === name)
           addMembers(elementType(member.typeAnnotation?.typeAnnotation));
       }
     }
   };
-  if (verify) {
-    for (const statement of program.body ?? []) {
-      const declaration =
-        statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-      if (declaration?.type === "ExpressionStatement") inspect(declaration.expression);
-      if (declaration?.type !== "VariableDeclaration") continue;
-      for (const binding of declaration.declarations) {
-        inspect(binding);
-        if (
-          binding.init?.type === "CallExpression" &&
-          (viaProps ? binding.id?.name === viaProps : binding.id?.type === "ObjectPattern")
-        )
-          inspect(binding.init);
-      }
+  if (!verify) {
+    walk(program, inspect);
+    return fields;
+  }
+
+  let props: AnyNode;
+  const addProp = (call: AnyNode, prop: string) => {
+    const member = membersOf(typeArguments(call)?.[0]).find(
+      (entry) => !entry.computed && (entry.key?.name ?? entry.key?.value) === prop,
+    );
+    addMembers(elementType(member?.typeAnnotation?.typeAnnotation));
+  };
+  const localName = viaProps ?? name;
+  for (const statement of program.body ?? []) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type === "ImportDeclaration" && declaration.importKind !== "type") {
+      if (declaration.specifiers.some((entry: AnyNode) => entry.local.name === localName))
+        return fields;
     }
-  } else walk(program, inspect);
+    if (declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") {
+      if (declaration.id?.name === localName) return fields;
+    }
+    if (declaration?.type === "ExpressionStatement")
+      props = definePropsCall(declaration.expression) ?? props;
+    if (declaration?.type !== "VariableDeclaration") continue;
+    for (const binding of declaration.declarations) {
+      const call = definePropsCall(binding.init);
+      props = call ?? props;
+      if (!bindingNames(binding.id).includes(localName)) continue;
+      if (viaProps) {
+        if (binding.id.name === localName && call) addProp(call, name);
+      } else if (call && binding.id.type === "ObjectPattern") {
+        const property = binding.id.properties.find((entry: AnyNode) => {
+          if (entry.type !== "Property" || entry.computed) return false;
+          const value = entry.value.type === "AssignmentPattern" ? entry.value.left : entry.value;
+          return value.type === "Identifier" && value.name === localName;
+        });
+        if (property) addProp(call, property.key.name ?? property.key.value);
+      } else inspect(binding);
+      return fields;
+    }
+  }
+  if ((!viaProps || viaProps === "$props") && props) addProp(props, name);
   return fields;
+}
+
+function definePropsCall(node: AnyNode): AnyNode {
+  if (node?.type !== "CallExpression") return undefined;
+  const call = node.callee?.name === "withDefaults" ? node.arguments?.[0] : node;
+  return call?.type === "CallExpression" && call.callee?.name === "defineProps" ? call : undefined;
 }
 
 function typeArguments(node: AnyNode): AnyNode[] | undefined {

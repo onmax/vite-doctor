@@ -145,14 +145,22 @@ function inTransitionGroup(
   node: TemplateElementNode,
   parents: WeakMap<TemplateElementNode, TemplateParentNode>,
 ): boolean {
-  if (hasConditional(node) || findTemplateDirective(node, "slot")) return false;
+  if (hasConditional(node) || (node.tagType === 3 && findTemplateDirective(node, "slot")))
+    return false;
   let parent = parents.get(node);
   if (parent?.type === TemplateNodeType.ELEMENT && parent.tagType === 3) {
     const slot = findTemplateDirective(parent, "slot");
-    if (!slot || (slot.arg && (!slot.arg.isStatic || slot.arg.content !== "default"))) return false;
+    if (!slot || !isDefaultSlot(slot)) return false;
     parent = parents.get(parent);
   }
-  return parent?.type === TemplateNodeType.ELEMENT && TRANSITION_GROUP_TAGS.has(parent.tag);
+  if (parent?.type !== TemplateNodeType.ELEMENT || !TRANSITION_GROUP_TAGS.has(parent.tag))
+    return false;
+  const slot = findTemplateDirective(parent, "slot");
+  return !slot || isDefaultSlot(slot);
+}
+
+function isDefaultSlot(slot: TemplateDirectiveNode): boolean {
+  return !slot.arg || (slot.arg.isStatic && slot.arg.content === "default");
 }
 
 /**

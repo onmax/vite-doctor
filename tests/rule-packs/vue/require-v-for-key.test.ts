@@ -90,6 +90,14 @@ test.each([
     "a text-only transition fragment",
     '<TransitionGroup><template v-for="item in items">{{ item.name }}</template></TransitionGroup>',
   ],
+  [
+    "a named slot declared on TransitionGroup itself",
+    '<TransitionGroup v-slot:other><li v-for="n in 3">{{ n }}</li></TransitionGroup>',
+  ],
+  [
+    "an unknown slot declared on TransitionGroup itself",
+    '<TransitionGroup v-slot:[slotName]><li v-for="n in 3">{{ n }}</li></TransitionGroup>',
+  ],
   ["an empty nested loop with state", '<div v-for="item in items"><input v-for="n in []"></div>'],
   [
     "an empty nested transition loop",
@@ -167,6 +175,8 @@ test("reports const array bindings that can be mutated in place", async () => {
 
 test.each([
   '<TransitionGroup><li v-for="n in 3">{{ n }}</li></TransitionGroup>',
+  '<TransitionGroup v-slot:default><li v-for="n in 3">{{ n }}</li></TransitionGroup>',
+  '<TransitionGroup><Row v-for="n in 3" v-slot="scope">{{ scope.label }}</Row></TransitionGroup>',
   '<TransitionGroup><template #default><li v-for="item in items">{{ item.name }}</li></template></TransitionGroup>',
   '<TransitionGroup><template v-for="item in items"><li v-for="n in 1">{{ n }}</li></template></TransitionGroup>',
 ])("reports a proven transition warning for %s", async (template) => {
@@ -249,6 +259,14 @@ test.each([
     '<input v-for="item in items" :placeholder="item.id.name">',
     "const items = ref<{ id: { name: string } }[]>([])",
   ],
+  [
+    '<input v-for="item in items" :placeholder="item.name">',
+    'const items = ref([{ name: "a" }]); const { children } = defineProps<{ items: { id: string }[]; children: string[] }>()',
+  ],
+  [
+    '<input v-for="item in items" :placeholder="item.name">',
+    "const { children: items } = defineProps<{ items: { id: string }[]; children: { name: string }[] }>()",
+  ],
 ])("does not suggest an unverified key for %s (%s)", async (template, script) => {
   const result = await diagnose(template, script);
   expect(result.diagnostics).toHaveLength(1);
@@ -261,6 +279,16 @@ test("suggests the id field from the item type", async () => {
     "interface Todo { id: string; title: string }\nconst todos = ref<Todo[]>([])",
   );
   expect(JSON.stringify(result.diagnostics[0])).toContain(':key=\\"todo.id\\"');
+});
+
+test.each([
+  ["items", "const { children: items } = defineProps<{ children: { id: string }[] }>()"],
+  ["items", "const props = defineProps<{ items: { id: string }[] }>()"],
+  ["$props.items", "const props = defineProps<{ items: { id: string }[] }>()"],
+  ["props.items", "const props = defineProps<{ items: { id: string }[] }>()"],
+])("suggests a key from the props binding %s", async (source, script) => {
+  const result = await diagnose(`<input v-for="item in ${source}">`, script);
+  expect(result.diagnostics[0]!.fix?.edits[0]?.text).toBe(' :key="item.id"');
 });
 
 test("offers no edit and never the index when the item shows no id", async () => {
