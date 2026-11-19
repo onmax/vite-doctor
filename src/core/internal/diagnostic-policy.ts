@@ -413,6 +413,10 @@ export function matchesSuppressionFile(relativePath: string, pattern: string): b
   return nativeMatch(relativePath, pattern);
 }
 
+export function canMatchBroadConfigSuppression(ruleId: string): boolean {
+  return ruleId !== "doctor/config/unused-suppression" && !ruleId.startsWith("doctor/inline/");
+}
+
 function matchesConfigSuppression(
   root: string,
   suppression: ConfigSuppression,
@@ -420,12 +424,7 @@ function matchesConfigSuppression(
 ): boolean {
   if (suppression.ruleId && suppression.ruleId !== diagnostic.ruleId) return false;
   // Broad entries must not hide the warning that reports them as unused.
-  if (
-    !suppression.ruleId &&
-    (diagnostic.ruleId === "doctor/config/unused-suppression" ||
-      diagnostic.ruleId.startsWith("doctor/inline/"))
-  )
-    return false;
+  if (!suppression.ruleId && !canMatchBroadConfigSuppression(diagnostic.ruleId)) return false;
   if (suppression.fingerprint && suppression.fingerprint !== diagnostic.fingerprint) return false;
   if (suppression.file && !nativeMatch(relative(root, diagnostic.file), suppression.file))
     return false;

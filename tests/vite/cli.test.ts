@@ -518,6 +518,58 @@ test.each([
   },
 );
 
+test.each([
+  [undefined, 0, "info"],
+  ["error", 1, "error"],
+  ["off", 0, undefined],
+] as const)(
+  "CLI exit code follows a configured DOC0037 severity of %s",
+  async (severity, code, reported) => {
+    await withFixture(
+      {
+        "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+        "src/main.ts":
+          "// doctor-disable-next-line vite/env/no-such-rule -- Typo.\nconsole.log(1);\n",
+        ...(severity && {
+          "doctor.config.json": JSON.stringify({
+            rules: { "doctor/inline/unknown-suppression-rule": severity },
+          }),
+        }),
+      },
+      async (root) => {
+        const result = await runCli([".", "--no-cache", "--format", "json"], root);
+        expect(result.code).toBe(code);
+        const report = JSON.parse(result.output) as {
+          diagnostics: Array<{ code: string; severity: string }>;
+        };
+        expect(
+          report.diagnostics
+            .filter((diagnostic) => diagnostic.code === "DOC0037")
+            .map((diagnostic) => diagnostic.severity),
+        ).toEqual(reported ? [reported] : []);
+      },
+    );
+  },
+);
+
+test("CLI rejects config for a Doctor Rule ID that no Doctor Run reports", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^7.0.0" } }),
+      "doctor.config.json": JSON.stringify({
+        rules: { "doctor/inline/unused-suppresion": "error" },
+      }),
+    },
+    async (root) => {
+      const result = await runCli([".", "--format", "agent"], root);
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.output)).toMatchObject({
+        error: { kind: "config", code: "DOC0020", file: join(root, "doctor.config.json") },
+      });
+    },
+  );
+});
+
 test("CLI identifies ambiguous Config Extends from a loaded config", async () => {
   await withFixture(
     {
