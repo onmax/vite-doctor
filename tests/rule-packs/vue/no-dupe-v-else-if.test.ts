@@ -153,107 +153,42 @@ test.each([
   ).toEqual([]);
 });
 
-const vue = "import { computed, customRef, reactive, ref, shallowRef } from 'vue';";
+const vue = "import { computed, customRef, ref, shallowRef } from 'vue';";
 
-test.each([
-  ["a ref", `${vue} const status = ref('idle');`, "status === 'loading'"],
-  ["a shallowRef", `${vue} const status = shallowRef('idle');`, "status === 'loading'"],
-  ["a ref read for truthiness", `${vue} const user = ref(null);`, "!user"],
-  ["a getter-only computed", `${vue} const ready = computed(() => Math.random() > 0.5);`, "ready"],
-  ["a defineModel model", "const open = defineModel<boolean>('open');", "open"],
-  ["a defineModel without a get option", "const open = defineModel({ default: false });", "open"],
-  ["a bare type-declared prop", "defineProps<{ ready: boolean }>();", "ready"],
-  ["a bare runtime-declared prop", "defineProps({ ready: Boolean });", "ready"],
-  ["a bare array-declared prop", "defineProps(['ready']);", "ready"],
-  ["a destructured prop", "const { ready = false } = defineProps<{ ready?: boolean }>();", "ready"],
-  ["a props member", "const props = defineProps<Props>();", "props.ready"],
-  ["a computed props member", "const props = defineProps<Props>();", "props['ready']"],
-  [
-    "a props member under withDefaults",
-    "const props = withDefaults(defineProps<{ mode?: string }>(), { mode: 'a' });",
-    "props.mode === 'a'",
-  ],
-  ["a parenthesized primitive constant", "const ready = (true);", "ready"],
-  [
-    "a ref with a TypeScript assertion",
-    `${vue} const ready = ref(false) as Ref<boolean>;`,
-    "ready",
-  ],
-  ["an auto-imported ref", "const status = ref('idle');", "status === 'loading'"],
-])("reports a repeated read of %s", async (_name, setup, condition) => {
-  expect(
-    await reportedBranches(`<p v-if="${condition}" /><p v-else-if="${condition}" />`, setup),
-  ).toEqual([1]);
-});
+test.each(["ref", "shallowRef"])(
+  "does not assume %s makes a customRef repeatable",
+  async (wrap) => {
+    const setup = `${vue} let reads = 0; const ready = ${wrap}(customRef(() => ({ get: () => ++reads === 2, set: () => {} })));`;
+    expect(await reportedBranches('<p v-if="ready" /><p v-else-if="ready" />', setup)).toEqual([]);
+  },
+);
 
-test("reports a v-else-if that a ref condition already covers", async () => {
+test("does not assume a getter-only computed leaves other reads unchanged", async () => {
+  const setup = `${vue} const ready = ref(false); const advance = computed(() => { ready.value = true; return false; });`;
   expect(
     await reportedBranches(
-      '<p v-if="isAdmin || isOwner" /><p v-else-if="isOwner" />',
-      `${vue} const isAdmin = ref(false); const isOwner = computed(() => true);`,
+      '<p v-if="ready || advance" /><p v-else-if="ready || advance" />',
+      setup,
     ),
-  ).toEqual([1]);
+  ).toEqual([]);
 });
 
 test.each([
-  [
-    "a customRef",
-    `${vue} let reads = 0; const ready = customRef(() => ({ get: () => ++reads === 2, set: () => {} }));`,
-    "ready",
-  ],
-  ["a reactive() member", `${vue} const state = reactive({ ready: false });`, "state.ready"],
-  ["a ref member", `${vue} const state = ref({ ready: false });`, "state.ready"],
-  ["a deeper props member chain", "const props = defineProps<Props>();", "props.user.ready"],
-  [
-    "a computed props member with a dynamic key",
-    "const props = defineProps<Props>();",
-    "props[key]",
-  ],
-  [
-    "a computed with a setter object",
-    `${vue} const ready = computed({ get: () => false, set: () => {} });`,
-    "ready",
-  ],
-  [
-    "a defineModel with a get option",
-    "let reads = 0; const open = defineModel({ get: () => ++reads === 2 });",
-    "open",
-  ],
-  ["a defineModel destructured with modifiers", "const [open] = defineModel();", "open"],
+  ["a ref", `${vue} const ready = ref(false);`, "ready"],
+  ["a shallowRef", `${vue} const ready = shallowRef(false);`, "ready"],
+  ["a getter-only computed", `${vue} const ready = computed(() => false);`, "ready"],
+  ["a model", "const ready = defineModel<boolean>();", "ready"],
+  ["a bare prop", "defineProps<{ ready: boolean }>();", "ready"],
+  ["a destructured prop", "const { ready } = defineProps<{ ready: boolean }>();", "ready"],
+  ["a props member", "const props = defineProps<{ ready: boolean }>();", "props.ready"],
   ["an imported binding", "import { ready } from './state';", "ready"],
-  [
-    "a ref from another library",
-    "import { ref } from './fake'; const ready = ref(false);",
-    "ready",
-  ],
-  ["a ref declared with let", `${vue} let ready = ref(false);`, "ready"],
-  ["a ref under a coercing comparison", `${vue} const count = ref(0);`, "count > 1"],
-  ["a ref under loose equality", `${vue} const count = ref(0);`, "count == 1"],
-  ["a ref in a template literal", `${vue} const id = ref('a');`, "`${id}` === 'a'"],
-  ["a bare prop declared by interface", "defineProps<Props>();", "ready"],
-  [
-    "a prop shadowed by a setup binding",
-    "defineProps<{ ready: boolean }>(); const ready = Math.random() > 0.5;",
-    "ready",
-  ],
-  ["a $-prefixed ref", `${vue} const $ready = ref(false);`, "$ready"],
+  ["a $-prefixed constant", "const $ready = false;", "$ready"],
+  ["an _-prefixed constant", "const _ready = false;", "_ready"],
 ])("does not compare %s", async (_name, setup, condition) => {
   expect(
     await reportedBranches(`<p v-if="${condition}" /><p v-else-if="${condition}" />`, setup),
   ).toEqual([]);
 });
-
-// Vue compiles a bare `Math` to the setup binding but `(Math)` to the global.
-test.each([
-  ["a primitive constant", "const Math = false;"],
-  ["a ref", `${vue} const Math = ref(false);`],
-  ["a prop", "defineProps<{ Math: boolean }>();"],
-])(
-  "does not treat a setup name that is also a Vue template global as one binding: %s",
-  async (_name, setup) => {
-    expect(await reportedBranches('<p v-if="Math" /><p v-else-if="(Math)" />', setup)).toEqual([]);
-  },
-);
 
 test.each([
   [

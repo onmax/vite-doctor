@@ -235,6 +235,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/template/no-dupe-v-else-if": "Duplicate v-else-if",
   "vue/template/no-useless-template-attributes": "Template attributes",
   "vue/template/no-index-key-on-stateful-list": "Stateful list keys",
+  "vue/template/require-toggle-inside-transition": "Transition toggle",
   "vue/template/prefer-same-name-prop-shorthand": "Prop shorthand",
   "vue/template/prefer-true-attribute-shorthand": "Boolean shorthand",
   "vue/template/prefer-use-template-ref": "useTemplateRef",

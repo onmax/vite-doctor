@@ -166,7 +166,7 @@ export const ruleDocumentationMetadata = {
       "Finds Nitro handlers and plugins that Vite plugins, Nuxt modules or Nitro modules register with relative paths.",
     why: "Nitro does not resolve a registered path against the file that registers it. Nitro 2 and Nitro 3 resolve handler and plugin paths against Nitro’s project rootDir. A generated file written to resolve(root, '.vitehub/handler.ts') but registered as '.vitehub/handler.ts' only works while every root happens to match, and it breaks for monorepos, custom srcDir or Vite roots, and Nitro 2.",
     recommendedReplacement:
-      "Register the same absolute path you write the file to, for example resolve(root, '.generated/handler.ts'), or resolve files shipped with the package with createResolver(import.meta.url). Doctor checks files that import from vite, nitro, nitropack, @nuxt/kit or @nuxt/schema, and skips config files, tests, app and server runtime directories, and arguments of @nuxt/kit helpers, which nuxt/module/resolve-runtime-paths reports. It reports handler objects with a route, middleware, method or lazy key, and nitro plugins arrays, whose path is a literal or const starting with ./, ../ or a dot directory such as .nuxt/.",
+      "Register the same absolute path you write the file to, for example resolve(root, '.generated/handler.ts'), or resolve files shipped with the package with createResolver(import.meta.url). Doctor checks files that import from vite, nitro, nitropack, @nuxt/kit or @nuxt/schema, and skips config files, tests, app and server runtime directories, and arguments of @nuxt/kit helpers, which nuxt/module/resolve-runtime-paths reports. It checks relative literals and const paths in handler objects with a route, middleware, method or lazy key, and in Nitro plugins arrays. For addPlugin and addServerPlugin calls on builders created by named imports of createNitroServerKit or createNitroConfigKit, Doctor compares an explicit Nitro root with writes on the registration path, including straight-line writes in awaited local helpers. It skips the Diagnostic when a competing write might already reach Nitro's destination. When the Nitro options come from a parameter, Doctor also checks separate helpers that share the same path constant when there is a single matching write and the roots come from separate inputs that can diverge.",
     examples: [
       {
         title: "Register generated handlers with the path they were written to",
@@ -2682,7 +2682,7 @@ export const ruleDocumentationMetadata = {
   },
   "vue/template/no-dupe-v-else-if": {
     description:
-      'Flags a `v-else-if` branch whose condition repeats an earlier condition in the same `v-if` / `v-else-if` chain, or is fully covered by earlier conditions, for example `v-else-if="a"` after `v-if="a || b"`, or `v-else-if="a && b"` after `v-if="a"`. Doctor compares only reads Vue returns unchanged within one render: `<script setup>` bindings to `ref()`, `shallowRef()`, a getter-only `computed()` or `defineModel()` without a `get` option, props declared in `defineProps` (as a bare name, a destructured binding, or one level of `props.x`), and constants initialized with primitive literals. Over those it compares `!`, `typeof`, `void`, `===`, `!==`, `&&`, `||`, `??` and `?:`; arithmetic, relational and loose-equality operators and template literals count only over primitive constants and literals, because they can call `valueOf` on an object. Spacing and parentheses do not matter, but `&&` / `||` operand order matters wherever their result is used as a value. `customRef`, `reactive()` members, deeper member chains, imports, names that are also Vue template globals such as `Math`, calls and anything else end the comparison. Branches in `v-for` and `v-slot` scopes are skipped because aliases can shadow setup bindings.',
+      'Flags a `v-else-if` branch whose condition repeats an earlier condition in the same `v-if` / `v-else-if` chain, or is fully covered by earlier conditions, for example `v-else-if="a"` after `v-if="a || b"`, or `v-else-if="a && b"` after `v-if="a"`. Doctor compares primitive literals, top-level `<script setup>` constants initialized with primitive literals, and supported expressions over them. In these expressions, spacing and parentheses do not matter, but `&&` / `||` operand order matters wherever their result is used as a value, such as in an equality comparison. Refs, computed values, models, props, member reads, imports, and calls are not treated as repeatable. An unknown condition ends the comparison. Names matching Vue template globals, `require`, and names starting with `$` or `_` are excluded. Branches in `v-for` and `v-slot` scopes are skipped because aliases can shadow setup bindings.',
     why: "Vue renders the first branch of a chain whose condition is truthy, and evaluates the conditions in order within one render. A later condition that can only be truthy when an earlier one already is never gets its turn, so its element never renders. That is almost always a copy-paste mistake in the condition.",
     recommendedReplacement:
       "Change the later condition to the one the branch was meant to test. If the branch is no longer needed, remove it. Doctor offers no fix, because deleting the branch would hide the condition the author meant to write.",
@@ -2691,17 +2691,17 @@ export const ruleDocumentationMetadata = {
         title: "Test a different value in each branch",
         language: "vue",
         invalid:
-          "<script setup>\nimport { ref } from 'vue'\n\nconst status = ref('idle')\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>\n</template>",
+          "<script setup>\nconst status = 'loading'\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>\n</template>",
         valid:
-          "<script setup>\nimport { ref } from 'vue'\n\nconst status = ref('idle')\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'error'\">Failed</p>\n</template>",
+          "<script setup>\nconst status = 'loading'\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'error'\">Failed</p>\n</template>",
       },
       {
         title: "Do not test a branch the earlier condition already covers",
         language: "vue",
         invalid:
-          '<script setup>\ndefineProps<{ isAdmin: boolean; isOwner: boolean }>()\n</script>\n\n<template>\n  <Banner v-if="isAdmin || isOwner" />\n  <OwnerTools v-else-if="isOwner" />\n</template>',
+          '<script setup>\nconst isAdmin = false\nconst isOwner = true\n</script>\n\n<template>\n  <Banner v-if="isAdmin || isOwner" />\n  <OwnerTools v-else-if="isOwner" />\n</template>',
         valid:
-          '<script setup>\ndefineProps<{ isAdmin: boolean; isOwner: boolean }>()\n</script>\n\n<template>\n  <OwnerTools v-if="isOwner" />\n  <Banner v-else-if="isAdmin" />\n</template>',
+          '<script setup>\nconst isAdmin = false\nconst isOwner = true\n</script>\n\n<template>\n  <OwnerTools v-if="isOwner" />\n  <Banner v-else-if="isAdmin" />\n</template>',
       },
     ],
   },
@@ -2771,6 +2771,31 @@ export const ruleDocumentationMetadata = {
         language: "vue",
         invalid: '<template>\n  <MyCmp :my-prop="myProp" />\n</template>',
         valid: '<template>\n  <MyCmp :my-prop="selectedValue" />\n</template>',
+      },
+    ],
+  },
+  "vue/template/require-toggle-inside-transition": {
+    description:
+      "Finds a <Transition> with a native child that has no v-if, v-else-if, v-else, v-show or bound :key. It skips dynamic default slots, transitions that may inherit attributes at the component root, and transitions with appear or forwarded v-show. A v-bind spread, a dynamic binding name, or a custom directive on the transition or its child may enable animation, so these are skipped too. Components, <slot>, elements with is, and <TransitionGroup> are not checked.",
+    why: "<Transition> animates when its child enters or leaves: a v-if/v-else branch switches, v-show changes, or a :key change replaces the element. A static child never triggers those animations, and without appear it does not animate on mount. If a v-for produces multiple children, <Transition> warns and renders only the first item.",
+    recommendedReplacement:
+      "Add v-if or v-show to the child so it enters and leaves, bind a :key that changes when the content should animate, add appear to animate on first render, or remove the <Transition> when no animation is wanted. To animate a v-for list, use <TransitionGroup> and bind a stable, unique :key per item.",
+    examples: [
+      {
+        title: "Toggle the transitioned element",
+        language: "vue",
+        invalid:
+          '<template>\n  <main>\n    <Transition name="fade">\n      <div class="toast">{{ message }}</div>\n    </Transition>\n  </main>\n</template>',
+        valid:
+          '<template>\n  <main>\n    <Transition name="fade">\n      <div v-if="message" class="toast">{{ message }}</div>\n    </Transition>\n  </main>\n</template>',
+      },
+      {
+        title: "Animate on first render with appear",
+        language: "vue",
+        invalid:
+          '<template>\n  <main>\n    <Transition name="slide">\n      <header class="hero" />\n    </Transition>\n  </main>\n</template>',
+        valid:
+          '<template>\n  <main>\n    <Transition name="slide" appear>\n      <header class="hero" />\n    </Transition>\n  </main>\n</template>',
       },
     ],
   },

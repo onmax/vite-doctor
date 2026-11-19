@@ -5,19 +5,23 @@ import type {
 } from "../../../../core/index.js";
 import { findTemplateDirective, TemplateNodeType } from "../../../../core/rule-authoring.js";
 import type { SFCDescriptor } from "@vue/compiler-sfc";
-import { fileScriptScope, type ScriptScope } from "../../../../core/internal/script-scope.js";
 import { createRule, type AnyNode } from "./shared.js";
-import { vueApiCall } from "./vue-api.js";
 import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "vue/template/no-dupe-v-else-if";
 
-// Truthiness, `typeof`, `void` and strict equality never run user code. The other operators can
-// call `valueOf` or `toString` on an object, so they only take operands known to be primitive.
-const NON_COERCING_UNARY = new Set(["!", "typeof", "void"]);
-const COERCING_UNARY = new Set(["-", "+", "~"]);
-const STRICT_BINARY = new Set(["===", "!=="]);
-const COERCING_BINARY = new Set([
+const VUE_UNPREFIXED_IDENTIFIERS = new Set(
+  (
+    "Infinity,undefined,NaN,isFinite,isNaN,parseFloat,parseInt,decodeURI,decodeURIComponent," +
+    "encodeURI,encodeURIComponent,Math,Number,Date,Array,Object,Boolean,String,RegExp,Map,Set," +
+    "JSON,Intl,BigInt,console,Error,Symbol,require"
+  ).split(","),
+);
+
+const PRIMITIVE_UNARY = new Set(["!", "-", "+", "~", "typeof", "void"]);
+const PRIMITIVE_BINARY = new Set([
+  "===",
+  "!==",
   "==",
   "!=",
   "<",
@@ -45,27 +49,6 @@ const TRANSPARENT = new Set([
   "TSNonNullExpression",
   "TSTypeAssertion",
 ]);
-const FUNCTION_TYPES = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
-const REF_APIS = new Set(["ref", "shallowRef", "computed"]);
-// The names compiler-core's `canPrefix` leaves unprefixed: `isGloballyAllowed` in @vue/shared 3.5,
-// plus `require`.
-const TEMPLATE_GLOBALS = new Set(
-  (
-    "Infinity,undefined,NaN,isFinite,isNaN,parseFloat,parseInt,decodeURI,decodeURIComponent," +
-    "encodeURI,encodeURIComponent,Math,Number,Date,Array,Object,Boolean,String,RegExp,Map,Set," +
-    "JSON,Intl,BigInt,console,Error,Symbol,require"
-  ).split(","),
-);
-
-/** `primitive` values never run user code when coerced; `value` reads may hold any value. */
-type ReadKind = "primitive" | "value";
-
-interface SetupBindings {
-  /** Template names whose read returns the same value twice in one render. */
-  reads: Map<string, ReadKind>;
-  /** Names bound to `defineProps()`, whose one-level member reads are props proxy reads. */
-  propsObjects: Set<string>;
-}
 
 interface Branch {
   directive: TemplateDirectiveNode;
@@ -87,7 +70,7 @@ export const noDupeVElseIf = createRule({
     id: RULE_ID,
     title: "Do not repeat a condition in a v-if / v-else-if chain",
     description:
-      "Reports a v-else-if branch whose condition repeats, or is fully covered by, earlier conditions in the same v-if / v-else-if chain. Compares reads Vue returns unchanged within one render: script setup refs, shallowRefs, getter-only computeds, defineModel models, props, and primitive constants, plus operators over them that run no user code.",
+      "Reports a v-else-if branch whose condition repeats, or is fully covered by, earlier conditions in the same v-if / v-else-if chain. Compares primitive literals, top-level script setup constants initialized with primitive literals, and supported expressions over them.",
     why: "Vue renders the first branch of a chain whose condition is truthy. A later branch whose condition can only be truthy when an earlier one already is never renders, which usually hides a copy-paste mistake in the condition.",
     recommendedReplacement:
       "Change the later condition to the one the branch was meant to test, or remove the branch.",
@@ -96,9 +79,9 @@ export const noDupeVElseIf = createRule({
         title: "Test a different value in each branch",
         language: "vue",
         invalid:
-          "<script setup>\nimport { ref } from 'vue'\n\nconst status = ref('idle')\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>\n</template>",
+          "<script setup>\nconst status = 'loading'\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>\n</template>",
         valid:
-          "<script setup>\nimport { ref } from 'vue'\n\nconst status = ref('idle')\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'error'\">Failed</p>\n</template>",
+          "<script setup>\nconst status = 'loading'\n</script>\n\n<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'error'\">Failed</p>\n</template>",
       },
     ],
     category: "template",
@@ -110,7 +93,7 @@ export const noDupeVElseIf = createRule({
   },
   create(ctx) {
     const scoped = new WeakSet<TemplateElementNode>();
-    let bindings: SetupBindings | undefined;
+    let bindings: ReadonlySet<string> | undefined;
     return {
       template: {
         element(node, parent) {
@@ -124,7 +107,7 @@ export const noDupeVElseIf = createRule({
           }
           const elseIf = findTemplateDirective(node, "else-if");
           if (!elseIf) return;
-          bindings ??= setupBindings(ctx);
+          bindings ??= primitiveSetupBindings(ctx);
           const test = stableTest(ctx, elseIf, bindings);
           if (!test) return;
 
@@ -228,49 +211,37 @@ function hasTemplateScope(node: TemplateElementNode): boolean {
   return Boolean(findTemplateDirective(node, "for") || findTemplateDirective(node, "slot"));
 }
 
-function setupBindings(ctx: RuleContext): SetupBindings {
-  const bindings: SetupBindings = { reads: new Map(), propsObjects: new Set() };
-  const setup = (ctx.file.sfc?.descriptor as SFCDescriptor | undefined)?.scriptSetup;
-  const script = setup && !setup.src ? fileScriptScope(ctx) : null;
-  if (!setup || !script) return bindings;
+function primitiveSetupBindings(ctx: RuleContext): ReadonlySet<string> {
+  const bindings = new Set<string>();
+  const sfc = ctx.file.sfc;
+  const setup = (sfc?.descriptor as SFCDescriptor | undefined)?.scriptSetup;
+  if (!setup || setup.src) return bindings;
+  const script = sfc?.getScriptAst("merged") as AnyNode;
+  const statements: AnyNode[] = script?.body ?? [];
   const declared = new Map<string, number>();
-  const candidates = new Map<string, ReadKind>();
-  const propsObjects = new Set<string>();
-  const propNames = new Set<string>();
-  for (const statement of (script.ast as AnyNode).body ?? []) {
+  for (const statement of statements) {
     for (const name of declaredNames(statement)) declared.set(name, (declared.get(name) ?? 0) + 1);
-    if (statement.start < setup.loc.start.offset || statement.end > setup.loc.end.offset) continue;
-    const bareProps =
-      statement.type === "ExpressionStatement" && propsMacro(unwrap(statement.expression));
-    if (bareProps) for (const name of declaredPropNames(bareProps)) propNames.add(name);
-    if (statement.type !== "VariableDeclaration" || statement.kind !== "const" || statement.declare)
+  }
+  for (const statement of statements) {
+    if (
+      statement.start < setup.loc.start.offset ||
+      statement.end > setup.loc.end.offset ||
+      statement.type !== "VariableDeclaration" ||
+      statement.kind !== "const" ||
+      statement.declare
+    )
       continue;
-    for (const declarator of statement.declarations) {
-      const init = unwrap(declarator.init);
-      const props = propsMacro(init);
-      if (props) {
-        for (const name of declaredPropNames(props)) propNames.add(name);
-        if (declarator.id.type === "Identifier") propsObjects.add(declarator.id.name);
-        for (const name of destructuredProps(declarator.id)) candidates.set(name, "value");
-        continue;
+    for (const declaration of statement.declarations) {
+      if (
+        declaration.id.type === "Identifier" &&
+        !VUE_UNPREFIXED_IDENTIFIERS.has(declaration.id.name) &&
+        !/^[$_]/.test(declaration.id.name) &&
+        declared.get(declaration.id.name) === 1 &&
+        isPrimitiveLiteral(unwrap(declaration.init))
+      ) {
+        bindings.add(declaration.id.name);
       }
-      if (declarator.id.type !== "Identifier") continue;
-      if (isPrimitiveLiteral(init)) candidates.set(declarator.id.name, "primitive");
-      else if (isIdempotentRef(script, init)) candidates.set(declarator.id.name, "value");
     }
-  }
-  // Vue resolves a template name to the setup binding only when nothing else claims it: a second
-  // declaration is ambiguous, and an allowed global such as `Math` compiles to the global inside
-  // compound expressions. Names starting with `$` or `_` collide with Vue's instance properties.
-  const unclaimed = (name: string) => !TEMPLATE_GLOBALS.has(name) && !/^[$_]/.test(name);
-  for (const [name, kind] of candidates) {
-    if (declared.get(name) === 1 && unclaimed(name)) bindings.reads.set(name, kind);
-  }
-  for (const name of propNames) {
-    if (!declared.has(name) && unclaimed(name)) bindings.reads.set(name, "value");
-  }
-  for (const name of propsObjects) {
-    if (declared.get(name) === 1 && unclaimed(name)) bindings.propsObjects.add(name);
   }
   return bindings;
 }
@@ -312,80 +283,13 @@ function patternNames(pattern: AnyNode): string[] {
   }
 }
 
-function propsMacro(node: AnyNode): AnyNode {
-  if (node?.type !== "CallExpression" || node.callee.type !== "Identifier") return null;
-  if (node.callee.name === "defineProps") return node;
-  return node.callee.name === "withDefaults" ? propsMacro(unwrap(node.arguments[0])) : null;
-}
-
-function declaredPropNames(call: AnyNode): string[] {
-  const type = (call.typeArguments ?? call.typeParameters)?.params?.[0];
-  if (type) {
-    if (type.type !== "TSTypeLiteral") return [];
-    return type.members.flatMap((member: AnyNode) =>
-      member.type === "TSPropertySignature" && !member.computed ? identifierKey(member.key) : [],
-    );
-  }
-  const runtime = unwrap(call.arguments[0]);
-  if (runtime?.type === "ObjectExpression") {
-    return runtime.properties.flatMap((property: AnyNode) =>
-      property.type === "Property" && !property.computed ? identifierKey(property.key) : [],
-    );
-  }
-  if (runtime?.type === "ArrayExpression") return runtime.elements.flatMap(identifierKey);
-  return [];
-}
-
-function identifierKey(key: AnyNode): string[] {
-  if (key?.type === "Identifier") return [key.name];
-  return key?.type === "Literal" &&
-    typeof key.value === "string" &&
-    /^[A-Za-z_$][\w$]*$/.test(key.value)
-    ? [key.value]
-    : [];
-}
-
-function destructuredProps(pattern: AnyNode): string[] {
-  if (pattern.type !== "ObjectPattern") return [];
-  return pattern.properties.flatMap((property: AnyNode) => {
-    if (property.type !== "Property" || property.computed) return [];
-    const value =
-      property.value.type === "AssignmentPattern" ? property.value.left : property.value;
-    return value.type === "Identifier" ? [value.name] : [];
-  });
-}
-
-// A ref, shallowRef or getter-only computed returns its stored or cached value on every read, and
-// defineModel does too unless a `get` option transforms it. customRef runs user code instead.
-function isIdempotentRef(script: ScriptScope, init: AnyNode): boolean {
-  if (init?.type !== "CallExpression") return false;
-  if (init.callee.type === "Identifier" && init.callee.name === "defineModel") {
-    return init.arguments.every((argument: AnyNode) => {
-      argument = unwrap(argument);
-      if (argument.type === "Literal") return typeof argument.value === "string";
-      return (
-        argument.type === "ObjectExpression" &&
-        argument.properties.every(
-          (property: AnyNode) =>
-            property.type === "Property" &&
-            !property.computed &&
-            identifierKey(property.key)[0] !== "get",
-        )
-      );
-    });
-  }
-  const api = vueApiCall(script, init.callee, REF_APIS);
-  if (api === "ref" || api === "shallowRef") return true;
-  return api === "computed" && FUNCTION_TYPES.has(unwrap(init.arguments[0])?.type);
-}
-
 function stableTest(
   ctx: RuleContext,
   directive: TemplateDirectiveNode,
-  bindings: SetupBindings,
+  bindings: ReadonlySet<string>,
 ): AnyNode {
   const test = directive.exp && ctx.helpers.parseTemplateExpression(directive.exp);
-  return test && readKind(test, bindings) ? test : null;
+  return test && isStable(test, bindings) ? test : null;
 }
 
 function unwrap(node: AnyNode): AnyNode {
@@ -417,60 +321,34 @@ function isPrimitiveLiteral(node: AnyNode): boolean {
   );
 }
 
-function readKind(node: AnyNode, bindings: SetupBindings): ReadKind | null {
+function isStable(node: AnyNode, bindings: ReadonlySet<string>): boolean {
   node = unwrap(node);
   switch (node?.type) {
     case "Identifier":
-      return bindings.reads.get(node.name) ?? null;
+      return bindings.has(node.name);
     case "Literal":
-      return isPrimitiveLiteral(node) ? "primitive" : null;
-    case "MemberExpression":
-      return node.object.type === "Identifier" &&
-        bindings.propsObjects.has(node.object.name) &&
-        propertyKey(node) !== undefined
-        ? "value"
-        : null;
-    case "UnaryExpression": {
-      const argument = readKind(node.argument, bindings);
-      if (!argument) return null;
-      if (NON_COERCING_UNARY.has(node.operator)) return "primitive";
-      return COERCING_UNARY.has(node.operator) && argument === "primitive" ? "primitive" : null;
-    }
-    case "BinaryExpression": {
-      const left = readKind(node.left, bindings);
-      const right = left && readKind(node.right, bindings);
-      if (!left || !right) return null;
-      if (STRICT_BINARY.has(node.operator)) return "primitive";
-      return COERCING_BINARY.has(node.operator) && left === "primitive" && right === "primitive"
-        ? "primitive"
-        : null;
-    }
+      return isPrimitiveLiteral(node);
+    case "UnaryExpression":
+      return PRIMITIVE_UNARY.has(node.operator) && isStable(node.argument, bindings);
+    case "BinaryExpression":
+      return (
+        PRIMITIVE_BINARY.has(node.operator) &&
+        isStable(node.left, bindings) &&
+        isStable(node.right, bindings)
+      );
     case "LogicalExpression":
-      return either(readKind(node.left, bindings), readKind(node.right, bindings));
+      return isStable(node.left, bindings) && isStable(node.right, bindings);
     case "ConditionalExpression":
-      return readKind(node.test, bindings)
-        ? either(readKind(node.consequent, bindings), readKind(node.alternate, bindings))
-        : null;
+      return (
+        isStable(node.test, bindings) &&
+        isStable(node.consequent, bindings) &&
+        isStable(node.alternate, bindings)
+      );
     case "TemplateLiteral":
-      return node.expressions.every(
-        (expression: AnyNode) => readKind(expression, bindings) === "primitive",
-      )
-        ? "primitive"
-        : null;
+      return node.expressions.every((expression: AnyNode) => isStable(expression, bindings));
     default:
-      return null;
+      return false;
   }
-}
-
-function either(left: ReadKind | null, right: ReadKind | null): ReadKind | null {
-  if (!left || !right) return null;
-  return left === "primitive" && right === "primitive" ? "primitive" : "value";
-}
-
-function propertyKey(node: AnyNode): string | undefined {
-  if (!node.computed) return node.property.name;
-  const key = unwrap(node.property);
-  return key?.type === "Literal" && typeof key.value === "string" ? key.value : undefined;
 }
 
 function isEqual(left: AnyNode, right: AnyNode, truthinessOnly = false): boolean {
@@ -480,12 +358,6 @@ function isEqual(left: AnyNode, right: AnyNode, truthinessOnly = false): boolean
   switch (a.type) {
     case "Identifier":
       return a.name === b.name;
-    case "MemberExpression":
-      return (
-        Boolean(a.optional) === Boolean(b.optional) &&
-        isEqual(a.object, b.object) &&
-        propertyKey(a) === propertyKey(b)
-      );
     case "Literal":
       if (a.bigint !== undefined || b.bigint !== undefined) return a.bigint === b.bigint;
       return Object.is(a.value, b.value);

@@ -43,6 +43,7 @@ export { noConstantComputed } from "./no-constant-computed.js";
 export { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
 export { noDupeVElseIf } from "./no-dupe-v-else-if.js";
 export { noUselessTemplateAttributes } from "./no-useless-template-attributes.js";
+export { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
@@ -89,6 +90,7 @@ import { noConstantComputed } from "./no-constant-computed.js";
 import { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
 import { noDupeVElseIf } from "./no-dupe-v-else-if.js";
 import { noUselessTemplateAttributes } from "./no-useless-template-attributes.js";
+import { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
 
 import { defineRulePack } from "../../../../core/index.js";
 
@@ -139,6 +141,7 @@ const rules = [
   noSetupStateFromBrowserRead,
   noDupeVElseIf,
   noUselessTemplateAttributes,
+  requireToggleInsideTransition,
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,
