@@ -1,7 +1,12 @@
-import { dirname, relative, resolve } from "pathe";
+import { dirname, normalize, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../core/index.js";
 import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
-import { parseScript } from "../../../core/internal/script.js";
+import {
+  analyzeScript,
+  scopeDialect,
+  type ScriptScope,
+} from "../../../core/internal/script-scope.js";
+import { parseScript, parseScriptResult } from "../../../core/internal/script.js";
 import { owningWorkspacePackage } from "../../../core/internal/workspace-packages.js";
 import {
   isPackageRuntimeSource,
@@ -15,6 +20,9 @@ import type { AnyNode } from "./shared.js";
 
 const SCRIPT_GLOB = "**/*.{ts,mts,cts,js,mjs,cjs,tsx,jsx}";
 const SOURCE_EXCLUDE = ["**/node_modules/**", "**/dist/**", "**/.output/**", "**/.nitro/**"];
+const FS_MODULES = /^(?:node:)?fs(?:\/promises)?$/;
+const HOOKS = ["config", "configResolved"];
+const INTERPOLATION = "__doctor_unknown_interpolation__";
 
 export function isViteServerRuntime(ctx: RuleContext, owner: OwningPackage): boolean {
   const key = `nitro:vite-server-runtime:${owner.dir}`;
@@ -38,7 +46,9 @@ export function isViteServerRuntime(ctx: RuleContext, owner: OwningPackage): boo
     if (!isOwnedSource(file)) continue;
     const text = ctx.fs.readText(file);
     if (!text?.includes("handlers") || !text.includes(`${owner.manifest.name}/`)) continue;
-    for (const specifier of generatedHandlerImports(parseScript(file, text))) {
+    const scope = analyzeScript(text, scopeDialect(file));
+    if (!scope) continue;
+    for (const specifier of generatedHandlerImports(scope)) {
       const entry = selfExportSource(ctx, owner, specifier);
       if (entry) pending.push(entry);
     }
@@ -62,7 +72,9 @@ export function isViteServerRuntime(ctx: RuleContext, owner: OwningPackage): boo
   return runtime.has(ctx.file.path);
 }
 
-function generatedHandlerImports(ast: AnyNode): Set<string> {
+type HandlerPath = string | object;
+
+function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> {
   const imports = new Set<string>();
   if (
     !ast?.body.some(
@@ -70,66 +82,192 @@ function generatedHandlerImports(ast: AnyNode): Set<string> {
     )
   )
     return imports;
-  let registersHandler = false;
-  walk(ast, (node) => {
+  const binding = (node: AnyNode) => {
+    const variable = references.get(node)?.resolved;
     if (
-      !registersHandler &&
-      node.type === "ObjectExpression" &&
-      ["config", "configResolved"].some((hook) => {
-        const callback = objectProperty(node, hook);
-        if (!callback?.body) return false;
-        let registers = false;
-        walk(callback.body, (child) => {
-          const handlers = objectProperty(objectProperty(child, "nitro"), "handlers");
-          if (containsHandler(handlers)) registers = true;
-          if (child.type === "AssignmentExpression") {
-            if (
-              isMember(child.left, "nitro") &&
-              containsHandler(objectProperty(child.right, "handlers"))
-            )
-              registers = true;
-            if (isNitroHandlers(child.left) && containsHandler(child.right)) registers = true;
-          }
-          if (
-            child.type === "CallExpression" &&
-            (isMember(child.callee, "push") || isMember(child.callee, "unshift")) &&
-            isNitroHandlers(child.callee.object) &&
-            child.arguments.some((argument: AnyNode) => objectProperty(argument, "handler"))
-          )
-            registers = true;
-        });
-        return registers;
-      })
+      variable?.defs.length === 1 &&
+      !variable.references.some((ref) => ref.isWrite() && !ref.init)
     )
-      registersHandler = true;
-    const generated =
-      node.type === "TemplateLiteral"
-        ? node.quasis.map((part: AnyNode) => part.value.cooked ?? part.value.raw).join("\0")
-        : node.type === "Literal" && typeof node.value === "string"
-          ? node.value
-          : undefined;
-    if (!generated?.includes("export default")) return;
-    for (const match of generated.matchAll(
-      /(?:^|[;\n])\s*import\s+(?!type\s)[^;"'\0]+?\bfrom\s*["']([^"'\s\0]+)["']/g,
-    ))
-      imports.add(match[1]!);
+      return variable.defs[0];
+  };
+  const constant = (node: AnyNode) => {
+    const def = binding(node);
+    if (
+      def?.type === "Variable" &&
+      def.parent.kind === "const" &&
+      def.node.id.type === "Identifier"
+    )
+      return def.node;
+  };
+  const literal = (node: AnyNode): string | undefined => {
+    if (typeof node?.value === "string") return node.value;
+    if (node?.type === "TemplateLiteral")
+      return node.quasis.map((part: AnyNode) => part.value.cooked).join(INTERPOLATION);
+    const declaration = constant(node);
+    if (declaration && declaration.range[0] < node.range[0]) return literal(declaration.init);
+  };
+  const writer = (callee: AnyNode): string | undefined => {
+    const def = binding(callee?.type === "MemberExpression" ? callee.object : callee);
+    if (
+      def?.type !== "ImportBinding" ||
+      def.parent.type !== "ImportDeclaration" ||
+      def.parent.importKind === "type" ||
+      !FS_MODULES.test(def.parent.source.value)
+    )
+      return;
+    if (def.node.type === "ImportSpecifier" && callee.type === "Identifier")
+      return def.node.importKind !== "type"
+        ? def.node.imported.type === "Identifier"
+          ? def.node.imported.name
+          : def.node.imported.value
+        : undefined;
+    if (
+      callee.type === "MemberExpression" &&
+      !callee.computed &&
+      (def.node.type === "ImportNamespaceSpecifier" || def.node.type === "ImportDefaultSpecifier")
+    )
+      return callee.property.name;
+  };
+
+  function trace(
+    callback: AnyNode,
+    writes: Map<HandlerPath, string | undefined>,
+    values: Map<AnyNode, HandlerPath>,
+    active: Set<AnyNode>,
+    hook?: string,
+  ): HandlerPath | undefined {
+    if (!callback?.body || callback.generator || active.has(callback)) return;
+    active.add(callback);
+
+    const path = (node: AnyNode): HandlerPath | undefined => {
+      const def = binding(node);
+      if (def?.type === "Parameter") return values.get(def.name);
+      const declaration = constant(node);
+      if (declaration && values.has(declaration.id)) return values.get(declaration.id);
+      const text = literal(node);
+      if (text !== undefined && !text.includes(INTERPOLATION) && text.length)
+        return normalize(text);
+    };
+    const registered = new Set<HandlerPath>();
+    const register = (handlers: AnyNode[]) => {
+      for (const handler of handlers) {
+        const target = path(objectProperty(handler, "handler"));
+        if (target !== undefined) registered.add(target);
+      }
+    };
+    const registerArray = (node: AnyNode) => {
+      if (node?.type === "ArrayExpression") register(node.elements);
+    };
+    const config = (node: AnyNode) => {
+      const def = binding(node);
+      return hook && def?.type === "Parameter" && def.name === callback.params[0];
+    };
+    const nitro = (node: AnyNode) => isMember(node, "nitro") && config(node.object);
+    const handlers = (node: AnyNode) => isMember(node, "handlers") && nitro(node.object);
+
+    const evaluate = (node: AnyNode, awaited = false): HandlerPath | undefined => {
+      if (node?.type === "AwaitExpression") return evaluate(node.argument, true);
+      if (node?.type === "CallExpression") {
+        const [target, content] = node.arguments;
+        const method = writer(node.callee);
+        if (method === "writeFileSync" || (method === "writeFile" && awaited)) {
+          const dest = path(target);
+          if (dest !== undefined) writes.set(dest, literal(content));
+        } else if (
+          (isMember(node.callee, "push") || isMember(node.callee, "unshift")) &&
+          handlers(node.callee.object)
+        ) {
+          register(node.arguments);
+        } else {
+          const def = binding(node.callee);
+          const helper = def?.type === "FunctionName" ? def.node : constant(node.callee)?.init;
+          if (
+            (helper?.type === "FunctionDeclaration" ||
+              helper?.type === "FunctionExpression" ||
+              helper?.type === "ArrowFunctionExpression") &&
+            (!helper.async || awaited)
+          ) {
+            const args = new Map(values);
+            for (const [index, parameter] of (helper.params as AnyNode[]).entries()) {
+              const value = path(node.arguments[index]);
+              if (parameter.type === "Identifier" && value !== undefined)
+                args.set(parameter, value);
+            }
+            return trace(helper, writes, args, active);
+          }
+        }
+      } else if (node?.type === "AssignmentExpression") {
+        if (nitro(node.left)) registerArray(objectProperty(node.right, "handlers"));
+        if (handlers(node.left)) registerArray(node.right);
+      }
+      return path(node);
+    };
+    const result = (node: AnyNode) => {
+      if (hook === "config")
+        registerArray(objectProperty(objectProperty(node, "nitro"), "handlers"));
+      return evaluate(node);
+    };
+    const run = (body: AnyNode): HandlerPath | undefined => {
+      if (body.type !== "BlockStatement") return result(body);
+      for (const statement of body.body as AnyNode[]) {
+        if (statement.type === "ReturnStatement") return result(statement.argument);
+        if (statement.type === "ExpressionStatement") evaluate(statement.expression);
+        if (statement.type !== "VariableDeclaration") continue;
+        for (const declaration of statement.declarations as AnyNode[]) {
+          const value = evaluate(declaration.init);
+          if (statement.kind === "const" && declaration.id.type === "Identifier")
+            values.set(declaration.id, value ?? {});
+        }
+      }
+    };
+
+    const value = run(callback.body);
+    active.delete(callback);
+    for (const target of registered) {
+      const generated = writes.get(target);
+      if (!generated) continue;
+      const parsed = parseScriptResult("generated.ts", generated);
+      const body = (parsed.ast?.body ?? []) as AnyNode[];
+      if (parsed.errors.length || !body.some((node) => node.type === "ExportDefaultDeclaration"))
+        continue;
+      for (const node of body) {
+        const specifier = node.source?.value;
+        if (
+          typeof specifier === "string" &&
+          !specifier.includes(INTERPOLATION) &&
+          !isTypeOnlyModuleReference(node)
+        )
+          imports.add(specifier);
+      }
+    }
+    return value;
+  }
+
+  walk(ast, (node) => {
+    if (node.type !== "ObjectExpression") return;
+    for (const hook of HOOKS) {
+      const callback = objectProperty(node, hook);
+      if (callback?.type === "FunctionExpression" || callback?.type === "ArrowFunctionExpression")
+        trace(callback, new Map(), new Map(), new Set(), hook);
+    }
   });
-  return registersHandler ? imports : new Set();
+  return imports;
 }
 
 function isMember(node: AnyNode, name: string): boolean {
   return node?.type === "MemberExpression" && !node.computed && node.property?.name === name;
 }
 
-function isNitroHandlers(node: AnyNode): boolean {
-  return isMember(node, "handlers") && isMember(node.object, "nitro");
-}
-
-function containsHandler(node: AnyNode): boolean {
-  return (
-    node?.type === "ArrayExpression" &&
-    node.elements.some((element: AnyNode) => objectProperty(element, "handler"))
-  );
+function esmExportTarget(target: unknown): string | null | undefined {
+  if (typeof target === "string" || target === null) return target;
+  if (!target || typeof target !== "object" || Array.isArray(target)) return null;
+  for (const [condition, branch] of Object.entries(target)) {
+    if (condition === "types" || condition.startsWith("types@") || condition === "require")
+      continue;
+    if (condition !== "import" && condition !== "default") return null;
+    const selected = esmExportTarget(branch);
+    if (selected !== undefined) return selected;
+  }
 }
 
 function selfExportSource(
@@ -141,11 +279,9 @@ function selfExportSource(
   if (!specifier.startsWith(prefix)) return;
   const exports = owner.manifest.exports;
   if (!exports || typeof exports !== "object" || Array.isArray(exports)) return;
-  let target: unknown = (exports as Record<string, unknown>)[`./${specifier.slice(prefix.length)}`];
-  while (target && typeof target === "object" && !Array.isArray(target)) {
-    const conditions = target as Record<string, unknown>;
-    target = conditions.import ?? conditions.default;
-  }
+  const target = esmExportTarget(
+    (exports as Record<string, unknown>)[`./${specifier.slice(prefix.length)}`],
+  );
   if (typeof target !== "string" || !target.startsWith("./")) return;
   const built = target.match(/^\.\/dist\/(.+)\.[cm]?js$/)?.[1];
   return sourceFile(ctx, resolve(owner.dir, built ? `src/${built}.js` : target));

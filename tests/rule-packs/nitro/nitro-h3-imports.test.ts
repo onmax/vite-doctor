@@ -562,7 +562,10 @@ export const handler = defineHandler(() => { throw new HTTPError("no") })`,
         {
           "packages/realtime": {
             name: "@acme/realtime",
-            exports: { ".": "./dist/index.mjs", "./server": { import: "./dist/server.mjs" } },
+            exports: {
+              ".": "./dist/index.mjs",
+              "./server": { types: "./dist/server.d.mts", import: "./dist/server.mjs" },
+            },
             dependencies: { nitro: "catalog:nitro-compat" },
           },
           "packages/docs": {
@@ -577,12 +580,17 @@ export const handler = defineHandler(() => { throw new HTTPError("no") })`,
           "packages/realtime/src/standalone.ts":
             'import { H3 } from "nitro/h3"\nexport const app = new H3()\nexport type Standalone = typeof app',
           "packages/realtime/src/vite.ts": `import type { Plugin } from "vite"
-import { writeFileSync } from "node:fs"
-export function realtime(): Plugin {
-  return { name: "realtime", config() {
-    const handler = "/generated/realtime.ts"
-    writeFileSync(handler, \`import { fail } from "@acme/realtime/server"
+import { writeFile } from "node:fs/promises"
+import { resolve } from "node:path"
+async function generateHandler(root: string) {
+  const handler = resolve(root, "generated/realtime.ts")
+  await writeFile(handler, \`import { fail } from "@acme/realtime/server"
 export default (event) => fail(event)\`)
+  return handler
+}
+export function realtime(): Plugin {
+  return { name: "realtime", async config(config) {
+    const handler = await generateHandler(config.root)
     return { nitro: { handlers: [{ route: "/realtime", handler }] } }
   } }
 }`,
@@ -610,6 +618,80 @@ export default (event) => fail(event)\`)
     );
     expect(realtime!.why).toContain("dependencies");
     expect(realtime!.suggestion).toContain("peerDependencies");
+  });
+
+  test("only follows generated modules written to a registered Nitro handler path", async () => {
+    const result = await runRuleFixture({
+      rule: declareNitroDependency,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.261103-rc" },
+      files: workspace(
+        {
+          "packages/realtime": {
+            name: "@acme/realtime",
+            exports: { "./server": "./dist/server.js" },
+            dependencies: { nitro: "^3.0.0" },
+          },
+        },
+        {
+          "packages/realtime/src/server.ts":
+            'import { H3 } from "nitro/h3"\nexport const app = new H3()',
+          "packages/realtime/src/vite.ts": `import type { Plugin } from "vite"
+import { writeFileSync } from "node:fs"
+const example = 'import { app } from "@acme/realtime/server"; export default app'
+export const realtime = (): Plugin => ({
+  name: "realtime",
+  config() {
+    const handler = "/generated/health.ts"
+    writeFileSync(handler, 'export default () => "ok"')
+    writeFileSync("/generated/example.ts", example)
+    return { nitro: { handlers: [{ route: "/health", handler }] } }
+  },
+  configureServer(server) {
+    const handler = "/generated/example.ts"
+    writeFileSync(handler, example)
+    server.middlewares.use((_req, res) => res.end(example))
+  },
+})`,
+        },
+      ),
+    });
+
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test.each([
+    { node: "./dist/node.js", default: "./dist/server.js" },
+    { default: "./dist/node.js", import: "./dist/server.js" },
+  ])("does not assume an unselected export is the Nitro handler: %j", async (entry) => {
+    const result = await runRuleFixture({
+      rule: declareNitroDependency,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.261103-rc" },
+      files: workspace(
+        {
+          "packages/realtime": {
+            name: "@acme/realtime",
+            exports: { "./server": entry },
+            dependencies: { nitro: "^3.0.0" },
+          },
+        },
+        {
+          "packages/realtime/src/server.ts":
+            'import { H3 } from "nitro/h3"\nexport const app = new H3()',
+          "packages/realtime/src/node.ts": 'export const app = () => "ok"',
+          "packages/realtime/src/vite.ts": `import type { Plugin } from "vite"
+import { writeFileSync } from "node:fs"
+export const realtime = (): Plugin => ({ name: "realtime", config() {
+  const handler = "/generated/realtime.ts"
+  writeFileSync(handler, 'import { app } from "@acme/realtime/server"; export default app')
+  return { nitro: { handlers: [{ route: "/realtime", handler }] } }
+} })`,
+        },
+      ),
+    });
+
+    expect(result.diagnostics).toEqual([]);
   });
 
   test("attributes Nitro build evidence to the package that owns it", async () => {
