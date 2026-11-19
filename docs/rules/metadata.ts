@@ -2680,6 +2680,31 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/template/no-dupe-v-else-if": {
+    description:
+      'Flags a `v-else-if` branch whose condition repeats an earlier condition in the same `v-if` / `v-else-if` chain, or is fully covered by earlier conditions, for example `v-else-if="a"` after `v-if="a || b"`, or `v-else-if="a && b"` after `v-if="a"`. Doctor compares the parsed expressions, so spacing, parentheses and the order of `&&` / `||` operands do not matter. Only conditions whose value cannot change between the two evaluations are compared: identifiers, literals, `this`, member chains, `!`, `-`, `+`, `typeof`, binary, logical and conditional operators, and template literals over them. A condition with a call, such as `isOpen()` or `$slots.footer()`, `new`, an assignment, an update or `await` is skipped, and a branch that writes state ends the comparison.',
+    why: "Vue renders the first branch of a chain whose condition is truthy, and evaluates the conditions in order within one render. A later condition that can only be truthy when an earlier one already is never gets its turn, so its element never renders. That is almost always a copy-paste mistake in the condition.",
+    recommendedReplacement:
+      "Change the later condition to the one the branch was meant to test. If the branch is no longer needed, remove it. Doctor offers no fix, because deleting the branch would hide the condition the author meant to write.",
+    examples: [
+      {
+        title: "Test a different value in each branch",
+        language: "vue",
+        invalid:
+          "<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'loading'\">Failed</p>\n</template>",
+        valid:
+          "<template>\n  <p v-if=\"status === 'loading'\">Loading…</p>\n  <p v-else-if=\"status === 'error'\">Failed</p>\n</template>",
+      },
+      {
+        title: "Do not test a branch the earlier condition already covers",
+        language: "vue",
+        invalid:
+          '<template>\n  <Banner v-if="isAdmin || isOwner" />\n  <OwnerTools v-else-if="isOwner" />\n</template>',
+        valid:
+          '<template>\n  <OwnerTools v-if="isOwner" />\n  <Banner v-else-if="isAdmin" />\n</template>',
+      },
+    ],
+  },
   "vue/template/prefer-use-template-ref": {
     description:
       "Finds Vue template code that should use the supported use template ref pattern instead.",
