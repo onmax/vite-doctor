@@ -39,6 +39,19 @@ async function reported(source: string) {
   return result.diagnostics.filter((diagnostic) => diagnostic.ruleId === RULE_ID);
 }
 
+test.each(["click.once", "clickOnce", "click-once", "clickPassiveOnce"])(
+  "does not recommend declaring an event from @%s, which would remove later native callbacks",
+  async (listener) => {
+    const source = `<script setup>
+defineEmits(['other'])
+</script>
+<template>
+  <button @${listener}="$emit('click', 1)">x</button>
+</template>`;
+    expect(await reported(source)).toHaveLength(0);
+  },
+);
+
 test.each([
   [
     "a template-only component",

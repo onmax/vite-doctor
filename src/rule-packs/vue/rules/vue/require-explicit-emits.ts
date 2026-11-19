@@ -311,11 +311,11 @@ function emitCandidates(dom: DomTree, root: TemplateElementNode) {
       if (prop.type !== TemplateNodeType.DIRECTIVE || prop.name !== "on") continue;
       const listener = templateListener(prop, element);
       if (!listener) continue;
-      const { event, capture } = listener;
+      const { event, capture, once } = listener;
       const bubbles = NATIVE_EVENTS.get(event);
       if (bubbles === undefined || (!bubbles && element !== root)) continue;
-      // A capture handler runs before the target, so descendants could still stop the event.
-      if (capture) continue;
+      // Capture can run before propagation stops. Once-only emitters need later native callbacks.
+      if (capture || once) continue;
       const handler = readHandler(prop);
       if (!handler.readable) continue;
       for (const emit of handler.emits) {
@@ -328,7 +328,7 @@ function emitCandidates(dom: DomTree, root: TemplateElementNode) {
   return candidates;
 }
 
-/** Resolve the compiler's static `v-on` key and runtime-dom's event name and capture option. */
+/** Resolve the compiler's static `v-on` key and runtime-dom's event name and listener options. */
 function templateListener(directive: TemplateDirectiveNode, element: TemplateElementNode) {
   const arg = directive.arg;
   if (arg?.type !== TemplateNodeType.SIMPLE_EXPRESSION || !arg.isStatic) return null;
@@ -339,14 +339,16 @@ function templateListener(directive: TemplateDirectiveNode, element: TemplateEle
     else if (hasModifier(directive, "middle")) key = "Mouseup";
   }
   let capture = hasModifier(directive, "capture");
+  let once = hasModifier(directive, "once");
   const optionSuffix = /(Once|Passive|Capture)$/;
   let suffix = optionSuffix.exec(key);
   while (suffix && suffix.index > 0) {
     capture ||= suffix[0] === "Capture";
+    once ||= suffix[0] === "Once";
     key = key.slice(0, suffix.index);
     suffix = optionSuffix.exec(key);
   }
-  return { event: preserveCase ? key : hyphenate(key), capture };
+  return { event: preserveCase ? key : hyphenate(key), capture, once };
 }
 
 function hasModifier(directive: TemplateDirectiveNode, name: string): boolean {
