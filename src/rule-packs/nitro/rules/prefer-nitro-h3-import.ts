@@ -4,7 +4,7 @@ import {
   declaresOnlyNitro3,
   installedNitroH3Exports,
   isLibrary,
-  isModuleServerRuntime,
+  moduleServerRuntime,
   isPackageRuntimeSource,
   isTypeOnlyModuleReference,
   owningPackage,
@@ -100,6 +100,10 @@ function nitroCodeScope(ctx: RuleContext): NitroCodeScope | undefined {
   if (runtimeDeclaration(owner.manifest, "nitropack") !== undefined) return undefined;
   const nitro = runtimeDeclaration(owner.manifest, "nitro");
   if (nitro !== undefined && !declaresOnlyNitro3(ctx, nitro)) return undefined;
+  const moduleRuntime = declaresNitro3Host(ctx, owner.manifest)
+    ? moduleServerRuntime(ctx, owner)
+    : undefined;
+  if (moduleRuntime === "unselected") return undefined;
   // Published Nuxt layers can have an entry point and still supply real server routes.
   // Keep their server evidence without treating the layer's client/library source as Nitro code.
   if (
@@ -110,8 +114,7 @@ function nitroCodeScope(ctx: RuleContext): NitroCodeScope | undefined {
     return { kind: "app", dir };
   const name = owner.manifest.name ?? "This package";
   if (nitro !== undefined && owner.framework !== "nuxt") return { kind: "package", dir, name };
-  if (isModuleServerRuntime(ctx, owner) && declaresNitro3Host(ctx, owner.manifest))
-    return { kind: "package", dir, name };
+  if (moduleRuntime === "server") return { kind: "package", dir, name };
   return undefined;
 }
 

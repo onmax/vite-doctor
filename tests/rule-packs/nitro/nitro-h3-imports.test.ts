@@ -1,5 +1,9 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { runViteDoctor } from "../../../src/doctor.ts";
 import {
   declareNitroDependency,
   preferNitroH3Import,
@@ -278,6 +282,7 @@ export default defineNuxtModule({
         {
           "packages/compat": nuxtModulePackage("@acme/compat", "^4.0.0 || ^5.0.0"),
           "packages/unknown": nuxtModulePackage("@acme/unknown"),
+          "packages/nightly": nuxtModulePackage("@acme/nightly", "npm:nuxt-nightly@4x"),
         },
         {
           "packages/compat/src/module.ts":
@@ -288,11 +293,97 @@ export default defineNuxtModule({
             'import { defineNuxtModule } from "@nuxt/kit"\nexport default defineNuxtModule({ setup() {} })',
           "packages/unknown/src/runtime/server/page.ts":
             'import { defineEventHandler } from "h3"\nexport default defineEventHandler(() => "page")',
+          "packages/nightly/src/module.ts":
+            'import { defineNuxtModule } from "@nuxt/kit"\nexport default defineNuxtModule({ setup() {} })',
+          "packages/nightly/src/runtime/server/page.ts": 'export { defineEventHandler } from "h3"',
         },
       ),
     });
 
     expect(result.diagnostics).toEqual([]);
+  });
+
+  test("uses the selected handler variant and proven Kit resolver paths", async () => {
+    const source = 'export { defineHandler } from "h3"';
+    const result = await runRuleFixture({
+      rule: preferNitroH3Import,
+      framework: "nitro",
+      dependencies: { nitro: "3.0.261103-rc" },
+      files: workspace(
+        { "packages/docs": nuxtModulePackage("@acme/docs", ">=5.0.0-0") },
+        {
+          "packages/docs/src/module.ts": `import { addDevServerHandler, addServerHandler, addNitroPlugin, createResolver as kitResolver, defineNuxtModule } from "@nuxt/kit"
+import { fileURLToPath as toPath } from "node:url"
+export default defineNuxtModule({ setup() {
+  const resolver = kitResolver(import.meta.url)
+  addServerHandler({ handler: { nuxt: resolver.resolve('runtime', 'server', 'status'), nitro2: resolver.resolve('./runtime/server/status.legacy') } })
+  const { resolve: fromOther } = kitResolver(toPath(new URL('./other/', import.meta.url)))
+  addServerHandler({ handler: fromOther('./status.ts') })
+  addDevServerHandler({ handler: toPath(new URL('./dev.ts', import.meta.url)) })
+  addNitroPlugin(resolver.resolve('runtime/plugin.ts'))
+  addServerHandler({ handler: resolver.resolve('./unproven.ts', process.env.HANDLER) })
+  function shadowed(resolver: { resolve(path: string): string }) {
+    addServerHandler({ handler: resolver.resolve('./unproven.ts') })
+  }
+} })`,
+          ...Object.fromEntries(
+            [
+              "runtime/server/status.ts",
+              "runtime/server/status.legacy.ts",
+              "other/status.ts",
+              "status.ts",
+              "dev.ts",
+              "runtime/plugin.ts",
+              "unproven.ts",
+            ].map((file) => [`packages/docs/src/${file}`, source]),
+          ),
+        },
+      ),
+    });
+    expect(result.diagnostics.map(({ file }) => file).sort()).toEqual([
+      expect.stringMatching(/dev\.ts$/),
+      expect.stringMatching(/other\/status\.ts$/),
+      expect.stringMatching(/runtime\/plugin\.ts$/),
+      expect.stringMatching(/runtime\/server\/status\.ts$/),
+    ]);
+  });
+
+  test("tracks module entry discovery across cached runs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-nitro-module-"));
+    const modulePath = "packages/docs/src/module.ts";
+    const moduleSource =
+      'import { defineNuxtModule } from "@nuxt/kit"\nexport default defineNuxtModule({ setup() {} })';
+    const options = {
+      root,
+      framework: "nitro" as const,
+      runtimeTarget: { nitro: "3.0.0", h3: "2.0.8" },
+      rules: preferNitroH3Import.meta.id,
+      cache: true,
+    };
+    try {
+      for (const [file, text] of Object.entries(
+        workspace(
+          { "packages/docs": nuxtModulePackage("@acme/docs", ">=5.0.0-0") },
+          {
+            "packages/docs/nuxt.config.ts": "export default {}",
+            [modulePath]: moduleSource,
+            "packages/docs/src/runtime/server/page.ts": 'export { defineHandler } from "h3"',
+          },
+        ),
+      )) {
+        mkdirSync(dirname(join(root, file)), { recursive: true });
+        writeFileSync(join(root, file), text);
+      }
+      expect((await runViteDoctor(options)).diagnostics).toHaveLength(1);
+      writeFileSync(join(root, modulePath), "export default {}\n");
+      expect((await runViteDoctor(options)).diagnostics).toEqual([]);
+      rmSync(join(root, modulePath));
+      expect((await runViteDoctor(options)).diagnostics).toEqual([]);
+      writeFileSync(join(root, modulePath), moduleSource);
+      expect((await runViteDoctor(options)).diagnostics).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("suggests nitro/h3 without an edit when the installed Nitro does not prove the names", async () => {
@@ -468,9 +559,11 @@ export const handler = defineHandler(() => { throw new HTTPError("no") })`,
         },
         {
           "packages/realtime/src/server.ts":
-            'import type { H3Event } from "nitro/h3"\nimport { HTTPError } from "nitro/h3"\nexport const fail = (event: H3Event) => new HTTPError(String(event))',
+            'import type { H3Event } from "nitro/h3"\nimport { HTTPError } from "nitro/h3"\nimport { useRuntimeConfig } from "nitro/runtime-config"\nexport const fail = (event: H3Event) => new HTTPError(String(useRuntimeConfig(event)))',
+          "packages/docs/src/module.ts":
+            'import { defineNuxtModule } from "@nuxt/kit"\nexport default defineNuxtModule({ setup() {} })',
           "packages/docs/src/runtime/server/page.ts":
-            'import { useRuntimeConfig } from "nitro/runtime-config"\nexport default () => useRuntimeConfig()',
+            'import { defineHandler } from "nitro/h3"\nexport default defineHandler(() => "page")',
         },
       ),
     });
@@ -490,6 +583,50 @@ export const handler = defineHandler(() => { throw new HTTPError("no") })`,
     );
     expect(realtime!.why).toContain("dependencies");
     expect(realtime!.suggestion).toContain("peerDependencies");
+  });
+
+  test("attributes Nitro build evidence to the package that owns it", async () => {
+    const app = {
+      name: "@acme/app",
+      exports: "./dist/index.js",
+      dependencies: { nitro: "^3.0.0" },
+    };
+    const files = workspace(
+      { "packages/app": app, "packages/builder": { name: "@acme/builder" } },
+      {
+        "packages/app/vite.config.ts":
+          'import { nitro } from "nitro/vite"\nexport default { plugins: [nitro({})] }',
+        "packages/app/src/entry.ts": 'export { useRuntimeConfig } from "nitro/runtime-config"',
+        "packages/builder/index.ts": 'export { createNitro } from "nitro/builder"',
+        "src/entry.ts": 'export { useRuntimeConfig } from "nitro/runtime-config"',
+      },
+    );
+    const result = await runRuleFixture({
+      rule: declareNitroDependency,
+      framework: "nitro",
+      files: { ...files, "package.json": JSON.stringify({ ...app, name: "@acme/root" }) },
+    });
+    expect(result.diagnostics.map(({ why }) => why)).toEqual([
+      expect.stringContaining("@acme/root"),
+    ]);
+  });
+
+  test("keeps Nitro build helpers and standalone H3 out of the peer advice", async () => {
+    const result = await runRuleFixture({
+      rule: declareNitroDependency,
+      framework: "nitro",
+      files: {
+        "package.json": JSON.stringify({
+          name: "@acme/tools",
+          exports: "./dist/index.js",
+          dependencies: { nitro: "^3.0.0" },
+        }),
+        "src/preset.ts": 'export { defineConfig as definePreset } from "nitro"',
+        "src/server.ts":
+          'import { H3, HTTPError } from "nitro/h3"\nexport const app = new H3().get("/", () => { throw new HTTPError("test") })',
+      },
+    });
+    expect(result.diagnostics).toEqual([]);
   });
 
   test("lets Nitro apps and packages that build their own Nitro depend on nitro", async () => {
@@ -527,7 +664,7 @@ export const handler = defineHandler(() => { throw new HTTPError("no") })`,
             "packages/start/src/vite.ts":
               'import { nitro } from "nitro/vite"\nexport const start = () => [nitro()]',
             "packages/start/src/server.ts":
-              'import { defineHandler } from "nitro/h3"\nexport const handler = defineHandler(() => "ok")',
+              'import { useRuntimeConfig } from "nitro/runtime-config"\nexport const handler = () => useRuntimeConfig()',
             "packages/peer/src/index.ts": 'export { HTTPError } from "nitro/h3"',
           },
         ),
