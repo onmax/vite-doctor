@@ -662,6 +662,16 @@ export const realtime = (): Plugin => ({
 
   test.each([
     ['config.nitro.handlers = [{ route: "/health", handler: health }]', ["health"]],
+    [
+      'config.nitro.handlers = [{ route: `${config.base ?? "/"}health`, handler: health }]',
+      ["health"],
+    ],
+    [
+      "const { root } = config; config.nitro.handlers = [{ route: root, handler: health }]",
+      ["health"],
+    ],
+    ["delete config.nitro.handlers; config.nitro.handlers = [{ handler: health }]", ["health"]],
+    ["delete config.nitro; config.nitro = { handlers: [{ handler: health }] }", ["health"]],
     ['config.nitro = { handlers: [{ route: "/health", handler: health }] }', ["health"]],
     [
       'config.nitro.handlers = [{ route: "/example", handler: example }, { route: "/health", handler: health }]',
@@ -698,11 +708,20 @@ export const realtime = (): Plugin => ({
       [],
     ],
     ["delete config.nitro.handlers; config.nitro.handlers &&= [{ handler: health }]", []],
+    ["config.nitro.handlers.length = 0; config.nitro.handlers ??= [{ handler: health }]", []],
+    [
+      "const options = config.nitro = { handlers: [{ handler: health }] }; options.handlers = []",
+      [],
+    ],
     [
       "if (enabled) config.nitro.handlers = []; config.nitro.handlers ??= [{ handler: health }]",
       [],
     ],
     ["configure(config.nitro); config.nitro.handlers &&= [{ handler: health }]", []],
+    [
+      "const { nitro } = config; config.nitro.handlers = [{ handler: health }]; nitro.handlers = []",
+      [],
+    ],
     [
       "const options = config; config.nitro = {}; options.nitro.handlers = []; config.nitro.handlers ||= [{ handler: health }]",
       [],
