@@ -16,7 +16,7 @@
   },
   "bin": {
     "nuxt-doctor": "./dist/nuxt-cli.mjs",
-    "vite-doctor": "./dist/cli.mjs"
+    "vite-doctor": "./dist/bin.mjs"
   },
   "files": [
     "dist",
