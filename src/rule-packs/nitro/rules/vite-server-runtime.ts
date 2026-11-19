@@ -197,8 +197,13 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
           }
         }
       } else if (node?.type === "AssignmentExpression") {
-        if (nitro(node.left)) registerArray(objectProperty(node.right, "handlers"));
-        if (handlers(node.left)) registerArray(node.right);
+        const replacesNitro = nitro(node.left);
+        if (replacesNitro || handlers(node.left)) {
+          if ((node.operator === "??=" || node.operator === "||=") && registered.size) return;
+          registered.clear();
+          if (node.operator === "=")
+            registerArray(replacesNitro ? objectProperty(node.right, "handlers") : node.right);
+        }
       }
       return path(node);
     };

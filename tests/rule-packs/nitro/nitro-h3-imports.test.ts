@@ -661,6 +661,53 @@ export const realtime = (): Plugin => ({
   });
 
   test.each([
+    ['config.nitro.handlers = [{ route: "/health", handler: health }]', ["health"]],
+    ['config.nitro = { handlers: [{ route: "/health", handler: health }] }', ["health"]],
+    [
+      'config.nitro.handlers = [{ route: "/example", handler: example }, { route: "/health", handler: health }]',
+      ["example", "health"],
+    ],
+    ["config.nitro.handlers = []", []],
+    ["config.nitro = {}", []],
+    ["config.nitro.handlers = getHandlers()", []],
+    ["config.nitro = getNitroOptions()", []],
+    ['config.nitro.handlers.push({ route: "/health", handler: health })', ["example", "health"]],
+    ['config.nitro.handlers.unshift({ route: "/health", handler: health })', ["example", "health"]],
+  ])("uses the Nitro handler list after %s", async (update, expected) => {
+    const result = await runRuleFixture({
+      rule: declareNitroDependency,
+      framework: "nitro",
+      files: workspace(
+        {
+          "packages/realtime": {
+            name: "@acme/realtime",
+            exports: { "./example": "./dist/example.js", "./health": "./dist/health.js" },
+            dependencies: { nitro: "^3.0.0" },
+          },
+        },
+        {
+          "packages/realtime/src/example.ts": 'export { H3 as app } from "nitro/h3"',
+          "packages/realtime/src/health.ts": 'export { H3 as app } from "nitro/h3"',
+          "packages/realtime/src/vite.ts": `import type { Plugin } from "vite"
+import { writeFileSync } from "node:fs"
+export const realtime = (): Plugin => ({ name: "realtime", enforce: "pre", config(config) {
+  const example = "/generated/example.ts"
+  const health = "/generated/health.ts"
+  writeFileSync(example, 'import { app } from "@acme/realtime/example"; export default app')
+  writeFileSync(health, 'import { app } from "@acme/realtime/health"; export default app')
+  config.nitro = { handlers: [{ route: "/example", handler: example }] }
+  ${update}
+} })`,
+        },
+      ),
+    });
+
+    expect(result.diagnostics.map(({ file }) => file.split("/").at(-1))).toEqual(
+      expected.map((name) => `${name}.ts`),
+    );
+  });
+
+  test.each([
     { node: "./dist/node.js", default: "./dist/server.js" },
     { default: "./dist/node.js", import: "./dist/server.js" },
   ])("does not assume an unselected export is the Nitro handler: %j", async (entry) => {
