@@ -28,6 +28,18 @@ export const defaultConfigDiagnosticMetadata = {
   category: "config",
 } as const satisfies DiagnosticMetadata;
 
+export const resolvedBaselineDiagnosticMetadata = {
+  code: "DOC0039",
+  ruleId: "doctor/baseline/resolved-entries",
+  title: "Remove resolved baseline entries",
+  description:
+    "A full `--new-only` run found baseline entries whose file Rule no longer reports their fingerprint.",
+  why: "A resolved entry hides nothing today, but if the same finding comes back, `--new-only` hides it again. Doctor requires Rule and file metadata and a full run covering that file (or proof the file no longer exists). Changed-file runs, Rule selections, analyses-only runs, baseline updates, and severity thresholds above `info` never report this Diagnostic. Entries from project-scoped Rules, workspace Rules and analyses, and Rules that are disabled, partial, or inactive are not reported.",
+  fix: "Delete only the fingerprints listed in the Diagnostic's evidence from the baseline. Leave the other entries in place and commit the updated baseline.",
+  severity: "info",
+  category: "baseline",
+} as const satisfies DiagnosticMetadata;
+
 export const workspaceDiagnosticMetadata = [
   {
     code: "DOC0001",
@@ -154,7 +166,11 @@ export const workspaceDiagnosticMetadata = [
 ] as const satisfies readonly WorkspaceDiagnosticMetadata[];
 
 const explainableMetadata: Array<DiagnosticMetadata & { analysis?: WorkspaceDiagnosticAnalysis }> =
-  [...workspaceDiagnosticMetadata, defaultConfigDiagnosticMetadata];
+  [
+    ...workspaceDiagnosticMetadata,
+    defaultConfigDiagnosticMetadata,
+    resolvedBaselineDiagnosticMetadata,
+  ];
 
 export const diagnosticMetadataByCode = new Map(
   explainableMetadata.map((metadata) => [metadata.code, metadata] as const),

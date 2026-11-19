@@ -31,13 +31,20 @@ import {
   settleDiagnosticIdentity,
   matchesSuppressionFile,
   unusedConfigSuppressionEntries,
+  type BaselineEntry,
   type InlineSuppression,
   type StaleBaseline,
 } from "./diagnostic-policy.js";
+import { hasRuleSourceCoverage } from "./facts.js";
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
-import { markSession, type ScanSession } from "./scan-session.js";
+import {
+  fileRuleConfig,
+  markSession,
+  topLevelRuleConfig,
+  type ScanSession,
+} from "./scan-session.js";
 import { scoreDiagnostics } from "./scoring.js";
 import { VERSION, sha256, shellArgument } from "./utils.js";
 import {
@@ -79,10 +86,9 @@ export function applyPolicyFilters(session: ScanSession): void {
   session.diagnostics = result.diagnostics;
   session.suppressedDiagnostics = result.suppressedDiagnostics;
   if (result.staleBaseline) reportStaleBaseline(session, result.staleBaseline);
+  if (result.baseline) reportResolvedBaselineEntries(session, result.baseline);
 }
 
-// The baseline is not a source file, so this skips scope filtering but still honors the
-// severity threshold and the same suppression policy as every other Diagnostic.
 function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): void {
   if (session.options.severity === "error") return;
   const path = relative(session.root, baseline.file) || baseline.file;
@@ -100,19 +106,106 @@ function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): voi
     confidence: "proven",
     analysisPhase: "manifest",
   });
-  warning.fingerprint ??= createDiagnosticFingerprint(
+  pushBaselineDiagnostic(session, warning);
+}
+
+// A missing fingerprint only proves resolution when a full run covered the recorded file,
+// or proved that the file or required syntax is gone. For Rules that execute or report across
+// files, the baseline location alone does not identify the inputs needed to reproduce the finding.
+function reportResolvedBaselineEntries(
+  session: ScanSession,
+  baseline: { file: string; entries: BaselineEntry[] },
+): void {
+  const { options, root } = session;
+  if (session.scopedReport || options.rules || options.analyses) return;
+  // A threshold above info drops findings before the baseline sees them, and hides this report.
+  if (options.severity && severityRank(options.severity) > severityRank("info")) return;
+  const reported = new Set(
+    [...session.diagnostics, ...session.suppressedDiagnostics].map(
+      (diagnostic) => diagnostic.fingerprint,
+    ),
+  );
+  const coverage = ruleCoverage(session);
+  const fileRules = new Map(
+    session.enabledRules
+      .filter(
+        (rule) => (rule.meta.execution ?? "file") === "file" && rule.meta.reportScope !== "project",
+      )
+      .map((rule) => [rule.meta.id, rule] as const),
+  );
+  const resolved = baseline.entries.filter(({ fingerprint, ruleId, file }) => {
+    if (reported.has(fingerprint) || !ruleId || !file) return false;
+    const rule = fileRules.get(ruleId);
+    if (!rule || coverage.partial.has(ruleId) || !topLevelRuleConfig(session, ruleId).enabled)
+      return false;
+    const path = resolve(root, file);
+    if (
+      coverage.unproven.has(relative(root, path)) ||
+      !fileRuleConfig(session, ruleId, path).enabled
+    )
+      return false;
+    const handle = session.handlesByPath.get(path);
+    return handle ? hasRuleSourceCoverage(rule, handle) : !existsSync(path);
+  });
+  if (!resolved.length) return;
+  const path = relative(root, baseline.file) || baseline.file;
+  const findings = resolved.length === 1 ? "1 finding" : `${resolved.length} findings`;
+  const diagnostic = normalizeDiagnosticFromRuleCode({
+    ruleId: "doctor/baseline/resolved-entries",
+    severity: "info",
+    category: "baseline",
+    file: baseline.file,
+    why: `Baseline "${path}" records ${findings} that this full Doctor Run no longer reports. While the entries stay, --new-only hides the same findings if they come back.`,
+    suggestion: `Delete only the fingerprints listed in this Diagnostic's evidence from "${path}". Leave the other entries in place and commit the updated baseline.`,
+    confidence: "proven",
+    analysisPhase: "manifest",
+    evidence: resolved.map((entry) => ({
+      kind: "manifest" as const,
+      summary: `${entry.ruleId} no longer reports fingerprint ${entry.fingerprint} in ${entry.file}.`,
+      file: resolve(root, entry.file!),
+    })),
+  });
+  pushBaselineDiagnostic(session, diagnostic);
+}
+
+// The baseline is not a source file, so its Diagnostics skip scope filtering but follow the
+// same suppression policy as every other Diagnostic.
+function pushBaselineDiagnostic(session: ScanSession, diagnostic: Diagnostic): void {
+  diagnostic.fingerprint ??= createDiagnosticFingerprint(
     session.root,
-    warning,
-    sourceTextFor(session, warning.file),
+    diagnostic,
+    sourceTextFor(session, diagnostic.file),
   );
   const result = applyDiagnosticPolicy({
     root: session.root,
     config: session.config,
     options: { ...session.options, updateBaseline: false },
-    diagnostics: [warning],
+    diagnostics: [diagnostic],
   });
   session.diagnostics.push(...result.diagnostics);
   session.suppressedDiagnostics.push(...result.suppressedDiagnostics);
+}
+
+function ruleCoverage(session: ScanSession) {
+  const { root } = session;
+  const workspacePackages = session.project.workspacePackages ?? [];
+  return {
+    ran: new Set(session.enabledRules.map((rule) => rule.meta.id)),
+    // A Rule that runs on only some files cannot prove a finding or suppression stale.
+    partial: new Set([
+      ...session.overrideOnlyRules,
+      ...session.ruleOverrides.flatMap((override) =>
+        [...override.rules].flatMap(([ruleId, config]) => (config.enabled ? [] : [ruleId])),
+      ),
+    ]),
+    analyzed: new Set(session.files.map((file) => relative(root, file.path))),
+    unproven: new Set(
+      (session.project.evidenceGaps ?? []).flatMap((gap) =>
+        gap.files.map((file) => relative(root, resolve(root, file))),
+      ),
+    ),
+    workspacePackages,
+  };
 }
 
 // A Rule ID is proven stale on a file only when the Rule ran there and reported nothing the
@@ -303,7 +396,7 @@ function inlineSuppressionFix(
 function reportUnusedConfigSuppressions(session: ScanSession): void {
   const { options, root } = session;
   if (session.scopedReport || options.rules || options.analyses) return;
-  const ran = new Set(session.enabledRules.map((rule) => rule.meta.id));
+  const { ran, partial, analyzed, unproven, workspacePackages } = ruleCoverage(session);
   const effectiveExtends = options.extends ?? session.config.extends;
   // An entry without a Rule may belong to a Rule turned off in config, which cannot prove it stale.
   const selectsActivated = (entry: string) => entry === "auto" || entry === "strict";
@@ -315,20 +408,6 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
         : effectiveExtends.some(selectsActivated))) &&
     !Object.values(session.config.rules ?? {}).includes("off") &&
     !session.ruleOverrides.length;
-  // A Rule that runs on only some files cannot prove a suppression stale.
-  const partial = new Set([
-    ...session.overrideOnlyRules,
-    ...session.ruleOverrides.flatMap((override) =>
-      [...override.rules].flatMap(([ruleId, config]) => (config.enabled ? [] : [ruleId])),
-    ),
-  ]);
-  const analyzed = session.files.map((file) => relative(root, file.path));
-  const unproven = new Set(
-    (session.project.evidenceGaps ?? []).flatMap((gap) =>
-      gap.files.map((file) => relative(root, resolve(root, file))),
-    ),
-  );
-  const workspacePackages = session.project.workspacePackages ?? [];
   const workspaceRoots = new Set(workspacePackages.map((item) => item.root));
   const coversWorkspace = (scope: ReadonlySet<string> | undefined): boolean =>
     !scope || [...workspaceRoots].every((root) => scope.has(root));
@@ -345,7 +424,7 @@ function reportUnusedConfigSuppressions(session: ScanSession): void {
       // ignored, or otherwise unavailable files). Without a complete target set we
       // cannot prove that a wildcard suppression is stale.
       if (isGlobPattern(pattern)) return false;
-      let targets = analyzed.filter((file) => matchesSuppressionFile(file, pattern));
+      let targets = [...analyzed].filter((file) => matchesSuppressionFile(file, pattern));
       // Only a literal path that no longer exists is provably stale; any other unanalyzed
       // target may be excluded, ignored, or outside the source inventory.
       if (!targets.length) {
