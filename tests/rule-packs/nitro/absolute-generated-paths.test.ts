@@ -339,7 +339,8 @@ function generate(root: string) {
   return writeFile(resolve(root, generatedNitroWorkspacePlugin), "export default () => {}")
 }
 function mergeNitroWorkspaceConfig(value: unknown, dev: boolean) {
-  const kit = makeKit(value)
+  const nitro = isRecord(value) ? { ...value } : {}
+  const kit = makeKit(nitro)
   switch (dev) {
     case true: const kit = markdown; kit.addPlugin(generatedNitroWorkspacePlugin)
   }
@@ -354,7 +355,7 @@ async function install(config: Record<string, unknown>, root: string) {
   (kit.addServerPlugin as (path: string) => void)(generatedNitroWorkspacePlugin)
 }`,
     }),
-  ).toEqual(["vite/plugin.ts:14", "vite/plugin.ts:21", "vite/plugin.ts:22"]);
+  ).toEqual(["vite/plugin.ts:15", "vite/plugin.ts:22", "vite/plugin.ts:23"]);
 });
 
 test("only reports explicit Nitro roots when the resolved destinations differ", async () => {
@@ -380,6 +381,9 @@ export function matchingDestinations() {
   const kit = createNitroServerKit({ rootDir: "/vite" })
   writeFile(resolve("/vite/sub/..", "../generated/match.ts"), "")
   kit.addPlugin("../generated/match.ts")
+}
+function unrelatedGenerator() {
+  writeFile(resolve("/nitro", "./generated/other.ts"), "")
 }`,
     }),
   ).toEqual(["modules/roots.ts:15"]);

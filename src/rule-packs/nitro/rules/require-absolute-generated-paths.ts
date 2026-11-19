@@ -13,6 +13,11 @@ const INTEGRATION_SOURCE_RE =
 
 const KIT_PLUGIN_METHODS = new Set(["addPlugin", "addServerPlugin"]);
 const KIT_FACTORIES = new Set(["createNitroServerKit", "createNitroConfigKit"]);
+const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
 const PATH_MODULES = new Set(["node:path", "path", "pathe"]);
 const FS_MODULES = new Set(["node:fs", "node:fs/promises", "fs", "fs/promises"]);
 const HANDLER_SHAPE_KEYS = new Set(["route", "middleware", "method", "lazy"]);
@@ -300,7 +305,25 @@ function reportKitPaths(
     };
   }
 
-  const writes = new Map<string, AnyNode[]>();
+  function configParameter(config: AnyNode) {
+    let input = config;
+    if (config?.type === "ConditionalExpression") {
+      const branches = [config.consequent, config.alternate].map(constValue);
+      if (!branches.every((branch) => branch?.type === "ObjectExpression")) return undefined;
+      const empty = branches.findIndex((branch) => branch.properties.length === 0);
+      if (empty === -1) return undefined;
+      const properties = branches[1 - empty].properties;
+      if (properties.length !== 1 || properties[0].type !== "SpreadElement") return undefined;
+      input = unwrapExpression(properties[0].argument);
+    }
+    const def = definition(input);
+    return def?.type === "Parameter" && def.node.params.includes(def.name) ? def : undefined;
+  }
+
+  const writes = new Map<
+    string,
+    Array<{ root: AnyNode; owner: AnyNode; pathBinding: ReturnType<typeof definition> }>
+  >();
   for (const call of calls) {
     const writer = importedFunction(call.callee);
     if (
@@ -315,11 +338,16 @@ function reportKitPaths(
     if (dest?.type !== "CallExpression" || dest.arguments.length !== 2) continue;
     const resolver = importedFunction(dest.callee);
     if (resolver?.name !== "resolve" || !PATH_MODULES.has(resolver.source)) continue;
-    const text = staticStringValue(constValue(dest.arguments[1]));
+    const writtenPath = unwrapExpression(dest.arguments[1]);
+    const text = staticStringValue(constValue(writtenPath));
     if (text === undefined || !isRelativeFilePath(text)) continue;
-    const roots = writes.get(text) ?? [];
-    roots.push(constValue(dest.arguments[0]));
-    writes.set(text, roots);
+    const matches = writes.get(text) ?? [];
+    matches.push({
+      root: constValue(dest.arguments[0]),
+      owner: generationOwner(call),
+      pathBinding: definition(writtenPath),
+    });
+    writes.set(text, matches);
   }
 
   for (const { receiver, path } of kitCalls) {
@@ -327,8 +355,10 @@ function reportKitPaths(
     const value = unwrapExpression(path);
     const text = staticStringValue(constValue(value));
     if (text === undefined) continue;
-    const roots = writes.get(text);
-    if (!roots) continue;
+    const matches = writes.get(text);
+    if (!matches) continue;
+    const owner = generationOwner(value);
+    const localWrites = matches.filter((write) => write.owner === owner);
 
     const init = constValue(receiver);
     const call = init?.type === "AwaitExpression" ? unwrapExpression(init.argument) : init;
@@ -349,17 +379,24 @@ function reportKitPaths(
       if (!nitroRoot || !isAbsolute(nitroRoot)) continue;
       const loadedPath = resolve(nitroRoot, text);
       if (
-        !roots.every((root) => {
+        localWrites.length === 0 ||
+        !localWrites.every(({ root }) => {
           const writeRoot = staticStringValue(root);
           return writeRoot && isAbsolute(writeRoot) && resolve(writeRoot, text) !== loadedPath;
         })
       )
         continue;
     } else {
-      const configDef = definition(config);
+      const configDef = configParameter(config);
+      const pathBinding = definition(value);
+      const related = localWrites.length
+        ? localWrites
+        : matches.filter((write) => pathBinding && write.pathBinding === pathBinding);
       if (
-        configDef?.type !== "Parameter" ||
-        !roots.every((root) => {
+        !configDef ||
+        related.length === 0 ||
+        (localWrites.length === 0 && related.length !== 1) ||
+        !related.every(({ root }) => {
           const input =
             root?.type === "MemberExpression" && !root.computed && root.property.name === "root"
               ? root.object
@@ -376,6 +413,12 @@ function reportKitPaths(
     }
     reportPath(ctx, value, text, "plugin");
   }
+}
+
+function generationOwner(node: AnyNode): AnyNode {
+  let owner = node;
+  while (owner.__doctorParent && !FUNCTION_TYPES.has(owner.type)) owner = owner.__doctorParent;
+  return owner;
 }
 
 function resolveBinding<T extends { name: string; scope: AnyNode | undefined }>(
