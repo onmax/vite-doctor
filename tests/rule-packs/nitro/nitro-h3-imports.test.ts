@@ -718,6 +718,15 @@ export const realtime = (): Plugin => ({
       [],
     ],
     ["configure(config.nitro); config.nitro.handlers &&= [{ handler: health }]", []],
+    ["config.clearHandlers = function () { this.nitro.handlers = [] }; config.clearHandlers()", []],
+    [
+      'config.clearHandlers = function () { this.nitro.handlers = [] }; (config["clearHandlers"]!)?.()',
+      [],
+    ],
+    [
+      "config.clearHandlers = function () { this.nitro.handlers = [] }; config.clearHandlers`now`",
+      [],
+    ],
     [
       "const { nitro } = config; config.nitro.handlers = [{ handler: health }]; nitro.handlers = []",
       [],

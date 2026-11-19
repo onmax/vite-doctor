@@ -24,6 +24,15 @@ const FS_MODULES = /^(?:node:)?fs(?:\/promises)?$/;
 const HOOKS = ["config", "configResolved"];
 const INTERPOLATION = "__doctor_unknown_interpolation__";
 const CONFIG_RUNTIME_KEYS = new Set(["nitro", "__proto__", "constructor", "prototype"]);
+const CALLEE_WRAPPERS = new Set([
+  "ChainExpression",
+  "ParenthesizedExpression",
+  "TSAsExpression",
+  "TSInstantiationExpression",
+  "TSNonNullExpression",
+  "TSSatisfiesExpression",
+  "TSTypeAssertion",
+]);
 
 export function isViteServerRuntime(ctx: RuleContext, owner: OwningPackage): boolean {
   const key = `nitro:vite-server-runtime:${owner.dir}`;
@@ -235,6 +244,11 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
     const checkConfigUses = (statement: AnyNode) => {
       if (!hook || configMayEscape) return;
       walk(statement, (node) => {
+        if (configMayEscape) return;
+        if (config(callReceiver(node))) {
+          configMayEscape = true;
+          return;
+        }
         if (node.type === "MemberExpression") {
           const key = staticKey(node.property, node.computed);
           if (key !== undefined && !CONFIG_RUNTIME_KEYS.has(key))
@@ -374,6 +388,14 @@ function generatedHandlerImports({ ast, references }: ScriptScope): Set<string> 
 
 function isMember(node: AnyNode, name: string): boolean {
   return node?.type === "MemberExpression" && staticKey(node.property, node.computed) === name;
+}
+
+function callReceiver(node: AnyNode): AnyNode {
+  let callee;
+  if (node.type === "CallExpression") callee = node.callee;
+  else if (node.type === "TaggedTemplateExpression") callee = node.tag;
+  while (CALLEE_WRAPPERS.has(callee?.type)) callee = callee.expression;
+  if (callee?.type === "MemberExpression") return callee.object;
 }
 
 function staticKey(node: AnyNode, computed: boolean): string | undefined {
