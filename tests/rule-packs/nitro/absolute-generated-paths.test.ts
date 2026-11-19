@@ -326,3 +326,213 @@ export default kit.defineNuxtModule({
     }),
   ).toEqual([]);
 });
+
+test("reports generated plugin paths written under a separate Vite root", async () => {
+  expect(
+    await lines({
+      "packages/workspace/src/hosts/vite/plugin.ts": `import { resolve } from "pathe"
+import type { Plugin } from "vite"
+import { writeFile } from "node:fs/promises"
+import { createNitroServerKit as makeKit, createNitroConfigKit } from "./nitro-kit"
+const generatedNitroWorkspacePlugin = ".vitehub/nitro/workspace/plugin.ts"
+function generate(root: string) {
+  return writeFile(resolve(root, generatedNitroWorkspacePlugin), "export default () => {}")
+}
+function mergeNitroWorkspaceConfig(value: unknown, dev: boolean) {
+  const nitro = isRecord(value) ? { ...value } : {}
+  const kit = makeKit(nitro)
+  switch (dev) {
+    case true: const kit = markdown; kit.addPlugin(generatedNitroWorkspacePlugin)
+  }
+  kit.addPlugin(generatedNitroWorkspacePlugin, dev ? "start" : "end")
+  return kit.config
+}
+async function install(config: Record<string, unknown>, root: string) {
+  const kit = await createNitroConfigKit(config)
+  kit.addPlugin(resolve(root, generatedNitroWorkspacePlugin))
+  kit.addPlugin("./unrelated.ts")
+  kit.addPlugin!(generatedNitroWorkspacePlugin);
+  (kit.addServerPlugin as (path: string) => void)(generatedNitroWorkspacePlugin)
+}`,
+    }),
+  ).toEqual(["vite/plugin.ts:15", "vite/plugin.ts:22", "vite/plugin.ts:23"]);
+});
+
+test("only reports explicit Nitro roots when the resolved destinations differ", async () => {
+  expect(
+    await lines({
+      "modules/roots.ts": `import { resolve } from "node:path"
+import { writeFile } from "node:fs/promises"
+import type { Plugin } from "vite"
+import { createNitroServerKit } from "./nitro-kit"
+const entry = "./generated/plugin.ts"
+export function sameRoot(root: string) {
+  const kit = createNitroServerKit({ rootDir: root })
+  writeFile(resolve(root, entry), "export default () => {}")
+  kit.addPlugin(entry)
+}
+export function differentRoots() {
+  const kit = createNitroServerKit({ rootDir: "/nitro" })
+  const destination = resolve("/vite", "./generated/other.ts")
+  writeFile(destination, "export default () => {}")
+  kit.addServerPlugin("./generated/other.ts")
+}
+export function matchingDestinations() {
+  const kit = createNitroServerKit({ rootDir: "/vite" })
+  writeFile(resolve("/vite/sub/..", "../generated/match.ts"), "")
+  kit.addPlugin("../generated/match.ts")
+}
+function unrelatedGenerator() {
+  writeFile(resolve("/nitro", "./generated/other.ts"), "")
+}`,
+    }),
+  ).toEqual(["modules/roots.ts:15"]);
+});
+
+test("compares explicit Nitro roots with writes in called generator helpers", async () => {
+  const source = (writeRoot: string, installBody: string) => `import { resolve } from "node:path"
+import { writeFile } from "node:fs/promises"
+import type { Plugin } from "vite"
+import { createNitroServerKit } from "./nitro-kit"
+const entry = "./generated/plugin.ts"
+const generate = () => writeFile(resolve("${writeRoot}", entry), "")
+export async function install() {
+  const kit = createNitroServerKit({ rootDir: "/nitro" })
+  ${installBody}
+  kit.addPlugin(entry)
+}`;
+  const writeCopy = 'await writeFile(resolve("/vite", entry), "")';
+  expect(
+    await lines({
+      "modules/correct-helper.ts": source("/nitro", `await generate(); ${writeCopy}`),
+      "modules/wrong-helper.ts": source("/vite", "await generate()"),
+      "modules/shadowed-helper.ts": source(
+        "/nitro",
+        `const generate = other; await generate(); ${writeCopy}`,
+      ),
+      "modules/escaped-helper.ts": source(
+        "/nitro",
+        `const run = generate; await run(); ${writeCopy}`,
+      ),
+      "modules/nested-helper.ts": source(
+        "/nitro",
+        `function setup() { return generate() }; await setup(); ${writeCopy}`,
+      ),
+    }),
+  ).toEqual(["modules/shadowed-helper.ts:10", "modules/wrong-helper.ts:10"]);
+});
+
+test("requires helper write evidence on the registration path", async () => {
+  const source = (helper: string, body: string) => `import { resolve } from "node:path"
+import { writeFile, writeFileSync } from "node:fs"
+import type { Plugin } from "vite"
+import { createNitroServerKit } from "./nitro-kit"
+const entry = "./generated/plugin.ts"
+${helper}
+export async function install(serve: boolean) {
+  const kit = createNitroServerKit({ rootDir: "/nitro" })
+  ${body}
+}`;
+  const wrongWrite = 'writeFileSync(resolve("/vite", entry), "")';
+  const correctWrite = 'writeFileSync(resolve("/nitro", entry), "")';
+  expect(
+    await lines({
+      "modules/other-branch.ts": source(
+        `function generate() { ${wrongWrite} }`,
+        `if (serve) { await generate() } else { writeFileSync("/nitro/generated/plugin.ts", ""); kit.addPlugin(entry) }`,
+      ),
+      "modules/conditional-caller.ts": source(
+        `function generate() { ${wrongWrite} }`,
+        "serve && await generate(); kit.addPlugin(entry)",
+      ),
+      "modules/conditional-writer.ts": source(
+        `function generate(serve: boolean) { if (serve) return; ${wrongWrite} }`,
+        "await generate(serve); kit.addPlugin(entry)",
+      ),
+      "modules/discarded-generator.ts": source(
+        `function* generate() { ${wrongWrite} }`,
+        "generate(); kit.addPlugin(entry)",
+      ),
+      "modules/inactive-competing-generator.ts": source(
+        `function* generate() { ${correctWrite} }`,
+        `generate(); ${wrongWrite}; kit.addPlugin(entry)`,
+      ),
+      "modules/opposite-competing-branch.ts": source(
+        `function generate() { ${correctWrite} }`,
+        `if (serve) { await generate() } else { ${wrongWrite}; kit.addPlugin(entry) }`,
+      ),
+      "modules/same-branch.ts": source(
+        `function generate() { ${wrongWrite} }`,
+        "if (serve) { await generate(); kit.addPlugin(entry) }",
+      ),
+    }),
+  ).toEqual(["modules/inactive-competing-generator.ts:9", "modules/same-branch.ts:9"]);
+});
+
+test("keeps competing writes that can run in an earlier invocation", async () => {
+  const source = (earlierRoot: string) => `import { resolve } from "node:path"
+import { writeFileSync } from "node:fs"
+import type { Plugin } from "vite"
+import { createNitroServerKit } from "./nitro-kit"
+const entry = "./generated/plugin.ts"
+function generate() {
+  writeFileSync(resolve("${earlierRoot}", entry), "")
+}
+async function configure(phase: "generate" | "register") {
+  if (phase === "generate") {
+    await generate()
+  } else {
+    const kit = createNitroServerKit({ rootDir: "/nitro" })
+    writeFileSync(resolve("/vite", entry), "")
+    kit.addPlugin(entry)
+  }
+}
+export async function install() {
+  await configure("generate")
+  await configure("register")
+}`;
+  expect(
+    await lines({
+      "modules/matching-earlier-write.ts": source("/nitro"),
+      "modules/mismatching-earlier-write.ts": source("/other"),
+    }),
+  ).toEqual(["modules/mismatching-earlier-write.ts:15"]);
+});
+
+test("leaves addPlugin calls on receivers not tied to Nitro alone", async () => {
+  expect(
+    await lines({
+      "modules/app-plugins.ts": `import * as kit from "@nuxt/kit"
+import { addPlugin } from "@nuxt/kit"
+import type { Plugin } from "vite"
+import { resolve } from "pathe"
+import { writeFile } from "node:fs/promises"
+import { createNitroServerKit } from "./nitro-kit"
+const markdown = createMarkdownParser()
+const entry = "./generated/plugin.ts"
+const renderer = createNitroDocsRenderer()
+writeFile(resolve("/vite", entry), "")
+renderer.addPlugin(entry)
+function register(typed: NitroDocsRenderer, kit: NitroServerKit) {
+  typed.addPlugin(entry)
+  kit = markdown
+  kit.addPlugin(entry)
+}
+export default kit.defineNuxtModule({
+  setup() {
+    kit.addPlugin("./runtime/app/plugin")
+    addPlugin("./runtime/app/other")
+    markdown.addPlugin("./plugins/anchors.ts")
+    builder.addPlugin("./generated/plugin.ts")
+  },
+})
+export function nitroConfig(nitro: unknown, createNitroServerKit: typeof createMarkdownParser) {
+  const kit = createNitroServerKit(nitro)
+  const register = (kit: { addPlugin(path: string): void }) => kit.addPlugin("./generated/shadowed.ts")
+  nitro.addPlugin("./generated/untyped.ts")
+  kit.addPlugin(entry)
+  return kit.config
+}`,
+    }),
+  ).toEqual([]);
+});

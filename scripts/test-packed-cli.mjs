@@ -22,6 +22,8 @@ const fixture = join(temporary, "fixture with spaces");
 const env = { ...process.env, CI: "1", NO_COLOR: "1" };
 // Nuxt 4.6 is the first release whose CLI exits with a host command's status, so `nuxt doctor` can fail CI.
 const nuxtVersion = "4.6.4";
+// The Vite a project such as a Nuxt app installs next to Vite+, which brings its own copy of Vite.
+const viteVersion = "8.3.8";
 const packageManager = process.env.npm_execpath;
 const pnpmCommand = packageManager ? process.execPath : "pnpm";
 const pnpmArgs = (args) => (packageManager ? [packageManager, ...args] : args);
@@ -84,6 +86,7 @@ try {
   );
   assert.equal(migrate.status, 2, `${migrate.stdout}\n${migrate.stderr}`);
   verifyNpmBins(archive, findingArgs);
+  verifyViteConfigTypes(archive);
   const library = join(temporary, "library with spaces");
   mkdirSync(join(library, "dist"), { recursive: true });
   writeFileSync(
@@ -257,6 +260,84 @@ function verifyNpmBins(archive, findingArgs) {
   }
 }
 
+// This repository aliases vite to @voidzero-dev/vite-plus-core, so only a separate install shows
+// how a consumer's TypeScript resolves the `doctor` key under each defineConfig().
+function verifyViteConfigTypes(archive) {
+  const vitePlus = JSON.parse(
+    readFileSync(join(root, "node_modules/vite-plus/package.json"), "utf8"),
+  );
+  const core = `npm:@voidzero-dev/vite-plus-core@${vitePlus.version}`;
+  const layouts = [
+    // vite-plus's defineConfig is typed against its own copy of Vite. When that copy is only
+    // installed under the alias `vite` inside vite-plus, no package can augment it.
+    { name: "Vite next to Vite+", vite: viteVersion, errors: ["vite-plus.config.ts TS2353"] },
+    { name: "Vite+ overriding vite", vite: core, overrides: { vite: core }, errors: [] },
+  ];
+  for (const layout of layouts) {
+    const consumer = join(temporary, `${layout.name} consumer`);
+    mkdirSync(consumer);
+    writeFileSync(
+      join(consumer, "package.json"),
+      JSON.stringify({
+        private: true,
+        type: "module",
+        dependencies: {
+          vite: layout.vite,
+          "vite-plus": vitePlus.version,
+          vitest: vitePlus.dependencies.vitest,
+          "vite-doctor": `file:../pack/${archive}`,
+        },
+      }),
+    );
+    if (layout.overrides) {
+      writeFileSync(
+        join(consumer, "pnpm-workspace.yaml"),
+        `overrides:\n${Object.entries(layout.overrides)
+          .map(([name, spec]) => `  ${name}: ${JSON.stringify(spec)}\n`)
+          .join("")}`,
+      );
+    }
+    execFileSync(pnpmCommand, pnpmArgs(["install", "--ignore-scripts", "--prefer-offline"]), {
+      cwd: consumer,
+      env,
+      stdio: "pipe",
+    });
+    const files = { vite: "vite", "vite-plus": "vite-plus", "vitest/config": "vitest" };
+    for (const [module, name] of Object.entries(files)) {
+      writeFileSync(
+        join(consumer, `${name}.config.ts`),
+        `import { defineConfig } from ${JSON.stringify(module)};\nimport { defineDoctorConfig } from "vite-doctor";\n\nexport default defineConfig({\n  doctor: defineDoctorConfig({ rules: { "vite/define/no-secret-define": "off" } }),\n});\n`,
+      );
+    }
+    writeFileSync(
+      join(consumer, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          module: "ESNext",
+          moduleResolution: "Bundler",
+          target: "ESNext",
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+          types: [],
+        },
+        files: Object.values(files).map((name) => `${name}.config.ts`),
+      }),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "node_modules/typescript/bin/tsc"), "-p", join(consumer, "tsconfig.json")],
+      { cwd: consumer, env, encoding: "utf8", stdio: "pipe" },
+    );
+    if (result.error) throw result.error;
+    const errors = [...result.stdout.matchAll(/^(\S+?)\(\d+,\d+\): error (TS\d+)/gm)].map(
+      ([, file, code]) => `${file} ${code}`,
+    );
+    assert.deepEqual(errors, layout.errors, `${layout.name}: ${result.stdout}${result.stderr}`);
+    assert.equal(result.status, layout.errors.length ? 2 : 0, `${layout.name}: ${result.stdout}`);
+  }
+}
+
 function verifyLightweightEntries() {
   const analyzers = [
     "typescript",
@@ -294,10 +375,10 @@ process.on("exit", () => writeFileSync(process.env.DOCTOR_LOADED_ANALYZERS, JSON
     },
     { name: "vite-doctor/plugin", args: evaluate('await import("vite-doctor/plugin");') },
     { name: "vite-doctor", args: evaluate('await import("vite-doctor");') },
-    {
-      name: "vite-doctor --version",
-      args: [join(temporary, "node_modules/vite-doctor/dist/cli.mjs"), "--version"],
-    },
+    ...["bin.mjs", "cli.mjs"].map((file) => ({
+      name: `node dist/${file} --version`,
+      args: [join(temporary, "node_modules/vite-doctor/dist", file), "--version"],
+    })),
     ...["--version", "-v", "--help", "--invalid"].map((flag) => ({
       name: `nuxt-doctor ${flag}`,
       args: [join(temporary, "node_modules/vite-doctor/dist/nuxt-cli.mjs"), flag],
@@ -414,7 +495,7 @@ function verifyDoctorProcess() {
     join(project, "vite.config.ts"),
     "export default { define: { SECRET_KEY: JSON.stringify('secret') } }\n",
   );
-  const cli = join(temporary, "node_modules/vite-doctor/dist/cli.mjs");
+  const cli = join(temporary, "node_modules/vite-doctor/dist/bin.mjs");
   const run = (args, extraEnv = {}) => {
     const result = spawnSync(process.execPath, [cli, ...args], {
       cwd: project,

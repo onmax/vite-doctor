@@ -143,9 +143,12 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
-  const ruleConfigs = resolveRuleConfigs(config.rules);
+  const registeredRules = new Map(
+    registry.rules.map((rule) => [rule.meta.id, rule.meta.execution]),
+  );
+  const ruleConfigs = resolveRuleConfigs(registeredRules, config.rules);
   const activations = resolveRulePackActivations(registry.packs, project);
-  const ruleOverrides = resolveRuleOverrides(config, registry);
+  const ruleOverrides = resolveRuleOverrides(config, registry, registeredRules);
   const selection = selectRules(
     registry,
     ruleConfigs,
@@ -656,11 +659,16 @@ function rulePackKey(pack: RulePack): string {
 }
 
 function resolveRuleConfigs(
+  registeredRules: ReadonlyMap<string, DoctorRule["meta"]["execution"]>,
   rules: Record<string, DoctorRuleConfig> = {},
 ): Map<string, ResolvedRuleConfig> {
   const resolved = new Map<string, ResolvedRuleConfig>();
   for (const [ruleId, value] of Object.entries(rules)) {
-    if (ruleId.startsWith("doctor/")) assertConfigurableDoctorRule(ruleId, value);
+    if (
+      ruleId.startsWith("doctor/") &&
+      (reportedDoctorRuleIds.has(ruleId) || !registeredRules.has(ruleId))
+    )
+      assertConfigurableDoctorRule(ruleId, value);
     if (value === "off") {
       resolved.set(ruleId, { enabled: false });
       continue;
@@ -702,9 +710,9 @@ function assertConfigurableDoctorRule(ruleId: string, value: DoctorRuleConfig): 
 function resolveRuleOverrides(
   config: DoctorConfig,
   registry: RuleRegistry,
+  registeredRules: ReadonlyMap<string, DoctorRule["meta"]["execution"]>,
 ): ResolvedRuleOverride[] {
   if (!config.overrides?.length) return [];
-  const executionKinds = new Map(registry.rules.map((rule) => [rule.meta.id, rule.meta.execution]));
   return (config.overrides ?? []).map((override, index) => {
     const invalid = (reason: string) => doctorInternalDiagnostics.DOC0035({ index, reason });
     if (typeof override !== "object" || override === null || Array.isArray(override))
@@ -731,9 +739,9 @@ function resolveRuleOverrides(
       (typeof rules !== "object" || rules === null || Array.isArray(rules))
     )
       throw invalid("`rules` must be an object keyed by Rule ID.");
-    const resolved = resolveRuleConfigs(rules);
+    const resolved = resolveRuleConfigs(registeredRules, rules);
     for (const [ruleId, ruleConfig] of resolved) {
-      const execution = executionKinds.get(ruleId);
+      const execution = registeredRules.get(ruleId);
       if (ruleConfig.options !== undefined && execution && execution !== "file")
         throw invalid(
           `set options for ${execution} Rule "${ruleId}" in top-level \`rules\`, not in an override.`,

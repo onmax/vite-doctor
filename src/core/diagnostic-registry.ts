@@ -28,6 +28,7 @@ export const coreDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0024", ruleId: "doctor/config/ambiguous-rule-pack-alias", docs: false },
   { code: "DOC0025", ruleId: "doctor/baseline/invalid-input", docs: false },
   { code: "DOC0032", ruleId: "doctor/baseline/stale-fingerprint-scheme" },
+  { code: "DOC0039", ruleId: "doctor/baseline/resolved-entries" },
   { code: "DOC0026", ruleId: "doctor/extension/duplicate-contributor-name", docs: false },
   { code: "DOC0027", ruleId: "doctor/extension/invalid-diagnostic-code", docs: false },
   { code: "DOC0028", ruleId: "doctor/extension/reserved-diagnostic-prefix", docs: false },
@@ -47,11 +48,12 @@ export const diagnosticCodesByRuleId = coreDiagnosticRegistry.codesByRuleId;
 
 /**
  * Doctor-owned Rule IDs that a Doctor Run reports as Diagnostics, so Rule config can set their
- * severity or turn them off. Every other `doctor/` Rule ID names an error Doctor throws.
+ * severity or turn them off.
  */
 export const reportedDoctorRuleIds: ReadonlySet<string> = new Set([
   "doctor/inventory/unresolved-runtime",
   "doctor/baseline/stale-fingerprint-scheme",
+  "doctor/baseline/resolved-entries",
   "doctor/config/unused-suppression",
   "doctor/inventory/empty-sfc",
   "doctor/inline/unused-suppression",

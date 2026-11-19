@@ -47,6 +47,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0024", ruleId: "doctor/config/ambiguous-rule-pack-alias", docs: false },
   { code: "DOC0025", ruleId: "doctor/baseline/invalid-input", docs: false },
   { code: "DOC0032", ruleId: "doctor/baseline/stale-fingerprint-scheme" },
+  { code: "DOC0039", ruleId: "doctor/baseline/resolved-entries" },
   { code: "DOC0026", ruleId: "doctor/extension/duplicate-contributor-name", docs: false },
   { code: "DOC0027", ruleId: "doctor/extension/invalid-diagnostic-code", docs: false },
   { code: "DOC0028", ruleId: "doctor/extension/reserved-diagnostic-prefix", docs: false },
@@ -104,7 +105,9 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0041", ruleId: "vue/reactivity/no-constant-computed" },
   { code: "VUE0042", ruleId: "vue/ssr/no-setup-state-from-browser-read" },
   { code: "VUE0044", ruleId: "vue/template/no-useless-template-attributes" },
+  { code: "VUE0045", ruleId: "vue/template/require-v-for-key" },
   { code: "VUE0046", ruleId: "vue/template/require-toggle-inside-transition" },
+  { code: "VUE0047", ruleId: "vue/attrs/require-explicit-emits" },
 
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },

@@ -25,6 +25,7 @@ export { requireUsePrefix } from "./require-use-prefix.js";
 export { maxProps } from "./max-props.js";
 export { noUnusedProps } from "./no-unused-props.js";
 export { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
+export { requireVForKey } from "./require-v-for-key.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
 export { noPropRelay } from "./no-prop-relay.js";
@@ -43,6 +44,7 @@ export { noConstantComputed } from "./no-constant-computed.js";
 export { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
 export { noUselessTemplateAttributes } from "./no-useless-template-attributes.js";
 export { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
+export { requireExplicitEmits } from "./require-explicit-emits.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
@@ -71,6 +73,7 @@ import { requireUsePrefix } from "./require-use-prefix.js";
 import { maxProps } from "./max-props.js";
 import { noUnusedProps } from "./no-unused-props.js";
 import { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
+import { requireVForKey } from "./require-v-for-key.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
 import { noPropRelay } from "./no-prop-relay.js";
@@ -89,6 +92,7 @@ import { noConstantComputed } from "./no-constant-computed.js";
 import { noSetupStateFromBrowserRead } from "./no-setup-state-from-browser-read.js";
 import { noUselessTemplateAttributes } from "./no-useless-template-attributes.js";
 import { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
+import { requireExplicitEmits } from "./require-explicit-emits.js";
 
 import { defineRulePack } from "../../../../core/index.js";
 
@@ -118,6 +122,7 @@ const rules = [
   preferSameNamePropShorthand,
   requireUsePrefix,
   noIndexKeyOnStatefulList,
+  requireVForKey,
   noUnusedTranslations,
   noUntranslatedText,
 
@@ -139,6 +144,7 @@ const rules = [
   noSetupStateFromBrowserRead,
   noUselessTemplateAttributes,
   requireToggleInsideTransition,
+  requireExplicitEmits,
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,
@@ -161,6 +167,7 @@ const strictOnlyRules = [
   noPropRelay,
   noUnpassedProps,
   preferStableListProps,
+  requireExplicitEmits,
 ];
 
 const vueRulePack = defineRulePack({

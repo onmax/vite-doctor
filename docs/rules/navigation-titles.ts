@@ -196,6 +196,7 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "vue/attrs/no-duplicate-attr-inheritance": "Duplicate $attrs",
   "vue/attrs/no-watch-use-attrs": "Watching attrs",
+  "vue/attrs/require-explicit-emits": "Undeclared emits",
 
   "vue/composables/require-use-prefix": "Composable names",
   "vue/i18n/no-untranslated-text": "Untranslated text",
@@ -238,6 +239,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/template/prefer-same-name-prop-shorthand": "Prop shorthand",
   "vue/template/prefer-true-attribute-shorthand": "Boolean shorthand",
   "vue/template/prefer-use-template-ref": "useTemplateRef",
+  "vue/template/require-v-for-key": "Missing v-for keys",
   "vue/watch/no-async-watcheffect-after-await-read": "Reads after await",
   "vue/watch/no-onwatchercleanup-after-await": "onWatcherCleanup",
   "vue/watch/require-post-flush-for-dom-read": "DOM reads",

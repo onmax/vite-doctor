@@ -10,7 +10,7 @@ import type {
   VirtualRootNode,
   WorkspaceGraph,
 } from "../primitives.js";
-import { fileRuleConfig, type ScanSession } from "./scan-session.js";
+import type { ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { pushDiagnostic } from "./diagnostics.js";
 import { walkAstFacts } from "./facts.js";

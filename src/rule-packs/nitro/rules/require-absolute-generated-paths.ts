@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../core/index.js";
+import { fileScriptScope, type ScopeReference } from "../../../core/internal/script-scope.js";
 import { nitroServerFile, readStaticConfigOptions, staticOptionValue } from "./server-layout.js";
 import { createRule, isNitroServerFile, report, sourceForNode, type AnyNode } from "./shared.js";
 
@@ -10,6 +11,21 @@ const NUXT_KIT_SOURCES = new Set(["@nuxt/kit", "nuxt/kit"]);
 const INTEGRATION_SOURCE_RE =
   /^(?:vite|nitro|nitropack|@nuxt\/kit|nuxt\/kit|@nuxt\/schema)(?:\/|$)/;
 
+const KIT_PLUGIN_METHODS = new Set(["addPlugin", "addServerPlugin"]);
+const KIT_FACTORIES = new Set(["createNitroServerKit", "createNitroConfigKit"]);
+const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
+const STRAIGHT_LINE_STATEMENTS = new Set([
+  "VariableDeclaration",
+  "ExpressionStatement",
+  "FunctionDeclaration",
+  "EmptyStatement",
+]);
+const PATH_MODULES = new Set(["node:path", "path", "pathe"]);
+const FS_MODULES = new Set(["node:fs", "node:fs/promises", "fs", "fs/promises"]);
 const HANDLER_SHAPE_KEYS = new Set(["route", "middleware", "method", "lazy"]);
 const CONFIG_FILE_RE = /(?:^|\/)(?:nuxt|nitro|vite|vitest|app)\.config\.[cm]?[jt]s$/;
 const TEST_FILE_RE = /(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -28,7 +44,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
     docsUrl: "https://nitro.build/config#handlers",
     requires: { script: true },
     activationScope: "workspace",
-    prefilter: { names: ["handler", "plugins"] },
+    prefilter: { names: ["handler", "plugins", "addPlugin", "addServerPlugin"] },
   },
   create(ctx) {
     const path = ctx.file.relativePath.replace(/\\/g, "/");
@@ -39,6 +55,8 @@ export const requireAbsoluteGeneratedPaths = createRule({
     const kitNamespaces = new Set<string>();
     const strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }> = [];
     const declarations: Array<{ name: string; scope: AnyNode | undefined }> = [];
+    const kitCalls: Array<{ call: AnyNode; receiver: AnyNode; path: AnyNode }> = [];
+    const calls: AnyNode[] = [];
     const declare = (name: string, node: AnyNode) =>
       declarations.push({ name, scope: declarationScope(node) });
     const declareFunction = (node: AnyNode) => {
@@ -89,8 +107,18 @@ export const requireAbsoluteGeneratedPaths = createRule({
         candidates.push({ node: handler.value, kind: "handler" });
       },
       CallExpression(node: AnyNode) {
+        calls.push(node);
         const callee = unwrapExpression(node.callee);
         if (callee?.type !== "MemberExpression" || callee.computed) return;
+        if (KIT_PLUGIN_METHODS.has(callee.property?.name)) {
+          if (node.arguments?.length)
+            kitCalls.push({
+              call: node,
+              receiver: unwrapExpression(callee.object),
+              path: node.arguments[0],
+            });
+          return;
+        }
         if (callee.property?.name !== "push" && callee.property?.name !== "unshift") return;
         const target = unwrapExpression(callee.object);
         if (target?.type !== "MemberExpression" || target.property?.name !== "plugins") return;
@@ -120,6 +148,7 @@ export const requireAbsoluteGeneratedPaths = createRule({
       },
       "Program:exit"() {
         if (!integration) return;
+        if (kitCalls.length) reportKitPaths(ctx, kitCalls, calls);
         for (const { node, kind } of candidates) {
           const value = unwrapExpression(node);
           // A name declared more than once may resolve to another scope's value, so skip it.
@@ -236,6 +265,296 @@ function resolveString(
   strings: Array<{ name: string; scope: AnyNode | undefined; value: AnyNode }>,
   declarations: Array<{ name: string; scope: AnyNode | undefined }>,
 ) {
+  return resolveBinding(value, strings, declarations)?.value;
+}
+
+function reportKitPaths(
+  ctx: RuleContext,
+  kitCalls: Array<{ call: AnyNode; receiver: AnyNode; path: AnyNode }>,
+  calls: AnyNode[],
+) {
+  const scope = fileScriptScope(ctx);
+  if (!scope) return;
+  const references = new Map<number, ScopeReference>();
+  for (const reference of scope.references.values())
+    if (reference.isValueReference) references.set(reference.identifier.range[0], reference);
+
+  const start = (node: AnyNode) => node.range?.[0] ?? node.start;
+
+  function definition(node: AnyNode) {
+    if (node?.type !== "Identifier") return undefined;
+    const variable = references.get(start(node))?.resolved;
+    if (variable?.defs.length !== 1) return undefined;
+    if (variable.references.some((reference) => reference.isWrite() && !reference.init))
+      return undefined;
+    return variable.defs[0];
+  }
+
+  function constValue(node: AnyNode): AnyNode {
+    const value = unwrapExpression(node);
+    const def = definition(value);
+    return def?.type === "Variable" &&
+      def.parent.kind === "const" &&
+      def.node.id.type === "Identifier"
+      ? unwrapExpression(def.node.init)
+      : value;
+  }
+
+  function importedFunction(node: AnyNode) {
+    const def = definition(unwrapExpression(node));
+    if (
+      def?.type !== "ImportBinding" ||
+      def.parent.type !== "ImportDeclaration" ||
+      def.parent.importKind === "type" ||
+      def.node.type !== "ImportSpecifier" ||
+      def.node.importKind === "type"
+    )
+      return undefined;
+    return {
+      name:
+        def.node.imported.type === "Identifier" ? def.node.imported.name : def.node.imported.value,
+      source: def.parent.source.value,
+    };
+  }
+
+  function configParameter(config: AnyNode) {
+    let input = config;
+    if (config?.type === "ConditionalExpression") {
+      const branches = [config.consequent, config.alternate].map(constValue);
+      if (!branches.every((branch) => branch?.type === "ObjectExpression")) return undefined;
+      const empty = branches.findIndex((branch) => branch.properties.length === 0);
+      if (empty === -1) return undefined;
+      const properties = branches[1 - empty].properties;
+      if (properties.length !== 1 || properties[0].type !== "SpreadElement") return undefined;
+      input = unwrapExpression(properties[0].argument);
+    }
+    const def = definition(input);
+    return def?.type === "Parameter" && def.node.params.includes(def.name) ? def : undefined;
+  }
+
+  function localHelper(def: ReturnType<typeof definition>) {
+    if (def?.type === "FunctionName" && def.node.type === "FunctionDeclaration") return def.node;
+    if (
+      def?.type !== "Variable" ||
+      def.parent.kind !== "const" ||
+      def.node.id.type !== "Identifier"
+    )
+      return undefined;
+    const init = unwrapExpression(def.node.init);
+    return FUNCTION_TYPES.has(init?.type) ? init : undefined;
+  }
+
+  const directCalls = new Set<number>();
+  const callers = new Map<number, AnyNode[]>();
+  for (const call of calls) {
+    const callee = unwrapExpression(call.callee);
+    const helper = localHelper(definition(callee));
+    if (!helper) continue;
+    directCalls.add(start(callee));
+    if (helper.generator && callExecution(call).statement?.type === "ExpressionStatement") continue;
+    const sites = callers.get(start(helper)) ?? [];
+    sites.push(call);
+    callers.set(start(helper), sites);
+  }
+
+  const trackedHelpers = new Set<number>();
+  for (const variable of scope.scopeManager.variables) {
+    const helper = variable.defs.length === 1 ? localHelper(variable.defs[0]) : undefined;
+    if (
+      helper &&
+      variable.references.every((ref) => ref.init || directCalls.has(start(ref.identifier)))
+    )
+      trackedHelpers.add(start(helper));
+  }
+
+  function writeRelationship(writer: AnyNode, registration: AnyNode) {
+    const registrationOwner = generationOwner(registration);
+    const pending = [{ site: writer, proven: true }];
+    const seen = new Map<AnyNode, boolean>();
+    let uncertain = false;
+    for (const { site, proven } of pending) {
+      if (seen.get(site) === true || (seen.has(site) && !proven)) continue;
+      seen.set(site, proven);
+      const owner = generationOwner(site);
+      const { expression, statement, awaited } = callExecution(site);
+      if (owner === registrationOwner) {
+        const block = statement?.__doctorParent;
+        if (
+          proven &&
+          (site === writer || awaited) &&
+          statement?.type === "ExpressionStatement" &&
+          (block?.type === "BlockStatement" || block?.type === "Program") &&
+          start(site) < start(registration) &&
+          isWithin(registration, block)
+        )
+          return "related";
+        uncertain = true;
+        continue;
+      }
+      if (
+        !FUNCTION_TYPES.has(owner.type) ||
+        !trackedHelpers.has(start(owner)) ||
+        helperIsExported(owner)
+      )
+        uncertain = true;
+      const executes =
+        proven &&
+        !owner.generator &&
+        (expression === owner.body ||
+          (statement &&
+            owner.body?.type === "BlockStatement" &&
+            statement.__doctorParent === owner.body &&
+            (site === writer || awaited || statement.type === "ReturnStatement") &&
+            owner.body.body
+              .slice(0, owner.body.body.indexOf(statement))
+              .every((previous: AnyNode) => STRAIGHT_LINE_STATEMENTS.has(previous.type))));
+      if (FUNCTION_TYPES.has(owner.type)) {
+        for (const caller of callers.get(start(owner)) ?? [])
+          pending.push({ site: caller, proven: executes });
+      }
+    }
+    return uncertain ? "unknown" : "unrelated";
+  }
+
+  const writes = new Map<
+    string,
+    Array<{ root: AnyNode; site: AnyNode; pathBinding: ReturnType<typeof definition> }>
+  >();
+  for (const call of calls) {
+    const writer = importedFunction(call.callee);
+    if (
+      !writer ||
+      !(
+        (FS_MODULES.has(writer.source) && /^(?:writeFile|writeFileSync)$/.test(writer.name)) ||
+        writer.name === "writeFileIfChanged"
+      )
+    )
+      continue;
+    const dest = constValue(call.arguments[0]);
+    if (dest?.type !== "CallExpression" || dest.arguments.length !== 2) continue;
+    const resolver = importedFunction(dest.callee);
+    if (resolver?.name !== "resolve" || !PATH_MODULES.has(resolver.source)) continue;
+    const writtenPath = unwrapExpression(dest.arguments[1]);
+    const text = staticStringValue(constValue(writtenPath));
+    if (text === undefined || !isRelativeFilePath(text)) continue;
+    const matches = writes.get(text) ?? [];
+    matches.push({
+      root: constValue(dest.arguments[0]),
+      site: call,
+      pathBinding: definition(writtenPath),
+    });
+    writes.set(text, matches);
+  }
+
+  for (const { call: registration, receiver, path } of kitCalls) {
+    if (receiver?.type !== "Identifier") continue;
+    const value = unwrapExpression(path);
+    const text = staticStringValue(constValue(value));
+    if (text === undefined) continue;
+    const matches = writes.get(text);
+    if (!matches) continue;
+    const owner = generationOwner(registration);
+
+    const init = constValue(receiver);
+    const call = init?.type === "AwaitExpression" ? unwrapExpression(init.argument) : init;
+    if (call?.type !== "CallExpression") continue;
+    const factory = importedFunction(call.callee);
+    if (!factory || NUXT_KIT_SOURCES.has(factory.source) || !KIT_FACTORIES.has(factory.name))
+      continue;
+
+    const config = constValue(call.arguments[0]);
+    if (config?.type === "ObjectExpression") {
+      if (config.properties.some((prop: AnyNode) => prop.type !== "Property" || prop.computed))
+        continue;
+      const rootOptions = config.properties.filter(
+        (prop: AnyNode) => propertyKeyName(prop) === "rootDir",
+      );
+      if (rootOptions.length !== 1) continue;
+      const nitroRoot = staticStringValue(constValue(rootOptions[0].value));
+      if (!nitroRoot || !isAbsolute(nitroRoot)) continue;
+      const loadedPath = resolve(nitroRoot, text);
+      let related = false;
+      let competing = false;
+      for (const write of matches) {
+        const relationship = writeRelationship(write.site, registration);
+        if (relationship === "unrelated") continue;
+        const writeRoot = staticStringValue(write.root);
+        if (!writeRoot || !isAbsolute(writeRoot) || resolve(writeRoot, text) === loadedPath) {
+          competing = true;
+          break;
+        }
+        if (relationship === "related") related = true;
+      }
+      if (!related || competing) continue;
+    } else {
+      const configDef = configParameter(config);
+      const pathBinding = definition(value);
+      const localWrites = matches.filter((write) => generationOwner(write.site) === owner);
+      const related = localWrites.length
+        ? localWrites
+        : matches.filter((write) => pathBinding && write.pathBinding === pathBinding);
+      if (
+        !configDef ||
+        related.length === 0 ||
+        (localWrites.length === 0 && related.length !== 1) ||
+        !related.every(({ root }) => {
+          const input =
+            root?.type === "MemberExpression" && !root.computed && root.property.name === "root"
+              ? root.object
+              : root;
+          const rootDef = definition(input);
+          return (
+            rootDef?.type === "Parameter" &&
+            rootDef.node.params.includes(rootDef.name) &&
+            rootDef !== configDef
+          );
+        })
+      )
+        continue;
+    }
+    reportPath(ctx, value, text, "plugin");
+  }
+}
+
+function callExecution(call: AnyNode) {
+  let expression = outerExpression(call);
+  const awaited = expression.__doctorParent?.type === "AwaitExpression";
+  if (awaited) expression = outerExpression(expression.__doctorParent);
+  const parent = expression.__doctorParent;
+  const statement =
+    parent?.type === "ExpressionStatement" || parent?.type === "ReturnStatement"
+      ? parent
+      : undefined;
+  return { expression, statement, awaited };
+}
+
+function isWithin(node: AnyNode, ancestor: AnyNode) {
+  for (let current = node; current; current = current.__doctorParent)
+    if (current === ancestor) return true;
+  return false;
+}
+
+function helperIsExported(node: AnyNode) {
+  const parent = outerExpression(node).__doctorParent;
+  const declaration =
+    parent?.type === "VariableDeclarator" ? parent.__doctorParent?.__doctorParent : parent;
+  return (
+    declaration?.type === "ExportNamedDeclaration" ||
+    declaration?.type === "ExportDefaultDeclaration"
+  );
+}
+
+function generationOwner(node: AnyNode): AnyNode {
+  let owner = node;
+  while (owner.__doctorParent && !FUNCTION_TYPES.has(owner.type)) owner = owner.__doctorParent;
+  return owner;
+}
+
+function resolveBinding<T extends { name: string; scope: AnyNode | undefined }>(
+  value: AnyNode,
+  bindings: T[],
+  declarations: Array<{ name: string; scope: AnyNode | undefined }>,
+): T | undefined {
   const scope = lexicalScope(value);
   const visible = declarations.filter(
     (item) => item.name === value.name && isScopeInside(scope, item.scope),
@@ -243,14 +562,13 @@ function resolveString(
   if (!visible.length) return undefined;
   const nearest = Math.max(...visible.map((item) => scopeDepth(item.scope)));
   if (visible.filter((item) => scopeDepth(item.scope) === nearest).length !== 1) return undefined;
-  const match = strings.find(
+  return bindings.find(
     (item) =>
       item.name === value.name &&
       item.scope &&
       scopeDepth(item.scope) === nearest &&
       isScopeInside(scope, item.scope),
   );
-  return match?.value;
 }
 
 function patternNames(pattern: AnyNode): string[] {

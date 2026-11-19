@@ -939,6 +939,22 @@ test("CLI explains workspace Diagnostic Codes by code and rule ID", async () => 
   });
 });
 
+test.each(["DOC0039", "doctor/baseline/resolved-entries"])(
+  "CLI explains resolved baseline entries by %s",
+  async (diagnostic) => {
+    const result = await runCli(["explain", diagnostic, "--format", "agent"], findRepoRoot());
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.output)).toMatchObject({
+      schema: "vite-doctor.explain/v1",
+      status: "ready",
+      id: "doctor/baseline/resolved-entries",
+      severity: "info",
+      recommendedReplacement: expect.stringContaining("Delete only the fingerprints"),
+      docsUrl: expect.stringMatching(/\/diagnostics\/DOC0039$/),
+    });
+  },
+);
+
 test("CLI rejects the removed scan alias", async () => {
   const repoRoot = findRepoRoot();
   const result = await runWithCapturedStdout(() =>
@@ -1497,6 +1513,71 @@ test("CLI can record and refresh a baseline while retaining new-only findings", 
         "src/new.ts",
       ]);
       expect((await runCli([...args, "--new-only"], root)).code).toBe(0);
+    },
+  );
+});
+
+test("CLI reports resolved baseline findings when syntax is removed, not when it is unreadable", async () => {
+  const template = "<template><div /></template>";
+  const script = "const { MODE } = import.meta.env";
+  const component = `<script setup lang="ts">${script}</script>${template}`;
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^8.0.0", vue: "^3.5.0" } }),
+      "src/Empty.ts": script,
+      "src/TemplateOnly.vue": component,
+      "src/Broken.vue": component,
+      "src/External.vue": component,
+      "src/ScriptOnly.vue": "<template><button>Save</button></template>",
+      "src/Pug.vue": "<template><button>Save</button></template>",
+    },
+    async (root) => {
+      const rule = "vite/env/prefer-direct-import-meta-env-access";
+      const baseline = "baseline.json";
+      const args = [".", "--baseline", baseline, "--format", "json", "--strict"];
+      const recorded = await runCli([...args, "--update-baseline"], root);
+      const report = JSON.parse(recorded.output);
+      expect(
+        report.diagnostics.filter((item: { rule: string }) => item.rule === rule),
+      ).toHaveLength(4);
+      const { diagnostics } = JSON.parse(readFileSync(join(root, baseline), "utf8")) as {
+        diagnostics: { ruleId: string; file: string; fingerprint: string }[];
+      };
+      writeFileSync(join(root, "src/Empty.ts"), " \n");
+      writeFileSync(join(root, "src/TemplateOnly.vue"), template);
+      writeFileSync(join(root, "src/Broken.vue"), `<script setup>const =</script>${template}`);
+      writeFileSync(join(root, "src/External.vue"), `<script src="./external.js" />${template}`);
+      writeFileSync(join(root, "src/ScriptOnly.vue"), "<script>export default {}</script>");
+      writeFileSync(join(root, "src/Pug.vue"), '<template lang="pug">button Save</template>');
+
+      const expected = diagnostics
+        .filter(
+          ({ ruleId, file }) =>
+            (ruleId === rule && ["src/Empty.ts", "src/TemplateOnly.vue"].includes(file)) ||
+            (ruleId === "vue/template/html-button-has-type" && file === "src/ScriptOnly.vue"),
+        )
+        .map(
+          ({ ruleId, file, fingerprint }) =>
+            `${ruleId} no longer reports fingerprint ${fingerprint} in ${file}.`,
+        )
+        .sort();
+      expect(expected).toHaveLength(3);
+      expect(diagnostics).toContainEqual(
+        expect.objectContaining({
+          ruleId: "vue/template/html-button-has-type",
+          file: "src/Pug.vue",
+        }),
+      );
+      for (const _run of ["cold", "cached"]) {
+        const result = await runCli([...args, "--new-only"], root);
+        const resolved = JSON.parse(result.output).diagnostics.filter(
+          (item: { code: string }) => item.code === "DOC0039",
+        );
+        expect(resolved).toHaveLength(1);
+        expect(
+          resolved[0].evidence.map((item: { summary: string }) => item.summary).sort(),
+        ).toEqual(expected);
+      }
     },
   );
 });

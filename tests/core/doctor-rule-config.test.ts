@@ -2,8 +2,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
-import { defineDoctorExtension, defineRulePack, runDoctor } from "../../src/core/index.ts";
-import type { Diagnostic, DoctorConfig } from "../../src/core/index.ts";
+import {
+  createRule,
+  defineDoctorDiagnostics,
+  defineDoctorExtension,
+  defineRulePack,
+  runDoctor,
+} from "../../src/core/index.ts";
+import type { Diagnostic, DoctorConfig, DoctorRunOptions } from "../../src/core/index.ts";
 import { runProjectFixture } from "../../src/core/testkit.ts";
 import { noClientSecretPattern } from "../../src/rules.ts";
 
@@ -99,37 +105,134 @@ test("a configured severity decides whether DOC0036 passes the severity threshol
   expect(reported((await run("warn")).diagnostics, "DOC0036")).toEqual([]);
 });
 
-test("off for DOC0036 keeps --fix from deleting the directive", async () => {
-  const root = mkdtempSync(join(tmpdir(), "doctor-rule-config-"));
-  try {
-    writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
-    mkdirSync(join(root, "src"));
-    writeFileSync(join(root, "src/main.ts"), staleDirective);
-    const result = await runDoctor({
-      root,
-      framework: "vite",
-      cache: false,
-      fix: true,
-      config: { rules: { "doctor/inline/unused-suppression": "off" } },
-      extensions: [
-        defineDoctorExtension({
-          name: "fixture",
-          rulePacks: [
-            defineRulePack({
-              name: "fixture",
-              version: "0.0.0",
-              rules,
-              presets: { recommended: [secret] },
-            }),
-          ],
-        }),
+const unusedRuleId = "doctor/inline/unused-suppression";
+const unknownRuleId = "doctor/inline/unknown-suppression-rule";
+const unknownTarget = "vite/env/no-such-rule";
+const mixedTargets = `${secret},${unknownTarget}`;
+
+interface InlineFixCase {
+  settings: NonNullable<DoctorConfig["rules"]>;
+  minimum?: DoctorRunOptions["severity"];
+  ids: string;
+  kept: string;
+  edits: number;
+}
+
+test.each<InlineFixCase>([
+  { settings: { [unusedRuleId]: "off" }, ids: secret, kept: secret, edits: 0 },
+  { settings: { [unusedRuleId]: "off" }, ids: mixedTargets, kept: secret, edits: 1 },
+  {
+    settings: { [unknownRuleId]: "off" },
+    ids: mixedTargets,
+    kept: unknownTarget,
+    edits: 1,
+  },
+  {
+    settings: { [unusedRuleId]: "warn", [unknownRuleId]: "error" },
+    minimum: "error",
+    ids: mixedTargets,
+    kept: secret,
+    edits: 1,
+  },
+  { settings: {}, ids: mixedTargets, kept: "", edits: 1 },
+])(
+  "--fix preserves ineligible IDs with settings $settings and IDs $ids",
+  async ({ settings, minimum, ids, kept, edits }) => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-rule-config-"));
+    try {
+      writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
+      mkdirSync(join(root, "src"));
+      const source = (ruleIds: string) =>
+        `${ruleIds ? `// doctor-disable-next-line ${ruleIds} -- Old.\n` : ""}console.log(1);\n`;
+      writeFileSync(join(root, "src/main.ts"), source(ids));
+      const result = await runDoctor({
+        root,
+        framework: "vite",
+        cache: false,
+        fix: true,
+        severity: minimum,
+        config: { rules: settings },
+        extensions: [
+          defineDoctorExtension({
+            name: "fixture",
+            rulePacks: [
+              defineRulePack({
+                name: "fixture",
+                version: "0.0.0",
+                rules,
+                presets: { recommended: [secret] },
+              }),
+            ],
+          }),
+        ],
+      });
+      expect(readFileSync(join(root, "src/main.ts"), "utf8")).toBe(source(kept));
+      expect(result.fixes?.edits ?? 0).toBe(edits);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  [{}, "info"],
+  [{ rules: { "doctor/inline/unused-suppression": "off" } }, "info"],
+  [
+    {
+      overrides: [
+        { files: ["doctor.config.json"], rules: { "doctor/config/unused-suppression": "error" } },
       ],
+    },
+    "error",
+  ],
+  [{ rules: { [secret]: "off" } }, undefined],
+  [{ overrides: [{ files: ["src/**"], rules: { [secret]: "off" } }] }, undefined],
+] satisfies Array<[DoctorConfig, Diagnostic["severity"] | undefined]>)(
+  "a broad suppression considers actual coverage with config %j",
+  async (settings, severity) => {
+    const config = { ...settings, suppressions: [{ file: "src/main.ts", reason: "Old." }] };
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules,
+      files: { "src/main.ts": "console.log(1);\n", "doctor.config.json": JSON.stringify(config) },
+      run: { config },
     });
-    expect(result.fixes?.edits ?? 0).toBe(0);
-    expect(readFileSync(join(root, "src/main.ts"), "utf8")).toBe(staleDirective);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+    expect(reported(result.diagnostics, "DOC0031").map((item) => item.severity)).toEqual(
+      severity ? [severity] : [],
+    );
+  },
+);
+
+test("registered extension Rules in the doctor namespace take normal settings", async () => {
+  const ruleId = "doctor/project/no-legacy";
+  const registry = defineDoctorDiagnostics([{ code: "ACME0001", ruleId }]);
+  const rule = createRule({
+    meta: { id: ruleId, title: "No legacy imports", category: "project", severity: "info" },
+    create(ctx) {
+      return {
+        ImportDeclaration(node) {
+          ctx.report(registry.diagnostics.ACME0001({ why: "Legacy import.", fix: "Replace it." }), {
+            range: ctx.range(node),
+          });
+        },
+      };
+    },
+  });
+  const run = (config: DoctorConfig) =>
+    runProjectFixture({
+      framework: "vite",
+      rules: [rule],
+      files: { "src/main.ts": 'import "./legacy";\n' },
+      config,
+    });
+  expect(reported((await run({})).diagnostics, "ACME0001")).toMatchObject([{ severity: "info" }]);
+  expect(reported((await run({ rules: { [ruleId]: "off" } })).diagnostics, "ACME0001")).toEqual([]);
+  expect(
+    reported(
+      (await run({ overrides: [{ files: ["src/**"], rules: { [ruleId]: "error" } }] })).diagnostics,
+      "ACME0001",
+    ),
+  ).toMatchObject([{ severity: "error" }]);
 });
 
 async function runWithStaleBaseline(config: DoctorConfig) {
