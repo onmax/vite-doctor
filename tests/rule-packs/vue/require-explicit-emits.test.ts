@@ -1,4 +1,5 @@
-import { afterAll, expect, test } from "vite-plus/test";
+import { compileScript, parse } from "@vue/compiler-sfc";
+import { afterAll, describe, expect, test } from "vite-plus/test";
 import { createProjectFixture } from "../../../src/core/testkit.ts";
 import vueRulePack from "../../../src/rule-packs/vue/rules/vue/index.ts";
 import { requireExplicitEmits } from "../../../src/rule-packs/vue/rules/vue/require-explicit-emits.ts";
@@ -10,6 +11,27 @@ afterAll(() => project.dispose());
 
 function diagnose(source: string) {
   return project.run({ rule: requireExplicitEmits, files: { "Comp.vue": source } });
+}
+
+function applyEdits(
+  source: string,
+  edits: Array<{ range: { start: number; end: number }; text: string }>,
+) {
+  return [...edits]
+    .sort((left, right) => right.range.start - left.range.start)
+    .reduce(
+      (text, edit) => text.slice(0, edit.range.start) + edit.text + text.slice(edit.range.end),
+      source,
+    );
+}
+
+/** The runtime emits Vue's compiler generates for the SFC; throws on compiler errors. */
+function compiledEmits(source: string): string[] {
+  const { descriptor, errors } = parse(source);
+  if (errors.length > 0) throw errors[0];
+  const { content } = compileScript(descriptor, { id: "test" });
+  const emits = /emits: ([^\n]*)/.exec(content)?.[1] ?? "";
+  return [...emits.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]!);
 }
 
 async function reported(source: string) {
@@ -75,8 +97,8 @@ test.each([
     `<template>\n  <input @focus="$emit('focus', 1)">\n</template>`,
   ],
   [
-    "a change emitted from an inner input",
-    `<template>\n  <label>Name <input @input="$emit('change', $event.target.value)"></label>\n</template>`,
+    "a keydown that bubbles from an inner input",
+    `<template>\n  <div>\n    <input @keydown="$emit('keydown', $event.target.value)">\n  </div>\n</template>`,
   ],
   [
     "an image error on the root",
@@ -293,15 +315,15 @@ test("explains the double call and suggests appending to defineEmits", async () 
   const source = `<script setup lang="ts">\ndefineEmits(["close"])\n</script>\n<template>\n  <button type="button" @click="$emit('click', id)">Open</button>\n</template>`;
   const [diagnostic] = await reported(source);
   expect(diagnostic!.why).toBe(
-    `$emit('click') runs in a @click handler on the root <button> itself. "click" is not declared in defineEmits or emits, so Vue treats the parent's @click listener as a fallthrough attribute and also binds it as a native click listener on the root <button>. One click runs the parent's handler twice: once from $emit with its payload, and once from the native click with the DOM event object.`,
+    `$emit('click') runs in a @click handler on the root <button>. "click" is not declared in defineEmits or emits, so Vue treats the parent's @click listener as a fallthrough attribute and also binds it as a native click listener on the root <button>. Each click that runs this $emit runs the parent's handler twice: once from $emit with its payload, and once from the native click with the DOM event object.`,
   );
   expect(diagnostic!.suggestion).toBe(
-    `Add it to defineEmits: \`defineEmits(["close", 'click'])\`. The parent's @click then only receives the emitted event. If the parent should keep a native click listener on <button>, emit an event whose name is not a native DOM event instead.`,
+    `Add it to defineEmits: \`defineEmits(["close", "click"])\`. The parent's @click then only receives the emitted event. If the parent should keep a native click listener on <button>, emit an event whose name is not a native DOM event instead.`,
   );
   expect(diagnostic!.fix?.kind).toBe("suggestion");
-  const edit = diagnostic!.fix!.edits[0]!;
-  const fixed = source.slice(0, edit.range.start) + edit.text + source.slice(edit.range.end);
+  const fixed = applyEdits(source, diagnostic!.fix!.edits);
   expect(fixed).toContain(`defineEmits(["close", "click"])`);
+  expect(compiledEmits(fixed)).toEqual(["close", "click"]);
 });
 
 test("names the bubbling path for a descendant handler", async () => {
@@ -309,7 +331,7 @@ test("names the bubbling path for a descendant handler", async () => {
     `<template>\n  <div class="card">\n    <button @click="$emit('click', 1)">x</button>\n  </div>\n</template>`,
   );
   expect(diagnostic!.why).toContain(
-    "runs in a @click handler on <button>, and the native event bubbles to <div>.",
+    "runs in a @click handler on <button>, and nothing between it and the root <div> stops the native click from bubbling there.",
   );
   expect(diagnostic!.suggestion).toContain(
     "Declare it in a <script setup> block: `defineEmits(['click'])`.",
@@ -317,25 +339,367 @@ test("names the bubbling path for a descendant handler", async () => {
   expect(diagnostic!.fix).toBeFalsy();
 });
 
-test("explains an emit outside a handler for the same event", async () => {
+test("suggests adding to the emits option the component actually uses", async () => {
   const [diagnostic] = await reported(
-    `<template>\n  <label>Name <input @input="$emit('change', $event.target.value)"></label>\n</template>\n<script>\nexport default { emits: ['input'] }\n</script>`,
-  );
-  expect(diagnostic!.why).toBe(
-    `The template calls $emit('change'). "change" is not declared in defineEmits or emits, so Vue treats the parent's @change listener as a fallthrough attribute and also binds it as a native change listener on the root <label>. <label> contains a form control that fires them and they bubble, so the parent's handler runs twice: for each $emit('change') with its payload, and again for each native change with the DOM event object.`,
+    `<template>\n  <button @click="$emit('click')">x</button>\n</template>\n<script>\nexport default { emits: ['input'] }\n</script>\n<script setup>\nconst a = 1\n</script>`,
   );
   expect(diagnostic!.suggestion).toContain(
-    "Add it to the emits option: `emits: ['input', 'change']`.",
+    "Add it to the emits option: `emits: ['input', 'click']`.",
   );
   expect(diagnostic!.fix).toBeFalsy();
 });
 
-test("offers no edit for a type-based defineEmits", async () => {
-  const [diagnostic] = await reported(
-    `<template>\n  <div @click="$emit('click')"/>\n</template>\n<script setup lang="ts">\ndefineEmits<{ close: [] }>()\n</script>`,
-  );
-  expect(diagnostic!.suggestion).toContain("to the defineEmits type");
-  expect(diagnostic!.fix).toBeFalsy();
+// Vue merges `<script setup>` declarations into the normal script's options with
+// Object.assign(normal, defineOptions, { props, emits, setup }), so setup-generated options win.
+describe("two script blocks", () => {
+  test.each([
+    [
+      "setup defineEmits after a normal emits option",
+      `<script setup>\ndefineEmits(['click'])\n</script>\n<script>\nexport default { emits: ['other'] }\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "setup defineEmits before a normal emits option",
+      `<script>\nexport default { emits: ['other'] }\n</script>\n<script setup>\ndefineEmits(['click'])\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "normal emits with a setup block that declares none",
+      `<script>\nexport default { emits: ['click'] }\n</script>\n<script setup>\nconst a = 1\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "defineOptions inheritAttrs false before a normal inheritAttrs true",
+      `<script setup>\ndefineOptions({ inheritAttrs: false })\n</script>\n<script>\nexport default { inheritAttrs: true }\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "defineOptions inheritAttrs false after a normal inheritAttrs true",
+      `<script>\nexport default { inheritAttrs: true }\n</script>\n<script setup>\ndefineOptions({ inheritAttrs: false })\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "normal inheritAttrs false with a setup block",
+      `<script>\nexport default { inheritAttrs: false }\n</script>\n<script setup>\nconst a = 1\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "a normal script loaded from src",
+      `<script src="./options.js"></script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+  ])("stays silent on %s", async (_, source) => {
+    expect(await reported(source)).toHaveLength(0);
+  });
+
+  test.each([
+    [
+      "setup defineModel() replacing a normal emits option",
+      `<script>\nexport default { emits: ['click'] }\n</script>\n<script setup>\ndefineModel()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "setup defineProps() replacing a normal onClick prop",
+      `<script>\nexport default { props: ['onClick'] }\n</script>\n<script setup>\ndefineProps({ label: String })\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "a defineEmits function in a normal script, which is not the macro",
+      `<script>\nfunction defineEmits() {}\ndefineEmits(['click'])\nexport default {}\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+  ])("reports %s", async (_, source) => {
+    expect(await reported(source)).toHaveLength(1);
+  });
+
+  test("tells a defineModel() component to add defineEmits", async () => {
+    const source = `<script>\nexport default { emits: ['click'] }\n</script>\n<script setup>\ndefineModel()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`;
+    const [diagnostic] = await reported(source);
+    expect(diagnostic!.suggestion).toContain("Add `defineEmits(['click'])` to <script setup>.");
+    expect(
+      compiledEmits(source.replace("defineModel()", "defineModel()\ndefineEmits(['click'])")),
+    ).toContain("click");
+  });
+});
+
+describe("the DOM path to the root", () => {
+  test.each([
+    [
+      "an intermediate .stop",
+      `<template>\n  <div>\n    <div @click.stop>\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "an intermediate .capture.stop",
+      `<template>\n  <div>\n    <div @click.capture.stop>\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "an intermediate method handler",
+      `<template>\n  <div>\n    <div @click="onClick">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "an intermediate handler with an event parameter",
+      `<template>\n  <div>\n    <div @click="(event) => track(event)">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "an intermediate onClick binding",
+      `<template>\n  <div>\n    <div :onClick="handler">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "an intermediate object v-on",
+      `<template>\n  <div>\n    <div v-on="handlers">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "an intermediate object v-bind",
+      `<template>\n  <div>\n    <div v-bind="attrs">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "an intermediate dynamic v-on",
+      `<template>\n  <div>\n    <div @[name]="handler">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "a template ref that script can add a listener to",
+      `<template>\n  <div>\n    <div ref="box">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "a template ref on the emitter",
+      `<template>\n  <div>\n    <button ref="button" @click="$emit('click', 1)">x</button>\n  </div>\n</template>`,
+    ],
+    [
+      "a custom directive on the path",
+      `<template>\n  <div>\n    <button v-tooltip="hint" @click="$emit('click', 1)">x</button>\n  </div>\n</template>`,
+    ],
+    [
+      "a custom directive on the root",
+      `<template>\n  <button v-click-outside="close" @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "the emitter calling stopPropagation behind a condition",
+      `<template>\n  <div>\n    <button @click="if (stop) $event.stopPropagation(); $emit('click', 1)">x</button>\n  </div>\n</template>`,
+    ],
+    [
+      "the emitter setting cancelBubble",
+      `<template>\n  <div>\n    <button @click="$event.cancelBubble = true; $emit('click', 1)">x</button>\n  </div>\n</template>`,
+    ],
+    [
+      "the emitter passing the event to the parent",
+      `<template>\n  <div>\n    <button @click="$emit('click', $event)">x</button>\n  </div>\n</template>`,
+    ],
+    [
+      "the emitter passing the event to a function",
+      `<template>\n  <button @click="track($event); $emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "a root handler that passes the event on",
+      `<template>\n  <div @click="onClick">\n    <button @click="$emit('click', 1)">x</button>\n  </div>\n</template>`,
+    ],
+    [
+      "an emitter that listens in the capture phase",
+      `<template>\n  <div>\n    <div @click.capture="$emit('click', 1)">\n      <button @click.stop>x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "a .right click, which listens for contextmenu",
+      `<template>\n  <div>\n    <button @click.right="$emit('click', 1)">x</button>\n  </div>\n</template>`,
+    ],
+    [
+      "a focus handler inside a focusable root",
+      `<template>\n  <div tabindex="-1">\n    <input @focus="$emit('focus', 1)">\n  </div>\n</template>`,
+    ],
+    [
+      "a mouseenter handler inside the root",
+      `<template>\n  <div>\n    <span @mouseenter="$emit('mouseenter')">x</span>\n  </div>\n</template>`,
+    ],
+    [
+      "an emit in a handler for another event",
+      `<template>\n  <label>Name <input @input="$emit('change', $event.target.value)"></label>\n</template>`,
+    ],
+    [
+      "an emit outside a handler",
+      `<template>\n  <button>{{ $emit('click') }}</button>\n</template>`,
+    ],
+  ])("stays silent on %s", async (_, source) => {
+    expect(await reported(source)).toHaveLength(0);
+  });
+
+  test.each([
+    [
+      "an intermediate .prevent, which does not stop propagation",
+      `<template>\n  <div>\n    <div @click.prevent>\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "an intermediate .self handler Doctor can read",
+      `<template>\n  <div>\n    <div @click.self="open = !open">\n      <button @click="$emit('click', 1)">x</button>\n    </div>\n  </div>\n</template>`,
+    ],
+    [
+      "the emitter with .self and .prevent",
+      `<template>\n  <div>\n    <button @click.self.prevent="$emit('click', 1)">x</button>\n  </div>\n</template>`,
+    ],
+    [
+      ".stop on the root, which does not stop the root's own listeners",
+      `<template>\n  <button @click.stop="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "a handler that only reads event properties",
+      `<template>\n  <div>\n    <input @input="$emit('input', $event.target.value)">\n  </div>\n</template>`,
+    ],
+    [
+      "an emitter inside v-if and Transition",
+      `<template>\n  <div>\n    <Transition>\n      <button v-if="open" @click="$emit('click', 1)">x</button>\n    </Transition>\n  </div>\n</template>`,
+    ],
+    [
+      "a root ref, which cannot run before Vue's root listeners",
+      `<template>\n  <button ref="button" @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+  ])("reports %s", async (_, source) => {
+    expect(await reported(source)).toHaveLength(1);
+  });
+});
+
+describe("a shadowed $emit", () => {
+  test.each([
+    [
+      "a script setup const",
+      `<script setup>\nconst $emit = () => {}\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "a script setup import",
+      `<script setup>\nimport { $emit } from './bus'\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "a normal script binding next to script setup",
+      `<script>\nconst $emit = () => {}\n</script>\n<script setup>\nconst a = 1\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+    ],
+    [
+      "a v-for alias",
+      `<template>\n  <div>\n    <button v-for="$emit in callbacks" @click="$emit('click', 1)">x</button>\n  </div>\n</template>`,
+    ],
+    [
+      "a destructured v-for alias on a wrapper",
+      `<template>\n  <div>\n    <template v-for="{ $emit } in items">\n      <button @click="$emit('click', 1)">x</button>\n    </template>\n  </div>\n</template>`,
+    ],
+    [
+      "an inline function parameter",
+      `<template>\n  <button @click="(($emit) => $emit('click', 1))(notify)">x</button>\n</template>`,
+    ],
+  ])("stays silent on %s", async (_, source) => {
+    expect(await reported(source)).toHaveLength(0);
+  });
+
+  test("still reports an Options API setup() that returns $emit, which the template proxy ignores", async () => {
+    expect(
+      await reported(
+        `<script>\nexport default { setup() { return { $emit: () => {} } } }\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+      ),
+    ).toHaveLength(1);
+  });
+});
+
+describe("declaration guidance compiles", () => {
+  test("adds a call signature to a call-signature type literal", async () => {
+    const source = `<script setup lang="ts">\ndefineEmits<{ (e: 'close'): void }>()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`;
+    const [diagnostic] = await reported(source);
+    const signature = "(e: 'click', ...args: any[]): void";
+    expect(diagnostic!.suggestion).toContain(
+      `Add the call signature \`${signature}\` to the defineEmits type literal`,
+    );
+    expect(diagnostic!.suggestion).not.toContain("click: [");
+    expect(compiledEmits(source.replace("void }", `void; ${signature} }`))).toEqual([
+      "close",
+      "click",
+    ]);
+    expect(() => compiledEmits(source.replace("void }", "void; click: [] }"))).toThrow(
+      /mixed call signature and property syntax/,
+    );
+  });
+
+  test("keeps the parameter name and names the interface", async () => {
+    const source = `<script setup lang="ts">\ninterface Emits {\n  (event: 'close'): void\n}\ndefineEmits<Emits>()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`;
+    const [diagnostic] = await reported(source);
+    const signature = "(event: 'click', ...args: any[]): void";
+    expect(diagnostic!.suggestion).toContain(
+      `Add the call signature \`${signature}\` to \`interface Emits\``,
+    );
+    expect(compiledEmits(source.replace("void\n}", `void\n  ${signature}\n}`))).toEqual([
+      "close",
+      "click",
+    ]);
+  });
+
+  test("adds a tuple property to a property-syntax type", async () => {
+    const source = `<script setup lang="ts">\ndefineEmits<{ close: [] }>()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`;
+    const [diagnostic] = await reported(source);
+    const property = "click: [...args: any[]]";
+    expect(diagnostic!.suggestion).toContain(
+      `Add the property \`${property}\` to the defineEmits type literal`,
+    );
+    expect(diagnostic!.fix).toBeFalsy();
+    expect(compiledEmits(source.replace("close: [] }", `close: []; ${property} }`))).toEqual([
+      "close",
+      "click",
+    ]);
+  });
+
+  test("extends the event union of a function type", async () => {
+    const source = `<script setup lang="ts">\ndefineEmits<(e: 'close', id: number) => void>()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`;
+    const [diagnostic] = await reported(source);
+    const rewritten = "(e: 'close' | 'click', id: number) => void";
+    expect(diagnostic!.suggestion).toContain(`\`${rewritten}\``);
+    expect(compiledEmits(source.replace("(e: 'close', id: number) => void", rewritten))).toEqual([
+      "close",
+      "click",
+    ]);
+  });
+
+  test("replaces an argument-less defineEmits() instead of adding a second call", async () => {
+    const source = `<script setup>\ndefineEmits()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`;
+    const [diagnostic] = await reported(source);
+    expect(diagnostic!.suggestion).toContain(
+      "Replace `defineEmits()` with `defineEmits(['click'])`.",
+    );
+    expect(compiledEmits(source.replace("defineEmits()", "defineEmits(['click'])"))).toEqual([
+      "click",
+    ]);
+  });
+});
+
+describe("merged interfaces", () => {
+  test("reads members from every declaration of the interface", async () => {
+    expect(
+      await reported(
+        `<script setup lang="ts">\ninterface E { (e: 'click'): void }\ninterface E { (e: 'close'): void }\ndefineEmits<E>()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+      ),
+    ).toHaveLength(0);
+  });
+
+  test("still reports when no declaration has the event", async () => {
+    expect(
+      await reported(
+        `<script setup lang="ts">\ninterface E { (e: 'open'): void }\ninterface E { (e: 'close'): void }\ndefineEmits<E>()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("stays silent when an interface and a type alias share a name", async () => {
+    expect(
+      await reported(
+        `<script setup lang="ts">\ninterface E { (e: 'open'): void }\ntype E = { (e: 'close'): void }\ndefineEmits<E>()\n</script>\n<template>\n  <button @click="$emit('click', 1)">x</button>\n</template>`,
+      ),
+    ).toHaveLength(0);
+  });
+});
+
+describe("entity-encoded handlers", () => {
+  test.each([
+    [
+      "&quot;",
+      `<template>\n  <button @click="$emit(&quot;click&quot;, 1)">x</button>\n</template>`,
+    ],
+    [
+      "&#39;",
+      `<template>\n  <button @click="$emit(&#39;click&#39;, a &amp;&amp; b)">x</button>\n</template>`,
+    ],
+  ])("maps the event argument back to the raw %s text", async (entity, source) => {
+    const [diagnostic] = await reported(source);
+    const raw = source.slice(diagnostic!.range!.start, diagnostic!.range!.end);
+    expect(raw).toBe(`${entity}click${entity}`);
+  });
+
+  test("stays silent when it cannot map an entity", async () => {
+    expect(
+      await reported(
+        `<template>\n  <button @click="$emit(&quot;click&quot;, '&hellip;')">x</button>\n</template>`,
+      ),
+    ).toHaveLength(0);
+  });
 });
 
 test("reports each undeclared event once", async () => {
