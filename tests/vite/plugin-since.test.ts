@@ -412,6 +412,37 @@ test("since reports a duplicate introduced by an intermediate lockfile resolutio
 
 const authWithPeers = { ...auth, peerDependencies: { h3: "^1.0.0", ...auth.peerDependencies } };
 
+test.each([false, true])(
+  "since uses only changed peer lines after a manifest rename (edited: %s)",
+  async (edited) => {
+    await withWorkspace(
+      async (root) => {
+        await mkdir(join(root, "packages/moved-auth"));
+        git(root, "mv", "packages/auth/package.json", "packages/moved-auth/package.json");
+        if (edited) {
+          git(root, "config", "diff.renames", "false");
+          await writeFile(
+            join(root, "packages/moved-auth/package.json"),
+            manifest({
+              ...authWithPeers,
+              peerDependencies: { ...authWithPeers.peerDependencies, h3: "^2.0.0" },
+            }),
+          );
+        }
+      },
+      async (root) => {
+        for (const scope of [".", "packages/realtime"]) {
+          const { diagnostics } = await sinceFindings(join(root, scope), "main");
+          const peers = diagnostics.filter((item) => item.code === "PKG0007");
+          expect(peers).toHaveLength(edited ? 1 : 0);
+          if (edited) expect(peers[0]?.message).toContain('"h3"');
+        }
+      },
+      authWithPeers,
+    );
+  },
+);
+
 test.each([
   [
     "optional peer metadata",

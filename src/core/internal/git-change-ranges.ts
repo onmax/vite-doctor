@@ -147,7 +147,6 @@ async function collectChanges(
   paths: string[] = [],
 ): Promise<GitChangeInventory> {
   const tracked = await runGit(root, [
-    "--literal-pathspecs",
     "diff",
     "--name-status",
     "-z",
@@ -156,7 +155,6 @@ async function collectChanges(
     "--diff-filter=ACMRDTU",
     base,
     "--",
-    ...paths,
   ]);
   if (!tracked.ok) {
     return unavailableInventory(
@@ -169,7 +167,10 @@ async function collectChanges(
   const untracked = await listUntrackedFiles(root, since, paths);
   if (untracked.status === "unavailable") return untracked;
 
-  const trackedChanges = parseNameStatus(tracked.stdout);
+  const selected = new Set(paths);
+  const trackedChanges = parseNameStatus(tracked.stdout).filter(
+    (change) => !selected.size || selected.has(change.path ?? change.previousPath ?? ""),
+  );
   const fileHunks = await mapConcurrently(trackedChanges, (change) => {
     const diffPath = change.path ?? change.previousPath;
     return diffPath
@@ -328,6 +329,7 @@ async function collectFileHunks(
     "--no-color",
     "--no-ext-diff",
     "--no-textconv",
+    "--find-renames",
     base,
     "--",
     ...(previousPath ? [previousPath] : []),

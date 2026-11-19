@@ -47,7 +47,7 @@ export const noDuplicateSingleton = createRule({
             ...(ctx.project.evidenceGaps ?? []),
             {
               source: "vite-doctor/package",
-              message: `${RULE_ID} reads pnpm lockfile version 9 only; pnpm-lock.yaml has another version.`,
+              message: `${RULE_ID} could not read pnpm-lock.yaml; expected a valid pnpm v9 lockfile with importers and snapshots. Check for malformed YAML or an unsupported lockfile format.`,
               files: [relative(ctx.project.root, lockfilePath)],
             },
           ];

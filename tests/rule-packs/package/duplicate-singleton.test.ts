@@ -69,6 +69,7 @@ async function duplicates(
     return {
       root,
       diagnostics: result.diagnostics.filter((diagnostic) => diagnostic.ruleId === RULE),
+      evidenceGaps: result.project.evidenceGaps,
     };
   });
 }
@@ -234,11 +235,16 @@ test("does not report duplicates from a malformed lockfile with duplicate snapsh
     { "old-ui@1.0.0": { vue: "3.5.44" }, "vue@3.5.44": {}, "vue@3.4.0": {} },
   );
   files["pnpm-lock.yaml"] += "  'old-ui@1.0.0':\n    dependencies:\n      vue: '3.4.0'\n";
-  const { diagnostics } = await duplicates(files, {
+  const { diagnostics, evidenceGaps } = await duplicates(files, {
     name: "app",
     dependencies: { vue: "3.5.44", "old-ui": "1.0.0" },
   });
   expect(diagnostics).toEqual([]);
+  expect(evidenceGaps).toContainEqual({
+    source: "vite-doctor/package",
+    message: expect.stringMatching(/malformed/i),
+    files: ["pnpm-lock.yaml"],
+  });
 });
 
 test("reports nothing without a pnpm lockfile", async () => {
