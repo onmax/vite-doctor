@@ -2799,6 +2799,31 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/template/require-v-for-key": {
+    description:
+      "Finds v-for elements without a key when an item holds state: an element with v-model, a native input, textarea or select, a child of <TransitionGroup>, or a component whose source keeps local state, either on the v-for element itself or rendered inside it. It shares its state evidence with vue/template/no-index-key-on-stateful-list. A component Doctor cannot read is reported, with low confidence, only when its name says it holds input or open state. Unlike eslint-plugin-vue's require-v-for-key, an unkeyed list of plain elements that only render text is not reported.",
+    why: "Without a key, Vue patches a v-for list in place: when items are inserted, removed or reordered, local component state, unbound input values and focus can move to a different item or be lost. A key on a descendant does not preserve the outer item. Vue's docs call the unkeyed mode efficient and fine for output that holds no state, so those lists stay valid. Fixed literal sources are exempt from state-reuse reports, but <TransitionGroup> still requires keys on its rendered element and component children. A v-bind object spread is only treated as a possible key if it reaches the VNode representing the iteration.",
+    recommendedReplacement:
+      'Bind :key to a stable, unique field of the item, such as :key="todo.id". Doctor suggests a candidate when the item type declares a required key field of a supported type or literal items show distinct keys. Confirm that the key stays stable and unique as items change. Do not key by the v-for index; vue/template/no-index-key-on-stateful-list reports that.',
+    examples: [
+      {
+        title: "Key a component list by item id",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nimport TodoRow from "./TodoRow.vue" // keeps a draft in ref()\n</script>\n\n<template>\n  <TodoRow v-for="todo in todos" :todo="todo" />\n</template>',
+        valid:
+          '<script setup lang="ts">\nimport TodoRow from "./TodoRow.vue" // keeps a draft in ref()\n</script>\n\n<template>\n  <TodoRow v-for="todo in todos" :key="todo.id" :todo="todo" />\n</template>',
+      },
+      {
+        title: "Key TransitionGroup children so they animate",
+        language: "vue",
+        invalid:
+          '<template>\n  <TransitionGroup name="list" tag="ul">\n    <li v-for="toast in toasts">{{ toast.text }}</li>\n  </TransitionGroup>\n</template>',
+        valid:
+          '<template>\n  <TransitionGroup name="list" tag="ul">\n    <li v-for="toast in toasts" :key="toast.id">{{ toast.text }}</li>\n  </TransitionGroup>\n</template>',
+      },
+    ],
+  },
   "vue/watch/no-async-watcheffect-after-await-read": {
     description: "Flags reactive dependency reads after an await in an async watchEffect callback.",
     why: "Vue tracks watchEffect dependencies during synchronous execution. Reads after await do not establish dependencies that rerun the effect; ordinary object and method accesses do not establish reactive dependencies.",

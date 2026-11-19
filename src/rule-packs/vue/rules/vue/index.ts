@@ -25,6 +25,7 @@ export { requireUsePrefix } from "./require-use-prefix.js";
 export { maxProps } from "./max-props.js";
 export { noUnusedProps } from "./no-unused-props.js";
 export { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
+export { requireVForKey } from "./require-v-for-key.js";
 export { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
 export { noPropRelay } from "./no-prop-relay.js";
@@ -71,6 +72,7 @@ import { requireUsePrefix } from "./require-use-prefix.js";
 import { maxProps } from "./max-props.js";
 import { noUnusedProps } from "./no-unused-props.js";
 import { noIndexKeyOnStatefulList } from "./no-index-key-on-stateful-list.js";
+import { requireVForKey } from "./require-v-for-key.js";
 import { noUnusedTranslations, noUntranslatedText } from "./i18n.js";
 
 import { noPropRelay } from "./no-prop-relay.js";
@@ -118,6 +120,7 @@ const rules = [
   preferSameNamePropShorthand,
   requireUsePrefix,
   noIndexKeyOnStatefulList,
+  requireVForKey,
   noUnusedTranslations,
   noUntranslatedText,
 
