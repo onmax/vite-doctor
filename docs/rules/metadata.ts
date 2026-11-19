@@ -2191,6 +2191,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/attrs/require-explicit-emits": {
+    description:
+      "Flags a template `$emit` of an undeclared event that runs in a handler for the native event of the same name, when that native event provably reaches the component's single native root element, where the parent's listener falls through.",
+    why: "Vue 3 treats a parent's `v-on` listener as a fallthrough attribute unless the child declares the event in `defineEmits` or `emits`. The listener then also lands on the child's root element as a native listener, so `$emit('click', id)` from a click handler runs the parent's `@click` handler twice: once with `id` and once with the `MouseEvent`. Doctor reports only when it can prove that path: the `$emit` runs in a `v-on` handler for the native event of the same name, the event name is a string literal, nothing declares it in the `defineEmits`, `emits`, `defineModel()` or `on<Event>` props Vue ends up with after merging `<script setup>` into the normal script, `inheritAttrs` stays on, and the template has a single native root. For a bubbling event, every element from the handler up to the root must be free of `.stop`, template refs, custom directives, object or dynamic listeners, and handlers that could reach the event object. A non-bubbling event such as `focus` counts only on the root itself. Components with declarations it cannot read, mixins, a shadowed `$emit`, multi-root templates and component roots are skipped.",
+    recommendedReplacement:
+      "Declare the event in `defineEmits` (or the `emits` option) so the parent's listener only receives the emitted event, or emit an event whose name is not a native DOM event when the parent should keep its native listener. Doctor skips once-only emitters (such as `@click.once`) because declaring their event would remove the parent's native callback on later clicks.",
+    examples: [
+      {
+        title: "Declare the emitted click event",
+        language: "vue",
+        invalid:
+          '<template>\n  <button type="button" @click="$emit(\'click\', id)">Open</button>\n</template>',
+        valid:
+          '<script setup lang="ts">\ndefineEmits([\'click\'])\n</script>\n\n<template>\n  <button type="button" @click="$emit(\'click\', id)">Open</button>\n</template>',
+      },
+    ],
+  },
   "vue/attrs/no-watch-use-attrs": {
     description:
       "Flags watch() calls whose source is the useAttrs() object itself, which Vue never re-runs.",
@@ -2819,6 +2836,31 @@ export const ruleDocumentationMetadata = {
         language: "vue",
         invalid:
           '<template>\n  <TransitionGroup name="list" tag="ul">\n    <li v-for="(toast, i) in toasts" :key="i">{{ toast.text }}</li>\n  </TransitionGroup>\n</template>',
+        valid:
+          '<template>\n  <TransitionGroup name="list" tag="ul">\n    <li v-for="toast in toasts" :key="toast.id">{{ toast.text }}</li>\n  </TransitionGroup>\n</template>',
+      },
+    ],
+  },
+  "vue/template/require-v-for-key": {
+    description:
+      "Finds v-for elements without a key when an item holds state: an element with v-model, a native input, textarea or select, a child of <TransitionGroup>, or a component whose source keeps local state, either on the v-for element itself or rendered inside it. It shares its state evidence with vue/template/no-index-key-on-stateful-list. A component Doctor cannot read is reported, with low confidence, only when its name says it holds input or open state. Unlike eslint-plugin-vue's require-v-for-key, an unkeyed list of plain elements that only render text is not reported.",
+    why: "Without a key, Vue patches a v-for list in place: when items are inserted, removed or reordered, local component state, unbound input values and focus can move to a different item or be lost. A key on a descendant does not preserve the outer item. Vue's docs call the unkeyed mode efficient and fine for output that holds no state, so those lists stay valid. Fixed literal sources are exempt from state-reuse reports, but <TransitionGroup> still requires keys on its rendered element and component children. A v-bind object spread is only treated as a possible key if it reaches the VNode representing the iteration.",
+    recommendedReplacement:
+      'Bind :key to a stable, unique field of the item, such as :key="todo.id". Doctor names a candidate field when the item type declares a required key field of a supported type or literal items show distinct keys, but it does not insert the key, because only the project knows whether that field stays stable and unique as items change. Do not key by the v-for index; vue/template/no-index-key-on-stateful-list reports that.',
+    examples: [
+      {
+        title: "Key a component list by item id",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nimport TodoRow from "./TodoRow.vue" // keeps a draft in ref()\n</script>\n\n<template>\n  <TodoRow v-for="todo in todos" :todo="todo" />\n</template>',
+        valid:
+          '<script setup lang="ts">\nimport TodoRow from "./TodoRow.vue" // keeps a draft in ref()\n</script>\n\n<template>\n  <TodoRow v-for="todo in todos" :key="todo.id" :todo="todo" />\n</template>',
+      },
+      {
+        title: "Key TransitionGroup children so they animate",
+        language: "vue",
+        invalid:
+          '<template>\n  <TransitionGroup name="list" tag="ul">\n    <li v-for="toast in toasts">{{ toast.text }}</li>\n  </TransitionGroup>\n</template>',
         valid:
           '<template>\n  <TransitionGroup name="list" tag="ul">\n    <li v-for="toast in toasts" :key="toast.id">{{ toast.text }}</li>\n  </TransitionGroup>\n</template>',
       },

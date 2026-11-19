@@ -959,6 +959,17 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }
 
+  if (rule.id === "vue/attrs/require-explicit-emits") {
+    add(
+      "Vue declaring emitted events",
+      "https://vuejs.org/guide/components/events.html#declaring-emitted-events",
+    );
+    add(
+      "Vue v-on listener inheritance",
+      "https://vuejs.org/guide/components/attrs.html#v-on-listener-inheritance",
+    );
+  }
+
   if (rule.id === "vue/template/no-index-key-on-stateful-list") {
     add("Vue TransitionGroup", "https://vuejs.org/guide/built-ins/transition-group.html");
     add(
@@ -971,6 +982,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add(
       "eslint-plugin-vue no-dupe-v-else-if",
       "https://eslint.vuejs.org/rules/no-dupe-v-else-if.html",
+    );
+  }
+
+  if (rule.id === "vue/template/require-v-for-key") {
+    add(
+      "Vue: maintaining state with key",
+      "https://vuejs.org/guide/essentials/list.html#maintaining-state-with-key",
+    );
+    add("Vue TransitionGroup", "https://vuejs.org/guide/built-ins/transition-group.html");
+    add(
+      "eslint-plugin-vue require-v-for-key",
+      "https://eslint.vuejs.org/rules/require-v-for-key.html",
     );
   }
 
