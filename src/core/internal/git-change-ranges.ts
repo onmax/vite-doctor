@@ -126,18 +126,22 @@ export async function collectGitChangeInventory(
   const untracked = await listUntrackedFiles(root, since);
   if (untracked.status === "unavailable") return untracked;
 
-  const changes: GitChangedFile[] = [];
-  for (const change of parseNameStatus(tracked.stdout)) {
+  const trackedChanges = parseNameStatus(tracked.stdout);
+  const fileHunks = await mapConcurrently(trackedChanges, (change) => {
     const diffPath = change.path ?? change.previousPath;
-    const hunks = diffPath
-      ? await collectFileHunks(
+    return diffPath
+      ? collectFileHunks(
           root,
           base,
           diffPath,
           change.path && change.previousPath ? change.previousPath : undefined,
           since,
         )
-      : { status: "available" as const, hunks: [] };
+      : Promise.resolve({ status: "available" as const, hunks: [] });
+  });
+  const changes: GitChangedFile[] = [];
+  for (const [index, change] of trackedChanges.entries()) {
+    const hunks = fileHunks[index]!;
     if (hunks.status === "unavailable") return hunks;
     changes.push({
       ...change,
@@ -319,6 +323,23 @@ function rangesFromHunks(hunks: GitChangeHunk[]): ChangedLineRange[] {
     }
   }
   return merged;
+}
+
+// Every changed file gets its own `git diff`, and a wide diff has hundreds; a few at a time keeps
+// that from dominating a --since run without flooding the machine with processes.
+const GIT_DIFF_CONCURRENCY = 8;
+
+async function mapConcurrently<T, R>(items: T[], map: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = Array.from({ length: items.length });
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await map(items[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(GIT_DIFF_CONCURRENCY, items.length) }, worker));
+  return results;
 }
 
 function parseNameStatus(output: string): TrackedChange[] {
