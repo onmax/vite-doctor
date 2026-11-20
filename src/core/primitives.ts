@@ -179,6 +179,13 @@ export interface RuleMeta {
    * plugin that registers Nitro handlers, which lives outside the packages that run the framework.
    */
   activationScope?: "package" | "workspace";
+  /**
+   * Also runs this file Rule on authored test code: files in `test`, `tests`, `__tests__`, and
+   * `test-utils` directories, and `*.test.*` or `*.spec.*` files. Doctor excludes them for every
+   * other Rule and analysis. Fixtures, snapshots, type tests, and paths the user excluded stay
+   * excluded. Ignored by manifest and workspace Rules.
+   */
+  includeTestFiles?: boolean;
   sourceKinds?: Array<"app" | "layer" | "module">;
   execution?: ExecutionKind;
   cost?: RuleCost;
@@ -1101,7 +1108,10 @@ export interface DoctorRunResult {
      */
     mode: "all" | "changed" | "affected";
     base?: string | null;
-    /** Files analyzed, or in a scoped mode, files whose Diagnostics the run reports. */
+    /**
+     * Files analyzed, or in a scoped mode, files whose Diagnostics the run reports. Test files
+     * count only when an enabled Rule with `meta.includeTestFiles` analyzed them.
+     */
     files: number;
     deletedFiles?: number;
   };

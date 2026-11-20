@@ -75,6 +75,7 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
   await runPhase(session, "cache", () => persistScanCache(session));
 
   const started = performance.now();
+  const analyzed = [...session.files, ...session.testFiles];
   const result = createResult(
     session.project,
     session.root,
@@ -88,12 +89,12 @@ async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunRes
       ? {
           mode: "changed",
           base: session.gitChanges.base,
-          files: session.files.filter((file) => file.reportEligibility).length,
+          files: analyzed.filter((file) => file.reportEligibility).length,
           deletedFiles: session.gitChanges.files.filter((file) => file.kind === "deleted").length,
         }
       : options.affectedFiles
-        ? { mode: "affected", files: session.files.filter((file) => file.reportEligibility).length }
-        : { mode: "all", files: session.files.length },
+        ? { mode: "affected", files: analyzed.filter((file) => file.reportEligibility).length }
+        : { mode: "all", files: analyzed.length },
   );
   result.fixes = fixes;
   result.extends = options.extends ?? session.config.extends;
