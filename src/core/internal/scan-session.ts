@@ -188,7 +188,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     cacheDirectory(root, config),
   );
   cache.bindInputs(ruleInputs, (path) => handlesByPath.get(path)?.hash);
-  return {
+  const session: ScanSession = {
     ...sessionBase,
     registry,
     project,
@@ -227,6 +227,19 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     ruleTimings: new Map(),
     fileRuleRuns: new Map(),
   };
+  // Only opted-in Rules read test files, so a test file none of them runs on stays unparsed and
+  // uncounted, the same as an excluded file.
+  const testRules = selection.rules.filter(analyzesTestFiles);
+  session.testFiles = session.testFiles.filter((file) =>
+    testRules.some((rule) => runsRuleOnTestFile(session, rule, file)),
+  );
+  return session;
+}
+
+function runsRuleOnTestFile(session: ScanSession, rule: DoctorRule, file: ScanFileEntry): boolean {
+  if (rule.meta.sourceKinds && !rule.meta.sourceKinds.includes(file.sourceKind)) return false;
+  if (fileRuleConfig(session, rule.meta.id, file.path).enabled) return true;
+  return rule.meta.reportScope === "project" && ruleInScope(session, rule.meta.id, file.path);
 }
 
 /** `--analyses` without `--rules` runs no file Rules. */

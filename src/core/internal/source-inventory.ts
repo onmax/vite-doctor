@@ -201,19 +201,21 @@ async function selectAllFiles(
       files.set(file, createAppFileEntry(root, file));
   }
   if (htmlOnly) return [...files.values()];
+  const moduleSources = projectNuxtInventories(project).flatMap((nuxt) => nuxt.moduleSources ?? []);
   if (testFiles) {
     // Without the test-file excludes the same walk selects a superset; the extra files are test
-    // code, still subject to the user's excludes and `.gitignore`.
+    // code, still subject to the user's excludes and `.gitignore`. Module sources keep their own
+    // selection, which never includes tests.
     const withTests = [...NON_TEST_EXCLUDE, ...(config.exclude ?? [])];
+    const inModuleSource = (file: string) =>
+      moduleSources.some((source) => !relative(source.root, file).startsWith(".."));
     for (const file of await selectProjectFiles(walk, include, withTests, memo)) {
-      if (files.has(file) || ignored(relative(root, file)) || !authored(file)) continue;
-      files.set(file, { ...createAppFileEntry(root, file), testFile: true });
+      if (files.has(file) || ignored(relative(root, file)) || inModuleSource(file)) continue;
+      if (authored(file)) files.set(file, { ...createAppFileEntry(root, file), testFile: true });
     }
   }
 
-  for (const source of projectNuxtInventories(project).flatMap(
-    (nuxt) => nuxt.moduleSources ?? [],
-  )) {
+  for (const source of moduleSources) {
     const include = source.include?.length ? source.include : DEFAULT_INCLUDE;
     const moduleExclude = [...DEFAULT_EXCLUDE, ...(source.exclude ?? [])];
     const moduleWalk = new ProjectFileWalk(source.root);

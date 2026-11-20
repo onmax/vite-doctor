@@ -133,6 +133,53 @@ test("config.exclude, overrides, and inline directives apply to test files", asy
   ]);
 });
 
+test("a test file no opted-in Rule runs on is not parsed or counted", async () => {
+  const broken = {
+    "src/app.ts": "export const app = 1;\n",
+    "tests/broken.ts": "export const = ;\n",
+  };
+  const analyzed = await runProjectFixture({ files: broken, rules: [withTests] });
+  expect(
+    analyzed.project.evidenceGaps?.flatMap((gap) =>
+      gap.files.map((file) => relative(analyzed.root, file)),
+    ),
+  ).toEqual(["tests/broken.ts"]);
+  expect(analyzed.scope.files).toBe(2);
+
+  const skipped = await runProjectFixture({
+    files: broken,
+    rules: [withTests],
+    config: { overrides: [{ files: ["tests/**"], rules: { [withTests.meta.id]: "off" } }] },
+  });
+  expect(skipped.project.evidenceGaps).toBeUndefined();
+  expect(skipped.scope.files).toBe(1);
+});
+
+test("test files inside a registered Nuxt module source stay skipped", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-test-files-"));
+  roots.push(root);
+  write(root, "package.json", JSON.stringify({ dependencies: { nuxt: "^4.1.0" } }));
+  write(root, "nuxt.config.ts", "export default {}\n");
+  write(root, "modules/widget/index.ts", "export const widget = 1; // TODO\n");
+  write(root, "modules/widget/tests/widget.test.ts", "// TODO\nexport {};\n");
+  write(root, "tests/app.test.ts", "// TODO\nexport {};\n");
+  write(
+    root,
+    ".nuxt/doctor.manifest.json",
+    JSON.stringify({ moduleSources: [{ module: "widget", root: join(root, "modules/widget") }] }),
+  );
+  const result = await runDoctor({
+    root,
+    framework: "nuxt",
+    cache: false,
+    extensions: [extension],
+  });
+  expect(reported(result).filter((line) => line.startsWith("fixture/"))).toEqual([
+    "fixture/todo-with-tests modules/widget/index.ts",
+    "fixture/todo-with-tests tests/app.test.ts",
+  ]);
+});
+
 test("--rules selects whether test files are analyzed", async () => {
   const result = await runProjectFixture({
     files,
