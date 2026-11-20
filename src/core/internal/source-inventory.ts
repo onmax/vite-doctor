@@ -1,5 +1,5 @@
 import { closeSync, openSync, readSync } from "node:fs";
-import { relative, resolve } from "pathe";
+import { isAbsolute, relative, resolve } from "pathe";
 import type { DoctorConfig } from "../config.js";
 import type { DoctorRunOptions } from "../config.js";
 import type { ProjectInfo, SourceFileHandle } from "../primitives.js";
@@ -208,7 +208,10 @@ async function selectAllFiles(
     // selection, which never includes tests.
     const withTests = [...NON_TEST_EXCLUDE, ...(config.exclude ?? [])];
     const inModuleSource = (file: string) =>
-      moduleSources.some((source) => !relative(source.root, file).startsWith(".."));
+      moduleSources.some((source) => {
+        const path = relative(source.root, file);
+        return !isAbsolute(path) && path !== ".." && !path.startsWith("../");
+      });
     for (const file of await selectProjectFiles(walk, include, withTests, memo)) {
       if (files.has(file) || ignored(relative(root, file)) || inModuleSource(file)) continue;
       if (authored(file)) files.set(file, { ...createAppFileEntry(root, file), testFile: true });
