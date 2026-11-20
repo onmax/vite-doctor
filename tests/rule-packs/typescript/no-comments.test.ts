@@ -726,6 +726,37 @@ export const view = <Widget>a{/* note */}b</Widget>
     });
   });
 
+  test.each([
+    ["v8", "\n"],
+    ["c8", "\r\n"],
+  ])("keeps line breaks across a counted %s coverage directive", async (tool, newline) => {
+    const file = "src/index.ts";
+    const protectedLines = [
+      `/* ${tool} ignore next 4 */`,
+      "first();",
+      "second();",
+      "third();",
+      "// Keep the fourth line in the ignore range.",
+      "outside();",
+    ];
+    const source = [...protectedLines, "// unrelated note", "export {}", ""].join(newline);
+    const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+    expect(after[file]).toBe([...protectedLines, "export {}", ""].join(newline));
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
+      { fix: undefined },
+    ]);
+  });
+
+  test("removes ordinary comments next to non-line-scoped exemptions", async () => {
+    const file = "src/index.ts";
+    const header = "/*! SPDX-License-Identifier: MIT */";
+    const annotated = "const value = /*#__PURE__*/ makeValue();";
+    const source = [header, "// note", annotated, "// another note", "export { value };", ""];
+    const { after, result } = await fixFixture({ [file]: source.join("\n") }, { unsafeFix: true });
+    expect(after[file]).toBe([header, annotated, "export { value };", ""].join("\n"));
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toEqual([]);
+  });
+
   test("marks the fix unsafe", async () => {
     expect(noComments.meta.fixable).toBe("unsafe");
     const [found] = await run({ "src/index.ts": "// note\nexport {}\n" });

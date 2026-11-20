@@ -14,6 +14,7 @@ import {
   planCommentDeletions,
   scriptDeletions,
   touchesTemplateBoundaries,
+  type LineScopedComment,
 } from "./comment-deletion.js";
 import { safetyNoteComments } from "./safety-comment.js";
 import {
@@ -28,6 +29,9 @@ const ruleId = "typescript/strict/no-comments";
 
 const toolDirective =
   /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|[#@]__(?:PURE|NO_SIDE_EFFECTS)__|@vite-ignore|webpack[A-Z]\w*\s*:|@vitest-environment|(?:v8|c8|istanbul)\s+ignore|@jsx|[#@]\s*source(?:Mapping)?URL=|!)/;
+const lineScopedDirective =
+  /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|(?:v8|c8|istanbul)\s+ignore|@vue-ignore\b)/;
+const countedCoverage = /^[\s*]*(?:v8|c8)\s+ignore\s+next\s+(\d+)\b/;
 const templateDirective =
   /^\s*@vue-(?:(?:ignore|expect-error|skip)(?![-\w])|generic\s*\{[\s\S]*\}\s*$)/;
 const blockDirective = /^\s*(?:globals?|exported)\s/;
@@ -169,10 +173,20 @@ export const noComments = createRule({
     const javascript = !isTypeScriptSource(ctx);
     visitor["Program:exit"] = () => {
       const safetyNotes = safetyNoteComments(source, comments);
-      const retainedToolComments: ScriptComment[] = [];
+      const lineScopedComments: LineScopedComment[] = [];
       const found = comments.filter((comment) => {
-        if (isToolComment(comment, javascript) || allowed(comment.value)) {
-          retainedToolComments.push(comment);
+        const { value, end } = comment;
+        if (isToolComment(comment, javascript) || allowed(value)) {
+          const count = countedCoverage.exec(value)?.[1];
+          if (count !== undefined) {
+            lineScopedComments.push({ end, lineBreaks: Math.max(2, Number(count) + 1) });
+          } else if (
+            lineScopedDirective.test(value) ||
+            containsInlineSuppression(value) ||
+            allowed(value)
+          ) {
+            lineScopedComments.push({ end, lineBreaks: 2 });
+          }
           return false;
         }
         return (
@@ -185,7 +199,7 @@ export const noComments = createRule({
       const edits = planCommentDeletions(
         source,
         [...new Set(deletions.values())],
-        retainedToolComments,
+        lineScopedComments,
       );
       dropJsxTextChanges(source, jsxComments, deletions, edits);
       for (const comment of found)

@@ -10,6 +10,11 @@ export interface CommentDeletion {
   kind: "script" | "jsx";
 }
 
+export interface LineScopedComment {
+  end: number;
+  lineBreaks: number;
+}
+
 interface LineGroup {
   members: CommentDeletion[];
   start: number;
@@ -32,10 +37,11 @@ const closingLine = /^(?:[})\]]|<\/)/;
 export function planCommentDeletions(
   source: string,
   deletions: readonly CommentDeletion[],
-  retainedToolComments: readonly ScriptComment[],
+  lineScopedComments: readonly LineScopedComment[],
 ): Map<CommentDeletion, FixEdit> {
   const edits = new Map<CommentDeletion, FixEdit>();
-  const protectedBreaks = directiveLineBreaks(source, retainedToolComments);
+  if (!deletions.length) return edits;
+  const protectedBreaks = directiveLineBreaks(source, lineScopedComments);
   const touchesProtectedBreak = (start: number, end: number) => {
     if (!protectedBreaks.size) return false;
     for (const { index } of source.slice(start, end).matchAll(/[\n\r\u2028\u2029]/g))
@@ -83,17 +89,22 @@ export function planCommentDeletions(
   return edits;
 }
 
-function directiveLineBreaks(source: string, comments: readonly ScriptComment[]): Set<number> {
+function directiveLineBreaks(source: string, comments: readonly LineScopedComment[]): Set<number> {
   const offsets = new Set<number>();
   const breaks = /\r\n|[\n\r\u2028\u2029]/g;
-  for (const comment of comments) {
-    breaks.lastIndex = comment.end;
-    for (let line = 0; line < 2; line++) {
-      const boundary = breaks.exec(source);
-      if (!boundary) break;
-      offsets.add(boundary.index);
-      if (boundary[0] === "\r\n") offsets.add(boundary.index + 1);
+  let next = 0;
+  let remaining = 0;
+  while (remaining || next < comments.length) {
+    if (!remaining) breaks.lastIndex = comments[next]!.end;
+    const boundary = breaks.exec(source);
+    if (!boundary) break;
+    while (next < comments.length && comments[next]!.end <= boundary.index) {
+      remaining = Math.max(remaining, comments[next]!.lineBreaks);
+      next++;
     }
+    offsets.add(boundary.index);
+    if (boundary[0] === "\r\n") offsets.add(boundary.index + 1);
+    remaining--;
   }
   return offsets;
 }
