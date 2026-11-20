@@ -1,5 +1,6 @@
 import { closeSync, openSync, readSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "pathe";
+import * as nativePath from "node:path";
+import { relative, resolve } from "pathe";
 import type { DoctorConfig } from "../config.js";
 import type { DoctorRunOptions } from "../config.js";
 import type { ProjectInfo, SourceFileHandle } from "../primitives.js";
@@ -209,8 +210,11 @@ async function selectAllFiles(
     const withTests = [...NON_TEST_EXCLUDE, ...(config.exclude ?? [])];
     const inModuleSource = (file: string) =>
       moduleSources.some((source) => {
-        const path = relative(source.root, file);
-        return !isAbsolute(path) && path !== ".." && !path.startsWith("../");
+        // pathe reads `C:` as a drive on every platform, so containment uses the native rules.
+        const path = nativePath.relative(source.root, file);
+        return (
+          !nativePath.isAbsolute(path) && path !== ".." && !path.startsWith(`..${nativePath.sep}`)
+        );
       });
     for (const file of await selectProjectFiles(walk, include, withTests, memo)) {
       if (files.has(file) || ignored(relative(root, file)) || inModuleSource(file)) continue;
