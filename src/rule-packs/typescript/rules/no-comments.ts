@@ -6,6 +6,7 @@ import {
   type ScriptAstNodeType,
 } from "../../../core/index.js";
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
+import { containsInlineSuppression } from "../../../core/internal/suppression-syntax.js";
 import { diagnostics } from "../diagnostics.js";
 import { safetyNoteComments } from "./safety-comment.js";
 import {
@@ -19,12 +20,18 @@ import {
 const ruleId = "typescript/strict/no-comments";
 
 const toolDirective =
-  /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)?doctor-(?:disable|enable)|(?:prettier|oxfmt|dprint|biome)-ignore|[#@]__(?:PURE|NO_SIDE_EFFECTS)__|@vite-ignore|@vue-ignore|webpack[A-Z]\w*\s*:|@vitest-environment|(?:v8|c8|istanbul)\s+ignore|@jsx|[#@]\s*source(?:Mapping)?URL=|!)/;
-const blockDirective = /^[\s*]*globals?\s/;
+  /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|[#@]__(?:PURE|NO_SIDE_EFFECTS)__|@vite-ignore|webpack[A-Z]\w*\s*:|@vitest-environment|(?:v8|c8|istanbul)\s+ignore|@jsx|[#@]\s*source(?:Mapping)?URL=|!)/;
+const templateDirective =
+  /^\s*@vue-(?:(?:ignore|expect-error|skip)(?![-\w])|generic\s*\{[\s\S]*\}\s*$)/;
+const blockDirective = /^\s*(?:globals?|exported)\s/;
 const tripleSlash = /^\/\s*<(?:reference|amd-module|amd-dependency)\b/;
 const preserved = /@(?:license|preserve)\b/;
 const checkJsTag =
-  /@(?:type|satisfies|typedef|callback|param|arg|argument|returns?|property|prop|this|enum|extends|augments|implements)\s*\{|@(?:template|import|overload)\b/;
+  /@(?:type|satisfies|typedef|callback|param|arg|argument|returns?|property|prop|this|enum|extends|augments|implements|template|import|overload|readonly|public|private|protected|override|abstract|class|constructor)\b/;
+
+const reason = "This comment does not match a known directive or an allowed comment pattern.";
+const removal =
+  "When removing a script or JSX comment, preserve its line breaks and use a space if the comment separates tokens.";
 
 const apiMembers = [
   "AccessorProperty",
@@ -51,12 +58,12 @@ const parsedOptions = new WeakMap<object, NoCommentsOptions>();
 export const noComments = createRule({
   meta: {
     id: ruleId,
-    title: "Delete comments no tool reads",
+    title: "Report comments without a recognized exemption",
     description:
-      "Report every script, JSX, and Vue template comment that no compiler, linter, formatter, bundler, coverage tool, or Doctor Rule reads. Opt-in: no Preset turns it on.",
-    why: "No tool reads this comment, so nothing checks that it stays true. A comment that repeats the code goes stale when the code changes, and agents read stale comments as facts. The Rule keeps comments a tool reads: compiler, linter, formatter, and coverage directives, bundler annotations such as `#__PURE__` and `@vite-ignore`, triple-slash references, `/*!`, `@license` and `@preserve` comments, source map comments, SAFETY notes that `typescript/strict/require-safety-comment-for-type-assertion` reads, typed JSDoc in JavaScript files, and, by default, JSDoc on exported declarations and their members. The `allow` option keeps comments that a project's own tools read.",
+      "Report script, JSX, and Vue template comments that do not match a known directive or configured exemption. Opt-in: no Preset turns it on.",
+    why: "A comment that repeats the code goes stale when the code changes, and agents read stale comments as facts. The Rule recognizes common compiler, linter, formatter, and coverage directives, bundler annotations such as `#__PURE__` and `@vite-ignore`, triple-slash references, `/*!`, `@license` and `@preserve` comments, source map comments, SAFETY notes, semantic JSDoc, and, by default, JSDoc on exported declarations and their members. Use `allow` for comments that other project tools consume.",
     recommendedReplacement:
-      "Classify the comment before deleting it. Delete a Tautology, which repeats what the code says, and a Stale comment, which is no longer true. For an Excuse, which allows a workaround, file an issue first. For a Decision Record, a non-obvious decision the code cannot show, move it to the project's decision log first. Then delete the comment.",
+      "Check whether a project tool reads the comment before removing it; if it does, add a pattern to allow it. Move non-obvious decisions to the project's decision log and file issues for workarounds before removing their comments. When removing a script or JSX comment, preserve its line breaks and use a space if the comment separates tokens.",
     examples: [
       {
         title: "Name the code instead of describing it",
@@ -74,6 +81,7 @@ export const noComments = createRule({
     docsUrl: "https://vite-doctor.onmax.me/typescript#delete-comments-no-tool-reads",
     aiGeneratedCodeRisk: "high",
   },
+  validateOptions: readOptions,
   create(ctx) {
     const options = readOptions(ctx.options);
     const source = ctx.file.text;
@@ -84,8 +92,8 @@ export const noComments = createRule({
     const report = (start: number, end: number) =>
       ctx.report(
         diagnostics.TS0017({
-          why: "No tool reads this comment, so nothing checks that it stays true.",
-          fix: "Delete it. First move a decision the code cannot show into the project's decision log, and file an issue for a workaround it excuses.",
+          why: reason,
+          fix: `Check whether a project tool reads it. If so, add an allow pattern. Otherwise, record decisions or file issues for workarounds before removing it. ${removal}`,
         }),
         { range: ctx.range(start, end), fingerprint: fingerprint(ctx, source.slice(start, end)) },
       );
@@ -95,7 +103,13 @@ export const noComments = createRule({
     if (template) {
       visitor.template = {
         comment(node) {
-          if (toolDirective.test(node.content) || allowed(node.content)) return;
+          if (
+            toolDirective.test(node.content) ||
+            templateDirective.test(node.content) ||
+            containsInlineSuppression(node.content) ||
+            allowed(node.content)
+          )
+            return;
           report(node.loc.start.offset, node.loc.end.offset);
         },
       };
@@ -104,15 +118,20 @@ export const noComments = createRule({
 
     const apiDocs = new Set<ScriptComment>();
     if (options.apiDocs === "exported" && comments.some(isJsDoc)) {
-      const keepApiDoc = (node: AnyNode) => {
-        const doc = jsDocBefore(source, comments, documentedStart(source, node));
-        if (doc && isExported(node)) apiDocs.add(doc);
+      let exported = new Set<AnyNode>();
+      const keepApiDoc = (start: number) => {
+        const doc = jsDocBefore(source, comments, start);
+        if (doc) apiDocs.add(doc);
       };
-      visitor.ExportNamedDeclaration = keepApiDoc;
-      visitor.ExportDefaultDeclaration = keepApiDoc;
-      for (const type of apiMembers) visitor[type] = keepApiDoc;
+      visitor.Program = (program) => {
+        exported = exportedDeclarations(program.body, keepApiDoc);
+      };
+      const keepMemberDoc = (node: AnyNode) => {
+        if (belongsToExport(node, exported)) keepApiDoc(documentedStart(source, node));
+      };
+      for (const type of apiMembers) visitor[type] = keepMemberDoc;
       visitor.TSUnionType = (node: AnyNode) => {
-        for (const member of node.types) keepApiDoc(member);
+        for (const member of node.types) keepMemberDoc(member);
       };
     }
 
@@ -132,7 +151,14 @@ export const noComments = createRule({
 
 function isToolComment(comment: ScriptComment, javascript: boolean): boolean {
   const { value } = comment;
-  if (toolDirective.test(value) || preserved.test(value)) return true;
+  if (
+    toolDirective.test(value) ||
+    /^[\s*]*@vue-ignore\b/.test(value) ||
+    preserved.test(value) ||
+    containsInlineSuppression(value)
+  )
+    return true;
+  if (value.includes("@internal")) return true;
   if (comment.type === "Line") return tripleSlash.test(value);
   return blockDirective.test(value) || (javascript && isJsDoc(comment) && checkJsTag.test(value));
 }
@@ -166,10 +192,69 @@ function jsDocBefore(
   return doc;
 }
 
-function isExported(node: AnyNode): boolean {
+function exportedDeclarations(body: AnyNode[], keepApiDoc: (start: number) => void) {
+  const declarations = new Set<AnyNode>();
+  const names = new Set<string>();
+  for (const statement of body) {
+    if (statement.type === "ExportNamedDeclaration") {
+      keepApiDoc(statement.start);
+      if (statement.declaration) declarations.add(statement.declaration);
+      if (!statement.source) {
+        for (const specifier of statement.specifiers) names.add(specifier.local.name);
+      }
+    } else if (statement.type === "ExportDefaultDeclaration") {
+      keepApiDoc(statement.start);
+      if (statement.declaration.type === "Identifier") names.add(statement.declaration.name);
+      else declarations.add(statement.declaration);
+    }
+  }
+  for (const statement of body) {
+    if (
+      isExportedBinding(statement.id, names) ||
+      (statement.type === "VariableDeclaration" &&
+        statement.declarations.some((item: AnyNode) => isExportedBinding(item.id, names)))
+    ) {
+      keepApiDoc(statement.start);
+      declarations.add(statement);
+    }
+  }
+  return declarations;
+}
+
+function isExportedBinding(pattern: AnyNode, names: Set<string>): boolean {
+  switch (pattern?.type) {
+    case "Identifier":
+      return names.has(pattern.name);
+    case "ObjectPattern":
+      return pattern.properties.some((property: AnyNode) =>
+        isExportedBinding(
+          property.type === "RestElement" ? property.argument : property.value,
+          names,
+        ),
+      );
+    case "ArrayPattern":
+      return pattern.elements.some((element: AnyNode) => isExportedBinding(element, names));
+    case "AssignmentPattern":
+      return isExportedBinding(pattern.left, names);
+    case "RestElement":
+      return isExportedBinding(pattern.argument, names);
+    default:
+      return false;
+  }
+}
+
+function belongsToExport(node: AnyNode, exported: Set<AnyNode>): boolean {
   for (let current = node; current; current = parentOf(current)) {
-    if (current.type === "ExportNamedDeclaration" || current.type === "ExportDefaultDeclaration")
-      return true;
+    if (exported.has(current)) return true;
+    const parent = parentOf(current);
+    if (!parent) return false;
+    if (
+      parent.type === "BlockStatement" ||
+      parent.type === "StaticBlock" ||
+      ((parent.type === "ArrowFunctionExpression" || parent.type === "FunctionExpression") &&
+        parent.body === current)
+    )
+      return false;
   }
   return false;
 }

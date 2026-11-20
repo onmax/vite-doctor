@@ -143,9 +143,7 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
-  const registeredRules = new Map(
-    registry.rules.map((rule) => [rule.meta.id, rule.meta.execution]),
-  );
+  const registeredRules = new Map(registry.rules.map((rule) => [rule.meta.id, rule]));
   const ruleConfigs = resolveRuleConfigs(registeredRules, config.rules);
   const activations = resolveRulePackActivations(registry.packs, project);
   const ruleOverrides = resolveRuleOverrides(config, registry, registeredRules);
@@ -659,7 +657,7 @@ function rulePackKey(pack: RulePack): string {
 }
 
 function resolveRuleConfigs(
-  registeredRules: ReadonlyMap<string, DoctorRule["meta"]["execution"]>,
+  registeredRules: ReadonlyMap<string, DoctorRule>,
   rules: Record<string, DoctorRuleConfig> = {},
 ): Map<string, ResolvedRuleConfig> {
   const resolved = new Map<string, ResolvedRuleConfig>();
@@ -674,6 +672,7 @@ function resolveRuleConfigs(
       continue;
     }
     if (isSeverity(value)) {
+      registeredRules.get(ruleId)?.validateOptions?.(undefined);
       resolved.set(ruleId, { enabled: true, severity: value });
       continue;
     }
@@ -681,6 +680,7 @@ function resolveRuleConfigs(
       const [severity, options] = value;
       if (!isSeverity(severity))
         throw doctorInternalDiagnostics.DOC0019({ ruleId, severity: String(severity) });
+      registeredRules.get(ruleId)?.validateOptions?.(options);
       resolved.set(ruleId, { enabled: true, severity, options });
       continue;
     }
@@ -710,7 +710,7 @@ function assertConfigurableDoctorRule(ruleId: string, value: DoctorRuleConfig): 
 function resolveRuleOverrides(
   config: DoctorConfig,
   registry: RuleRegistry,
-  registeredRules: ReadonlyMap<string, DoctorRule["meta"]["execution"]>,
+  registeredRules: ReadonlyMap<string, DoctorRule>,
 ): ResolvedRuleOverride[] {
   if (!config.overrides?.length) return [];
   return (config.overrides ?? []).map((override, index) => {
@@ -741,7 +741,7 @@ function resolveRuleOverrides(
       throw invalid("`rules` must be an object keyed by Rule ID.");
     const resolved = resolveRuleConfigs(registeredRules, rules);
     for (const [ruleId, ruleConfig] of resolved) {
-      const execution = registeredRules.get(ruleId);
+      const execution = registeredRules.get(ruleId)?.meta.execution;
       if (ruleConfig.options !== undefined && execution && execution !== "file")
         throw invalid(
           `set options for ${execution} Rule "${ruleId}" in top-level \`rules\`, not in an override.`,

@@ -12,15 +12,23 @@ export interface ScriptComment {
   end: number;
 }
 
+const orderedComments = new WeakMap<ScriptComment[], ScriptComment[]>();
+
 /** Comments of every script block in the file, in source order, at file offsets. */
 export function scriptComments(ctx: RuleContext): ScriptComment[] {
   const comments = ctx.file.scriptAst?.comments as ScriptComment[] | undefined;
   if (!comments?.length) return [];
+  const cached = orderedComments.get(comments);
+  if (cached) return cached;
+  let ordered = comments;
   for (let index = 1; index < comments.length; index++) {
-    if (comments[index]!.start < comments[index - 1]!.start)
-      return comments.toSorted((a, b) => a.start - b.start);
+    if (comments[index]!.start < comments[index - 1]!.start) {
+      ordered = comments.toSorted((a, b) => a.start - b.start);
+      break;
+    }
   }
-  return comments;
+  orderedComments.set(comments, ordered);
+  return ordered;
 }
 
 export function isTypeScriptSource(ctx: RuleContext): boolean {

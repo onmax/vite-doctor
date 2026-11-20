@@ -5,6 +5,9 @@ import { describe, expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.js";
 import type { DoctorRunOptions } from "../../../src/core/config.js";
 import { runViteDoctor } from "../../../src/doctor.js";
+import type { RuleContext } from "../../../src/core/index.js";
+import { safetyNoteComments } from "../../../src/rule-packs/typescript/rules/safety-comment.js";
+import { scriptComments } from "../../../src/rule-packs/typescript/rules/shared.js";
 import {
   noComments,
   requireSafetyCommentForTypeAssertion,
@@ -102,6 +105,128 @@ describe("kept comments", () => {
 });
 
 describe("reported comments", () => {
+  test("keeps local exports and their members, not implementation-local declarations", async () => {
+    const source = `
+/** Opens a store. */
+function open() {}
+/** A store. */
+class Store {
+  /** Reads the store. */
+  read() {}
+}
+export { open as start }
+export default Store
+export function work() {
+  class Local {
+    /** Internal implementation. */
+    read() {}
+  }
+}
+/** Not a local export. */
+function remote() {}
+export { remote } from './elsewhere'
+`;
+    expect(await reported({ "src/index.ts": source })).toEqual([
+      "/** Internal implementation. */",
+      "/** Not a local export. */",
+    ]);
+  });
+
+  test.each([
+    ["/* note\n */", "function read() { return /* note\n */ 42; }", "line breaks"],
+    ["/**/", "const/**/value = 1", "space"],
+  ])("reports %s with guidance to preserve syntax", async (comment, source, guidance) => {
+    const [found] = await run({ "src/index.ts": source });
+    expect(source.slice(found!.range!.start, found!.range!.end)).toBe(comment);
+    expect(found!.suggestion).toContain(guidance);
+  });
+
+  test("keeps Vue tooling pragmas and Doctor directives after prose", async () => {
+    const source = `<script setup lang="ts">
+/* Prose first.
+ * doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- explained
+ */ const n = input as number
+// Ordinary script note.
+</script>
+<template>
+  <!-- @vue-expect-error -->
+  <div>{{ missing }}</div>
+  <!-- @vue-skip -->
+  <div />
+  <!-- @vue-generic {string} -->
+  <Widget />
+  <!-- Prose first.
+    doctor-disable-next-line vue/example -- explained
+  -->
+  <span />
+  <!-- Ordinary template note. -->
+</template>`;
+    expect(await reported({ "src/App.vue": source })).toEqual([
+      "// Ordinary script note.",
+      "<!-- Ordinary template note. -->",
+    ]);
+  });
+
+  test("keeps semantic JSDoc and ESLint exports independently of API docs", async () => {
+    expect(
+      await reported(
+        {
+          "src/index.cjs": `/* exported boot */
+function boot() {}
+class Store { /** @readonly */ value = 1 }
+/** Ordinary docs. */
+module.exports = Store`,
+        },
+        { apiDocs: "none" },
+      ),
+    ).toEqual(["/** Ordinary docs. */"]);
+    expect(
+      await reported(
+        {
+          "src/index.ts": `/** @internal */
+export const hidden = 1
+/** Ordinary docs. */
+export const visible = 2`,
+        },
+        { apiDocs: "none" },
+      ),
+    ).toEqual(["/** Ordinary docs. */"]);
+  });
+
+  test("reads a SAFETY comment run a linear number of times", () => {
+    let reads = 0;
+    const line = "// UNSAFETY: ordinary prose\n";
+    const count = 100;
+    const comments = Array.from({ length: count }, (_, index) => ({
+      type: "Line" as const,
+      start: index * line.length,
+      end: (index + 1) * line.length - 1,
+      get value() {
+        reads++;
+        return " UNSAFETY: ordinary prose";
+      },
+    }));
+    expect(safetyNoteComments(line.repeat(count), comments).size).toBe(0);
+    expect(reads).toBeLessThanOrEqual(2 * count);
+  });
+
+  test.each([true, false])("checks comment ordering once per file (sorted: %s)", (sorted) => {
+    let reads = 0;
+    const comments = Array.from({ length: 100 }, (_, index) => ({
+      get start() {
+        reads++;
+        return sorted ? index : 100 - index;
+      },
+    }));
+    const ctx = { file: { scriptAst: { comments } } } as unknown as RuleContext;
+    const ordered = scriptComments(ctx);
+    expect(ordered.map((comment) => comment.start)).toEqual(
+      Array.from({ length: 100 }, (_, index) => (sorted ? index : index + 1)),
+    );
+    const initialReads = reads;
+    for (let run = 0; run < 100; run++) expect(scriptComments(ctx)).toBe(ordered);
+    expect(reads).toBe(initialReads);
+  });
   test.each([
     [
       "line comment before an exported function",
@@ -208,6 +333,11 @@ describe("reported comments", () => {
 });
 
 describe("options", () => {
+  test("rejects invalid options even when there are no scanned source files", async () => {
+    await expect(
+      runFixture({}, { config: { rules: { [ruleId]: ["warn", { allow: ["("] }] } } }),
+    ).rejects.toMatchObject({ code: "DOC0020" });
+  });
   test("allow keeps comments a project's tools read", async () => {
     const source = [
       "// provider-message-match: the binding has no code.",

@@ -1066,6 +1066,8 @@ export type RuleVisitor = RuleLifecycleHooks &
 
 export interface DoctorRule {
   meta: RuleMeta;
+  /** Validate an explicit rule configuration before selecting or scanning files. */
+  validateOptions?(options: unknown): void;
   create(ctx: RuleContext): RuleVisitor | void | Promise<RuleVisitor | void>;
 }
 

@@ -138,7 +138,8 @@ function hasSafetyCommentBefore(
   return false;
 }
 
-const safetyNote = /(?:^|[^\p{L}\p{N}_])SAFETY\s*:\s*\S/u;
+const safetyNote = /(?:^|[^\p{L}\p{N}_])(SAFETY)\s*:(?=\s*\S)/du;
+const safetyMarkers = new RegExp(safetyNote, "dgu");
 
 function commentText(comment: ScriptComment): string {
   return comment.value.replace(/^[ \t]*\*[ \t]?/gm, "");
@@ -160,12 +161,18 @@ export function safetyNoteComments(source: string, comments: ScriptComment[]): S
     const gap =
       index < comments.length && source.slice(comments[index - 1]!.end, comments[index]!.start);
     if (gap !== false && /^\s*$/.test(gap) && !hasBlankLine(gap)) continue;
-    for (let first = index - 1; first >= runStart; first--) {
-      if (!comments[first]!.value.includes("SAFETY")) continue;
-      const run = comments.slice(first, index);
-      if (!safetyNote.test(run.map(commentText).join("\n"))) continue;
-      for (const comment of run) notes.add(comment);
-      break;
+    const texts = comments.slice(runStart, index).map(commentText);
+    let marker = -1;
+    for (const match of texts.join("\n").matchAll(safetyMarkers)) {
+      marker = match.indices![1]![0];
+    }
+    if (marker >= 0) {
+      let first = runStart;
+      while (marker >= texts[first - runStart]!.length) {
+        marker -= texts[first - runStart]!.length + 1;
+        first++;
+      }
+      for (; first < index; first++) notes.add(comments[first]!);
     }
     runStart = index;
   }
