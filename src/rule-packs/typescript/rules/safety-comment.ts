@@ -1,6 +1,6 @@
 import type { RuleContext } from "../../../core/index.js";
 import { createTypeAliasResolver } from "./type-aliases.js";
-import { parentOf, type AnyNode } from "./shared.js";
+import { parentOf, scriptComments, type AnyNode, type ScriptComment } from "./shared.js";
 
 const commentOwners = new Set([
   "ExpressionStatement",
@@ -30,14 +30,18 @@ const plainGap = /^\s*;?\s*$/;
 
 export function hasSafetyComment(ctx: RuleContext, node: AnyNode): boolean {
   const source = ctx.file.text;
-  const comments = (ctx.file.scriptAst?.comments as AnyNode[] | undefined) ?? [];
+  const comments = scriptComments(ctx);
   return (
     hasSafetyCommentBeforeOwner(source, comments, node) ||
     hasSafetyCommentAboveLine(source, comments, node)
   );
 }
 
-function hasSafetyCommentBeforeOwner(source: string, comments: AnyNode[], node: AnyNode): boolean {
+function hasSafetyCommentBeforeOwner(
+  source: string,
+  comments: ScriptComment[],
+  node: AnyNode,
+): boolean {
   let current = node;
   while (current && current.type !== "Program") {
     const parent = parentOf(current);
@@ -62,7 +66,11 @@ function hasSafetyCommentBeforeOwner(source: string, comments: AnyNode[], node: 
 
 // A comment on its own line covers the next line, unless an unrelated statement starts
 // on that line before the assertion or the assertion sits in a loop body or `else` branch.
-function hasSafetyCommentAboveLine(source: string, comments: AnyNode[], node: AnyNode): boolean {
+function hasSafetyCommentAboveLine(
+  source: string,
+  comments: ScriptComment[],
+  node: AnyNode,
+): boolean {
   const lineStart = source.lastIndexOf("\n", node.start - 1) + 1;
   const lineCode =
     lineStart + /^[ \t]*(?:;[ \t]*)?/.exec(source.slice(lineStart, node.start))![0].length;
@@ -96,7 +104,7 @@ function continuesBranch(node: AnyNode, parent: AnyNode): boolean {
 
 function hasSafetyCommentBefore(
   source: string,
-  comments: AnyNode[],
+  comments: ScriptComment[],
   start: number,
   firstGap: RegExp,
   standalone = false,
@@ -117,17 +125,51 @@ function hasSafetyCommentBefore(
     if (!gapPattern.test(gap)) return false;
     // The branch token can occupy its own line, but neither side may contain a blank line.
     const gaps = gapPattern === branchToken ? gap.split(/;|\?\?|\?|:|&&|\|\||else\b/) : [gap];
-    if (gaps.some((part) => (part.match(/\r\n|\r|\n/g)?.length ?? 0) > 1)) return false;
+    if (gaps.some(hasBlankLine)) return false;
     if (standalone) {
       const lineStart = source.lastIndexOf("\n", comment.start - 1) + 1;
       if (!/^\s*$/.test(source.slice(lineStart, comment.start))) return false;
     }
-    value = `${comment.value.replace(/^[ \t]*\*[ \t]?/gm, "")}\n${value}`;
-    if (/(?:^|[^\p{L}\p{N}_])SAFETY\s*:\s*\S/u.test(value)) return true;
+    value = `${commentText(comment)}\n${value}`;
+    if (safetyNote.test(value)) return true;
     before = comment.start;
     gapPattern = /^\s*$/;
   }
   return false;
+}
+
+const safetyNote = /(?:^|[^\p{L}\p{N}_])SAFETY\s*:\s*\S/u;
+
+function commentText(comment: ScriptComment): string {
+  return comment.value.replace(/^[ \t]*\*[ \t]?/gm, "");
+}
+
+function hasBlankLine(gap: string): boolean {
+  return (gap.match(/\r\n|\r|\n/g)?.length ?? 0) > 1;
+}
+
+/**
+ * Every comment that `hasSafetyComment` could read as the SAFETY note of an assertion: in each
+ * run of comments with no code or blank line between them, the last comment that starts a
+ * SAFETY note and the comments after it.
+ */
+export function safetyNoteComments(source: string, comments: ScriptComment[]): Set<ScriptComment> {
+  const notes = new Set<ScriptComment>();
+  let runStart = 0;
+  for (let index = 1; index <= comments.length; index++) {
+    const gap =
+      index < comments.length && source.slice(comments[index - 1]!.end, comments[index]!.start);
+    if (gap !== false && /^\s*$/.test(gap) && !hasBlankLine(gap)) continue;
+    for (let first = index - 1; first >= runStart; first--) {
+      if (!comments[first]!.value.includes("SAFETY")) continue;
+      const run = comments.slice(first, index);
+      if (!safetyNote.test(run.map(commentText).join("\n"))) continue;
+      for (const comment of run) notes.add(comment);
+      break;
+    }
+    runStart = index;
+  }
+  return notes;
 }
 
 export function isVuePropTypeAssertion(ctx: RuleContext, node: AnyNode): boolean {

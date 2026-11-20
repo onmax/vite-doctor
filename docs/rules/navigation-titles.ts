@@ -156,6 +156,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "typescript/evidence/no-widen-then-assert": "Widen then assert",
   "typescript/performance/no-array-filter-map": "filter().map()",
   "typescript/performance/no-reduce-accumulator-copy": "Reducer copies",
+  "typescript/strict/no-comments": "Comments",
   "typescript/strict/require-safety-comment-for-type-assertion": "Assertion notes",
 
   "vite/assets/no-dynamic-new-url": "Dynamic new URL",

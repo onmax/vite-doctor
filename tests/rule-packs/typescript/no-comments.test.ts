@@ -1,0 +1,387 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "pathe";
+import { describe, expect, test } from "vite-plus/test";
+import { runProjectFixture } from "../../../src/core/testkit.js";
+import type { DoctorRunOptions } from "../../../src/core/config.js";
+import { runViteDoctor } from "../../../src/doctor.js";
+import {
+  noComments,
+  requireSafetyCommentForTypeAssertion,
+  typescriptRulePack,
+} from "../../../src/rule-packs/typescript/index.js";
+import { cases as safetyCases } from "./safety-comment-cases.js";
+
+const ruleId = "typescript/strict/no-comments";
+// Vitest reads this pragma anywhere in a test file's text, string literals included.
+const vitestEnvironment = ["@vitest", "environment"].join("-");
+
+async function run(files: Record<string, string>, options?: Record<string, unknown>) {
+  const result = await runProjectFixture({
+    framework: "vite",
+    rules: [noComments],
+    files,
+    config: { extends: [], rules: { [ruleId]: options ? ["warn", options] : "warn" } },
+  });
+  return result.diagnostics.filter((item) => item.ruleId === ruleId);
+}
+
+async function reported(files: Record<string, string>, options?: Record<string, unknown>) {
+  const [file, source] = Object.entries(files)[0]!;
+  const found = await run({ [file]: source }, options);
+  return found.map((item) => source.slice(item.range!.start, item.range!.end));
+}
+
+describe("kept comments", () => {
+  test.each([
+    ["exported function JSDoc", "/** Opens a store. */\nexport function open() {}"],
+    [
+      "exported interface member",
+      "export interface Store {\n  /** The store name. */\n  name: string\n}",
+    ],
+    [
+      "exported union members",
+      'export type Mode =\n  /** Reads only. */\n  | "read"\n  /** Reads and writes. */\n  | "write"',
+    ],
+    ["exported class member", "export class Store {\n  /** Opens it. */\n  open() {}\n}"],
+    ["exported enum member", "export enum Mode {\n  /** Reads only. */\n  Read,\n}"],
+    ["exported default", "/** The store. */\nexport default {}"],
+    ["@ts-expect-error", "// @ts-expect-error the value is untyped\nconst a: string = 1"],
+    ["@ts-nocheck", "// @ts-nocheck\nexport {}"],
+    [
+      "SAFETY note and its continuation",
+      '// SAFETY: the schema checked the value,\n// and JSON has no other shape.\nconst b = JSON.parse("1") as number',
+    ],
+    ["block SAFETY note", "/* SAFETY: checked. */\nconst b = input as number"],
+    ["JSDoc SAFETY note", "/**\n * SAFETY: checked.\n */\nconst b = input as number"],
+    ["pure annotation", "const e = /*#__PURE__*/ Object.freeze({})"],
+    ["at pure annotation", "const e = /* @__PURE__ */ Object.freeze({})"],
+    ["no side effects", "/* #__NO_SIDE_EFFECTS__ */\nexport function f() {}"],
+    ["vite-ignore", 'const env = () => import(/* @vite-ignore */ "#env")'],
+    ["webpack magic", 'const page = () => import(/* webpackChunkName: "page" */ "./page")'],
+    ["vue-ignore", "// @vue-ignore\nexport {}"],
+    ["eslint directive", "// eslint-disable-next-line no-console\nconsole.log(1)"],
+    ["eslint block", "/* eslint-disable */\nexport {}"],
+    ["oxlint directive", "// oxlint-disable-next-line no-console\nconsole.log(1)"],
+    ["doctor directive", "// doctor-disable-next-line typescript/x -- reason\nexport {}"],
+    ["nuxt-doctor directive", "// nuxt-doctor-disable-next-line nuxt/x -- reason\nexport {}"],
+    ["vite-doctor directive", "// vite-doctor-enable\nexport {}"],
+    ["prettier-ignore", "// prettier-ignore\nconst m = [1,0,\n0,1]"],
+    ["oxfmt-ignore", "// oxfmt-ignore\nconst m = [1]"],
+    ["dprint-ignore", "// dprint-ignore\nconst m = [1]"],
+    ["biome-ignore", "// biome-ignore lint: reason\nconst m = [1]"],
+    ["eslint globals", "/* global window */\nexport {}"],
+    ["v8 ignore", "/* v8 ignore next */\nexport {}"],
+    ["c8 ignore", "/* c8 ignore next */\nexport {}"],
+    ["istanbul ignore", "/* istanbul ignore next */\nexport {}"],
+    ["vitest environment", `// ${vitestEnvironment} node\nexport {}`],
+    ["JSDoc vitest environment", `/** ${vitestEnvironment} node */\nexport {}`],
+    ["jsx pragma", "/** @jsxImportSource vue */\nexport {}"],
+    ["triple-slash reference", '/// <reference types="vite/client" />\nexport {}'],
+    ["preserved banner", "/*! Store v1 */\nexport {}"],
+    ["license", "/**\n * @license MIT\n */\nexport {}"],
+    ["preserve", "/* @preserve keep */\nexport {}"],
+    ["source map", "export {}\n//# sourceMappingURL=index.js.map"],
+  ])("%s", async (_name, source) => {
+    expect(await reported({ "src/index.ts": source })).toEqual([]);
+  });
+
+  test("skips the hashbang line", async () => {
+    expect(await reported({ "src/cli.ts": "#!/usr/bin/env node\nconsole.log(1)\n" })).toEqual([]);
+  });
+
+  test("keeps typed JSDoc in JavaScript files only", async () => {
+    const typed =
+      "/** @type {number} */\nconst f = 1\n/** @template T\n * @param {T} value\n */\nfunction id(value) { return value }\n";
+    expect(await reported({ "scripts/example.mjs": typed })).toEqual([]);
+    expect(await reported({ "src/index.ts": typed })).toEqual([
+      "/** @type {number} */",
+      "/** @template T\n * @param {T} value\n */",
+    ]);
+  });
+});
+
+describe("reported comments", () => {
+  test.each([
+    [
+      "line comment before an exported function",
+      "// Opens a store.\nexport function open() {}",
+      ["// Opens a store."],
+    ],
+    [
+      "JSDoc on a declaration that is not exported",
+      "/** Not exported. */\nfunction close() {}",
+      ["/** Not exported. */"],
+    ],
+    [
+      "comment on an object member",
+      "const codes = {\n  // A store answered with an error.\n  other: 1,\n}",
+      ["// A store answered with an error."],
+    ],
+    [
+      "note after a SAFETY note and code",
+      "// SAFETY: checked.\nconst h = 1\n// A later note.\nconst i = 2",
+      ["// A later note."],
+    ],
+    [
+      "note separated from a SAFETY note by a blank line",
+      "// SAFETY: checked.\n\n// A later note.\nconst i = input as number",
+      ["// A later note."],
+    ],
+    [
+      "note before a SAFETY note",
+      "// A note.\n// SAFETY: checked.\nconst i = input as number",
+      ["// A note."],
+    ],
+    ["trailing note", "const j = 1 // trailing note", ["// trailing note"]],
+    [
+      "JSDoc separated by code",
+      "/** Opens. */\nconst x = 1; export function open() {}",
+      ["/** Opens. */"],
+    ],
+  ])("%s", async (_name, source, expected) => {
+    expect(await reported({ "src/index.ts": source })).toEqual(expected);
+  });
+
+  test("reports comments in JavaScript files", async () => {
+    expect(await reported({ "scripts/build.mjs": "// Build it.\nexport const a = 1\n" })).toEqual([
+      "// Build it.",
+    ]);
+    expect(
+      await reported({ "scripts/build.cjs": "/* Build it. */\nmodule.exports = 1\n" }),
+    ).toEqual(["/* Build it. */"]);
+  });
+
+  test("reports JSX comments", async () => {
+    expect(
+      await reported({ "src/Widget.tsx": "export const W = () => <div>{/* jsx note */}</div>\n" }),
+    ).toEqual(["/* jsx note */"]);
+    expect(
+      await reported({ "src/Widget.jsx": "export const W = () => <div>{/* jsx note */}</div>\n" }),
+    ).toEqual(["/* jsx note */"]);
+  });
+
+  test("reports both Vue script blocks and the template, and keeps directives", async () => {
+    const source = [
+      '<script lang="ts">',
+      "// plain script note",
+      "export default {}",
+      "</script>",
+      '<script setup lang="ts">',
+      "// setup note",
+      "const count = 1 /* trailing */",
+      "// SAFETY: checked above.",
+      "const n = count as number",
+      "</script>",
+      "<template>",
+      "  <!-- template note -->",
+      "  <div>",
+      "    <!-- eslint-disable-next-line vue/no-v-html -->",
+      '    <p v-html="n" />',
+      "  </div>",
+      "</template>",
+      "<style>",
+      "/* style note */",
+      ".a { color: red }",
+      "</style>",
+      "",
+    ].join("\n");
+    expect(await reported({ "src/App.vue": source })).toEqual([
+      "// plain script note",
+      "// setup note",
+      "/* trailing */",
+      "<!-- template note -->",
+    ]);
+  });
+
+  test("reports template comments in a Vue file without script", async () => {
+    expect(
+      await reported({ "src/App.vue": "<template>\n  <!-- note -->\n  <div />\n</template>\n" }),
+    ).toEqual(["<!-- note -->"]);
+  });
+
+  test("reports comments in a JavaScript Vue script", async () => {
+    expect(
+      await reported({ "src/App.vue": "<script setup>\n// note\nconst a = 1\n</script>\n" }),
+    ).toEqual(["// note"]);
+  });
+});
+
+describe("options", () => {
+  test("allow keeps comments a project's tools read", async () => {
+    const source = [
+      "// provider-message-match: the binding has no code.",
+      "const c = 1",
+      'const env = () => import(/* @vite-ignore */ /* @vitehub-env */ "#env")',
+      "const codes = {",
+      "  // Runtime errors.",
+      "  EXAMPLE_FAILED: 1,",
+      "}",
+      "// Not allowed.",
+      "",
+    ].join("\n");
+    expect(await reported({ "src/index.ts": source })).toHaveLength(4);
+    expect(
+      await reported(
+        { "src/index.ts": source },
+        {
+          allow: [
+            "^\\s*provider-message-match:",
+            "^\\s*@vitehub-",
+            "^\\s*[A-Z][\\w -]{2,40}errors?\\.?\\s*$",
+          ],
+        },
+      ),
+    ).toEqual(["// Not allowed."]);
+  });
+
+  test("allow applies to template comments", async () => {
+    expect(
+      await reported(
+        { "src/App.vue": "<template>\n  <!-- @island -->\n  <div />\n</template>\n" },
+        { allow: ["^\\s*@island"] },
+      ),
+    ).toEqual([]);
+  });
+
+  test('apiDocs "none" reports JSDoc on exported declarations', async () => {
+    const source = "/** Opens a store. */\nexport function open() {}";
+    expect(await reported({ "src/index.ts": source }, { apiDocs: "none" })).toEqual([
+      "/** Opens a store. */",
+    ]);
+    expect(await reported({ "src/index.ts": source }, { apiDocs: "exported" })).toEqual([]);
+  });
+
+  test("overrides narrow apiDocs by path", async () => {
+    const source = "/** Opens a store. */\nexport function open() {}\n";
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noComments],
+      files: { "packages/store/src/index.ts": source, "scripts/open.ts": source },
+      config: {
+        extends: [],
+        rules: { [ruleId]: ["warn", { apiDocs: "none" }] },
+        overrides: [
+          { files: ["packages/*/src/**"], rules: { [ruleId]: ["warn", { apiDocs: "exported" }] } },
+        ],
+      },
+    });
+    expect(result.diagnostics.map((item) => item.file)).toEqual([
+      expect.stringMatching(/scripts\/open\.ts$/),
+    ]);
+  });
+
+  test.each([
+    [{ allow: ["("] }, "`allow[0]` is not a valid regular expression"],
+    [{ allow: "x" }, "`allow` must be an array"],
+    [{ apiDocs: "all" }, '`apiDocs` must be "exported" or "none"'],
+    [{ allowed: [] }, "unknown option `allowed`"],
+  ])("rejects invalid options %j", async (options, reason) => {
+    await expect(run({ "src/index.ts": "// note\nexport {}" }, options)).rejects.toMatchObject({
+      code: "DOC0020",
+      message: expect.stringContaining(reason),
+    });
+  });
+});
+
+describe("fingerprints", () => {
+  const base = [
+    "export function load() {",
+    "  // first note",
+    "  const a = 1",
+    "  // second note",
+    "  const b = 2",
+    "  return a + b",
+    "}",
+    "",
+  ].join("\n");
+  const fingerprints = async (source: string) =>
+    (await run({ "src/a.ts": source })).map((item) => item.fingerprint);
+
+  test("survive a rename of the enclosing function and a declaration inserted above", async () => {
+    const before = await fingerprints(base);
+    expect(before).toHaveLength(2);
+    expect(await fingerprints(base.replace("load", "loadAll"))).toEqual(before);
+    expect(await fingerprints(base.replace("  // first", "  const z = 0\n  // first"))).toEqual(
+      before,
+    );
+  });
+
+  test("change when the comment is reworded", async () => {
+    const [first, second] = await fingerprints(base);
+    const reworded = await fingerprints(base.replace("first note", "first note, reworded"));
+    expect(reworded[0]).not.toBe(first);
+    expect(reworded[1]).toBe(second);
+  });
+
+  test("differ for identical comments in one file", async () => {
+    const found = await fingerprints(base.replace("second note", "first note"));
+    expect(found).toHaveLength(2);
+    expect(new Set(found).size).toBe(2);
+  });
+});
+
+describe("TS0008 SAFETY notes", () => {
+  test.each(safetyCases.filter(([, , expected]) => expected === 0))(
+    "neither Rule reports %s",
+    async (_name, source) => {
+      const result = await runProjectFixture({
+        framework: "vite",
+        rules: [noComments, requireSafetyCommentForTypeAssertion],
+        files: { "index.ts": source },
+      });
+      expect(result.diagnostics.map((item) => item.code)).toEqual([]);
+    },
+  );
+});
+
+describe("presets", () => {
+  test("is in no Preset", () => {
+    expect(typescriptRulePack.rules.map((rule) => rule.meta.id)).toContain(ruleId);
+    expect(typescriptRulePack.presets.recommended).not.toContain(ruleId);
+    expect(typescriptRulePack.presets.strict).not.toContain(ruleId);
+    expect(typescriptRulePack.presets.strict).toEqual(
+      typescriptRulePack.rules.map((rule) => rule.meta.id).filter((id) => id !== ruleId),
+    );
+  });
+
+  const files = { "src/index.ts": "// A note.\nexport const a = 1\n" };
+
+  test("--strict does not report TS0017", async () => {
+    const result = await runFixture(files, { extends: ["strict"] });
+    expect(result.diagnostics.map((item) => item.code)).not.toContain("TS0017");
+  });
+
+  test("naming the Rule in config turns it on", async () => {
+    const result = await runFixture(files, { config: { rules: { [ruleId]: "warn" } } });
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toHaveLength(1);
+  });
+
+  test("naming the Rule in config turns it on in a JavaScript-only project", async () => {
+    const result = await runFixture(
+      { "src/index.js": "// A note.\nexport const a = 1\n" },
+      { config: { rules: { [ruleId]: "warn" } } },
+    );
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toHaveLength(1);
+  });
+});
+
+async function runFixture(
+  files: Record<string, string>,
+  options: Pick<DoctorRunOptions, "config" | "extends"> = {},
+) {
+  const root = await mkdtemp(join(tmpdir(), "vite-doctor-no-comments-"));
+  try {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", devDependencies: { vite: "^8.0.0" } }),
+    );
+    for (const [file, source] of Object.entries(files)) {
+      await mkdir(dirname(join(root, file)), { recursive: true });
+      await writeFile(join(root, file), source);
+    }
+    return await runViteDoctor({ root, cache: false, framework: "vite", ...options });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}

@@ -846,6 +846,11 @@ function renderRulePage(rule: RuleDocument) {
       "This opt-in rule requires a `doctor.config.ts` that registers `createNuxtAuthorizationReviewExtension`. See the [Nuxt authorization review setup](/nuxt#optional-api-authorization-review) before running it.",
       "",
     );
+  if (rule.id === "typescript/strict/no-comments")
+    lines.push(
+      'This opt-in rule is in no preset, `strict` included. Turn it on with `"rules": { "typescript/strict/no-comments": "warn" }` in `doctor.config.json`. See [Delete comments no tool reads](/typescript#delete-comments-no-tool-reads) for what it keeps, its options, and how to adopt it with `--since`.',
+      "",
+    );
   lines.push("## Run this rule", "", "```bash", renderRuleCommand(rule), "```", "");
   if (rule.why) lines.push("## Why it matters", "", escapeMarkdownText(rule.why), "");
   if (rule.recommendedReplacement) {
