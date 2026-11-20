@@ -316,6 +316,7 @@ describe("handlers marked public on purpose", () => {
     "// nuxt-doctor: public-route\nexport default defineHandler(() => ({ count: 3 }))",
     "// nuxt-doctor: public-route -- the sign-in page shows the user count\nexport default defineHandler(() => ({ count: 3 }))",
     "/* nuxt-doctor: public-route */\nexport default defineHandler(() => ({ count: 3 }))",
+    "/*\r\n  nuxt-doctor: public-route -- public count\r\n*/\r\nexport default defineHandler(() => ({ count: 3 }))",
     "/**\n * Lists the tools this visitor may use. Each tool checks access on its own routes.\n * nuxt-doctor: public-route\n */\nexport default defineHandler(() => ({ count: 3 }))",
   ])("accepts a marked handler: %s", async (handler) => {
     expect(
@@ -328,8 +329,16 @@ describe("handlers marked public on purpose", () => {
 
   test.each([
     ["in a string", "export default defineHandler(() => 'nuxt-doctor: public-route')"],
+    [
+      "at the start of a template literal line",
+      "export default defineHandler(() => `\n// nuxt-doctor: public-route\n`)",
+    ],
     ["with another name", "// nuxt-doctor: public-routes\nexport default defineHandler(() => [])"],
     ["inside code", "export default defineHandler(() => [/* nuxt-doctor: public-route */])"],
+    [
+      "in a trailing line comment",
+      "export default defineHandler(() => 'é😀') // nuxt-doctor: public-route",
+    ],
   ])("reports a handler with the marker %s", async (_, handler) => {
     expect(await reported({ "server/api/users/count.get.ts": handler })).toEqual([
       "server/api/users/count.get.ts",
