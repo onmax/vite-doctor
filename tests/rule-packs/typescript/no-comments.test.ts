@@ -726,6 +726,48 @@ export const view = <Widget>a{/* note */}b</Widget>
     });
   });
 
+  test("does not reactivate a shadowed JSDoc type in checkJs", async () => {
+    const file = "src/index.js";
+    const annotation = "/** @type {number} */";
+    const shadow = "/** Labels shown on the start page. */";
+    const declaration = 'const label = "start";';
+    const protectedSource = [annotation, "", shadow, declaration, ""].join("\n");
+    const source = `${protectedSource}/** Ordinary docs. */\nconst other = label;\n`;
+    expect(typeScriptDiagnostics(file, source)).toEqual([]);
+    expect(typeScriptDiagnostics(file, source.replace(shadow, ""))).toEqual([2322]);
+
+    const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+    expect(after[file]).toBe(`${protectedSource}const other = label;\n`);
+    expect(typeScriptDiagnostics(file, after[file]!)).toEqual([]);
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
+      { fix: undefined },
+    ]);
+  });
+
+  test("does not activate a TypeScript suppression across an ordinary block comment", async () => {
+    const file = "src/index.ts";
+    const barrier = "/* The error below is intentional. */";
+    const source = [
+      "// @ts-expect-error",
+      "// @license MIT",
+      "// @preserve This notice.",
+      barrier,
+      'const label: number = "start";',
+      "",
+    ].join("\n");
+    const before = typeScriptDiagnostics(file, source).sort((left, right) => left - right);
+    expect(before).toEqual([2322, 2578]);
+    expect(typeScriptDiagnostics(file, source.replace(barrier, ""))).toEqual([]);
+
+    const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+    expect(typeScriptDiagnostics(file, after[file]!).sort((left, right) => left - right)).toEqual(
+      before,
+    );
+    expect(after[file]).toContain(barrier);
+    const diagnostics = result.diagnostics.filter((item) => item.code === "TS0017");
+    expect(diagnostics).toMatchObject([{ fix: undefined }]);
+  });
+
   test.each([
     ["v8", "\n"],
     ["c8", "\r\n"],
@@ -766,6 +808,15 @@ export const view = <Widget>a{/* note */}b</Widget>
     });
   });
 });
+
+function typeScriptDiagnostics(file: string, source: string) {
+  const options = { allowJs: true, checkJs: true, noEmit: true, noLib: true, types: [] };
+  const host = ts.createCompilerHost(options);
+  host.getSourceFile = (name, languageVersion) =>
+    name === file ? ts.createSourceFile(name, source, languageVersion) : undefined;
+  const program = ts.createProgram([file], options, host);
+  return program.getSemanticDiagnostics(program.getSourceFile(file)).map(({ code }) => code);
+}
 
 function parseErrors(file: string, text: string) {
   if (!file.endsWith(".vue")) return parseSync(file, text).errors.map((error) => error.message);

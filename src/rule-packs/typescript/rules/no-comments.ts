@@ -31,6 +31,7 @@ const toolDirective =
   /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|[#@]__(?:PURE|NO_SIDE_EFFECTS)__|@vite-ignore|webpack[A-Z]\w*\s*:|@vitest-environment|(?:v8|c8|istanbul)\s+ignore|@jsx|[#@]\s*source(?:Mapping)?URL=|!)/;
 const lineScopedDirective =
   /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|(?:v8|c8|istanbul)\s+ignore|@vue-ignore\b)/;
+const typeScriptSuppression = /^[\s*/]*@ts-(?:ignore|expect-error)/;
 const countedCoverage = /^[\s*]*(?:v8|c8)\s+ignore\s+next\s+(\d+)\b/;
 const templateDirective =
   /^\s*@vue-(?:(?:ignore|expect-error|skip)(?![-\w])|generic\s*\{[\s\S]*\}\s*$)/;
@@ -174,36 +175,56 @@ export const noComments = createRule({
     visitor["Program:exit"] = () => {
       const safetyNotes = safetyNoteComments(source, comments);
       const lineScopedComments: LineScopedComment[] = [];
-      const found = comments.filter((comment) => {
+      const found: ScriptComment[] = [];
+      const fixable: ScriptComment[] = [];
+      let previousEnd = 0;
+      let retainedJsDoc = false;
+      let precedingTypeScriptSuppression = false;
+      for (const comment of comments) {
         const { value, end } = comment;
-        if (isToolComment(comment, javascript) || allowed(value)) {
+        if (source.slice(previousEnd, comment.start).trim() !== "") {
+          retainedJsDoc = false;
+          precedingTypeScriptSuppression = false;
+        }
+        previousEnd = end;
+        const jsDoc = isJsDoc(comment);
+        const custom = allowed(value);
+        if (isToolComment(comment, javascript) || custom) {
           const count = countedCoverage.exec(value)?.[1];
           if (count !== undefined) {
             lineScopedComments.push({ end, lineBreaks: Math.max(2, Number(count) + 1) });
           } else if (
             lineScopedDirective.test(value) ||
             containsInlineSuppression(value) ||
-            allowed(value)
+            custom
           ) {
             lineScopedComments.push({ end, lineBreaks: 2 });
           }
-          return false;
+          retainedJsDoc ||= jsDoc;
+          precedingTypeScriptSuppression ||= typeScriptSuppression.test(value);
+        } else if (apiDocs.has(comment)) {
+          retainedJsDoc = true;
+        } else if (!safetyNotes.has(comment) && !(comment.start === 0 && source.startsWith("#!"))) {
+          found.push(comment);
+          if (
+            !(jsDoc && retainedJsDoc) &&
+            !(comment.type === "Block" && precedingTypeScriptSuppression)
+          ) {
+            fixable.push(comment);
+          }
         }
-        return (
-          !(comment.start === 0 && source.startsWith("#!")) &&
-          !safetyNotes.has(comment) &&
-          !apiDocs.has(comment)
-        );
-      });
-      const deletions = scriptDeletions(comments, found, jsxComments);
+      }
+      const deletions = scriptDeletions(comments, fixable, jsxComments);
       const edits = planCommentDeletions(
         source,
         [...new Set(deletions.values())],
         lineScopedComments,
       );
       dropJsxTextChanges(source, jsxComments, deletions, edits);
-      for (const comment of found)
-        report(comment.start, comment.end, edits.get(deletions.get(comment)!));
+      for (const comment of found) {
+        const deletion = deletions.get(comment);
+        report(comment.start, comment.end, deletion && edits.get(deletion));
+      }
     };
     return visitor;
   },
