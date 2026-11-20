@@ -116,7 +116,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
           ctx.report(
             diagnostics.NUXT0037({
               why: `Route middleware only protects app navigation. This auth-sensitive server handler has no visible server guard: ${toPosixPath(relative(ctx.project.root, file))}.`,
-              fix: 'Await a server guard with the event at the top of the handler, or protect it with server middleware. If the handler already calls an app guard Doctor cannot follow, list it in this rule\'s guards option: ["warn", { guards: ["requireAdmin"] }].',
+              fix: 'Await a server guard with the event at the top of the handler, or protect it with server middleware. If the handler already calls an app guard Doctor cannot follow, list it in this rule\'s guards option: ["warn", { guards: ["requireAdmin"] }]. If the route is public on purpose, start a comment line in the handler file with nuxt-doctor: public-route -- <reason>.',
             }),
             {
               ruleId: "nuxt/middleware/no-route-middleware-api-security",
@@ -324,12 +324,21 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
             ) ||
               isSensitive(handler.route ?? "", handler.method, handler.route)) &&
             !isAuthProviderHandler(ctx, handler.file, handler.route) &&
+            !isMarkedPublic(ctx.fs.readText(handler.file) ?? "") &&
             !middleware.some((guard) => middlewareCoversHandler(guard, handler)) &&
             !hasUnconditionalAuthGuard(ctx, handler.file),
         )
         .map((handler) => handler.file),
     ),
   ];
+}
+
+// The marker must open a comment line, so a string or an inline comment does not count.
+const PUBLIC_ROUTE_MARKER =
+  /^[ \t]*(?:\/\/|\/\*+|\*)[ \t]*nuxt-doctor:[ \t]*public-route(?![\w-])/m;
+
+function isMarkedPublic(text: string): boolean {
+  return PUBLIC_ROUTE_MARKER.test(text);
 }
 
 function middlewareCoversHandler(

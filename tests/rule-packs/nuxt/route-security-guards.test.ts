@@ -310,3 +310,63 @@ describe("auth provider mounts re-exported from a package", () => {
     ).toEqual(["server/api/admin.ts"]);
   });
 });
+
+describe("handlers marked public on purpose", () => {
+  test.each([
+    "// nuxt-doctor: public-route\nexport default defineHandler(() => ({ count: 3 }))",
+    "// nuxt-doctor: public-route -- the sign-in page shows the user count\nexport default defineHandler(() => ({ count: 3 }))",
+    "/* nuxt-doctor: public-route */\nexport default defineHandler(() => ({ count: 3 }))",
+    "/**\n * Lists the tools this visitor may use. Each tool checks access on its own routes.\n * nuxt-doctor: public-route\n */\nexport default defineHandler(() => ({ count: 3 }))",
+  ])("accepts a marked handler: %s", async (handler) => {
+    expect(
+      await reported({
+        "server/api/users/count.get.ts": handler,
+        "server/api/users/index.get.ts": "export default defineHandler(() => [])",
+      }),
+    ).toEqual(["server/api/users/index.get.ts"]);
+  });
+
+  test.each([
+    ["in a string", "export default defineHandler(() => 'nuxt-doctor: public-route')"],
+    ["with another name", "// nuxt-doctor: public-routes\nexport default defineHandler(() => [])"],
+    ["inside code", "export default defineHandler(() => [/* nuxt-doctor: public-route */])"],
+  ])("reports a handler with the marker %s", async (_, handler) => {
+    expect(await reported({ "server/api/users/count.get.ts": handler })).toEqual([
+      "server/api/users/count.get.ts",
+    ]);
+  });
+
+  test("accepts a marked handler that the manifest resolves to a route", async () => {
+    const result = await runProjectFixture({
+      framework: "nuxt",
+      dependencies: H3_V2,
+      rules: [noRouteMiddlewareApiSecurity],
+      files: {
+        ...middleware,
+        "node_modules/tools/dist/session.mjs":
+          "// nuxt-doctor: public-route\nexport default defineHandler(() => ({}))",
+        "node_modules/tools/dist/account.mjs": "export default defineHandler(() => ({}))",
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: "2100-01-01T00:00:00.000Z",
+          resolvedServerHandlers: [
+            {
+              file: "node_modules/tools/dist/session.mjs",
+              route: "/_tools/session",
+              method: "get",
+            },
+            {
+              file: "node_modules/tools/dist/account.mjs",
+              route: "/_tools/account",
+              method: "get",
+            },
+          ],
+        }),
+      },
+    });
+    expect(
+      result.diagnostics
+        .filter((diagnostic) => diagnostic.ruleId === RULE_ID)
+        .map((diagnostic) => diagnostic.file?.replace(/^.*?(?=node_modules\/)/, "")),
+    ).toEqual(["node_modules/tools/dist/account.mjs"]);
+  });
+});
