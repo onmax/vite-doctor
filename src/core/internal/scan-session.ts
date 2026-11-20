@@ -66,6 +66,11 @@ export interface ScanSession {
   registry: RuleRegistry;
   project: ProjectInfo;
   files: ScanFileEntry[];
+  /**
+   * Authored test code, selected only when an enabled file Rule declares `meta.includeTestFiles`.
+   * Only those Rules run on it; Project Inventory, graphs, and analyses never see it.
+   */
+  testFiles: ScanFileEntry[];
   gitChanges?: AvailableGitChangeInventory;
   /**
    * Set when the run reports only some files (`changed`, `since`, or `affectedFiles`), so it can
@@ -73,6 +78,8 @@ export interface ScanSession {
    */
   scopedReport: boolean;
   handles: SourceFileHandle[];
+  testHandles: SourceFileHandle[];
+  /** Source and test file handles. */
   handlesByPath: Map<string, SourceFileHandle>;
   sourceTexts: Map<string, string | null>;
   facts: FileFacts[];
@@ -162,7 +169,10 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
 
   started = performance.now();
   const cache = new DoctorCache(root, cacheDirectory(root, config), options.cache !== false);
-  const sourceInventory = await selectSourceInventory(root, config, options, project, cache);
+  const sourceInventory = await selectSourceInventory(root, config, options, project, {
+    memo: cache,
+    testFiles: runsFileRules(options) && selection.rules.some(analyzesTestFiles),
+  });
   if (sourceInventory.git?.status === "unavailable") {
     throw new GitChangeUnavailableError(sourceInventory.git);
   }
@@ -178,14 +188,16 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     cacheDirectory(root, config),
   );
   cache.bindInputs(ruleInputs, (path) => handlesByPath.get(path)?.hash);
-  return {
+  const session: ScanSession = {
     ...sessionBase,
     registry,
     project,
     files,
+    testFiles: sourceInventory.testFiles,
     gitChanges: sourceInventory.git,
     scopedReport: Boolean(sourceInventory.git || options.affectedFiles),
     handles: [],
+    testHandles: [],
     handlesByPath,
     sourceTexts: new Map(),
     facts: [],
@@ -215,6 +227,28 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     ruleTimings: new Map(),
     fileRuleRuns: new Map(),
   };
+  // Only opted-in Rules read test files, so a test file none of them runs on stays unparsed and
+  // uncounted, the same as an excluded file.
+  const testRules = selection.rules.filter(analyzesTestFiles);
+  session.testFiles = session.testFiles.filter((file) =>
+    testRules.some((rule) => runsRuleOnTestFile(session, rule, file)),
+  );
+  return session;
+}
+
+function runsRuleOnTestFile(session: ScanSession, rule: DoctorRule, file: ScanFileEntry): boolean {
+  if (rule.meta.sourceKinds && !rule.meta.sourceKinds.includes(file.sourceKind)) return false;
+  if (fileRuleConfig(session, rule.meta.id, file.path).enabled) return true;
+  return rule.meta.reportScope === "project" && ruleInScope(session, rule.meta.id, file.path);
+}
+
+/** `--analyses` without `--rules` runs no file Rules. */
+export function runsFileRules(options: DoctorRunOptions): boolean {
+  return !options.analyses || Boolean(options.rules);
+}
+
+export function analyzesTestFiles(rule: DoctorRule): boolean {
+  return (rule.meta.execution ?? "file") === "file" && rule.meta.includeTestFiles === true;
 }
 
 export function markSession(
@@ -252,7 +286,7 @@ export function persistScanCache(session: ScanSession): void {
   // Scoped-report runs and Rule subset runs skip work, so they keep the results they did not touch.
   const subset = Boolean(options.rules) || Boolean(options.analyses) || session.scopedReport;
   session.cache.persist({
-    files: session.files.length,
+    files: session.files.length + session.testFiles.length,
     activeRuleKeys: subset
       ? new Set(
           session.scopedReport || (options.analyses && !options.rules)

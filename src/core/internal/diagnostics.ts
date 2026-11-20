@@ -37,12 +37,13 @@ import {
   type InlineSuppression,
   type StaleBaseline,
 } from "./diagnostic-policy.js";
-import { hasRuleSourceCoverage } from "./facts.js";
+import { hasRuleSourceCoverage, isTestFileHandle } from "./facts.js";
 import { collectExternalGitChanges } from "./git-change-ranges.js";
 import { lineColumnAt } from "./line-index.js";
 import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
 import {
+  analyzesTestFiles,
   fileRuleConfig,
   markSession,
   topLevelRuleConfig,
@@ -154,6 +155,7 @@ function reportResolvedBaselineEntries(
     )
       return false;
     const handle = session.handlesByPath.get(path);
+    if (handle && isTestFileHandle(handle) && !analyzesTestFiles(rule)) return false;
     return handle ? hasRuleSourceCoverage(rule, handle) : !existsSync(path);
   });
   if (!resolved.length) return;
@@ -663,7 +665,9 @@ function suppressionEntryBounds(
 async function applyReportEligibility(session: ScanSession): Promise<void> {
   if (!session.scopedReport) return;
   const eligibility = new Map<string, ScanFileEntry["reportEligibility"]>(
-    session.files.map((file) => [file.path, file.reportEligibility] as const),
+    [...session.files, ...session.testFiles].map(
+      (file) => [file.path, file.reportEligibility] as const,
+    ),
   );
   // Files outside the source inventory, such as package.json and pnpm-lock.yaml, still carry
   // Diagnostics and manifest evidence, so their changed lines count like a source file's.
