@@ -47,6 +47,7 @@ const filterControlUi = {
 const fixItems = [
   { value: "all", label: "All fixes", icon: "i-lucide-list-filter" },
   { value: "safe", label: "Auto-fix", icon: fixIcon("safe") },
+  { value: "unsafe", label: "Unsafe fix", icon: fixIcon("unsafe") },
   { value: "suggestion", label: "Suggestion", icon: fixIcon("suggestion") },
   { value: "no", label: "No fix", icon: fixIcon("no") },
 ] as const;

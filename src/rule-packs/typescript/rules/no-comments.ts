@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   createRule,
+  type FixEdit,
   type RuleContext,
   type RuleVisitor,
   type ScriptAstNodeType,
@@ -8,6 +9,13 @@ import {
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
 import { containsInlineSuppression } from "../../../core/internal/suppression-syntax.js";
 import { diagnostics } from "../diagnostics.js";
+import {
+  condensedAround,
+  dropJsxTextChanges,
+  planCommentDeletions,
+  scriptDeletions,
+  type CommentDeletion,
+} from "./comment-deletion.js";
 import { safetyNoteComments } from "./safety-comment.js";
 import {
   isTypeScriptSource,
@@ -32,6 +40,8 @@ const checkJsTag =
 const reason = "This comment does not match a known directive or an allowed comment pattern.";
 const removal =
   "When removing a script or JSX comment, preserve its line breaks and use a space if the comment separates tokens.";
+const deleteMessage =
+  "Delete the comment. Classify it first: move a decision to the decision log and file an issue for a workaround before deleting it.";
 
 const apiMembers = [
   "AccessorProperty",
@@ -77,7 +87,7 @@ export const noComments = createRule({
     category: "strict",
     severity: "warn",
     confidence: "proven",
-    fixable: false,
+    fixable: "unsafe",
     docsUrl: "https://vite-doctor.onmax.me/typescript#delete-comments-no-tool-reads",
     aiGeneratedCodeRisk: "high",
   },
@@ -89,20 +99,32 @@ export const noComments = createRule({
     const template = ctx.file.isVueSfc && source.includes("<!--");
     if (!comments.length && !template) return;
 
-    const report = (start: number, end: number) =>
+    const report = (start: number, end: number, edit?: FixEdit) =>
       ctx.report(
         diagnostics.TS0017({
           why: reason,
           fix: `Check whether a project tool reads it. If so, add an allow pattern. Otherwise, record decisions or file issues for workarounds before removing it. ${removal}`,
         }),
-        { range: ctx.range(start, end), fingerprint: fingerprint(ctx, source.slice(start, end)) },
+        {
+          range: ctx.range(start, end),
+          fingerprint: fingerprint(ctx, source.slice(start, end)),
+          fix: edit ? { kind: "unsafe", message: deleteMessage, edits: [edit] } : undefined,
+        },
       );
     const allowed = (text: string) => options.allow.some((pattern) => pattern.test(text));
 
     const visitor: RuleVisitor = {};
     if (template) {
+      const found: Array<{ deletion: CommentDeletion; fixable: boolean }> = [];
+      let pre = 0;
       visitor.template = {
-        comment(node) {
+        element(node) {
+          if (node.tag === "pre") pre++;
+        },
+        "element:exit"(node) {
+          if (node.tag === "pre") pre--;
+        },
+        comment(node, parent) {
           if (
             toolDirective.test(node.content) ||
             templateDirective.test(node.content) ||
@@ -110,7 +132,20 @@ export const noComments = createRule({
             allowed(node.content)
           )
             return;
-          report(node.loc.start.offset, node.loc.end.offset);
+          const deletion = {
+            start: node.loc.start.offset,
+            end: node.loc.end.offset,
+            kind: "template" as const,
+          };
+          found.push({ deletion, fixable: !pre && condensedAround(parent.children, node) });
+        },
+        "root:exit"() {
+          const edits = planCommentDeletions(
+            source,
+            found.filter((item) => item.fixable).map((item) => item.deletion),
+          );
+          for (const { deletion } of found)
+            report(deletion.start, deletion.end, edits.get(deletion));
         },
       };
     }
@@ -135,15 +170,27 @@ export const noComments = createRule({
       };
     }
 
+    const jsxComments: AnyNode[] = [];
+    visitor.JSXExpressionContainer = (node: AnyNode) => {
+      if (node.expression.type === "JSXEmptyExpression") jsxComments.push(node);
+    };
+
     const javascript = !isTypeScriptSource(ctx);
     visitor["Program:exit"] = () => {
       const safetyNotes = safetyNoteComments(source, comments);
-      for (const comment of comments) {
-        if (comment.start === 0 && source.startsWith("#!")) continue;
-        if (safetyNotes.has(comment) || apiDocs.has(comment)) continue;
-        if (isToolComment(comment, javascript) || allowed(comment.value)) continue;
-        report(comment.start, comment.end);
-      }
+      const found = comments.filter(
+        (comment) =>
+          !(comment.start === 0 && source.startsWith("#!")) &&
+          !safetyNotes.has(comment) &&
+          !apiDocs.has(comment) &&
+          !isToolComment(comment, javascript) &&
+          !allowed(comment.value),
+      );
+      const deletions = scriptDeletions(comments, found, jsxComments);
+      const edits = planCommentDeletions(source, [...new Set(deletions.values())]);
+      dropJsxTextChanges(source, jsxComments, deletions, edits);
+      for (const comment of found)
+        report(comment.start, comment.end, edits.get(deletions.get(comment)!));
     };
     return visitor;
   },

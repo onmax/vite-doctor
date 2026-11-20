@@ -1,5 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { parse as parseSfc } from "@vue/compiler-sfc";
+import { parseSync } from "oxc-parser";
 import { dirname, join } from "pathe";
 import { describe, expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.js";
@@ -495,6 +497,235 @@ describe("presets", () => {
     expect(result.diagnostics.filter((item) => item.code === "TS0017")).toHaveLength(1);
   });
 });
+
+describe("unsafe fix", () => {
+  const script = `// Leading note.
+
+import { a } from "./a"
+
+export function f(b: number) {
+  // Alone in a block.
+
+  const c = a + b // trailing note
+  const d = a /* inline */ + b
+  const e = a/**/+b
+  const g = [a,/* first */b]
+  /*
+   * Multi-line note.
+   */
+  const h = c
+
+  // First of a run.
+  // Second of a run.
+
+  // After a blank line.
+  return /* before the value */ c + d + e + g.length + h
+}
+
+function asi() {
+  return /* a line break
+  */ 1
+}
+
+export const kept = asi() // eslint-disable-line no-console
+`;
+  const jsx = `export function Widget() {
+  return (
+    <ul>
+      {/* Alone on its line. */}
+      <li>first</li>
+      <li>{/* inline */}</li>
+      <li>
+        text
+        {/* between words */}
+        more
+      </li>
+      <li>
+        text
+        {/* first between words */}
+        {/* second between words */}
+        more
+      </li>
+      <li>
+        {/* above the text */}
+        last
+      </li>
+    </ul>
+  )
+}
+`;
+  const vue = `<script setup lang="ts">
+// Setup note.
+const count = 1 /* trailing */
+</script>
+
+<template>
+  <!-- Alone in the template. -->
+  <div>
+    <span>a</span><!-- touching --><span>b</span>
+    <span>c</span> <!-- spaced --> <span>d</span>
+    {{ count }}
+    <!-- next to text -->
+    <!-- eslint-disable-next-line vue/no-v-html -->
+    <p v-html="count" />
+  </div>
+  <pre>
+    <!-- in pre -->
+  </pre>
+</template>
+`;
+  const crlf = "// Note.\r\nconst a = 1 // trailing\r\nexport { a }\r\n";
+  const files = {
+    "src/index.ts": script,
+    "src/Widget.tsx": jsx,
+    "src/App.vue": vue,
+    "src/crlf.ts": crlf,
+  };
+
+  test("plain --fix leaves every comment in place", async () => {
+    const { after, result } = await fixFixture(files, { fix: true });
+    expect(after).toEqual(files);
+    expect(result.fixes?.edits ?? 0).toBe(0);
+  });
+
+  test("--unsafe-fix deletes the comments it can delete cleanly", async () => {
+    const { after, result } = await fixFixture(files, { unsafeFix: true });
+    expect(after["src/index.ts"]).toBe(`import { a } from "./a"
+
+export function f(b: number) {
+  const c = a + b
+  const d = a + b
+  const e = a +b
+  const g = [a,b]
+  const h = c
+
+  return c + d + e + g.length + h
+}
+
+function asi() {
+  return /* a line break
+  */ 1
+}
+
+export const kept = asi() // eslint-disable-line no-console
+`);
+    expect(after["src/Widget.tsx"]).toBe(`export function Widget() {
+  return (
+    <ul>
+      <li>first</li>
+      <li></li>
+      <li>
+        text
+        {/* between words */}
+        more
+      </li>
+      <li>
+        text
+        {/* first between words */}
+        {/* second between words */}
+        more
+      </li>
+      <li>
+        last
+      </li>
+    </ul>
+  )
+}
+`);
+    expect(after["src/App.vue"]).toBe(`<script setup lang="ts">
+const count = 1
+</script>
+
+<template>
+  <div>
+    <span>a</span><span>b</span>
+    <span>c</span> <!-- spaced --> <span>d</span>
+    {{ count }}
+    <!-- next to text -->
+    <!-- eslint-disable-next-line vue/no-v-html -->
+    <p v-html="count" />
+  </div>
+  <pre>
+    <!-- in pre -->
+  </pre>
+</template>
+`);
+    expect(after["src/crlf.ts"]).toBe("const a = 1\r\nexport { a }\r\n");
+
+    const remaining = result.diagnostics.filter((item) => item.code === "TS0017");
+    expect(remaining.map((item) => item.fix)).toEqual(remaining.map(() => undefined));
+    expect(remaining).toHaveLength(7);
+    for (const [file, text] of Object.entries(after)) expect(parseErrors(file, text)).toEqual([]);
+  });
+
+  test.each([
+    ["a comment that separates two words", "const/**/value = 1\n", "const value = 1\n"],
+    ["a comment before a closing bracket", "f(a /* x */)\n", "f(a)\n"],
+    ["the last comment in a file", "const a = 1\n\n// End.\n", "const a = 1\n"],
+    [
+      "a comment at the end of a block",
+      "if (a) {\n  b()\n\n  // End.\n}\n",
+      "if (a) {\n  b()\n}\n",
+    ],
+    ["a comment between blank lines", "a()\n\n// x\n\nb()\n", "a()\n\nb()\n"],
+  ])("deletes %s", async (_name, source, expected) => {
+    const { after } = await fixFixture({ "src/index.ts": source }, { unsafeFix: true });
+    expect(after["src/index.ts"]).toBe(expected);
+  });
+
+  test("offers no fix where a block comment holds the line break after return", async () => {
+    const [found] = await run({ "src/index.ts": "function f() {\n  return /* x\n  */ 1\n}\n" });
+    expect(found!.fix).toBeUndefined();
+  });
+
+  test("marks the fix unsafe", async () => {
+    expect(noComments.meta.fixable).toBe("unsafe");
+    const [found] = await run({ "src/index.ts": "// note\nexport {}\n" });
+    expect(found!.fix).toMatchObject({
+      kind: "unsafe",
+      edits: [{ range: { start: 0, end: 8 }, text: "" }],
+    });
+  });
+});
+
+function parseErrors(file: string, text: string) {
+  if (!file.endsWith(".vue")) return parseSync(file, text).errors.map((error) => error.message);
+  const { descriptor, errors } = parseSfc(text, { filename: file });
+  const script = descriptor.scriptSetup ?? descriptor.script;
+  return [
+    ...errors.map((error) => error.message),
+    ...(script ? parseSync(`${file}.ts`, script.content).errors.map((error) => error.message) : []),
+  ];
+}
+
+async function fixFixture(
+  files: Record<string, string>,
+  flags: Pick<DoctorRunOptions, "fix" | "unsafeFix">,
+) {
+  const root = await mkdtemp(join(tmpdir(), "vite-doctor-no-comments-fix-"));
+  try {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", devDependencies: { vite: "^8.0.0", vue: "^3.5.0" } }),
+    );
+    for (const [file, source] of Object.entries(files)) {
+      await mkdir(dirname(join(root, file)), { recursive: true });
+      await writeFile(join(root, file), source);
+    }
+    const result = await runViteDoctor({
+      root,
+      cache: false,
+      framework: "vite",
+      config: { extends: [], rules: { [ruleId]: "warn" } },
+      ...flags,
+    });
+    const after: Record<string, string> = {};
+    for (const file of Object.keys(files)) after[file] = await readFile(join(root, file), "utf8");
+    return { after, result };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 async function runFixture(
   files: Record<string, string>,
