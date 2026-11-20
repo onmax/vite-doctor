@@ -116,7 +116,7 @@ export const noRouteMiddlewareApiSecurity = createRule({
           ctx.report(
             diagnostics.NUXT0037({
               why: `Route middleware only protects app navigation. This auth-sensitive server handler has no visible server guard: ${toPosixPath(relative(ctx.project.root, file))}.`,
-              fix: 'Await a server guard with the event at the top of the handler, or protect it with server middleware. If the handler already calls an app guard Doctor cannot follow, list it in this rule\'s guards option: ["warn", { guards: ["requireAdmin"] }].',
+              fix: 'Await a server guard with the event at the top of the handler, or protect it with server middleware. If the handler already calls an app guard Doctor cannot follow, list it in this rule\'s guards option: ["warn", { guards: ["requireAdmin"] }]. If the route is public on purpose, start a comment line in the handler file with nuxt-doctor: public-route -- <reason>.',
             }),
             {
               ruleId: "nuxt/middleware/no-route-middleware-api-security",
@@ -271,13 +271,13 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
     manifest?.isCurrent && configurationCurrent ? (manifest.serverHandlers ?? []) : [];
   const middleware = resolvedHandlers
     ? resolvedHandlers.filter(
-        (handler) => handler.middleware && hasUnconditionalAuthGuard(ctx, handler.file),
+        (handler) => handler.middleware && hasGuardOrPublicMarker(ctx, handler.file),
       )
     : [];
   if (
     !resolvedHandlers &&
     [...(dirs?.middleware ?? []), ...layerFiles.middleware].some((file) =>
-      hasUnconditionalAuthGuard(ctx, file),
+      hasGuardOrPublicMarker(ctx, file),
     )
   )
     return [];
@@ -325,11 +325,30 @@ function unguardedSensitiveHandlers(ctx: RuleContext, configurationCurrent: bool
               isSensitive(handler.route ?? "", handler.method, handler.route)) &&
             !isAuthProviderHandler(ctx, handler.file, handler.route) &&
             !middleware.some((guard) => middlewareCoversHandler(guard, handler)) &&
-            !hasUnconditionalAuthGuard(ctx, handler.file),
+            !hasGuardOrPublicMarker(ctx, handler.file, { allowPublicMarker: true }),
         )
         .map((handler) => handler.file),
     ),
   ];
+}
+
+const PUBLIC_ROUTE_MARKER = /^[ \t]*nuxt-doctor:[ \t]*public-route(?![\w-])/;
+const LINE_BREAK = /[\n\r\u2028\u2029]/;
+
+function isMarkedPublic(
+  source: string,
+  comments: ReturnType<typeof parseScriptSync>["comments"],
+): boolean {
+  return comments.some((comment) =>
+    comment.value.split(LINE_BREAK).some((line, index) => {
+      const text = comment.type === "Block" ? line.replace(/^[ \t]*\*+/, "") : line;
+      if (!PUBLIC_ROUTE_MARKER.test(text)) return false;
+      if (index > 0) return true;
+      let before = comment.start - 1;
+      while (source[before] === " " || source[before] === "\t") before--;
+      return before < 0 || LINE_BREAK.test(source[before]!);
+    }),
+  );
 }
 
 function middlewareCoversHandler(
@@ -842,10 +861,16 @@ function handlerFromFactory(ctx: RuleContext, program: AnyNode, factory: AnyNode
   )?.value;
 }
 
-function hasUnconditionalAuthGuard(ctx: RuleContext, file: string): boolean {
+function hasGuardOrPublicMarker(
+  ctx: RuleContext,
+  file: string,
+  { allowPublicMarker = false } = {},
+): boolean {
   try {
-    const parsed = parseScriptSync(file, readProjectFile(ctx.fs, file));
+    const source = readProjectFile(ctx.fs, file);
+    const parsed = parseScriptSync(file, source);
     if (parsed.errors.length) return false;
+    if (allowPublicMarker && isMarkedPublic(source, parsed.comments)) return true;
     const resolver = guardResolver(ctx);
     const module = { file, program: parsed.program };
     const declaration: AnyNode = parsed.program.body.find(

@@ -1125,10 +1125,10 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/middleware/no-route-middleware-api-security": {
     description:
-      'Reports auth-sensitive server handlers, such as server/api/admin/** or server/api/me.get.ts, in projects whose auth route middleware suggests the API is protected, when the handler has no visible server guard. A handler counts as guarded when its defineEventHandler, eventHandler, defineHandler, defineValidatedHandler (including the handler method of its options object), or cached handler awaits a guard with the event before any control flow, either as a statement or as const user = await guard(event). Built-in guard names are requireUserSession, requireAuth, requireMcpAdminToken, authGuard, and protectRoute. Doctor also follows imported and auto-imported app guards into server/utils and accepts a function that throws a 401 or 403 HTTPError or createError on a failing branch, or that first awaits another guard, and never returns nothing, null, or false. Name guards Doctor cannot follow, such as ones from a package, in the guards option under rules in doctor.config.json or the doctor key of nuxt.config: "nuxt/middleware/no-route-middleware-api-security": ["warn", { "guards": ["requireAdmin"] }]. Named guards still have to be awaited with the event before any control flow. An auth catch-all route that only re-exports a default handler from an installed auth package that depends on Better Auth, such as export { default } from "vite-hub/auth/server", counts as the provider mount.',
+      'Reports auth-sensitive server handlers, such as server/api/admin/** or server/api/me.get.ts, in projects whose auth route middleware suggests the API is protected, when the handler has no visible server guard. A handler counts as guarded when its defineEventHandler, eventHandler, defineHandler, defineValidatedHandler (including the handler method of its options object), or cached handler awaits a guard with the event before any control flow, either as a statement or as const user = await guard(event). Built-in guard names are requireUserSession, requireAuth, requireMcpAdminToken, authGuard, and protectRoute. Doctor also follows imported and auto-imported app guards into server/utils and accepts a function that throws a 401 or 403 HTTPError or createError on a failing branch, or that first awaits another guard, and never returns nothing, null, or false. Name guards Doctor cannot follow, such as ones from a package, in the guards option under rules in doctor.config.json or the doctor key of nuxt.config: "nuxt/middleware/no-route-middleware-api-security": ["warn", { "guards": ["requireAdmin"] }]. Named guards still have to be awaited with the event before any control flow. An auth catch-all route that only re-exports a default handler from an installed auth package that depends on Better Auth, such as export { default } from "vite-hub/auth/server", counts as the provider mount. A handler that is public on purpose, such as a public count or a list of tools that check access on their own routes, says so with a comment line that starts with nuxt-doctor: public-route, followed by -- and the reason. The marker must start its own comment line, so a string or an inline comment does not count.',
     why: "Nuxt route middleware runs only during app navigation. Requests to server/api go straight to Nitro, so an API handler without its own server guard is public even when every page that calls it is protected.",
     recommendedReplacement:
-      "Call a server guard at the top of the handler, or protect the route with server middleware. If the handler already calls an app guard Doctor cannot follow, add its name to the rule's guards option.",
+      "Call a server guard at the top of the handler, or protect the route with server middleware. If the handler already calls an app guard Doctor cannot follow, add its name to the rule's guards option. If the route is public on purpose, add a nuxt-doctor: public-route comment with the reason to the handler file.",
     examples: [
       {
         title: "Keep API authorization on the server",
@@ -1137,6 +1137,14 @@ export const ruleDocumentationMetadata = {
           "// server/api/admin/reports.get.ts\nexport default defineHandler(() => listReports())",
         valid:
           "// server/api/admin/reports.get.ts\nexport default defineHandler(async (event) => {\n  await requireAdmin(event)\n  return listReports()\n})",
+      },
+      {
+        title: "Mark a route that is public on purpose",
+        language: "ts",
+        invalid:
+          "// server/api/users/count.get.ts\nexport default defineHandler(() => countUsers())",
+        valid:
+          "// server/api/users/count.get.ts\n// nuxt-doctor: public-route -- the sign-in page shows the user count\nexport default defineHandler(() => countUsers())",
       },
     ],
   },
