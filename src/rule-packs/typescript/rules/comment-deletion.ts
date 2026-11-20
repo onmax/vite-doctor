@@ -2,13 +2,12 @@ import type { FixEdit, TemplateChildNode } from "../../../core/index.js";
 import { parentOf, type AnyNode, type ScriptComment } from "./shared.js";
 
 /**
- * A reported script comment, a JSX expression container that holds only comments, or a Vue
- * template comment. Script comments sit between tokens; the others between rendered children.
+ * A reported script comment or a JSX expression container that holds only comments.
  */
 export interface CommentDeletion {
   start: number;
   end: number;
-  kind: "script" | "jsx" | "template";
+  kind: "script" | "jsx";
 }
 
 interface LineGroup {
@@ -33,8 +32,16 @@ const closingLine = /^(?:[})\]]|<\/)/;
 export function planCommentDeletions(
   source: string,
   deletions: readonly CommentDeletion[],
+  retainedToolComments: readonly ScriptComment[],
 ): Map<CommentDeletion, FixEdit> {
   const edits = new Map<CommentDeletion, FixEdit>();
+  const protectedBreaks = directiveLineBreaks(source, retainedToolComments);
+  const touchesProtectedBreak = (start: number, end: number) => {
+    if (!protectedBreaks.size) return false;
+    for (const { index } of source.slice(start, end).matchAll(/[\n\r\u2028\u2029]/g))
+      if (protectedBreaks.has(start + index)) return true;
+    return false;
+  };
   const wholeLines: LineGroup[] = [];
   for (const members of sameLineGroups(source, deletions)) {
     const first = members[0]!;
@@ -49,7 +56,10 @@ export function planCommentDeletions(
     const spaceAfter = /^[ \t]*/.exec(after)![0].length;
     if (!codeBefore && !codeAfter) {
       wholeLines.push({ members, start: lineStart, end: nextLineStart(source, lineEnd) });
-    } else if (first.kind !== "script" && members.length > 1) {
+    } else if (
+      (first.kind === "jsx" && members.length > 1) ||
+      touchesProtectedBreak(first.start, last.end)
+    ) {
       continue;
     } else if (!codeAfter) {
       partition(edits, members, first.start - spaceBefore, last.end);
@@ -57,10 +67,6 @@ export function planCommentDeletions(
       partition(edits, members, first.start, last.end + spaceAfter);
     } else if (first.kind === "jsx") {
       partition(edits, members, first.start, last.end);
-    } else if (first.kind === "template") {
-      // Whitespace beside a comment renders under `whitespace: "preserve"` and not under the
-      // default "condense", so only a comment that touches its neighbours is safe to delete.
-      if (!spaceBefore && !spaceAfter) partition(edits, members, first.start, last.end);
     } else if (!lineBreak.test(source.slice(first.start, last.end))) {
       // Code on both sides: a line break inside the comment could be the one that ends the
       // statement after `return` or `throw`, so only single-line comments get an edit.
@@ -72,8 +78,24 @@ export function planCommentDeletions(
       else partition(edits, members, first.start, last.end, spaceBefore || spaceAfter ? "" : " ");
     }
   }
-  for (const run of lineRuns(source, wholeLines)) planRun(source, run, edits);
+  for (const run of lineRuns(source, wholeLines))
+    planRun(source, run, edits, touchesProtectedBreak);
   return edits;
+}
+
+function directiveLineBreaks(source: string, comments: readonly ScriptComment[]): Set<number> {
+  const offsets = new Set<number>();
+  const breaks = /\r\n|[\n\r\u2028\u2029]/g;
+  for (const comment of comments) {
+    breaks.lastIndex = comment.end;
+    for (let line = 0; line < 2; line++) {
+      const boundary = breaks.exec(source);
+      if (!boundary) break;
+      offsets.add(boundary.index);
+      if (boundary[0] === "\r\n") offsets.add(boundary.index + 1);
+    }
+  }
+  return offsets;
 }
 
 /**
@@ -164,8 +186,8 @@ function keepsJsxText(
   const before = run
     .filter((node) => node.type === "JSXText")
     .map((node) => renderedJsxText(source.slice(node.start, node.end)))
-    .join("");
-  return renderedJsxText(after) === before;
+    .filter(Boolean);
+  return before.length <= 1 && renderedJsxText(after) === (before[0] ?? "");
 }
 
 // The whitespace rules JSX compilers apply to a text child.
@@ -186,16 +208,23 @@ function renderedJsxText(raw: string): string {
 }
 
 /**
- * Whether Vue's default whitespace condensing drops the whitespace on both sides of a template
- * comment, so deleting the comment and its line leaves the rendered children unchanged.
+ * Only remove a template comment that touches element or container boundaries on both sides.
+ * The condensed AST alone cannot tell us whether Vue's preserve mode would render whitespace.
  */
-export function condensedAround(
+export function touchesTemplateBoundaries(
+  source: string,
   siblings: readonly TemplateChildNode[],
   comment: TemplateChildNode,
 ): boolean {
   const index = siblings.indexOf(comment);
-  return [siblings[index - 1], siblings[index + 1]].every(
-    (sibling) => !sibling || sibling.type === 1 || sibling.type === 3,
+  const { start, end } = comment.loc;
+  const left = siblings[index - 1];
+  const right = siblings[index + 1];
+  return (
+    (left
+      ? left.type === 1 && left.loc.end.offset === start.offset
+      : source[start.offset - 1] === ">") &&
+    (right ? right.type === 1 && right.loc.start.offset === end.offset : source[end.offset] === "<")
   );
 }
 
@@ -226,7 +255,12 @@ function lineRuns(source: string, groups: LineGroup[]) {
 
 // Blank lines around and between the deleted lines join the nearest deleted group, so the edits
 // stay contiguous. One blank line survives unless the run touches a block or file edge.
-function planRun(source: string, run: LineGroup[], edits: Map<CommentDeletion, FixEdit>) {
+function planRun(
+  source: string,
+  run: LineGroup[],
+  edits: Map<CommentDeletion, FixEdit>,
+  touchesProtectedBreak: (start: number, end: number) => boolean,
+) {
   const fileStart = source.startsWith("\uFEFF") ? 1 : 0;
   let top = run[0]!.start;
   while (top > fileStart) {
@@ -256,6 +290,12 @@ function planRun(source: string, run: LineGroup[], edits: Map<CommentDeletion, F
     if (kept !== -1) starts[kept] = nextLineStart(source, lineEndAt(source, starts[kept]!));
     else if (bottom > run.at(-1)!.end) end = lineStartAt(source, bottom - 1);
   }
+  if (
+    run.some((group, index) =>
+      touchesProtectedBreak(starts[index]!, index === run.length - 1 ? end : group.end),
+    )
+  )
+    return;
   run.forEach((group, index) =>
     partition(edits, group.members, starts[index]!, index === run.length - 1 ? end : group.end),
   );
@@ -281,7 +321,7 @@ function partition(
 }
 
 function lineStartAt(source: string, offset: number): number {
-  const start = source.lastIndexOf("\n", offset - 1) + 1;
+  const start = offset > 0 ? source.lastIndexOf("\n", offset - 1) + 1 : 0;
   return start === 0 && source.startsWith("\uFEFF") ? 1 : start;
 }
 

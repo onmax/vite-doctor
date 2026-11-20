@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { parse as parseSfc } from "@vue/compiler-sfc";
 import { parseSync } from "oxc-parser";
 import { dirname, join } from "pathe";
+import ts from "typescript";
 import { describe, expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.js";
 import type { DoctorRunOptions } from "../../../src/core/config.js";
@@ -637,6 +638,7 @@ const count = 1
 </script>
 
 <template>
+  <!-- Alone in the template. -->
   <div>
     <span>a</span><span>b</span>
     <span>c</span> <!-- spaced --> <span>d</span>
@@ -654,7 +656,7 @@ const count = 1
 
     const remaining = result.diagnostics.filter((item) => item.code === "TS0017");
     expect(remaining.map((item) => item.fix)).toEqual(remaining.map(() => undefined));
-    expect(remaining).toHaveLength(7);
+    expect(remaining).toHaveLength(8);
     for (const [file, text] of Object.entries(after)) expect(parseErrors(file, text)).toEqual([]);
   });
 
@@ -676,6 +678,52 @@ const count = 1
   test("offers no fix where a block comment holds the line break after return", async () => {
     const [found] = await run({ "src/index.ts": "function f() {\n  return /* x\n  */ 1\n}\n" });
     expect(found!.fix).toBeUndefined();
+  });
+
+  test("reports a comment after a leading empty line without hanging", async () => {
+    expect(await reported({ "src/index.ts": "\n// note\nexport {}\n" })).toEqual(["// note"]);
+  });
+
+  test("keeps separate text children of a JSX component", async () => {
+    const file = "src/Widget.tsx";
+    const source = `declare function Widget(props: { children: [string, string] }): any
+export const view = <Widget>a{/* note */}b</Widget>
+`;
+    const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+    const output = ts.transpileModule(after[file]!, {
+      fileName: file,
+      compilerOptions: { jsx: ts.JsxEmit.React, jsxFactory: "h" },
+    }).outputText;
+    expect(output).toMatch(/h\(Widget, null,\s*"a",\s*"b"\)/);
+    expect(result.diagnostics.find((item) => item.code === "TS0017")).toMatchObject({
+      fix: undefined,
+    });
+  });
+
+  test("does not delete Vue template whitespace under preserve", async () => {
+    const file = "src/App.vue";
+    const source = `<template><div><span>A</span>
+<!-- note -->
+<span>B</span>
+<!-- on the left --><span>C</span><!-- on the right -->
+<span>D</span></div></template>`;
+    const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+    expect(after[file]).toBe(source);
+    const remaining = result.diagnostics.filter((item) => item.code === "TS0017");
+    expect(remaining.map((item) => item.fix)).toEqual([undefined, undefined, undefined]);
+  });
+
+  test("does not move code onto the target line of an exempt directive", async () => {
+    const file = "src/index.ts";
+    const protectedSource = "// eslint-disable-next-line no-console\n// note\nconsole.log(1)\n";
+    const { after, result } = await fixFixture(
+      { [file]: `${protectedSource}export {} // unrelated note\n` },
+      { unsafeFix: true },
+    );
+    expect(after[file]).toBe(`${protectedSource}export {}\n`);
+    expect(result.diagnostics.find((item) => item.code === "TS0017")).toMatchObject({
+      fix: undefined,
+    });
   });
 
   test("marks the fix unsafe", async () => {

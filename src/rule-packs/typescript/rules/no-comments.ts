@@ -10,11 +10,10 @@ import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-han
 import { containsInlineSuppression } from "../../../core/internal/suppression-syntax.js";
 import { diagnostics } from "../diagnostics.js";
 import {
-  condensedAround,
   dropJsxTextChanges,
   planCommentDeletions,
   scriptDeletions,
-  type CommentDeletion,
+  touchesTemplateBoundaries,
 } from "./comment-deletion.js";
 import { safetyNoteComments } from "./safety-comment.js";
 import {
@@ -115,7 +114,6 @@ export const noComments = createRule({
 
     const visitor: RuleVisitor = {};
     if (template) {
-      const found: Array<{ deletion: CommentDeletion; fixable: boolean }> = [];
       let pre = 0;
       visitor.template = {
         element(node) {
@@ -132,20 +130,13 @@ export const noComments = createRule({
             allowed(node.content)
           )
             return;
-          const deletion = {
-            start: node.loc.start.offset,
-            end: node.loc.end.offset,
-            kind: "template" as const,
-          };
-          found.push({ deletion, fixable: !pre && condensedAround(parent.children, node) });
-        },
-        "root:exit"() {
-          const edits = planCommentDeletions(
-            source,
-            found.filter((item) => item.fixable).map((item) => item.deletion),
-          );
-          for (const { deletion } of found)
-            report(deletion.start, deletion.end, edits.get(deletion));
+          const start = node.loc.start.offset;
+          const end = node.loc.end.offset;
+          const edit =
+            !pre && touchesTemplateBoundaries(source, parent.children, node)
+              ? { range: { start, end }, text: "" }
+              : undefined;
+          report(start, end, edit);
         },
       };
     }
@@ -178,16 +169,24 @@ export const noComments = createRule({
     const javascript = !isTypeScriptSource(ctx);
     visitor["Program:exit"] = () => {
       const safetyNotes = safetyNoteComments(source, comments);
-      const found = comments.filter(
-        (comment) =>
+      const retainedToolComments: ScriptComment[] = [];
+      const found = comments.filter((comment) => {
+        if (isToolComment(comment, javascript) || allowed(comment.value)) {
+          retainedToolComments.push(comment);
+          return false;
+        }
+        return (
           !(comment.start === 0 && source.startsWith("#!")) &&
           !safetyNotes.has(comment) &&
-          !apiDocs.has(comment) &&
-          !isToolComment(comment, javascript) &&
-          !allowed(comment.value),
-      );
+          !apiDocs.has(comment)
+        );
+      });
       const deletions = scriptDeletions(comments, found, jsxComments);
-      const edits = planCommentDeletions(source, [...new Set(deletions.values())]);
+      const edits = planCommentDeletions(
+        source,
+        [...new Set(deletions.values())],
+        retainedToolComments,
+      );
       dropJsxTextChanges(source, jsxComments, deletions, edits);
       for (const comment of found)
         report(comment.start, comment.end, edits.get(deletions.get(comment)!));
