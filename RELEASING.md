@@ -20,7 +20,7 @@ The workflow uses `GITHUB_TOKEN` and npm OIDC trusted publishing. It does not ne
 4. The workflow creates the version tag and GitHub release, then dispatches a run on that tag. That run verifies the tagged commit, builds and packs the root package, and publishes its tarball to npm with provenance. The publish job does not check out or build repository code.
 5. Confirm the version and dist-tag on npm. A GitHub release alone does not mean the npm package is available.
 
-`pnpm pack` builds Doctor through `prepack`. The docs workspace is not published. Branch and PR preview packages continue through `pkg-pr-new`.
+`pnpm pack` builds Doctor through `prepack`. The docs workspace is not published. PR and `main` preview packages continue through `pkg-pr-new`.
 
 The publish workflow preserves the existing dist-tag mapping: `-alpha` versions use `alpha`, `-beta` versions use `beta`, `-rc` versions use `rc`, and other versions use `latest`. This mapping does not add a prerelease-version selector to uppt's generated release PRs. Use only the supported prerelease channels when preparing a prerelease tag.
 

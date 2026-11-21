@@ -7,6 +7,11 @@ on:
         description: Git ref to verify
         required: false
         type: string
+      compatibility:
+        description: Run the OS and Node package matrix
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -52,6 +57,7 @@ jobs:
       - run: pnpm docs:build
 
   compatibility:
+    if: inputs.compatibility
     uses: ./.github/workflows/package-compatibility.yml
     with:
       ref: ${{ inputs.ref || github.sha }}

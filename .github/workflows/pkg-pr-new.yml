@@ -3,10 +3,12 @@ name: Preview Package
 on:
   pull_request:
   push:
-    branches:
-      - "**"
-    tags-ignore:
-      - "**"
+    branches: [main]
+
+# Give each main push its own group so newer pushes cannot replace pending previews.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -14,6 +16,12 @@ permissions:
 jobs:
   check:
     uses: ./.github/workflows/ci.yml
+    with:
+      compatibility: false
+
+  # Publishing only needs a passing build, so it does not wait for the OS matrix.
+  compatibility:
+    uses: ./.github/workflows/package-compatibility.yml
 
   publish:
     # Do not give fork pull requests a write-capable token while executing their package scripts.
