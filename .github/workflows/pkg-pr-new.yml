@@ -5,9 +5,9 @@ on:
   push:
     branches: [main]
 
-# Main pushes are never cancelled, so every main commit gets a preview package.
+# Give each main push its own group so newer pushes cannot replace pending previews.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
