@@ -142,7 +142,7 @@ export const noComments = createRule({
           const start = node.loc.start.offset;
           const end = node.loc.end.offset;
           const edit =
-            !pre && touchesTemplateBoundaries(source, parent.children, node)
+            !pre && touchesTemplateBoundaries(source, parent, node)
               ? { range: { start, end }, text: "" }
               : undefined;
           reports.push({ start, end, edit });

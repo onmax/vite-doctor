@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { parse as parseSfc } from "@vue/compiler-sfc";
+import { compileTemplate, parse as parseSfc } from "@vue/compiler-sfc";
 import { parseSync } from "oxc-parser";
 import { dirname, join } from "pathe";
 import ts from "typescript";
@@ -688,14 +688,62 @@ const count = 1
 export const view = <Widget>a{/* note */}b</Widget>
 `;
     const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
-    const output = ts.transpileModule(after[file]!, {
-      fileName: file,
-      compilerOptions: { jsx: ts.JsxEmit.React, jsxFactory: "h" },
-    }).outputText;
-    expect(output).toMatch(/h\(Widget, null,\s*"a",\s*"b"\)/);
+    expect(emitJsx(file, after[file]!)).toMatch(/h\(Widget, null,\s*"a",\s*"b"\)/);
     expect(result.diagnostics.find((item) => item.code === "TS0017")).toMatchObject({
       fix: undefined,
     });
+  });
+
+  test("preserves JSX children when new-only selects just one comment edit", async () => {
+    const file = "src/Widget.tsx";
+    const source = "export const view = <Widget>\n{/* first */}{/* second */}\n a</Widget>\n";
+    const { after, result } = await fixFixture(
+      { [file]: source },
+      { unsafeFix: true, newOnly: true, baseline: "baseline.json" },
+      { [file]: source.replace("{/* second */}", "") },
+    );
+    expect(emitJsx(file, source)).toContain('h(Widget, null, "a")');
+    expect(emitJsx(file, after[file]!)).toBe(emitJsx(file, source));
+    expect(after[file]).toBe(source);
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
+      { range: { start: source.indexOf("/* second */") }, fix: undefined },
+    ]);
+  });
+
+  test("preserves JSX children next to nonbreaking whitespace", async () => {
+    const file = "src/Widget.tsx";
+    const source = "export const view = <Widget>\n{/* note */}\u00A0</Widget>\n";
+    const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+    expect(emitJsx(file, source)).toContain('h(Widget, null, "\\u00A0")');
+    expect(emitJsx(file, after[file]!)).toBe(emitJsx(file, source));
+    expect(after[file]).toBe(source);
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
+      { fix: undefined },
+    ]);
+  });
+
+  test("preserves a Vue component's comment-only default slot", async () => {
+    const file = "src/App.vue";
+    const source = "<template><Toolbar><!-- No actions needed. --></Toolbar></template>";
+    const compile = (text: string) => {
+      const { descriptor } = parseSfc(text, { filename: file });
+      const { code, errors } = compileTemplate({
+        source: descriptor.template!.content,
+        filename: file,
+        id: "toolbar",
+      });
+      expect(errors).toEqual([]);
+      return code;
+    };
+    const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+    expect(compile(source)).toContain("default: _withCtx");
+    expect(compile(source.replace("<!-- No actions needed. -->", ""))).not.toContain(
+      "default: _withCtx",
+    );
+    expect(compile(after[file]!)).toBe(compile(source));
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
+      { fix: undefined },
+    ]);
   });
 
   test("does not delete Vue template whitespace under preserve", async () => {
@@ -863,6 +911,13 @@ const count = 1
   });
 });
 
+function emitJsx(file: string, source: string): string {
+  return ts.transpileModule(source, {
+    fileName: file,
+    compilerOptions: { jsx: ts.JsxEmit.React, jsxFactory: "h" },
+  }).outputText;
+}
+
 function typeScriptDiagnostics(file: string, source: string) {
   const options = { allowJs: true, checkJs: true, noEmit: true, noLib: true, types: [] };
   const host = ts.createCompilerHost(options);
@@ -884,7 +939,8 @@ function parseErrors(file: string, text: string) {
 
 async function fixFixture(
   files: Record<string, string>,
-  flags: Pick<DoctorRunOptions, "fix" | "unsafeFix">,
+  flags: Pick<DoctorRunOptions, "fix" | "unsafeFix" | "baseline" | "newOnly">,
+  baselineFiles?: Record<string, string>,
 ) {
   const root = await mkdtemp(join(tmpdir(), "vite-doctor-no-comments-fix-"));
   try {
@@ -892,17 +948,24 @@ async function fixFixture(
       join(root, "package.json"),
       JSON.stringify({ type: "module", devDependencies: { vite: "^8.0.0", vue: "^3.5.0" } }),
     );
-    for (const [file, source] of Object.entries(files)) {
-      await mkdir(dirname(join(root, file)), { recursive: true });
-      await writeFile(join(root, file), source);
-    }
-    const result = await runViteDoctor({
+    const writeSources = async (sources: Record<string, string>) => {
+      for (const [file, source] of Object.entries(sources)) {
+        await mkdir(dirname(join(root, file)), { recursive: true });
+        await writeFile(join(root, file), source);
+      }
+    };
+    const options = {
       root,
       cache: false,
-      framework: "vite",
-      config: { extends: [], rules: { [ruleId]: "warn" } },
-      ...flags,
-    });
+      framework: "vite" as const,
+      config: { extends: [], rules: { [ruleId]: "warn" as const } },
+    };
+    if (baselineFiles) {
+      await writeSources(baselineFiles);
+      await runViteDoctor({ ...options, baseline: flags.baseline, updateBaseline: true });
+    }
+    await writeSources(files);
+    const result = await runViteDoctor({ ...options, ...flags });
     const after: Record<string, string> = {};
     for (const file of Object.keys(files)) after[file] = await readFile(join(root, file), "utf8");
     return { after, result };

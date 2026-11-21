@@ -1,4 +1,4 @@
-import type { FixEdit, TemplateChildNode } from "../../../core/index.js";
+import type { FixEdit, TemplateCommentNode, TemplateParentNode } from "../../../core/index.js";
 import { parentOf, type AnyNode, type ScriptComment } from "./shared.js";
 
 /**
@@ -106,7 +106,8 @@ export function scriptDeletions(
 
 /**
  * Drops the edits of JSX comment containers whose deletion would change the text a JSX element
- * renders, for example by turning a line break between two words into a space.
+ * renders. Diagnostics can be filtered independently, so a text run with multiple planned
+ * removals is report-only: validating their combined edit does not validate every subset.
  */
 export function dropJsxTextChanges(
   source: string,
@@ -132,36 +133,27 @@ export function dropJsxTextChanges(
         continue;
       }
       const removed = run.flatMap((node) => byStart.get(node.start) ?? []);
-      if (removed.length && !keepsJsxText(source, run, removed, edits))
+      if (
+        removed.length > 1 ||
+        (removed.length === 1 && !keepsJsxText(source, run, edits.get(removed[0]!)!))
+      )
         for (const deletion of removed) edits.delete(deletion);
       run = [];
     }
   }
 }
 
-function keepsJsxText(
-  source: string,
-  run: AnyNode[],
-  removed: CommentDeletion[],
-  edits: Map<CommentDeletion, FixEdit>,
-): boolean {
+function keepsJsxText(source: string, run: AnyNode[], { range, text }: FixEdit): boolean {
+  const start = run[0]!.start;
   const end = run.at(-1)!.end;
-  let cursor = run[0]!.start;
-  let after = "";
-  for (const deletion of removed) {
-    const { range, text } = edits.get(deletion)!;
-    if (range.start < cursor || range.end > end) return false;
-    after += source.slice(cursor, range.start) + text;
-    cursor = range.end;
-  }
-  after += source.slice(cursor, end);
-  // Joining two texts can complete an HTML entity.
-  if (after.includes("&")) return false;
+  if (range.start < start || range.end > end) return false;
+  const after = source.slice(start, range.start) + text + source.slice(range.end, end);
   const before = run
     .filter((node) => node.type === "JSXText")
-    .map((node) => renderedJsxText(source.slice(node.start, node.end)))
-    .filter(Boolean);
-  return before.length <= 1 && renderedJsxText(after) === (before[0] ?? "");
+    .map((node) => source.slice(node.start, node.end));
+  if ([after, ...before].some((raw) => raw.includes("&") || /[^\S \t\r\n]/.test(raw))) return false;
+  const children = before.map(renderedJsxText).filter(Boolean);
+  return children.length <= 1 && renderedJsxText(after) === (children[0] ?? "");
 }
 
 // The whitespace rules JSX compilers apply to a text child.
@@ -184,12 +176,15 @@ function renderedJsxText(raw: string): string {
 /**
  * Only remove a template comment that touches element or container boundaries on both sides.
  * The condensed AST alone cannot tell us whether Vue's preserve mode would render whitespace.
+ * A component's only child can also supply its implicit default slot, even if it is a comment.
  */
 export function touchesTemplateBoundaries(
   source: string,
-  siblings: readonly TemplateChildNode[],
-  comment: TemplateChildNode,
+  parent: TemplateParentNode,
+  comment: TemplateCommentNode,
 ): boolean {
+  const siblings = parent.children;
+  if (parent.type === 1 && parent.tagType === 1 && siblings.length === 1) return false;
   const index = siblings.indexOf(comment);
   const { start, end } = comment.loc;
   const left = siblings[index - 1];
