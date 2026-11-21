@@ -47,7 +47,7 @@ When you add Doctor to a project that does not have it yet (installing `vite-doc
 
 Write the entry in the one place the project's Doctor config lives. Doctor stops with a config error when it finds config in two places.
 
-- Nuxt 4.1 or later: the `doctor` key in `nuxt.config.*`. The CLI reads it from `.nuxt/doctor.manifest.json`, so run `nuxt prepare` after the edit. Older Nuxt can't load the module; use `doctor.config.json` there.
+- Nuxt 4.1 or later: the `doctor` key in `nuxt.config.*`. The CLI reads it from `.nuxt/doctor.manifest.json`, so run `nuxt prepare` after the edit. In CI, make sure the manifest is generated before the Doctor step: run `nuxt prepare` from the app directory after installing dependencies if the install doesn't already run it. Older Nuxt can't load the module; use `doctor.config.json` there.
 
   ```ts
   export default defineNuxtConfig({
@@ -71,13 +71,13 @@ Write the entry in the one place the project's Doctor config lives. Doctor stops
   });
   ```
 
-- Anything else: `doctor.config.json` at the project root. If a `vite.config.*` there still stops the run with a config error, pass `--config doctor.config.json` to the diagnostic runs in the project's scripts and CI.
+- Anything else: `doctor.config.json` at the project root. If Doctor can't determine whether `vite.config.*` supplies a `doctor` key, pass `--config doctor.config.json` to diagnostic runs from the project root, including the Workflow commands below and any scripts or CI steps you add.
 
   ```json
   { "rules": { "typescript/strict/no-comments": "warn" } }
   ```
 
-Existing comments stay out of the way because you check work with `--changed` or `--since` (see Workflow). Run the CI step you add on pull requests only, with `--since origin/<base branch>` (`origin/${{ github.base_ref }}` in GitHub Actions), so it checks only the pull request's changed lines. The checkout needs that ref (`fetch-depth: 0` with `actions/checkout`), or Doctor fails the run. A push run has no base to compare with, and a full run with `--max-warnings 0` fails on comments already in the code. Run `--unsafe-fix` on existing comments only when the person asks: it cannot tell a stale comment from a decision that needs a new home.
+Existing comments stay out of the way because you check work with `--changed` or `--since` (see Workflow). Run the CI step you add on pull requests only, with `--since origin/<base branch>`, so it checks only the pull request's changed lines. In GitHub Actions, set the step's `BASE_REF` environment variable to `${{ github.base_ref }}` and pass `--since "origin/$BASE_REF"`. The checkout needs that ref (`fetch-depth: 0` with `actions/checkout`), or Doctor fails the run. A push run has no PR base to compare with, and a full run with `--max-warnings 0` fails on comments already in the code. Run `--unsafe-fix` on existing comments only when the person asks: it cannot tell a stale comment from a decision that needs a new home.
 
 In the reply that reports the setup, tell the person in one or two sentences that new comments no tool reads are now reported, that recognized tool directives, `SAFETY:` notes, and JSDoc on exported API stay allowed (other tools' comments, such as `cspell:`, need an `allow` pattern), and that `"typescript/strict/no-comments": "off"` (or deleting the entry) turns it off. The ban was your default, not their choice.
 
