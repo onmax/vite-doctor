@@ -47,7 +47,7 @@ When you add Doctor to a project that does not have it yet (installing `vite-doc
 
 Write the entry in the one place the project's Doctor config lives. Doctor stops with a config error when it finds config in two places.
 
-- Nuxt app: the `doctor` key in `nuxt.config.*`. The CLI reads it from `.nuxt/doctor.manifest.json`, so run `nuxt prepare` after the edit.
+- Nuxt 4.1 or later: the `doctor` key in `nuxt.config.*`. The CLI reads it from `.nuxt/doctor.manifest.json`, so run `nuxt prepare` after the edit. Older Nuxt can't load the module; use `doctor.config.json` there.
 
   ```ts
   export default defineNuxtConfig({
@@ -58,7 +58,7 @@ Write the entry in the one place the project's Doctor config lives. Doctor stops
   });
   ```
 
-- Other project with a `vite.config.*` that exports a plain object: the `doctor` key there. Doctor parses the file without running it, so the value must be a literal.
+- Other project whose `vite.config.*` exports a literal object with no spreads, computed keys, or `mergeConfig()`: the `doctor` key there. Doctor parses the file without running it, and anything that could supply or replace the key stops the run with a config error.
 
   ```ts
   import { defineConfig } from "vite";
@@ -77,9 +77,9 @@ Write the entry in the one place the project's Doctor config lives. Doctor stops
   { "rules": { "typescript/strict/no-comments": "warn" } }
   ```
 
-Existing comments stay out of the way because you check work with `--changed` or `--since` (see Workflow). Give the CI step `--since origin/<default branch>` too, so a pull request is checked only on its changed lines; the checkout needs that ref (`fetch-depth: 0` with `actions/checkout`), or Doctor fails the run. Run `--unsafe-fix` on existing comments only when the person asks: it cannot tell a stale comment from a decision that needs a new home.
+Existing comments stay out of the way because you check work with `--changed` or `--since` (see Workflow). On pull requests, give the CI step `--since origin/<base branch>` too (`origin/${{ github.base_ref }}` in GitHub Actions), so it checks only the pull request's changed lines. The checkout needs that ref (`fetch-depth: 0` with `actions/checkout`), or Doctor fails the run. Keep the flag off push runs: on the base branch it compares the commit with itself and reports nothing. Run `--unsafe-fix` on existing comments only when the person asks: it cannot tell a stale comment from a decision that needs a new home.
 
-In the reply that reports the setup, tell the person in one or two sentences that new comments no tool reads are now reported, that tool directives, `SAFETY:` notes, and JSDoc on exported API stay allowed, and that `"typescript/strict/no-comments": "off"` (or deleting the entry) turns it off. The ban was your default, not their choice.
+In the reply that reports the setup, tell the person in one or two sentences that new comments no tool reads are now reported, that recognized tool directives, `SAFETY:` notes, and JSDoc on exported API stay allowed (other tools' comments, such as `cspell:`, need an `allow` pattern), and that `"typescript/strict/no-comments": "off"` (or deleting the entry) turns it off. The ban was your default, not their choice.
 
 ## Workflow
 
