@@ -4,6 +4,7 @@ export { noWidenThenAssert } from "./no-widen-then-assert.js";
 export { noReduceAccumulatorCopy } from "./no-reduce-accumulator-copy.js";
 export { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 export { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
+export { noComments } from "./no-comments.js";
 export { noCrossRealmBuiltinInstanceof } from "./no-cross-realm-builtin-instanceof.js";
 export { noCrossRealmPrototypeIdentity } from "./no-cross-realm-prototype-identity.js";
 export { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
@@ -16,6 +17,7 @@ export { requireSafetyCommentForTypeAssertion } from "./require-safety-comment-f
 import { defineRulePack } from "../../../core/index.js";
 import { noCallerChosenResultType } from "./no-caller-chosen-result-type.js";
 import { noChainedTypeAssertions } from "./no-chained-type-assertions.js";
+import { noComments } from "./no-comments.js";
 import { noCrossRealmBuiltinInstanceof } from "./no-cross-realm-builtin-instanceof.js";
 import { noCrossRealmPrototypeIdentity } from "./no-cross-realm-prototype-identity.js";
 import { noCrossRealmWebInstanceof } from "./no-cross-realm-web-instanceof.js";
@@ -48,13 +50,17 @@ const strictRules = [
   requireSafetyCommentForTypeAssertion,
 ];
 
+// Opt-in policy Rules: only a `rules` entry turns them on, so `--strict` stays a set of findings
+// to fix rather than a house style to adopt.
+const optInRules = [noComments];
+
 const typescriptRulePack = defineRulePack({
   name: "vite-doctor/typescript",
   version: "0.0.0",
   activation: {
     languages: ["typescript"],
   },
-  rules: strictRules,
+  rules: [...strictRules, ...optInRules],
   presets: {
     recommended: recommendedRules.map((rule) => rule.meta.id),
     strict: strictRules.map((rule) => rule.meta.id),

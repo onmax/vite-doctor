@@ -7,6 +7,15 @@ import { explainRule } from "../../src/core/reports.js";
 import { diagnosticsCollectionSource, getDiagnosticDocuments } from "./source.js";
 
 const repeated = Array.from({ length: 12 }, (_, index) => `console.log(${index});`).join("\n");
+
+test("TS0017 verification explains how to enable the opt-in rule", async () => {
+  const document = getDiagnosticDocuments().find(({ code }) => code === "TS0017");
+  const markdown = await diagnosticsCollectionSource.getItem(document!.key);
+  const verification = markdown!.split("## Verify the fix")[1];
+  expect(verification).toContain('"rules": { "typescript/strict/no-comments": "warn" }');
+  expect(verification).toContain("--rules typescript/strict/no-comments");
+});
+
 const cases = [
   {
     code: "DOC0001",

@@ -16,6 +16,7 @@ export const typescriptDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "TS0014", ruleId: "typescript/boundaries/no-cross-realm-prototype-identity" },
   { code: "TS0015", ruleId: "typescript/boundaries/no-inherited-key-lookup" },
   { code: "TS0016", ruleId: "typescript/boundaries/no-cross-realm-builtin-instanceof" },
+  { code: "TS0017", ruleId: "typescript/strict/no-comments" },
   { code: "TS0011", ruleId: "typescript/evidence/no-known-value-widening" },
   { code: "TS0009", ruleId: "typescript/evidence/no-widen-then-assert" },
   { code: "TS0010", ruleId: "typescript/performance/no-reduce-accumulator-copy" },

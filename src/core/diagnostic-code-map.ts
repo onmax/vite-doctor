@@ -156,6 +156,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "TS0014", ruleId: "typescript/boundaries/no-cross-realm-prototype-identity" },
   { code: "TS0015", ruleId: "typescript/boundaries/no-inherited-key-lookup" },
   { code: "TS0016", ruleId: "typescript/boundaries/no-cross-realm-builtin-instanceof" },
+  { code: "TS0017", ruleId: "typescript/strict/no-comments" },
   { code: "NITRO0001", ruleId: "nitro/context/no-navigateto-in-nitro" },
   { code: "NITRO0002", ruleId: "nitro/context/no-usenuxtapp-in-nitro" },
   { code: "NITRO0003", ruleId: "nitro/request/prefer-assert-method" },

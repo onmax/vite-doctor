@@ -29,7 +29,7 @@ The required default preset in every rule pack.
 _Avoid_: Default group
 
 **Strict Preset**:
-An optional preset that enables all rules in a rule pack, including noisy, migration-oriented, or opinionated rules.
+An optional preset that enables every rule in a rule pack except opt-in policy rules, including noisy, migration-oriented, or opinionated rules. An opt-in policy rule, such as a ban on comments, runs only when Surface Configuration names it in `rules`.
 _Avoid_: Full group
 
 **Surface Configuration**:

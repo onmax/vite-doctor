@@ -19,6 +19,7 @@ import { loadVueCompilerSfc } from "./lazy-parsers.js";
 import { walkAstFacts } from "./facts.js";
 import { parseScript } from "./script.js";
 import { parseVueScriptsResult } from "./sfc.js";
+import { matchInlineSuppression } from "./suppression-syntax.js";
 import {
   SFC_TEMPLATE_PARSE_OPTIONS,
   TemplateNodeType,
@@ -583,9 +584,7 @@ function addInlineSuppression(
   offset: number,
   source: string,
 ): InlineSuppression | undefined {
-  const match = segment.match(
-    /(?:^|\s)doctor-disable(-next-line)?\s+([^\s]+)(?:\s+--\s+(.+)|\s+(.+))?/,
-  );
+  const match = matchInlineSuppression(segment);
   if (!match) return undefined;
   const first = directives.get(line);
   if (first) {
