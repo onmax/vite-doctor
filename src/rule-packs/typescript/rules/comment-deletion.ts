@@ -10,11 +10,6 @@ export interface CommentDeletion {
   kind: "script" | "jsx";
 }
 
-export interface LineScopedComment {
-  end: number;
-  lineBreaks: number;
-}
-
 interface LineGroup {
   members: CommentDeletion[];
   start: number;
@@ -37,17 +32,9 @@ const closingLine = /^(?:[})\]]|<\/)/;
 export function planCommentDeletions(
   source: string,
   deletions: readonly CommentDeletion[],
-  lineScopedComments: readonly LineScopedComment[],
 ): Map<CommentDeletion, FixEdit> {
   const edits = new Map<CommentDeletion, FixEdit>();
   if (!deletions.length) return edits;
-  const protectedBreaks = directiveLineBreaks(source, lineScopedComments);
-  const touchesProtectedBreak = (start: number, end: number) => {
-    if (!protectedBreaks.size) return false;
-    for (const { index } of source.slice(start, end).matchAll(/[\n\r\u2028\u2029]/g))
-      if (protectedBreaks.has(start + index)) return true;
-    return false;
-  };
   const wholeLines: LineGroup[] = [];
   for (const members of sameLineGroups(source, deletions)) {
     const first = members[0]!;
@@ -62,10 +49,7 @@ export function planCommentDeletions(
     const spaceAfter = /^[ \t]*/.exec(after)![0].length;
     if (!codeBefore && !codeAfter) {
       wholeLines.push({ members, start: lineStart, end: nextLineStart(source, lineEnd) });
-    } else if (
-      (first.kind === "jsx" && members.length > 1) ||
-      touchesProtectedBreak(first.start, last.end)
-    ) {
+    } else if (first.kind === "jsx" && members.length > 1) {
       continue;
     } else if (!codeAfter) {
       partition(edits, members, first.start - spaceBefore, last.end);
@@ -84,29 +68,8 @@ export function planCommentDeletions(
       else partition(edits, members, first.start, last.end, spaceBefore || spaceAfter ? "" : " ");
     }
   }
-  for (const run of lineRuns(source, wholeLines))
-    planRun(source, run, edits, touchesProtectedBreak);
+  for (const run of lineRuns(source, wholeLines)) planRun(source, run, edits);
   return edits;
-}
-
-function directiveLineBreaks(source: string, comments: readonly LineScopedComment[]): Set<number> {
-  const offsets = new Set<number>();
-  const breaks = /\r\n|[\n\r\u2028\u2029]/g;
-  let next = 0;
-  let remaining = 0;
-  while (remaining || next < comments.length) {
-    if (!remaining) breaks.lastIndex = comments[next]!.end;
-    const boundary = breaks.exec(source);
-    if (!boundary) break;
-    while (next < comments.length && comments[next]!.end <= boundary.index) {
-      remaining = Math.max(remaining, comments[next]!.lineBreaks);
-      next++;
-    }
-    offsets.add(boundary.index);
-    if (boundary[0] === "\r\n") offsets.add(boundary.index + 1);
-    remaining--;
-  }
-  return offsets;
 }
 
 /**
@@ -266,12 +229,7 @@ function lineRuns(source: string, groups: LineGroup[]) {
 
 // Blank lines around and between the deleted lines join the nearest deleted group, so the edits
 // stay contiguous. One blank line survives unless the run touches a block or file edge.
-function planRun(
-  source: string,
-  run: LineGroup[],
-  edits: Map<CommentDeletion, FixEdit>,
-  touchesProtectedBreak: (start: number, end: number) => boolean,
-) {
+function planRun(source: string, run: LineGroup[], edits: Map<CommentDeletion, FixEdit>) {
   const fileStart = source.startsWith("\uFEFF") ? 1 : 0;
   let top = run[0]!.start;
   while (top > fileStart) {
@@ -301,12 +259,6 @@ function planRun(
     if (kept !== -1) starts[kept] = nextLineStart(source, lineEndAt(source, starts[kept]!));
     else if (bottom > run.at(-1)!.end) end = lineStartAt(source, bottom - 1);
   }
-  if (
-    run.some((group, index) =>
-      touchesProtectedBreak(starts[index]!, index === run.length - 1 ? end : group.end),
-    )
-  )
-    return;
   run.forEach((group, index) =>
     partition(edits, group.members, starts[index]!, index === run.length - 1 ? end : group.end),
   );

@@ -14,7 +14,6 @@ import {
   planCommentDeletions,
   scriptDeletions,
   touchesTemplateBoundaries,
-  type LineScopedComment,
 } from "./comment-deletion.js";
 import { safetyNoteComments } from "./safety-comment.js";
 import {
@@ -29,10 +28,8 @@ const ruleId = "typescript/strict/no-comments";
 
 const toolDirective =
   /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|[#@]__(?:PURE|NO_SIDE_EFFECTS)__|@vite-ignore|webpack[A-Z]\w*\s*:|@vitest-environment|(?:v8|c8|istanbul)\s+ignore|@jsx|[#@]\s*source(?:Mapping)?URL=|!)/;
-const lineScopedDirective =
-  /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|(?:v8|c8|istanbul)\s+ignore|@vue-ignore\b)/;
-const typeScriptSuppression = /^[\s*/]*@ts-(?:ignore|expect-error)/;
-const countedCoverage = /^[\s*]*(?:v8|c8)\s+ignore\s+next\s+(\d+)\b/;
+const typeScriptSuppression = /@ts-(?:ignore|expect-error)/;
+const licenseOnly = /^[ \t]*!?[ \t]*(?:SPDX-License-Identifier:|@license)[ \t]+[\w.+-]+[ \t]*$/;
 const templateDirective =
   /^\s*@vue-(?:(?:ignore|expect-error|skip)(?![-\w])|generic\s*\{[\s\S]*\}\s*$)/;
 const blockDirective = /^\s*(?:globals?|exported)\s/;
@@ -100,7 +97,7 @@ export const noComments = createRule({
     const options = readOptions(ctx.options);
     const source = ctx.file.text;
     const comments = scriptComments(ctx);
-    const template = ctx.file.isVueSfc && source.includes("<!--");
+    const template = ctx.file.templateAst && source.includes("<!--");
     if (!comments.length && !template) return;
 
     const report = (start: number, end: number, edit?: FixEdit) =>
@@ -117,8 +114,11 @@ export const noComments = createRule({
       );
     const allowed = (text: string) => options.allow.some((pattern) => pattern.test(text));
 
+    let reportOnly = false;
+    let reportScript: (() => void) | undefined;
     const visitor: RuleVisitor = {};
     if (template) {
+      const reports: { start: number; end: number; edit?: FixEdit }[] = [];
       let pre = 0;
       visitor.template = {
         element(node) {
@@ -128,20 +128,29 @@ export const noComments = createRule({
           if (node.tag === "pre") pre--;
         },
         comment(node, parent) {
+          const { content } = node;
+          const custom = allowed(content);
           if (
-            toolDirective.test(node.content) ||
-            templateDirective.test(node.content) ||
-            containsInlineSuppression(node.content) ||
-            allowed(node.content)
-          )
+            custom ||
+            toolDirective.test(content) ||
+            templateDirective.test(content) ||
+            containsInlineSuppression(content)
+          ) {
+            reportOnly ||= custom || !licenseOnly.test(content);
             return;
+          }
           const start = node.loc.start.offset;
           const end = node.loc.end.offset;
           const edit =
             !pre && touchesTemplateBoundaries(source, parent.children, node)
               ? { range: { start, end }, text: "" }
               : undefined;
-          report(start, end, edit);
+          reports.push({ start, end, edit });
+        },
+        "root:exit"() {
+          reportScript?.();
+          for (const { start, end, edit } of reports)
+            report(start, end, reportOnly ? undefined : edit);
         },
       };
     }
@@ -172,60 +181,34 @@ export const noComments = createRule({
     };
 
     const javascript = !isTypeScriptSource(ctx);
-    visitor["Program:exit"] = () => {
+    reportScript = () => {
       const safetyNotes = safetyNoteComments(source, comments);
-      const lineScopedComments: LineScopedComment[] = [];
       const found: ScriptComment[] = [];
-      const fixable: ScriptComment[] = [];
-      let previousEnd = 0;
-      let retainedJsDoc = false;
-      let precedingTypeScriptSuppression = false;
       for (const comment of comments) {
-        const { value, end } = comment;
-        if (source.slice(previousEnd, comment.start).trim() !== "") {
-          retainedJsDoc = false;
-          precedingTypeScriptSuppression = false;
-        }
-        previousEnd = end;
-        const jsDoc = isJsDoc(comment);
+        const { value } = comment;
         const custom = allowed(value);
+        reportOnly ||= typeScriptSuppression.test(value);
         if (isToolComment(comment, javascript) || custom) {
-          const count = countedCoverage.exec(value)?.[1];
-          if (count !== undefined) {
-            lineScopedComments.push({ end, lineBreaks: Math.max(2, Number(count) + 1) });
-          } else if (
-            lineScopedDirective.test(value) ||
-            containsInlineSuppression(value) ||
-            custom
-          ) {
-            lineScopedComments.push({ end, lineBreaks: 2 });
-          }
-          retainedJsDoc ||= jsDoc;
-          precedingTypeScriptSuppression ||= typeScriptSuppression.test(value);
+          reportOnly ||= custom || !licenseOnly.test(value);
         } else if (apiDocs.has(comment)) {
-          retainedJsDoc = true;
+          reportOnly = true;
         } else if (!safetyNotes.has(comment) && !(comment.start === 0 && source.startsWith("#!"))) {
           found.push(comment);
-          if (
-            !(jsDoc && retainedJsDoc) &&
-            !(comment.type === "Block" && precedingTypeScriptSuppression)
-          ) {
-            fixable.push(comment);
-          }
         }
       }
-      const deletions = scriptDeletions(comments, fixable, jsxComments);
-      const edits = planCommentDeletions(
-        source,
-        [...new Set(deletions.values())],
-        lineScopedComments,
-      );
+      if (reportOnly || !found.length) {
+        for (const { start, end } of found) report(start, end);
+        return;
+      }
+      const deletions = scriptDeletions(comments, found, jsxComments);
+      const edits = planCommentDeletions(source, [...new Set(deletions.values())]);
       dropJsxTextChanges(source, jsxComments, deletions, edits);
       for (const comment of found) {
         const deletion = deletions.get(comment);
         report(comment.start, comment.end, deletion && edits.get(deletion));
       }
     };
+    if (!template) visitor["Program:exit"] = reportScript;
     return visitor;
   },
 });

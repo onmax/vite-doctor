@@ -528,7 +528,7 @@ function asi() {
   */ 1
 }
 
-export const kept = asi() // eslint-disable-line no-console
+export const kept = asi()
 `;
   const jsx = `export function Widget() {
   return (
@@ -567,7 +567,6 @@ const count = 1 /* trailing */
     <span>c</span> <!-- spaced --> <span>d</span>
     {{ count }}
     <!-- next to text -->
-    <!-- eslint-disable-next-line vue/no-v-html -->
     <p v-html="count" />
   </div>
   <pre>
@@ -608,7 +607,7 @@ function asi() {
   */ 1
 }
 
-export const kept = asi() // eslint-disable-line no-console
+export const kept = asi()
 `);
     expect(after["src/Widget.tsx"]).toBe(`export function Widget() {
   return (
@@ -644,7 +643,6 @@ const count = 1
     <span>c</span> <!-- spaced --> <span>d</span>
     {{ count }}
     <!-- next to text -->
-    <!-- eslint-disable-next-line vue/no-v-html -->
     <p v-html="count" />
   </div>
   <pre>
@@ -720,10 +718,36 @@ export const view = <Widget>a{/* note */}b</Widget>
       { [file]: `${protectedSource}export {} // unrelated note\n` },
       { unsafeFix: true },
     );
-    expect(after[file]).toBe(`${protectedSource}export {}\n`);
-    expect(result.diagnostics.find((item) => item.code === "TS0017")).toMatchObject({
-      fix: undefined,
-    });
+    expect(after[file]).toBe(`${protectedSource}export {} // unrelated note\n`);
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
+      { fix: undefined },
+      { fix: undefined },
+    ]);
+  });
+
+  test.each([
+    ["script", "// @ts-nocheck\n", ""],
+    ["template", "", "<!-- @vue-ignore -->"],
+  ])("withholds script and template edits for a Vue %s directive", async (_, script, template) => {
+    const file = "src/App.vue";
+    const source = `<script setup lang="ts">
+${script}// Script note.
+const count = 1
+</script>
+<template>${template}<div><span>{{ count }}</span><!-- Template note. --><span /></div></template>
+`;
+    const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+    expect(after[file]).toBe(source);
+    expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
+      { fix: undefined },
+      { fix: undefined },
+    ]);
+  });
+
+  test("keeps edits disabled when a custom tool comment is allowed", async () => {
+    const source = "// custom-tool next-node\n// Ordinary note.\nexport {}\n";
+    const found = await run({ "src/index.ts": source }, { allow: ["custom-tool"] });
+    expect(found).toMatchObject([{ fix: undefined }]);
   });
 
   test("does not reactivate a shadowed JSDoc type in checkJs", async () => {
@@ -737,9 +761,10 @@ export const view = <Widget>a{/* note */}b</Widget>
     expect(typeScriptDiagnostics(file, source.replace(shadow, ""))).toEqual([2322]);
 
     const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
-    expect(after[file]).toBe(`${protectedSource}const other = label;\n`);
+    expect(after[file]).toBe(source);
     expect(typeScriptDiagnostics(file, after[file]!)).toEqual([]);
     expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
+      { fix: undefined },
       { fix: undefined },
     ]);
   });
@@ -769,33 +794,62 @@ export const view = <Widget>a{/* note */}b</Widget>
   });
 
   test.each([
-    ["v8", "\n"],
-    ["c8", "\r\n"],
-  ])("keeps line breaks across a counted %s coverage directive", async (tool, newline) => {
+    ["ignore", [2322]],
+    ["expect-error", [2322, 2578]],
+  ] as const)("preserves @ts-%s on the last line of a retained block", async (directive, codes) => {
     const file = "src/index.ts";
-    const protectedLines = [
-      `/* ${tool} ignore next 4 */`,
-      "first();",
-      "second();",
-      "third();",
-      "// Keep the fourth line in the ignore range.",
-      "outside();",
-    ];
-    const source = [...protectedLines, "// unrelated note", "export {}", ""].join(newline);
+    const barrier = "/* Ordinary note. */";
+    const source = [
+      `/* @preserve\n * @ts-${directive} */`,
+      barrier,
+      'const count: number = "one";',
+      "",
+    ].join("\n");
+    const compilerCodes = (text: string) =>
+      typeScriptDiagnostics(file, text).sort((left, right) => left - right);
+    expect(compilerCodes(source)).toEqual(codes);
+    expect(compilerCodes(source.replace(barrier, ""))).toEqual([]);
+
     const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
-    expect(after[file]).toBe([...protectedLines, "export {}", ""].join(newline));
+    expect(compilerCodes(after[file]!)).toEqual(codes);
+    expect(after[file]).toBe(source);
     expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
       { fix: undefined },
     ]);
   });
 
-  test("removes ordinary comments next to non-line-scoped exemptions", async () => {
+  test.each([
+    ["v8", "\n"],
+    ["c8", "\r\n"],
+  ])(
+    "reports without fixing in files with a counted %s coverage directive",
+    async (tool, newline) => {
+      const file = "src/index.ts";
+      const protectedLines = [
+        `/* ${tool} ignore next 4 */`,
+        "first();",
+        "second();",
+        "third();",
+        "// Keep the fourth line in the ignore range.",
+        "outside();",
+      ];
+      const source = [...protectedLines, "// unrelated note", "export {}", ""].join(newline);
+      const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+      expect(after[file]).toBe(source);
+      expect(result.diagnostics.filter((item) => item.code === "TS0017")).toMatchObject([
+        { fix: undefined },
+        { fix: undefined },
+      ]);
+    },
+  );
+
+  test("removes ordinary comments next to a standalone license identifier", async () => {
     const file = "src/index.ts";
     const header = "/*! SPDX-License-Identifier: MIT */";
-    const annotated = "const value = /*#__PURE__*/ makeValue();";
-    const source = [header, "// note", annotated, "// another note", "export { value };", ""];
+    const declaration = "const value = makeValue();";
+    const source = [header, "// note", declaration, "// another note", "export { value };", ""];
     const { after, result } = await fixFixture({ [file]: source.join("\n") }, { unsafeFix: true });
-    expect(after[file]).toBe([header, annotated, "export { value };", ""].join("\n"));
+    expect(after[file]).toBe([header, declaration, "export { value };", ""].join("\n"));
     expect(result.diagnostics.filter((item) => item.code === "TS0017")).toEqual([]);
   });
 
