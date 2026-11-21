@@ -89,6 +89,7 @@ export const noComments = createRule({
     severity: "warn",
     confidence: "proven",
     fixable: "unsafe",
+    includeTestFiles: true,
     docsUrl: "https://vite-doctor.onmax.me/typescript#delete-comments-no-tool-reads",
     aiGeneratedCodeRisk: "high",
   },

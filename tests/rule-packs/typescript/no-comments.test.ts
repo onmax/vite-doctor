@@ -417,6 +417,65 @@ describe("options", () => {
   });
 });
 
+describe("test files", () => {
+  const files = {
+    "src/index.ts": "// A note.\nexport const a = 1\n",
+    "src/a.test.ts": "// A test note.\nexport const b = 1\n",
+    "tests/b.ts": "// A helper note.\nexport const c = 1\n",
+    "tests/fixtures/input.ts": "// A fixture note.\nexport const d = 1\n",
+    "src/__snapshots__/a.test.ts.snap.ts": "// A snapshot note.\nexport const e = 1\n",
+  };
+  const reportedFiles = async (config: DoctorRunOptions["config"]) => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noComments],
+      files,
+      config,
+    });
+    return result.diagnostics
+      .filter((item) => item.ruleId === ruleId)
+      .map((item) => item.file.slice(result.root.length + 1))
+      .sort();
+  };
+
+  test("reports comments in test code but not in fixtures or snapshots", async () => {
+    expect(await reportedFiles({ extends: [], rules: { [ruleId]: "warn" } })).toEqual([
+      "src/a.test.ts",
+      "src/index.ts",
+      "tests/b.ts",
+    ]);
+  });
+
+  test("an override turns the Rule off for test files", async () => {
+    expect(
+      await reportedFiles({
+        extends: [],
+        rules: { [ruleId]: "warn" },
+        overrides: [{ files: ["**/*.test.*"], rules: { [ruleId]: "off" } }],
+      }),
+    ).toEqual(["src/index.ts", "tests/b.ts"]);
+    expect(
+      await reportedFiles({
+        extends: [],
+        rules: { [ruleId]: "warn" },
+        overrides: [
+          {
+            files: [
+              "**/*.test.*",
+              "**/*.spec.*",
+              "**/test/**",
+              "**/tests/**",
+              "**/__tests__/**",
+              "**/test-utils/**",
+            ],
+            rules: { [ruleId]: "off" },
+          },
+        ],
+      }),
+    ).toEqual(["src/index.ts"]);
+  });
+});
+
 describe("fingerprints", () => {
   const base = [
     "export function load() {",
