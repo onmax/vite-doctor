@@ -10,7 +10,7 @@ export type Framework =
   | "mcp";
 export type FrameworkFilter = Framework | "all";
 export type Severity = "error" | "warn" | "info";
-export type FixKind = "safe" | "suggestion" | "no";
+export type FixKind = "safe" | "unsafe" | "suggestion" | "no";
 
 export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; icon: string }> = {
   package: { label: "Package", pack: "vite-doctor/package", icon: "i-lucide-package" },
@@ -173,24 +173,28 @@ export function severityBadgeColor(severity: string) {
 
 export function fixLabel(fix: string | undefined) {
   if (fix === "safe") return "Auto-fix";
+  if (fix === "unsafe") return "Unsafe fix";
   if (fix === "suggestion") return "Suggestion";
   return "No fix";
 }
 
 export function fixIcon(fix: FixKind) {
   if (fix === "safe") return "i-lucide-wand-sparkles";
+  if (fix === "unsafe") return "i-lucide-wand";
   if (fix === "suggestion") return "i-lucide-plug";
   return "i-lucide-plug-zap";
 }
 
 export function fixClass(fix: FixKind) {
   if (fix === "safe") return "text-emerald-600 dark:text-emerald-400";
+  if (fix === "unsafe") return "text-amber-600 dark:text-amber-400";
   if (fix === "suggestion") return "text-teal-600 dark:text-teal-400";
   return "text-neutral-300 dark:text-neutral-700";
 }
 
 export function fixBadgeColor(fix: string | undefined) {
   if (fix === "safe") return "success";
+  if (fix === "unsafe") return "warning";
   if (fix === "suggestion") return "primary";
   return "neutral";
 }

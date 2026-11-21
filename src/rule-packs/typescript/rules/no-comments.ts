@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   createRule,
+  type FixEdit,
   type RuleContext,
   type RuleVisitor,
   type ScriptAstNodeType,
@@ -8,6 +9,12 @@ import {
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
 import { containsInlineSuppression } from "../../../core/internal/suppression-syntax.js";
 import { diagnostics } from "../diagnostics.js";
+import {
+  dropJsxTextChanges,
+  planCommentDeletions,
+  scriptDeletions,
+  touchesTemplateBoundaries,
+} from "./comment-deletion.js";
 import { safetyNoteComments } from "./safety-comment.js";
 import {
   isTypeScriptSource,
@@ -21,6 +28,8 @@ const ruleId = "typescript/strict/no-comments";
 
 const toolDirective =
   /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|[#@]__(?:PURE|NO_SIDE_EFFECTS)__|@vite-ignore|webpack[A-Z]\w*\s*:|@vitest-environment|(?:v8|c8|istanbul)\s+ignore|@jsx|[#@]\s*source(?:Mapping)?URL=|!)/;
+const typeScriptSuppression = /@ts-(?:ignore|expect-error)/;
+const licenseOnly = /^[ \t]*!?[ \t]*(?:SPDX-License-Identifier:|@license)[ \t]+[\w.+-]+[ \t]*$/;
 const templateDirective =
   /^\s*@vue-(?:(?:ignore|expect-error|skip)(?![-\w])|generic\s*\{[\s\S]*\}\s*$)/;
 const blockDirective = /^\s*(?:globals?|exported)\s/;
@@ -32,6 +41,8 @@ const checkJsTag =
 const reason = "This comment does not match a known directive or an allowed comment pattern.";
 const removal =
   "When removing a script or JSX comment, preserve its line breaks and use a space if the comment separates tokens.";
+const deleteMessage =
+  "Delete the comment. Classify it first: move a decision to the decision log and file an issue for a workaround before deleting it.";
 
 const apiMembers = [
   "AccessorProperty",
@@ -77,7 +88,7 @@ export const noComments = createRule({
     category: "strict",
     severity: "warn",
     confidence: "proven",
-    fixable: false,
+    fixable: "unsafe",
     docsUrl: "https://vite-doctor.onmax.me/typescript#delete-comments-no-tool-reads",
     aiGeneratedCodeRisk: "high",
   },
@@ -86,31 +97,60 @@ export const noComments = createRule({
     const options = readOptions(ctx.options);
     const source = ctx.file.text;
     const comments = scriptComments(ctx);
-    const template = ctx.file.isVueSfc && source.includes("<!--");
+    const template = ctx.file.templateAst && source.includes("<!--");
     if (!comments.length && !template) return;
 
-    const report = (start: number, end: number) =>
+    const report = (start: number, end: number, edit?: FixEdit) =>
       ctx.report(
         diagnostics.TS0017({
           why: reason,
           fix: `Check whether a project tool reads it. If so, add an allow pattern. Otherwise, record decisions or file issues for workarounds before removing it. ${removal}`,
         }),
-        { range: ctx.range(start, end), fingerprint: fingerprint(ctx, source.slice(start, end)) },
+        {
+          range: ctx.range(start, end),
+          fingerprint: fingerprint(ctx, source.slice(start, end)),
+          fix: edit ? { kind: "unsafe", message: deleteMessage, edits: [edit] } : undefined,
+        },
       );
     const allowed = (text: string) => options.allow.some((pattern) => pattern.test(text));
 
+    let reportOnly = false;
+    let reportScript: (() => void) | undefined;
     const visitor: RuleVisitor = {};
     if (template) {
+      const reports: { start: number; end: number; edit?: FixEdit }[] = [];
+      let pre = 0;
       visitor.template = {
-        comment(node) {
+        element(node) {
+          if (node.tag === "pre") pre++;
+        },
+        "element:exit"(node) {
+          if (node.tag === "pre") pre--;
+        },
+        comment(node, parent) {
+          const { content } = node;
+          const custom = allowed(content);
           if (
-            toolDirective.test(node.content) ||
-            templateDirective.test(node.content) ||
-            containsInlineSuppression(node.content) ||
-            allowed(node.content)
-          )
+            custom ||
+            toolDirective.test(content) ||
+            templateDirective.test(content) ||
+            containsInlineSuppression(content)
+          ) {
+            reportOnly ||= custom || !licenseOnly.test(content);
             return;
-          report(node.loc.start.offset, node.loc.end.offset);
+          }
+          const start = node.loc.start.offset;
+          const end = node.loc.end.offset;
+          const edit =
+            !pre && touchesTemplateBoundaries(source, parent.children, node)
+              ? { range: { start, end }, text: "" }
+              : undefined;
+          reports.push({ start, end, edit });
+        },
+        "root:exit"() {
+          reportScript?.();
+          for (const { start, end, edit } of reports)
+            report(start, end, reportOnly ? undefined : edit);
         },
       };
     }
@@ -135,16 +175,40 @@ export const noComments = createRule({
       };
     }
 
+    const jsxComments: AnyNode[] = [];
+    visitor.JSXExpressionContainer = (node: AnyNode) => {
+      if (node.expression.type === "JSXEmptyExpression") jsxComments.push(node);
+    };
+
     const javascript = !isTypeScriptSource(ctx);
-    visitor["Program:exit"] = () => {
+    reportScript = () => {
       const safetyNotes = safetyNoteComments(source, comments);
+      const found: ScriptComment[] = [];
       for (const comment of comments) {
-        if (comment.start === 0 && source.startsWith("#!")) continue;
-        if (safetyNotes.has(comment) || apiDocs.has(comment)) continue;
-        if (isToolComment(comment, javascript) || allowed(comment.value)) continue;
-        report(comment.start, comment.end);
+        const { value } = comment;
+        const custom = allowed(value);
+        reportOnly ||= typeScriptSuppression.test(value);
+        if (isToolComment(comment, javascript) || custom) {
+          reportOnly ||= custom || !licenseOnly.test(value);
+        } else if (apiDocs.has(comment)) {
+          reportOnly = true;
+        } else if (!safetyNotes.has(comment) && !(comment.start === 0 && source.startsWith("#!"))) {
+          found.push(comment);
+        }
+      }
+      if (reportOnly || !found.length) {
+        for (const { start, end } of found) report(start, end);
+        return;
+      }
+      const deletions = scriptDeletions(comments, found, jsxComments);
+      const edits = planCommentDeletions(source, [...new Set(deletions.values())]);
+      dropJsxTextChanges(source, jsxComments, deletions, edits);
+      for (const comment of found) {
+        const deletion = deletions.get(comment);
+        report(comment.start, comment.end, deletion && edits.get(deletion));
       }
     };
+    if (!template) visitor["Program:exit"] = reportScript;
     return visitor;
   },
 });
