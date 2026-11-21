@@ -13,7 +13,13 @@ import type {
 import type { GraphSummary } from "./cache-store.js";
 import { projectWorkspacePackages } from "./applicability.js";
 import { componentUsageGraph } from "./component-inventory.js";
-import { canRunRuleOnFile, loadSourceFile, sourceFacts, sourceShape } from "./facts.js";
+import {
+  canRunRuleOnFile,
+  isTestFileHandle,
+  loadSourceFile,
+  sourceFacts,
+  sourceShape,
+} from "./facts.js";
 import type { RuleInputFrame } from "./rule-inputs.js";
 import { assertKnownRuleHooks } from "./rule-hooks.js";
 import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
@@ -28,10 +34,12 @@ import {
 } from "./workspace-graph.js";
 import { createDiagnosticFingerprint, normalizeDiagnostic, sourceTextFor } from "./diagnostics.js";
 import {
+  analyzesTestFiles,
   fileRuleConfig,
   markSession,
   recordRuleTiming,
   ruleInScope,
+  runsFileRules,
   topLevelRuleConfig,
   type ResolvedRuleConfig,
   type RuleTiming,
@@ -48,7 +56,7 @@ interface RuleRun {
 }
 
 export async function runFileRules(session: ScanSession): Promise<void> {
-  if (session.options.analyses && !session.options.rules) return;
+  if (!runsFileRules(session.options)) return;
   const started = performance.now();
   const rules = session.enabledRules.filter((rule) => (rule.meta.execution ?? "file") === "file");
   const keys = rules.map((rule) => cacheKeyFor(session, rule));
@@ -56,15 +64,21 @@ export async function runFileRules(session: ScanSession): Promise<void> {
   const reported = rules.map((): Diagnostic[] => []);
   const timings = session.options.profile ? rules.map(() => ({ ms: 0, files: 0 })) : undefined;
   const reportedFiles = session.scopedReport
-    ? new Set(session.files.flatMap((file) => (file.reportEligibility ? [file.path] : [])))
+    ? new Set(
+        [...session.files, ...session.testFiles].flatMap((file) =>
+          file.reportEligibility ? [file.path] : [],
+        ),
+      )
     : undefined;
-  for (const file of session.handles) {
+  const testRules = [...rules.keys()].filter((index) => analyzesTestFiles(rules[index]!));
+  for (const file of [...session.handles, ...session.testHandles]) {
+    const fileRules = isTestFileHandle(file) ? testRules : [...rules.keys()];
     // File-scoped Rules can only report into the file they analyze, so a scoped run needs them on
     // the reported files only; project-scoped Rules keep whole-project context.
     const candidates =
       reportedFiles && !reportedFiles.has(file.path)
-        ? [...rules.keys()].filter((index) => rules[index]!.meta.reportScope === "project")
-        : [...rules.keys()];
+        ? fileRules.filter((index) => rules[index]!.meta.reportScope === "project")
+        : fileRules;
     if (!candidates.length) continue;
     if (sourceShape(file) === undefined) await loadSourceFile(file);
     const ran = file.text.includes("doctor-disable") ? new Set<string>() : undefined;
@@ -183,7 +197,7 @@ function timeCall(timing: RuleTiming, call: () => void): void {
 }
 
 export async function runManifestRules(session: ScanSession): Promise<void> {
-  if (session.options.analyses && !session.options.rules) return;
+  if (!runsFileRules(session.options)) return;
   const started = performance.now();
   const fallbackFile = session.handles[0] ?? createEmptySourceFileHandle(session);
   const nuxtRoots = workspaceNuxtRoots(session.project);

@@ -59,7 +59,17 @@ export async function parseSourceFiles(session: ScanSession): Promise<void> {
     if (handle.isVueSfc && sourceShape(handle) === 0 && !handle.text.trim())
       reportEmptySfc(session, handle);
   }
+  for (const file of session.testFiles) {
+    const handle = await prepareSourceFile(session, file, fileId++);
+    session.testHandles.push(handle);
+    session.handlesByPath.set(handle.path, handle);
+  }
   markSession(session, "parse", started);
+}
+
+/** Whether a handle is test code, which only Rules with `meta.includeTestFiles` analyze. */
+export function isTestFileHandle(handle: SourceFileHandle): boolean {
+  return sourceStates.get(handle)?.entry.testFile === true;
 }
 
 function reportEmptySfc(session: ScanSession, handle: SourceFileHandle): void {
