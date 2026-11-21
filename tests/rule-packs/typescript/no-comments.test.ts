@@ -21,6 +21,7 @@ import { cases as safetyCases } from "./safety-comment-cases.js";
 const ruleId = "typescript/strict/no-comments";
 // Vitest reads this pragma anywhere in a test file's text, string literals included.
 const vitestEnvironment = ["@vitest", "environment"].join("-");
+const jestEnvironment = ["@jest", "environment"].join("-");
 
 async function run(files: Record<string, string>, options?: Record<string, unknown>) {
   const result = await runProjectFixture({
@@ -82,6 +83,8 @@ describe("kept comments", () => {
     ["istanbul ignore", "/* istanbul ignore next */\nexport {}"],
     ["vitest environment", `// ${vitestEnvironment} node\nexport {}`],
     ["JSDoc vitest environment", `/** ${vitestEnvironment} node */\nexport {}`],
+    ["jest environment", `// ${jestEnvironment} happy-dom\nconst a = 1`],
+    ["jest environment options", `// ${jestEnvironment}-options {"url": "/"}\nconst a = 1`],
     ["jsx pragma", "/** @jsxImportSource vue */\nexport {}"],
     ["triple-slash reference", '/// <reference types="vite/client" />\nexport {}'],
     ["preserved banner", "/*! Store v1 */\nexport {}"],
@@ -421,6 +424,7 @@ describe("test files", () => {
   const files = {
     "src/index.ts": "// A note.\nexport const a = 1\n",
     "src/a.test.ts": "// A test note.\nexport const b = 1\n",
+    "src/a.test.config.ts": "// A config note.\nexport const f = 1\n",
     "tests/b.ts": "// A helper note.\nexport const c = 1\n",
     "tests/fixtures/input.ts": "// A fixture note.\nexport const d = 1\n",
     "src/__snapshots__/a.test.ts.snap.ts": "// A snapshot note.\nexport const e = 1\n",
@@ -440,6 +444,7 @@ describe("test files", () => {
 
   test("reports comments in test code but not in fixtures or snapshots", async () => {
     expect(await reportedFiles({ extends: [], rules: { [ruleId]: "warn" } })).toEqual([
+      "src/a.test.config.ts",
       "src/a.test.ts",
       "src/index.ts",
       "tests/b.ts",
@@ -461,18 +466,22 @@ describe("test files", () => {
         overrides: [
           {
             files: [
-              "**/*.test.*",
-              "**/*.spec.*",
-              "**/test/**",
-              "**/tests/**",
-              "**/__tests__/**",
-              "**/test-utils/**",
+              "**/{test,tests,__tests__,test-utils}/**",
+              "**/*.{test,spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs,vue}",
             ],
             rules: { [ruleId]: "off" },
           },
         ],
       }),
-    ).toEqual(["src/index.ts"]);
+    ).toEqual(["src/a.test.config.ts", "src/index.ts"]);
+  });
+
+  test("--unsafe-fix keeps test environment directives in a test file", async () => {
+    const file = "tests/dom.test.js";
+    const source = `/** ${jestEnvironment} happy-dom */\n// A note.\nexport const a = 1\n`;
+    const { after, result } = await fixFixture({ [file]: source }, { unsafeFix: true });
+    expect(after[file]).toBe(source);
+    expect(result.diagnostics.filter((item) => item.ruleId === ruleId)).toHaveLength(1);
   });
 });
 

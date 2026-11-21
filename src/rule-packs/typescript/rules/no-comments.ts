@@ -27,7 +27,7 @@ import {
 const ruleId = "typescript/strict/no-comments";
 
 const toolDirective =
-  /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|[#@]__(?:PURE|NO_SIDE_EFFECTS)__|@vite-ignore|webpack[A-Z]\w*\s*:|@vitest-environment|(?:v8|c8|istanbul)\s+ignore|@jsx|[#@]\s*source(?:Mapping)?URL=|!)/;
+  /^[\s*]*(?:@ts-|eslint[\s-]|oxlint-|(?:nuxt-|vite-)doctor-(?:disable|enable)\b|doctor-enable\b|(?:prettier|oxfmt|dprint|biome)-ignore|[#@]__(?:PURE|NO_SIDE_EFFECTS)__|@vite-ignore|webpack[A-Z]\w*\s*:|@(?:vitest|jest)-environment|(?:v8|c8|istanbul)\s+ignore|@jsx|[#@]\s*source(?:Mapping)?URL=|!)/;
 const typeScriptSuppression = /@ts-(?:ignore|expect-error)/;
 const licenseOnly = /^[ \t]*!?[ \t]*(?:SPDX-License-Identifier:|@license)[ \t]+[\w.+-]+[ \t]*$/;
 const templateDirective =
