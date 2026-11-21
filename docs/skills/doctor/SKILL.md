@@ -71,7 +71,7 @@ Write the entry in the one place the project's Doctor config lives. Doctor stops
   });
   ```
 
-- Anything else: `doctor.config.json` at the project root. If a `vite.config.*` there still stops the run with a config error, pass `--config doctor.config.json` in every Doctor command the project runs.
+- Anything else: `doctor.config.json` at the project root. If a `vite.config.*` there still stops the run with a config error, pass `--config doctor.config.json` to the diagnostic runs in the project's scripts and CI.
 
   ```json
   { "rules": { "typescript/strict/no-comments": "warn" } }
