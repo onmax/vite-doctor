@@ -71,13 +71,13 @@ Write the entry in the one place the project's Doctor config lives. Doctor stops
   });
   ```
 
-- Anything else: `doctor.config.json` at the project root.
+- Anything else: `doctor.config.json` at the project root. If a `vite.config.*` there still stops the run with a config error, pass `--config doctor.config.json` in every Doctor command the project runs.
 
   ```json
   { "rules": { "typescript/strict/no-comments": "warn" } }
   ```
 
-Existing comments stay out of the way because you check work with `--changed` or `--since` (see Workflow). On pull requests, give the CI step `--since origin/<base branch>` too (`origin/${{ github.base_ref }}` in GitHub Actions), so it checks only the pull request's changed lines. The checkout needs that ref (`fetch-depth: 0` with `actions/checkout`), or Doctor fails the run. Keep the flag off push runs: on the base branch it compares the commit with itself and reports nothing. Run `--unsafe-fix` on existing comments only when the person asks: it cannot tell a stale comment from a decision that needs a new home.
+Existing comments stay out of the way because you check work with `--changed` or `--since` (see Workflow). Run the CI step you add on pull requests only, with `--since origin/<base branch>` (`origin/${{ github.base_ref }}` in GitHub Actions), so it checks only the pull request's changed lines. The checkout needs that ref (`fetch-depth: 0` with `actions/checkout`), or Doctor fails the run. A push run has no base to compare with, and a full run with `--max-warnings 0` fails on comments already in the code. Run `--unsafe-fix` on existing comments only when the person asks: it cannot tell a stale comment from a decision that needs a new home.
 
 In the reply that reports the setup, tell the person in one or two sentences that new comments no tool reads are now reported, that recognized tool directives, `SAFETY:` notes, and JSDoc on exported API stay allowed (other tools' comments, such as `cspell:`, need an `allow` pattern), and that `"typescript/strict/no-comments": "off"` (or deleting the entry) turns it off. The ban was your default, not their choice.
 
