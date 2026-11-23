@@ -16,6 +16,7 @@ import { createScanSession } from "../../src/core/internal/scan-session.ts";
 import { cleanCache, runDoctor } from "../../src/core/index.ts";
 import { readCacheStatus } from "../../src/core/internal/cache-store.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
+import { cacheDiagnosticValues } from "./cache-diagnostic-values.ts";
 import { readStoreFile, writeStoreFile } from "./cache-store-file.ts";
 
 const files = {
@@ -496,7 +497,10 @@ test("a Rule subset run keeps the cached results of the Rules it did not run", a
       expect(resultsFor("src/Other.vue")).toBe(before);
       await settle();
       const full = await runViteDoctor(run);
-      expect(full.diagnostics).toEqual((await runViteDoctor({ ...run, cache: false })).diagnostics);
+      const uncached = await runViteDoctor({ ...run, cache: false });
+      expect(cacheDiagnosticValues(full.diagnostics)).toEqual(
+        cacheDiagnosticValues(uncached.diagnostics),
+      );
       const { lastWrite } = readStoreFile(storePath(root)).index;
       expect(lastWrite?.ruleResultsReused).toBeGreaterThan(
         lastWrite?.ruleResultsComputed as number,
