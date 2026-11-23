@@ -20,6 +20,7 @@ import {
 } from "../../src/core/internal/source-inventory.ts";
 import { FINGERPRINT_SCHEME } from "../../src/core/diagnostic-constants.ts";
 import { runProjectFixture } from "../../src/testkit.ts";
+import { cacheDiagnosticValues } from "./cache-diagnostic-values.ts";
 
 function todoRule(id: string, includeTestFiles?: boolean): DoctorRule {
   return createRule({
@@ -276,7 +277,7 @@ test("the analysis cache replays results for test files", async () => {
   // Editing the source file rewrites the store while the test file's result is replayed.
   write(root, "src/app.ts", "export const app = 2;\n");
   const warm = await runDoctor(options);
-  expect(warm.diagnostics).toEqual(cold.diagnostics);
+  expect(cacheDiagnosticValues(warm.diagnostics)).toEqual(cacheDiagnosticValues(cold.diagnostics));
   expect(cacheStatus(root).lastWrite).toMatchObject({
     files: 2,
     filesParsed: 1,
