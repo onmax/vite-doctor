@@ -245,6 +245,23 @@ export interface NuxtProjectInfo {
   autoImports: Map<string, AutoImportEntry>;
   /** All resolved auto-import entries, including names shadowed in the lookup map. */
   autoImportEntries?: AutoImportEntry[];
+  runtimeAutoImportEntries?: AutoImportEntry[];
+  /**
+   * Nitro's runtime auto-imports for server files, as Nitro resolved them. `entries` is unset when
+   * the manifest does not record them, and `authoritative` is false when the manifest is stale.
+   */
+  nitroAutoImports?: {
+    enabled: boolean;
+    authoritative: boolean;
+    entries?: AutoImportEntry[];
+    scanDirs?: string[];
+    plugins?: string[];
+    aliases?: Record<string, string>;
+    customResolver?: boolean;
+    installedPackageJsonPath?: string;
+    scan?: NuxtDoctorManifest["nitroAutoImportScan"];
+    transform?: NuxtDoctorManifest["nitroAutoImportTransform"];
+  };
   components: Map<
     string,
     { name: string; file: string; mode?: "client" | "server" | "all"; sourceLayer?: string }
@@ -288,6 +305,7 @@ export interface NuxtProjectInfo {
     importsDirs: string[];
     pluginFiles: string[];
     resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
+    resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
     resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
     hasServerPageIslands?: boolean;
     componentIslands?: NuxtDoctorManifest["componentIslands"];
@@ -411,6 +429,29 @@ export interface NuxtDoctorManifest {
     exclude: Array<{ source: string; flags: string }>;
   };
   autoImports: unknown[];
+  /** Runtime winners, separate from raw collision candidates in autoImports. */
+  runtimeAutoImports?: unknown[];
+  /** Unset when Nitro was not initialized, `false` when server auto-imports are off. */
+  nitroAutoImportEnabled?: boolean;
+  /** Nitro's resolved runtime auto-imports, with aliases resolved to paths. */
+  nitroAutoImports?: unknown[];
+  /** Resolved Nitro scan roots, separate from the server handler freshness inventory. */
+  nitroScanDirs?: string[];
+  nitroPlugins?: string[];
+  nitroAliases?: Record<string, string>;
+  nitroAutoImportCustomResolver?: boolean;
+  nitroAutoImportScan?: {
+    version: string;
+    dirs: Array<string | { glob: string; types?: boolean }>;
+    options: { cwd: string; types?: boolean; filePatterns?: string[] };
+    decisions?: Array<[file: string, included: boolean]>;
+    fingerprint: string;
+  };
+  nitroAutoImportTransform?: {
+    include: Array<{ glob: string } | { source: string; flags: string }>;
+    exclude: Array<{ glob: string } | { source: string; flags: string }>;
+    commentsDisable: string[];
+  };
   components: unknown[];
   resolvedComponents?: Array<{ name: string; file: string; mode: "client" | "server" | "all" }>;
   hasServerPageIslands?: boolean;
@@ -462,6 +503,7 @@ export interface NuxtDoctorManifest {
   importsDirs?: string[];
   pluginFiles?: string[];
   resolvedPlugins?: Array<{ file: string; mode: "client" | "server" | "all" }>;
+  resolvedMiddleware?: string[];
   appScanRoots?: string[];
   sharedScanRoots?: string[];
 }
@@ -785,18 +827,33 @@ export interface ImportGraphEdge {
   from: string;
   /** The imported file, when the specifier resolves to a source file in the Doctor Run. */
   to?: string;
-  /** The specifier as written, such as `./b` or `~/utils/format`. */
+  /**
+   * The specifier as written, such as `./b` or `~/utils/format`. For an `auto-import` edge, the
+   * auto-imported identifier, such as `useCart`.
+   */
   specifier: string;
-  /** `import` declarations, `export ... from` re-exports, or `import()` with a string literal. */
-  kind: "import" | "re-export" | "dynamic-import";
+  /**
+   * `import` declarations, `export ... from` re-exports, `import()` with a string literal, or a
+   * script reference to a Nuxt auto-import whose source is a file of the run.
+   */
+  kind: "import" | "re-export" | "dynamic-import" | "auto-import";
+  /** The transform that injects an auto-import. Written dependencies have no transform tag. */
+  autoImportBundle?: "nuxt" | "nitro";
+  /** Nuxt client participation; absent when unknown or not applicable. */
+  clientReachable?: boolean;
   /** Whether TypeScript erases the dependency: `import type` or `export type ... from`. */
   typeOnly: boolean;
-  /** The import or re-export declaration, or the `import()` call. */
+  /**
+   * The import or re-export declaration, the `import()` call, or the file's first
+   * unshadowed reference to the auto-imported identifier.
+   */
   range?: SourceRange;
 }
 
-/** Files that evaluate each other through static runtime imports. */
+/** Files that evaluate each other through static runtime imports and Nuxt auto-imports. */
 export interface ImportCycle {
+  /** The bundle view used to find this group, when not shared across views. */
+  autoImportBundle?: ImportGraphEdge["autoImportBundle"];
   /** Every file in the strongly connected group, as sorted absolute paths. */
   files: readonly string[];
   /**
@@ -807,19 +864,23 @@ export interface ImportCycle {
   path: readonly ImportGraphEdge[];
 }
 
-/** Project Inventory of which source files import which, built from File Facts. */
+/** Project Inventory of which source files import or auto-import which, built from File Facts. */
 export interface ImportGraph {
   /** Every source file in the Doctor Run with File Facts, as absolute paths. */
   files: readonly string[];
-  /** Every import, re-export, and literal dynamic import, in source order per file. */
+  /**
+   * Every import, re-export, literal dynamic import, and project-owned Nuxt auto-import. Each
+   * file's written edges come in source order, followed by its auto-import edges.
+   */
   edges: readonly ImportGraphEdge[];
   /** Edges written in `file`, an absolute path. */
   importsOf(file: string): readonly ImportGraphEdge[];
   /** Edges that resolve to `file`, an absolute path. */
   importersOf(file: string): readonly ImportGraphEdge[];
   /**
-   * Groups of two or more files joined by static imports and re-exports. Type-only edges are
-   * erased and dynamic imports run later, so neither forms a cycle.
+   * Groups of two or more files joined by static imports, re-exports, and auto-imports, which Nuxt
+   * compiles to static imports. Nuxt app and Nitro auto-imports are analyzed independently.
+   * Type-only edges are erased and dynamic imports run later, so neither forms a cycle.
    */
   cycles: readonly ImportCycle[];
 }
@@ -838,6 +899,7 @@ export interface GraphEdge {
   from: number;
   to?: number;
   specifier?: string;
+  autoImportBundle?: ImportGraphEdge["autoImportBundle"];
   kind:
     | "import"
     | "type-import"
@@ -845,6 +907,7 @@ export interface GraphEdge {
     | "export"
     | "re-export"
     | "type-re-export"
+    | "auto-import"
     | "virtual-root";
 }
 
