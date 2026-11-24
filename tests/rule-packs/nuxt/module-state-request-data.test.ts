@@ -269,6 +269,32 @@ filter.value = useRoute().fullPath
 });
 
 test.each([
+  ["namespace latest { export interface State {} }", true],
+  ["namespace useRoute { export namespace Types { export type Query = string } }", true],
+  ["namespace latest { export let value = '' }", false],
+  [
+    `namespace latest { export declare let value: string }
+latest.value = ''`,
+    false,
+  ],
+  ["namespace useRoute { export const local = true }", false],
+])("resolves plain-script bindings with setup declaration %s", async (namespace, reports) => {
+  const file = "app/pages/index.vue";
+  expect(
+    await run({
+      [file]: `<script lang="ts">
+import { useRoute } from '#app'
+const latest = ref('')
+</script>
+<script setup lang="ts">
+${namespace}
+latest.value = useRoute().fullPath
+</script>`,
+    }),
+  ).toEqual(reports ? [{ code: "NUXT0105", file, line: 3 }] : []);
+});
+
+test.each([
   ["import { ref as createRef } from 'vue'", "createRef", true],
   ["import { ref } from './project-factory'", "ref", false],
   ["const ref = () => ({ value: '' })", "ref", true],

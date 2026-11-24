@@ -35,6 +35,12 @@ export const viteDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0028", ruleId: "vite/plugin/no-fragment-in-virtual-id" },
 
   { code: "VITE0029", ruleId: "vite/hmr/no-circular-import-at-hmr-boundary" },
+
+  { code: "VITE0030", ruleId: "vite/env/no-unprefixed-client-env" },
+  { code: "VITE0031", ruleId: "vite/define/no-loadenv-all-in-define" },
+  { code: "VITE0032", ruleId: "vite/plugin/no-unreachable-hook" },
+
+  { code: "VITE0033", ruleId: "vite/build/no-node-builtin-in-client-chunk" },
 ]);
 
 export const diagnostics = viteDiagnosticRegistry.diagnostics;

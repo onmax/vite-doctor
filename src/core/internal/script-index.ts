@@ -94,12 +94,17 @@ export function findStatementBinding(scope: AnyNode, name: string): AnyNode {
     for (const statement of scopeStatements(scope)) {
       const declaration = statement.declaration ?? statement;
       const declared: [string, AnyNode][] = [];
-      if (
+      if (declaration.type === "TSModuleDeclaration") {
+        if (!declaration.declare && !isErasedNamespaceBody(declaration.body)) {
+          let id = declaration.id;
+          while (id?.type === "TSQualifiedName") id = id.left;
+          if (id?.type === "Identifier") declared.push([id.name, declaration]);
+        }
+      } else if (
         [
           "FunctionDeclaration",
           "ClassDeclaration",
           "TSEnumDeclaration",
-          "TSModuleDeclaration",
           "TSImportEqualsDeclaration",
         ].includes(declaration.type)
       ) {
@@ -116,6 +121,19 @@ export function findStatementBinding(scope: AnyNode, name: string): AnyNode {
     statementBindings.set(scope, bindings);
   }
   return bindings.get(name) ?? null;
+}
+
+function isErasedNamespaceBody(body: AnyNode): boolean {
+  if (body?.type === "TSModuleDeclaration") return isErasedNamespaceBody(body.body);
+  if (body?.type !== "TSModuleBlock") return false;
+  return body.body.every((statement: AnyNode) => {
+    const { declaration } = statement;
+    if (!declaration && statement.type === "ExportNamedDeclaration")
+      return statement.exportKind === "type";
+    const member = declaration ?? statement;
+    if (member.type === "TSModuleDeclaration") return isErasedNamespaceBody(member.body);
+    return member.type === "TSInterfaceDeclaration" || member.type === "TSTypeAliasDeclaration";
+  });
 }
 
 function scopeStatements(scope: AnyNode): AnyNode[] {

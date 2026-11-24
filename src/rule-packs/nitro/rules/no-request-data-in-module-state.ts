@@ -2,7 +2,6 @@ import {
   holdsRequestValue,
   logicalRightIsSkipped,
   moduleNames,
-  provenConstBinding,
   resolveLexicalBinding,
   resolvesToModuleBinding,
   unwrapExpression,
@@ -258,7 +257,7 @@ function isScalarCopyValue(input: AnyNode, depth = 0): boolean {
   if (value.type === "CallExpression")
     return SCALAR_REQUEST_READERS.has(h3Name(unwrapExpression(value.callee)) ?? "");
   if (value.type !== "Identifier") return false;
-  const binding = provenConstBinding(value);
+  const binding = resolveLexicalBinding(value);
   return isLocalConst(binding) && isScalarCopyValue(binding.init, depth + 1);
 }
 
