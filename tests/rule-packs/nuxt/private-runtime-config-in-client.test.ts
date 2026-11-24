@@ -1,5 +1,12 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { buildNuxt, defineNuxtModule, loadNuxt } from "nuxt/kit";
+import { dirname, join } from "pathe";
 import { describe, expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
+import { runViteDoctor } from "../../../src/doctor.ts";
+import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import { noPrivateRuntimeConfigInClient } from "../../../src/rule-packs/nuxt/rules/nuxt/no-private-runtime-config-in-client.ts";
 
 const manifest = JSON.stringify({
@@ -9,6 +16,7 @@ const manifest = JSON.stringify({
   autoImportEnabled: true,
   autoImports: [
     { name: "useRuntimeConfig", from: "#app/nuxt", kind: "nuxt" },
+    { name: "useRequestEvent", from: "#app/composables/ssr", kind: "nuxt" },
     { name: "onServerPrefetch", from: "vue", kind: "vue" },
   ],
   components: [],
@@ -121,23 +129,123 @@ describe("nuxt/runtime/no-private-runtime-config-in-client", () => {
     expect(diagnostics).toEqual([]);
   });
 
-  test("stays quiet for a component Nuxt resolved as server-only", async () => {
-    const withServerComponent = manifest.replace(
-      '"components":[]',
-      JSON.stringify({
-        components: [{ name: "Report", file: "app/components/Report.vue", mode: "server" }],
-      }).slice(1, -1),
-    );
-    const { diagnostics } = await runProjectFixture({
-      rules: [noPrivateRuntimeConfigInClient],
-      framework: "nuxt",
-      files: {
-        ".nuxt/doctor.manifest.json": withServerComponent,
-        "app/components/Report.vue": page("const key = useRuntimeConfig().apiSecret"),
-      },
+  test("reports a raw island import even when another page uses the Nuxt wrapper", async () => {
+    const { diagnostics } = await run({
+      "app/components/islands/Invoice.vue": page("const key = useRuntimeConfig().apiSecret"),
+      "app/pages/wrapped.vue": "<template><Invoice /></template>",
+      "app/pages/raw.vue": page("import Invoice from '../components/islands/Invoice.vue'").replace(
+        "<div />",
+        "<Invoice />",
+      ),
     });
+    expect(diagnostics.map(({ confidence }) => confidence)).toEqual(["heuristic-medium"]);
+  });
 
-    expect(diagnostics).toEqual([]);
+  test("checks alias-only imports in branches that can run in the browser", async () => {
+    const { diagnostics } = await run({
+      "app/pages/index.vue": page(
+        [
+          "import { useRuntimeConfig as config } from '#app'",
+          "if (import.meta.client && ready.value) {} else console.log(config().apiSecret)",
+          "if (import.meta.server || preview.value) console.log(config().apiSecret)",
+          "const event = true; if (event) console.log(config().apiSecret)",
+          "function setup() { if (import.meta.client && ready.value) return; console.log(config().apiSecret) }",
+          "if (!import.meta.client && ready.value) console.log(config().apiSecret)",
+        ].join("\n"),
+      ),
+    });
+    expect(diagnostics).toHaveLength(4);
+  });
+
+  test("uses the generated component inventory and plugin modes after Nuxt prepare", async () => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-runtime-registration-"));
+    const cwd = process.cwd();
+    let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
+    try {
+      symlinkSync(
+        fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+        join(root, "node_modules"),
+        "junction",
+      );
+      const files = {
+        "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "^4.5.2" } }),
+        "nuxt.config.ts": "export default { srcDir: 'app/' }",
+        "app/components/Report.vue": page("const key = useRuntimeConfig().apiSecret"),
+        "app/components/Variant.server.vue": "<template><div /></template>",
+        "app/components/Variant.client.vue": "<template><div /></template>",
+        "app/pages/index.vue": "<template><Report /></template>",
+        "app/runtime/auth.ts":
+          "export default defineNuxtPlugin({ name: 'auth', env: { islands: false }, setup() {} })",
+        "app/runtime/api.client.ts":
+          "export default defineNuxtPlugin({ name: 'api', dependsOn: ['auth'], setup() {} })",
+      };
+      for (const [file, source] of Object.entries(files)) {
+        mkdirSync(dirname(join(root, file)), { recursive: true });
+        writeFileSync(join(root, file), source);
+      }
+      const register = defineNuxtModule({
+        setup(_options, app) {
+          app.hook("components:extend", (components) => {
+            const report = components.find((component) => component.pascalName === "Report");
+            if (report) report.mode = "server";
+          });
+        },
+      });
+      process.chdir(root);
+      nuxt = await loadNuxt({
+        cwd: root,
+        overrides: {
+          _prepare: true,
+          srcDir: "app",
+          telemetry: false,
+          modules: [nuxtDoctorModule, register],
+          runtimeConfig: { apiSecret: "private" },
+          plugins: [
+            { src: join(root, "app/runtime/auth.ts"), mode: "client" },
+            { src: join(root, "app/runtime/api.client.ts"), mode: "server" },
+          ],
+        },
+      });
+      await buildNuxt(nuxt);
+      await nuxt.close();
+      nuxt = undefined;
+      const generated = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+      expect(generated.resolvedComponents).toEqual(
+        expect.arrayContaining([
+          { name: "Report", file: join(root, "app/components/Report.vue"), mode: "server" },
+          {
+            name: "Variant",
+            file: join(root, "app/components/Variant.server.vue"),
+            mode: "server",
+          },
+          {
+            name: "Variant",
+            file: join(root, "app/components/Variant.client.vue"),
+            mode: "client",
+          },
+        ]),
+      );
+      expect(generated.resolvedPlugins).toEqual(
+        expect.arrayContaining([
+          { file: join(root, "app/runtime/auth.ts"), mode: "client" },
+          { file: join(root, "app/runtime/api.client.ts"), mode: "server" },
+        ]),
+      );
+      const scan = async () =>
+        (await runViteDoctor({ root, framework: "nuxt", cache: false })).diagnostics.filter(
+          ({ code }) => code === "NUXT0102" || code === "NUXT0104",
+        );
+      expect(await scan()).toEqual([]);
+      writeFileSync(
+        join(root, "app/pages/raw.vue"),
+        page("import Report from '~/components/Report.vue'").replace("<div />", "<Report />"),
+      );
+      expect(await scan()).toMatchObject([{ code: "NUXT0102", confidence: "heuristic-medium" }]);
+    } finally {
+      await nuxt?.close();
+      process.chdir(cwd);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("lowers confidence for a component whose client rendering it cannot see", async () => {

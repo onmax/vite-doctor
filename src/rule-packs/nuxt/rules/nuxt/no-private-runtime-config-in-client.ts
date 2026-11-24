@@ -3,7 +3,8 @@ import type { RuleContext } from "../../../../core/index.js";
 import { fileScriptScope, type ScriptScope } from "../../../../core/internal/script-scope.js";
 import { diagnostics } from "../../diagnostics.js";
 import { isRuntimeAppFile, nuxtSourcePath, resolveSameFile } from "./file-classification.js";
-import { isNuxtAppExport } from "./nuxt-app-binding.js";
+import { isNuxtAppExport, isVueLifecycleExport } from "./nuxt-app-binding.js";
+import { excludesRuntime, isInlineCallback, scriptParents } from "./runtime-branches.js";
 import { scriptNodesOfType } from "./script-index.js";
 import { createRule, toPosixPath, type AnyNode } from "./shared.js";
 
@@ -18,18 +19,8 @@ const CLIENT_CODE_RE = /(?:\.vue$|(?:^|\/)(?:plugins|middleware)\/)/;
 // Nuxt renders pages, layouts and the app root on every client navigation. Other components run in
 // the browser only when a client-rendered parent uses them, which this file Rule cannot see.
 const CLIENT_ENTRY_RE = /^(?:(?:pages|layouts)\/|(?:app|error)\.vue$)/;
-// Nuxt's default component dirs register components/islands with `island: true`, so every
-// component there renders only on the server (nuxt/dist/index.mjs normalizeDirs and scanComponents).
 const ISLANDS_DIR_RE = /^components\/islands\//;
-const CLIENT_FLAGS = new Set([
-  "import.meta.client",
-  "import.meta.browser",
-  "process.client",
-  "process.browser",
-]);
-const SERVER_FLAGS = new Set(["import.meta.server", "import.meta.env.SSR", "process.server"]);
-// A test that names the server or the request event is taken as a server guard Doctor can't read.
-const SERVER_HINT_RE = /server|ssr|requestevent|\bevent\b/i;
+const SERVER_LIFECYCLE = new Set(["onServerPrefetch"]);
 
 interface PrivateRead {
   key: string;
@@ -45,30 +36,46 @@ export const noPrivateRuntimeConfigInClient = createRule({
     confidence: "manifest-backed",
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/guide/going-further/runtime-config#reading",
-    requires: { script: true, nuxt: true },
-    prefilter: { calls: ["useRuntimeConfig"] },
+    cacheScope: "none",
+    requires: { script: true, nuxt: true, crossFile: true },
   },
-  create(ctx) {
+  async create(ctx) {
     const nuxt = ctx.project.nuxt;
     const path = toPosixPath(ctx.file.relativePath);
     if (
       !nuxt ||
-      SERVER_ONLY_FILE_RE.test(path) ||
+      (!path.endsWith(".vue") && SERVER_ONLY_FILE_RE.test(path)) ||
       !CLIENT_CODE_RE.test(path) ||
       !isRuntimeAppFile(ctx)
     )
       return;
     const sourcePath = nuxtSourcePath(ctx);
-    if (isServerComponent(ctx, sourcePath)) return;
+    const scope = fileScriptScope(ctx);
+    if (!scope) return;
+    const runsOnlyOnServer = (parents: Map<AnyNode, AnyNode>, node: AnyNode) =>
+      excludesRuntime(
+        parents,
+        node,
+        scope,
+        "client",
+        (call, child) =>
+          call.callee.type === "Identifier" &&
+          isInlineCallback(call, child) &&
+          isVueLifecycleExport(scope.references.get(call.callee), nuxt, SERVER_LIFECYCLE),
+        (test) => isRequestEvent(test, scope, nuxt),
+      );
+    const reads = clientReads(scope, runsOnlyOnServer, (reference) =>
+      isNuxtAppExport(reference, nuxt, "useRuntimeConfig", "nuxt"),
+    ).filter((read) => !CLIENT_KEYS.has(read.key));
+    if (!reads.length) return;
+    if (isServerComponent(ctx, sourcePath)) {
+      const graph = await ctx.inventory.importGraph();
+      // Nuxt registration wraps the component; a physical import can bypass the wrapper.
+      if (!graph.importersOf(ctx.file.path).some((edge) => !edge.typeOnly)) return;
+    }
     const component = path.endsWith(".vue") && !CLIENT_ENTRY_RE.test(sourcePath ?? "");
     return {
       Program() {
-        const scope = fileScriptScope(ctx);
-        if (!scope) return;
-        const reads = clientReads(scope, ctx.file.text, (reference) =>
-          isNuxtAppExport(reference, nuxt, "useRuntimeConfig", "nuxt"),
-        ).filter((read) => !CLIENT_KEYS.has(read.key));
-        if (!reads.length) return;
         const declared = topLevelKeys(nuxt.runtimeConfig);
         if (!declared) {
           recordUnknownKeys(ctx, reads[0]!.key);
@@ -110,17 +117,20 @@ export const noPrivateRuntimeConfigInClient = createRule({
   },
 });
 
-/** A component Nuxt renders only on the server: its resolved entry says so, or it sits in islands/. */
 function isServerComponent(ctx: RuleContext, sourcePath: string | null): boolean {
   if (!ctx.file.relativePath.endsWith(".vue")) return false;
   const file = toPosixPath(resolve(ctx.project.root, ctx.file.path));
-  const entries = [...(ctx.project.nuxt?.components.values() ?? [])].filter(
+  const inventory = ctx.project.nuxt?.manifest;
+  const entries = inventory?.resolvedComponents?.filter(
     (entry) =>
       typeof entry?.file === "string" &&
       resolveSameFile(toPosixPath(resolve(ctx.project.root, entry.file)), file),
   );
-  if (entries.length) return entries.every((entry) => entry.mode === "server");
-  return sourcePath !== null && ISLANDS_DIR_RE.test(sourcePath);
+  if (entries?.length) return entries.every((entry) => entry.mode === "server");
+  return (
+    SERVER_ONLY_FILE_RE.test(file) ||
+    (entries === undefined && sourcePath !== null && ISLANDS_DIR_RE.test(sourcePath))
+  );
 }
 
 function topLevelKeys(config: unknown): Set<string> | undefined {
@@ -146,10 +156,10 @@ function recordUnknownKeys(ctx: RuleContext, key: string) {
 /** Top-level key reads of `useRuntimeConfig()` results outside server-only branches. */
 function clientReads(
   scope: ScriptScope,
-  text: string,
+  runsOnlyOnServer: (parents: Map<AnyNode, AnyNode>, node: AnyNode) => boolean,
   isUseRuntimeConfig: (reference: ReturnType<ScriptScope["references"]["get"]>) => boolean,
 ): PrivateRead[] {
-  const parents = parentMap(scope);
+  const parents = scriptParents(scope);
   const reads: PrivateRead[] = [];
   const readsOf = (value: AnyNode) => {
     const parent = outerParent(parents, value);
@@ -185,28 +195,12 @@ function clientReads(
       call.callee?.type !== "Identifier" ||
       call.arguments.length ||
       !isUseRuntimeConfig(scope.references.get(call.callee)) ||
-      runsOnlyOnServer(parents, call, text)
+      runsOnlyOnServer(parents, call)
     )
       continue;
     readsOf(call);
   }
-  return reads.filter((read) => !runsOnlyOnServer(parents, read.node, text));
-}
-
-function parentMap(scope: ScriptScope): Map<AnyNode, AnyNode> {
-  const parents = new Map<AnyNode, AnyNode>();
-  const visit = (node: AnyNode) => {
-    for (const key of scope.visitorKeys[node.type] ?? []) {
-      const value = node[key];
-      for (const child of Array.isArray(value) ? value : [value]) {
-        if (!child?.type) continue;
-        parents.set(child, node);
-        visit(child);
-      }
-    }
-  };
-  visit(scope.ast);
-  return parents;
+  return reads.filter((read) => !runsOnlyOnServer(parents, read.node));
 }
 
 const WRAPPERS = new Set(["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression"]);
@@ -231,78 +225,26 @@ function propertyKey(node: AnyNode): string | undefined {
   return typeof node.key.value === "string" ? node.key.value : undefined;
 }
 
-function runsOnlyOnServer(parents: Map<AnyNode, AnyNode>, node: AnyNode, text: string): boolean {
-  const hintsServer = (test: AnyNode) =>
-    SERVER_HINT_RE.test(text.slice(test.range[0], test.range[1]));
-  let child = node;
-  for (let parent = parents.get(node); parent; child = parent, parent = parents.get(parent)) {
-    if (parent.type === "IfStatement" || parent.type === "ConditionalExpression") {
-      if (child === parent.test) continue;
-      const side = runtimeSide(parent.test);
-      if (side === (child === parent.consequent ? "server" : "client")) return true;
-      if (side === undefined && hintsServer(parent.test)) return true;
-    } else if (parent.type === "LogicalExpression" && child === parent.right) {
-      const side = runtimeSide(parent.left);
-      if (side === (parent.operator === "&&" ? "server" : "client")) return true;
-      if (side === undefined && hintsServer(parent.left)) return true;
-    } else if (parent.type === "BlockStatement" || parent.type === "Program") {
-      const index = parent.body.indexOf(child);
-      if (parent.body.slice(0, index).some(isClientExit)) return true;
-    } else if (
-      parent.type === "CallExpression" &&
-      parent.callee.type === "Identifier" &&
-      parent.callee.name === "onServerPrefetch" &&
-      parent.arguments.includes(child)
-    )
-      return true;
-  }
-  return false;
-}
-
-/** `if (import.meta.client) return`: what follows runs only on the server. */
-function isClientExit(statement: AnyNode): boolean {
-  if (statement.type !== "IfStatement" || statement.alternate) return false;
-  if (runtimeSide(statement.test) !== "client") return false;
-  const body =
-    statement.consequent.type === "BlockStatement"
-      ? statement.consequent.body.at(-1)
-      : statement.consequent;
-  return body?.type === "ReturnStatement" || body?.type === "ThrowStatement";
-}
-
-function runtimeSide(test: AnyNode): "client" | "server" | undefined {
-  if (test.type === "UnaryExpression" && test.operator === "!") {
-    const side = runtimeSide(test.argument);
-    return side && (side === "client" ? "server" : "client");
-  }
-  if (test.type === "LogicalExpression" && test.operator === "&&") {
-    const left = runtimeSide(test.left);
-    const right = runtimeSide(test.right);
-    return left ?? right;
-  }
-  if (test.type === "BinaryExpression" && /^[!=]==?$/.test(test.operator)) {
-    const [typeOf, literal] =
-      test.left.type === "UnaryExpression" ? [test.left, test.right] : [test.right, test.left];
-    if (
-      typeOf.type !== "UnaryExpression" ||
-      typeOf.operator !== "typeof" ||
-      typeOf.argument.type !== "Identifier" ||
-      !["window", "document"].includes(typeOf.argument.name) ||
-      literal.value !== "undefined"
-    )
-      return undefined;
-    return test.operator.startsWith("=") ? "server" : "client";
-  }
-  const name = memberPath(test);
-  if (name && CLIENT_FLAGS.has(name)) return "client";
-  if (name && SERVER_FLAGS.has(name)) return "server";
-  return undefined;
-}
-
-function memberPath(node: AnyNode): string | undefined {
-  if (node.type === "Identifier") return node.name;
-  if (node.type === "MetaProperty") return `${node.meta.name}.${node.property.name}`;
-  if (node.type !== "MemberExpression" || node.computed) return undefined;
-  const object = memberPath(node.object);
-  return object && `${object}.${node.property.name}`;
+function isRequestEvent(
+  test: AnyNode,
+  scope: ScriptScope,
+  nuxt: NonNullable<RuleContext["project"]["nuxt"]>,
+): boolean {
+  const call = (node: AnyNode) =>
+    node?.type === "CallExpression" &&
+    node.callee.type === "Identifier" &&
+    node.arguments.length === 0 &&
+    isNuxtAppExport(scope.references.get(node.callee), nuxt, "useRequestEvent", "composables/ssr");
+  if (call(test)) return true;
+  if (test.type !== "Identifier") return false;
+  const binding = scope.references.get(test)?.resolved;
+  const def = binding?.defs[0];
+  if (!binding || binding.defs.length !== 1 || def?.type !== "Variable") return false;
+  const declaration = def.node as AnyNode;
+  return (
+    declaration.id === def.name &&
+    call(declaration.init) &&
+    declaration.range[1] < test.range[0] &&
+    !binding.references.some((ref) => ref.isWrite() && ref.writeExpr !== declaration.init)
+  );
 }

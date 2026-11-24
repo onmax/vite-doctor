@@ -1,6 +1,9 @@
 import { basename, dirname, join, relative, resolve } from "pathe";
 import { createRule, type RuleContext, type SourceRange } from "../../../../core/index.js";
-import { readExportedExperimentalOption } from "../../../../core/internal/runtime-graph.js";
+import {
+  readExportedExperimentalOption,
+  readExportedNuxtOption,
+} from "../../../../core/internal/runtime-graph.js";
 import { parseScript } from "../../../../core/internal/script.js";
 import { workspaceViewRoot } from "../../../../core/internal/workspace-nuxt.js";
 import { diagnostics } from "../../diagnostics.js";
@@ -22,7 +25,6 @@ interface PluginMeta {
   /** Unset when the plugin object is not literal enough to read its metadata. */
   dependsOn?: Array<{ name: string; node: AnyNode }>;
   islandsDisabled?: { node: AnyNode };
-  clientOnly: boolean;
   readable: boolean;
 }
 
@@ -60,10 +62,10 @@ export const noIslandDisabledPluginDependency = createRule({
         }
         if (!islandsRender(ctx, app, sources)) return;
         for (const plugin of plugins) {
-          if (plugin.clientOnly || plugin.islandsDisabled || !plugin.dependsOn) continue;
+          if (plugin.islandsDisabled || !plugin.dependsOn) continue;
           for (const dependency of plugin.dependsOn) {
             const [target, ...others] = names.get(dependency.name) ?? [];
-            if (!target || others.length || target.clientOnly || !target.islandsDisabled) continue;
+            if (!target || others.length || !target.islandsDisabled) continue;
             report(ctx, app.root, plugin, dependency, target);
           }
         }
@@ -112,6 +114,7 @@ interface AppRoots {
   root: string;
   configRoots: string[];
   pluginDirs: string[];
+  sourceDirs: string[];
 }
 
 function appRoots(ctx: RuleContext): AppRoots | undefined {
@@ -127,31 +130,40 @@ function appRoots(ctx: RuleContext): AppRoots | undefined {
     root: resolve(root, layer.root),
     srcDir: layer.srcDir && resolve(root, layer.srcDir),
   }));
-  const pluginDirs = new Set([join(resolve(root, nuxt.appDir), "plugins")]);
+  const sourceDirs = new Set([resolve(root, nuxt.appDir)]);
   for (const layer of layers) {
-    if (layer.srcDir) pluginDirs.add(join(layer.srcDir, "plugins"));
-    else {
-      pluginDirs.add(join(layer.root, "plugins"));
-      pluginDirs.add(join(layer.root, "app/plugins"));
-    }
+    if (layer.root === root) continue;
+    const defaultDir = ctx.fs.exists(join(layer.root, "app"))
+      ? join(layer.root, "app")
+      : layer.root;
+    sourceDirs.add(layer.srcDir ?? defaultDir);
   }
   return {
     root,
     configRoots: [...new Set([root, ...layers.map((layer) => layer.root)])],
-    pluginDirs: [...pluginDirs],
+    pluginDirs: [...sourceDirs].map((dir) => join(dir, "plugins")),
+    sourceDirs: [...sourceDirs],
   };
 }
 
 function readPlugins(ctx: RuleContext, app: AppRoots, sources: readonly string[]): PluginMeta[] {
-  const explicit = new Set(ctx.project.nuxt?.manifest?.pluginFiles ?? []);
+  const inventory = ctx.project.nuxt?.manifest;
+  const modes =
+    inventory?.resolvedPlugins &&
+    new Map(inventory.resolvedPlugins.map(({ file, mode }) => [file, mode]));
+  const explicit = new Set(inventory?.pluginFiles ?? []);
+  if (!modes && readRegistration(ctx, app, "plugins") !== undefined) return [];
   const files = sources.filter(
     (file) =>
       !/\.d\.[cm]?ts$/.test(file) &&
-      (explicit.has(file) ||
-        app.pluginDirs.some((dir) => {
-          const path = relative(dir, file);
-          return !path.startsWith("..") && PLUGIN_FILE_RE.test(path);
-        })),
+      (modes
+        ? modes.has(file) && modes.get(file) !== "client"
+        : !explicit.has(file) &&
+          !/\.client\.[^/.]+$/.test(basename(file)) &&
+          app.pluginDirs.some((dir) => {
+            const path = relative(dir, file);
+            return !path.startsWith("..") && PLUGIN_FILE_RE.test(path);
+          })),
   );
   return files.flatMap((file) => {
     const text = ctx.fs.readText(file);
@@ -162,8 +174,7 @@ function readPlugins(ctx: RuleContext, app: AppRoots, sources: readonly string[]
 }
 
 function readPlugin(file: string, text: string): PluginMeta | undefined {
-  const clientOnly = /\.client\.[^/.]+$/.test(basename(file));
-  const unreadable = { file, text, clientOnly, readable: false };
+  const unreadable = { file, text, readable: false };
   const program = parseScript(file, text) as AnyNode;
   if (!program) return unreadable;
   const exported = program.body?.find(
@@ -175,7 +186,7 @@ function readPlugin(file: string, text: string): PluginMeta | undefined {
   // A function plugin has no name, dependsOn or env.
   if (FUNCTION_TYPES.has(object?.type)) return undefined;
   if (object?.type !== "ObjectExpression") return unreadable;
-  const plugin: PluginMeta = { file, text, clientOnly, readable: true };
+  const plugin: PluginMeta = { file, text, readable: true };
   for (const property of object.properties) {
     if (property.type !== "Property" || property.computed) return unreadable;
     const key = property.key.name ?? property.key.value;
@@ -216,33 +227,62 @@ function unwrap(node: AnyNode): AnyNode {
  * has a component or page that renders as an island.
  */
 function islandsRender(ctx: RuleContext, app: AppRoots, sources: readonly string[]): boolean {
+  const inventory = ctx.project.nuxt?.manifest;
+  if (inventory?.componentIslands === false) return false;
+  if (inventory?.componentIslands === undefined) {
+    const value = readRegistration(ctx, app, "componentIslands", true);
+    if (
+      value !== undefined &&
+      !(value?.type === "Literal" && [true, "auto"].includes(value.value)) &&
+      value?.type !== "ObjectExpression"
+    )
+      return false;
+  }
+  if (inventory?.isCurrent && inventory.pages?.some((page) => page.mode === "server")) return true;
+  const components = inventory?.resolvedComponents;
+  if (components) {
+    const clients = new Set(
+      components.filter(({ mode }) => mode === "client").map(({ name }) => name),
+    );
+    return components.some(({ name, mode }) => mode === "server" && !clients.has(name));
+  }
+  const defaults = (option: string) => {
+    const value = readRegistration(ctx, app, option);
+    return value === undefined || (value?.type === "Literal" && value.value === true);
+  };
+  if (
+    readRegistration(ctx, app, "dir") !== undefined ||
+    readRegistration(ctx, app, "srcDir") !== undefined
+  )
+    return false;
+  const checkComponents = defaults("components");
+  const checkPages = defaults("pages");
+  const vueFiles = new Set(sources.filter((file) => file.endsWith(".vue")));
+  return app.sourceDirs.some((dir) =>
+    [...vueFiles].some((file) => {
+      const path = relative(dir, file);
+      if (checkPages && path.startsWith("pages/") && SERVER_COMPONENT_RE.test(path))
+        return !vueFiles.has(file.replace(SERVER_COMPONENT_RE, ".client.vue"));
+      if (!checkComponents || !path.startsWith("components/")) return false;
+      return (
+        path.startsWith("components/islands/") ||
+        ISLAND_COMPONENT_RE.test(path) ||
+        (SERVER_COMPONENT_RE.test(path) &&
+          !vueFiles.has(file.replace(SERVER_COMPONENT_RE, ".client.vue")))
+      );
+    }),
+  );
+}
+
+function readRegistration(ctx: RuleContext, app: AppRoots, key: string, experimental = false) {
   for (const root of app.configRoots) {
     const file = CONFIG_FILES.map((name) => join(root, name)).find((path) => ctx.fs.exists(path));
     if (!file) continue;
     const text = ctx.fs.readText(file);
-    if (text === undefined) return false;
-    const value = readExportedExperimentalOption(file, text, "componentIslands");
-    if (value === null) return false;
-    if (value === undefined) continue;
-    if (value.type === "Literal" && value.value === false) return false;
-    break;
+    if (text === undefined) return null;
+    const value = experimental
+      ? readExportedExperimentalOption(file, text, key)
+      : readExportedNuxtOption(file, text, key);
+    if (value !== undefined) return value;
   }
-  const components = ctx.project.nuxt?.components;
-  if (
-    [...(components?.values() ?? [])].some(
-      (component) =>
-        component.mode === "server" &&
-        ![...components!.values()].some(
-          (other) => other.name === component.name && other.mode === "client",
-        ),
-    )
-  )
-    return true;
-  const vueFiles = new Set(sources.filter((file) => file.endsWith(".vue")));
-  return [...vueFiles].some(
-    (file) =>
-      ISLAND_COMPONENT_RE.test(file) ||
-      (SERVER_COMPONENT_RE.test(file) &&
-        !vueFiles.has(file.replace(SERVER_COMPONENT_RE, ".client.vue"))),
-  );
 }

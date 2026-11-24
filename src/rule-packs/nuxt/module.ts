@@ -72,7 +72,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
     serverInventory: undefined as Record<string, string[]> | undefined,
     serverHandlerMtimes: undefined as Record<string, number> | undefined,
-    pages: [] as Array<{ path?: string; file?: string; name?: string }>,
+    pages: [] as NonNullable<NuxtDoctorManifest["pages"]>,
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
     componentDirs: [] as unknown[],
@@ -191,6 +191,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
       path: page.path,
       file: page.file,
       name: page.name,
+      mode: page.mode,
     }));
   });
 
@@ -247,6 +248,10 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     await writeManifest(nuxt, evidence);
   });
 
+  nuxt.hook?.("app:templatesGenerated", async () => {
+    await writeManifest(nuxt, evidence);
+  });
+
   nuxt.hook?.("close", async () => {
     await writeManifest(nuxt, evidence);
   });
@@ -272,6 +277,8 @@ export async function writeManifest(
   const buildDir = resolve(rootDir, nuxt.options.buildDir ?? ".nuxt");
   const srcDir = resolve(rootDir, nuxt.options.srcDir ?? ".");
   const appDir = srcDir;
+  const app = nuxt.apps?.default;
+  const componentIslands = nuxt.options.experimental?.componentIslands;
   const moduleSources = evidence?.moduleSources ?? (await collectModuleSources(nuxt));
   const extensions = evidence?.extensions ?? (await collectExtensionEntries(nuxt));
   const modules = toArray(nuxt.options.modules).map((entry: any) => ({
@@ -336,6 +343,25 @@ export async function writeManifest(
           ].sort(),
     autoImports,
     components: toArray(nuxt.options.components ?? nuxt._components),
+    resolvedComponents: Array.isArray(app?.components)
+      ? app.components.flatMap((component: any) =>
+          typeof component.pascalName === "string" &&
+          typeof component.filePath === "string" &&
+          ["client", "server", "all"].includes(component.mode)
+            ? [
+                {
+                  name: component.pascalName,
+                  file: resolve(srcDir, component.filePath),
+                  mode: component.mode,
+                },
+              ]
+            : [],
+        )
+      : undefined,
+    componentIslands:
+      componentIslands === undefined || componentIslands === "auto"
+        ? componentIslands
+        : Boolean(componentIslands),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({
         root: resolve(layer.cwd ?? layer.config?.rootDir ?? rootDir),
@@ -383,7 +409,14 @@ export async function writeManifest(
     resolvedServerHandlers: evidence?.resolvedServerHandlers,
     serverInventory: evidence?.serverInventory,
     serverHandlerMtimes: evidence?.serverHandlerMtimes,
-    pages: evidence?.pages ?? [],
+    pages: Array.isArray(app?.pages)
+      ? flattenPages(app.pages).map((page) => ({
+          path: page.path,
+          file: page.file,
+          name: page.name,
+          mode: page.mode,
+        }))
+      : (evidence?.pages ?? []),
     prerenderRoutes: [
       ...new Set([
         ...toArray(nuxt.options.nitro?.prerender?.routes).map(String),
@@ -402,6 +435,13 @@ export async function writeManifest(
       ...toArray(evidence?.importDirs),
     ]),
     pluginFiles: normalizePluginFiles(rootDir, toArray(nuxt.options.plugins)),
+    resolvedPlugins: Array.isArray(app?.plugins)
+      ? app.plugins.flatMap((plugin: any) =>
+          typeof plugin.src === "string" && ["client", "server", "all"].includes(plugin.mode)
+            ? [{ file: resolve(rootDir, plugin.src), mode: plugin.mode }]
+            : [],
+        )
+      : undefined,
     appScanRoots: [appDir],
     sharedScanRoots: [
       resolve(rootDir, "shared/utils"),

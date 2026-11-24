@@ -48,3 +48,32 @@ function isNuxtAppSource(source: string, module: string): boolean {
   const path = source.replace(/\.[cm]?[jt]s$/, "");
   return path === `#app/${module}` || path.endsWith(`/nuxt/dist/app/${module}`);
 }
+
+export function isVueLifecycleExport(
+  reference: ScopeReference | undefined,
+  nuxt: NuxtProjectInfo,
+  names: ReadonlySet<string>,
+): boolean {
+  if (!reference) return false;
+  function autoImport(local: string) {
+    const entry = nuxt.autoImports.get(local);
+    return entry
+      ? names.has(entry.name) && entry.from === "vue" && !entry.type
+      : names.has(local) && !nuxt.autoImportsAuthoritative;
+  }
+  if (!reference.resolved) return nuxt.autoImportEnabled && autoImport(reference.identifier.name);
+  return reference.resolved.defs.some((definition) => {
+    if (definition.type !== "ImportBinding") return false;
+    const { node, parent } = definition as { node: AnyNode; parent: AnyNode };
+    if (
+      node.type !== "ImportSpecifier" ||
+      node.importKind === "type" ||
+      parent.importKind === "type"
+    )
+      return false;
+    const name = node.imported.name ?? node.imported.value;
+    return parent.source.value === "vue"
+      ? names.has(name)
+      : parent.source.value === "#imports" && autoImport(name);
+  });
+}

@@ -1,7 +1,8 @@
 import { fileScriptScope } from "../../../../core/internal/script-scope.js";
 import { diagnostics } from "../../diagnostics.js";
 import { isRuntimeAppFile } from "./file-classification.js";
-import { isNuxtAppExport } from "./nuxt-app-binding.js";
+import { isNuxtAppExport, isVueLifecycleExport } from "./nuxt-app-binding.js";
+import { excludesRuntime, isInlineCallback, scriptParents } from "./runtime-branches.js";
 import { scriptNodesOfType } from "./script-index.js";
 import { createRule, toPosixPath, type AnyNode } from "./shared.js";
 
@@ -17,7 +18,8 @@ const NESTED_SCOPES = new Set([
   "ClassDeclaration",
   "ClassExpression",
 ]);
-const SSR_OPTIONS = new Set(["server", "immediate"]);
+const SSR_OPTIONS = new Set(["server", "immediate", "enabled"]);
+const CLIENT_LIFECYCLE = new Set(["onMounted", "onBeforeMount", "onBeforeUnmount", "onUnmounted"]);
 const CLIENT_ONLY_FILE_RE = /\.(?:client|server|island(?:\.global)?)\.[^/]+$/;
 
 export const asyncDataHandlerMustReturn = createRule({
@@ -30,7 +32,6 @@ export const asyncDataHandlerMustReturn = createRule({
     fixable: "suggestion",
     docsUrl: "https://nuxt.com/docs/4.x/api/composables/use-async-data#params",
     requires: { script: true, nuxt: true },
-    prefilter: { calls: COMPOSABLES },
   },
   create(ctx) {
     const nuxt = ctx.project.nuxt;
@@ -45,6 +46,7 @@ export const asyncDataHandlerMustReturn = createRule({
       Program() {
         const scope = fileScriptScope(ctx);
         if (!scope) return;
+        let parents: ReturnType<typeof scriptParents> | undefined;
         for (const call of scriptNodesOfType(scope.ast, "CallExpression")) {
           if (call.callee?.type !== "Identifier") continue;
           const composable = COMPOSABLES.find((composable) =>
@@ -56,19 +58,33 @@ export const asyncDataHandlerMustReturn = createRule({
             ),
           );
           if (!composable) continue;
-          const handlerIndex = FUNCTION_TYPES.has(call.arguments[0]?.type) ? 0 : 1;
+          const handlerIndex =
+            FUNCTION_TYPES.has(call.arguments[0]?.type) &&
+            !FUNCTION_TYPES.has(call.arguments[1]?.type)
+              ? 0
+              : 1;
           const handler = call.arguments[handlerIndex];
           const options = call.arguments[handlerIndex + 1];
           if (
             !FUNCTION_TYPES.has(handler?.type) ||
             handler.generator ||
             !runsDuringSsrWithoutFallback(options) ||
-            returnsValue(handler)
+            returnsValue(handler) ||
+            excludesRuntime(
+              (parents ??= scriptParents(scope)),
+              call,
+              scope,
+              "server",
+              (outer, child) =>
+                outer.callee.type === "Identifier" &&
+                isInlineCallback(outer, child) &&
+                isVueLifecycleExport(scope.references.get(outer.callee), nuxt, CLIENT_LIFECYCLE),
+            )
           )
             continue;
           ctx.report(
             diagnostics.NUXT0103({
-              why: `This ${composable}() handler never returns a value, so it resolves to undefined. Nuxt skips the client fetch during hydration only when the payload holds data that is not undefined, so the handler runs again in the browser after SSR, and in development Nuxt warns that the request may be duplicated (NUXT_E3006).`,
+              why: `When this ${composable}() handler completes successfully it returns undefined. Without payload data or an error, Nuxt can run the handler again during hydration, and in development it warns that the request may be duplicated (NUXT_E3006).`,
               fix: "Return the data the page uses. If the handler only runs side effects, return null, or move the side effects out of the handler.",
             }),
             {
@@ -122,7 +138,18 @@ function returnsValue(handler: AnyNode): boolean {
   handler.body.body.forEach(visit);
   if (returns.some((statement) => statement.argument && !isUndefined(statement.argument)))
     return true;
-  return !returns.length && handler.body.body.at(-1)?.type === "ThrowStatement";
+  return !returns.length && alwaysThrows(handler.body);
+}
+
+function alwaysThrows(statement: AnyNode): boolean {
+  if (statement.type === "ThrowStatement") return true;
+  if (statement.type === "BlockStatement") return statement.body.some(alwaysThrows);
+  return (
+    statement.type === "IfStatement" &&
+    !!statement.alternate &&
+    alwaysThrows(statement.consequent) &&
+    alwaysThrows(statement.alternate)
+  );
 }
 
 function isUndefined(node: AnyNode): boolean {

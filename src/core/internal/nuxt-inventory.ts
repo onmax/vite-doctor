@@ -6,6 +6,9 @@ export interface NuxtProjectInventory {
   scannedComposableFiles?: string[];
   importsDirs: string[];
   pluginFiles: string[];
+  resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
+  resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
+  componentIslands?: NuxtDoctorManifest["componentIslands"];
   keyedComposables: NuxtKeyedComposable[];
   aliases: Record<string, string>;
   autoImportTransform?: {
@@ -18,7 +21,7 @@ export interface NuxtProjectInventory {
   isCurrent: boolean;
   serverHandlers: NuxtDoctorManifest["serverHandlers"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
-  pages: Array<{ path?: string; file?: string; name?: string }>;
+  pages: NonNullable<NuxtDoctorManifest["pages"]>;
   prerenderRoutes: string[];
   buildManifest?: {
     hasBuildManifest: boolean;
@@ -43,6 +46,14 @@ export function createNuxtProjectInventory(
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
+    resolvedPlugins: isCurrent
+      ? manifest?.resolvedPlugins?.map((plugin) => ({
+          ...plugin,
+          file: resolve(root, plugin.file),
+        }))
+      : undefined,
+    resolvedComponents: isCurrent ? manifest?.resolvedComponents : undefined,
+    componentIslands: isCurrent ? manifest?.componentIslands : undefined,
     keyedComposables: keyedComposables(root, manifest?.keyedComposables),
     aliases: manifest?.aliases ?? {},
     autoImportTransform: manifest?.autoImportTransform,

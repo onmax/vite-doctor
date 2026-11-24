@@ -17,6 +17,31 @@ const api = plugin("  name: 'api',\n  dependsOn: ['auth'],");
 const island = { "app/components/Chart.server.vue": "<template><div /></template>\n" };
 
 describe("nuxt/plugins/no-island-disabled-dependency", () => {
+  test("uses default island roots and withholds reports for unknown or disabled registration", async () => {
+    const plugins = { "app/plugins/auth.ts": auth, "app/plugins/api.ts": api };
+    expect(
+      await run({ ...plugins, "app/components/islands/Chart.vue": "<template><div /></template>" }),
+    ).toHaveLength(1);
+    expect(
+      await run({ ...plugins, "app/utils/Chart.server.vue": "<template><div /></template>" }),
+    ).toEqual([]);
+    expect(
+      await run({
+        ...plugins,
+        ...island,
+        "nuxt.config.ts": "export default defineNuxtConfig({ components: false })",
+      }),
+    ).toEqual([]);
+    expect(
+      await run({
+        ...plugins,
+        ...island,
+        "nuxt.config.ts":
+          "const enabled = false; export default defineNuxtConfig({ experimental: { componentIslands: enabled } })",
+      }),
+    ).toEqual([]);
+  });
+
   test("reports a plugin that depends on an island-disabled plugin when the app renders islands", async () => {
     const diagnostics = await run({
       ...island,
@@ -33,6 +58,38 @@ describe("nuxt/plugins/no-island-disabled-dependency", () => {
     expect(diagnostics[0]?.why).toContain("islands: false");
     expect(diagnostics[0]?.related?.[0]?.file).toMatch(/app\/plugins\/auth\.ts$/);
     expect(diagnostics[0]?.related?.[0]?.range?.line).toBe(3);
+  });
+
+  test("prefers resolved plugin modes and an authoritative empty component inventory", async () => {
+    const files = { ...island, "app/runtime/auth.client.ts": auth, "app/plugins/api.ts": api };
+    const withInventory = (
+      authMode: "client" | "server",
+      apiMode: "client" | "server",
+      hasIsland: boolean,
+    ) =>
+      run({
+        ...files,
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: new Date(Date.now() + 10_000).toISOString(),
+          nuxtVersion: "4.5.2",
+          appDir: "app",
+          autoImports: [],
+          components: [],
+          layers: [],
+          componentIslands: "auto",
+          resolvedComponents: hasIsland
+            ? [{ name: "Chart", file: "app/components/Chart.server.vue", mode: "server" }]
+            : [],
+          resolvedPlugins: [
+            { file: "app/runtime/auth.client.ts", mode: authMode },
+            { file: "app/plugins/api.ts", mode: apiMode },
+          ],
+        }),
+      });
+    expect(await withInventory("server", "server", true)).toHaveLength(1);
+    expect(await withInventory("client", "server", true)).toEqual([]);
+    expect(await withInventory("server", "client", true)).toEqual([]);
+    expect(await withInventory("server", "server", false)).toEqual([]);
   });
 
   test("reports island components and index plugins with explicitly enabled islands", async () => {

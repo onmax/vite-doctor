@@ -87,6 +87,24 @@ describe("nuxt/fetch/handler-must-return", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  test("distinguishes alias-only reactive and keyless handlers from non-SSR calls and rejections", async () => {
+    const diagnostics = await run({
+      "app/pages/a.vue": page(
+        [
+          "import { useAsyncData as loadData, useLazyAsyncData as lazyData } from '#app'",
+          "loadData(() => 'user-' + id.value, async () => { await load() })",
+          "lazyData(async () => { await load() })",
+          "if (import.meta.client && ready) loadData('client', () => {})",
+          "onMounted(() => loadData('mounted', () => {}))",
+          "loadData('disabled', () => {}, { enabled: false })",
+          "loadData('reject', () => { if (flag.value) throw new Error('A'); else throw new Error('B') })",
+          "loadData('fallthrough', () => { if (flag.value) throw new Error('A') })",
+        ].join("\n"),
+      ),
+    });
+    expect(diagnostics.map(({ range }) => range?.line)).toEqual([3, 4, 9]);
+  });
+
   test("stays quiet when options replace the result or keep the handler off the server", async () => {
     const diagnostics = await run({
       "app/pages/a.vue": page(

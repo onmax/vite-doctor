@@ -287,6 +287,9 @@ export interface NuxtProjectInfo {
     scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
+    resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
+    resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
+    componentIslands?: NuxtDoctorManifest["componentIslands"];
     keyedComposables: NuxtKeyedComposable[];
     aliases: Record<string, string>;
     autoImportTransform?: {
@@ -299,7 +302,7 @@ export interface NuxtProjectInfo {
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
-    pages?: Array<{ path?: string; file?: string; name?: string }>;
+    pages?: NuxtDoctorManifest["pages"];
     prerenderRoutes?: string[];
     buildManifest?: {
       hasBuildManifest: boolean;
@@ -363,6 +366,8 @@ export interface NuxtDoctorManifest {
   };
   autoImports: unknown[];
   components: unknown[];
+  resolvedComponents?: Array<{ name: string; file: string; mode: "client" | "server" | "all" }>;
+  componentIslands?: boolean | "auto";
   layers: Array<{
     root: string;
     nuxtConfigMtimeMs?: number | null;
@@ -386,7 +391,7 @@ export interface NuxtDoctorManifest {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
-  pages?: Array<{ path?: string; file?: string; name?: string }>;
+  pages?: Array<{ path?: string; file?: string; name?: string; mode?: "client" | "server" }>;
   prerenderRoutes?: string[];
   buildManifest?: {
     hasBuildManifest: boolean;
@@ -401,6 +406,7 @@ export interface NuxtDoctorManifest {
   keyedComposables?: unknown[];
   importsDirs?: string[];
   pluginFiles?: string[];
+  resolvedPlugins?: Array<{ file: string; mode: "client" | "server" | "all" }>;
   appScanRoots?: string[];
   sharedScanRoots?: string[];
 }
@@ -748,7 +754,7 @@ export interface ImportGraph {
 export interface RuleInventory {
   /** Available to `workspace` and `manifest` Rules, which see the whole project. */
   componentUsage(): Promise<ComponentUsageGraph>;
-  /** Available to `workspace` and `manifest` Rules, which see the whole project. */
+  /** Also available to uncached file Rules that require cross-file context. */
   importGraph(): Promise<ImportGraph>;
   /** Authored files selected by the run, including HTML when requested separately. */
   sourcePaths(kind?: "html"): Promise<readonly string[]>;

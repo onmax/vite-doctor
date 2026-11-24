@@ -705,8 +705,17 @@ export function readExportedExperimentalOption(
   text: string,
   option: string,
 ): AnyRuntimeNode | null | undefined {
+  return readExportedNuxtOption(file, text, "experimental", option);
+}
+
+export function readExportedNuxtOption(
+  file: string,
+  text: string,
+  option: string,
+  nested?: string,
+): AnyRuntimeNode | null | undefined {
   const program = parseScript(file, text) as { body?: AnyRuntimeNode[] } | null;
-  if (!program) return new RegExp(`\\b${option}\\b`).test(text) ? null : undefined;
+  if (!program) return new RegExp(`\\b${nested ?? option}\\b`).test(text) ? null : undefined;
   const exported = program.body?.find((node) => node.type === "ExportDefaultDeclaration");
   if (!exported) return undefined;
   let config = unwrapExpression(exported.declaration);
@@ -722,14 +731,14 @@ export function readExportedExperimentalOption(
     const value = unwrapExpression(override.value);
     if (value?.type !== "ObjectExpression") return null;
     const source = text.slice(value.start, value.end);
-    if (source.includes(option) || source.includes("...")) return null;
+    if (source.includes(nested ?? option) || source.includes("...")) return null;
   }
-  const experimental = objectProperty(config, "experimental");
-  if (experimental.state === "absent") return undefined;
-  if (experimental.state === "unknown") return null;
-  const experimentalObject = unwrapExpression(experimental.value);
-  if (experimentalObject?.type !== "ObjectExpression") return null;
-  const flag = objectProperty(experimentalObject, option);
+  const parent = nested ? objectProperty(config, option) : undefined;
+  if (parent?.state === "absent") return undefined;
+  if (parent?.state === "unknown") return null;
+  const object = parent ? unwrapExpression(parent.value) : config;
+  if (object?.type !== "ObjectExpression") return null;
+  const flag = objectProperty(object, nested ?? option);
   if (flag.state === "absent") return undefined;
   if (flag.state === "unknown") return null;
   return unwrapExpression(flag.value) ?? null;
