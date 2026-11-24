@@ -1021,6 +1021,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Vue watch()", "https://vuejs.org/api/reactivity-core.html#watch");
   }
 
+  if (rule.id === "vue/router/no-redirect-cycle") {
+    add(
+      "Vue Router redirect and alias",
+      "https://router.vuejs.org/guide/essentials/redirect-and-alias.html",
+    );
+  }
+
+  if (rule.id === "nuxt/routing/no-global-middleware-redirect-loop") {
+    add("Nuxt route middleware", "https://nuxt.com/docs/4.x/directory-structure/app/middleware");
+    add("Nuxt navigateTo", "https://nuxt.com/docs/4.x/api/utils/navigate-to");
+  }
+
   if (rule.id === "vue/attrs/require-explicit-emits") {
     add(
       "Vue declaring emitted events",
