@@ -1,13 +1,17 @@
 import { originalPositionFor, TraceMap, type SourceMapInput } from "@jridgewell/trace-mapping";
 import type { ViteDevServer } from "vite";
 import type { RuntimeFrameworkDiagnostic } from "./core/index.js";
+import {
+  RUNTIME_CALL_SITE,
+  VITE_HMR_TIMESTAMP,
+  runtimeCallSiteKey,
+} from "./core/internal/runtime-call-site.js";
 
 /** The event `nostics/reporters/dev` sends from the browser with `import.meta.hot.send()`. */
 const NOSTICS_REPORT = "nostics:report";
 // A page that reports in a loop must not grow the dev server's memory or every Doctor Run.
 const MAX_REPORTS = 200;
 const CODE = /^[A-Za-z][\w-]{0,63}$/;
-const CALL_SITE = /^(.+):(\d+):(\d+)$/;
 
 /**
  * Collects the framework diagnostics a dev server's browser clients report, one per code,
@@ -15,6 +19,8 @@ const CALL_SITE = /^(.+):(\d+):(\d+)$/;
  */
 export class RuntimeDiagnosticReports {
   private readonly reports = new Map<string, RuntimeFrameworkDiagnostic>();
+  private readonly invalidatedTransforms = new WeakSet<object>();
+  private closed = false;
   private readonly onReport = (payload: unknown) => void this.receive(payload);
 
   constructor(
@@ -27,6 +33,7 @@ export class RuntimeDiagnosticReports {
   }
 
   close() {
+    this.closed = true;
     this.server.ws.off(NOSTICS_REPORT, this.onReport);
   }
 
@@ -36,6 +43,9 @@ export class RuntimeDiagnosticReports {
 
   /** Drops reports located in `file`, since the saved code may no longer report them. */
   forget(file: string): boolean {
+    for (const module of clientGraph(this.server).getModulesByFile(file) ?? []) {
+      if (module.transformResult) this.invalidatedTransforms.add(module.transformResult);
+    }
     let forgot = false;
     for (const [key, report] of this.reports) {
       if (report.location?.file !== file) continue;
@@ -48,11 +58,15 @@ export class RuntimeDiagnosticReports {
   private async receive(payload: unknown) {
     const parsed = parseReport(payload);
     if (!parsed) return;
-    const report = { ...parsed, ...(await locate(this.server, parsed.sources)) };
+    const report = {
+      ...parsed,
+      ...(await locate(this.server, parsed.sources, this.invalidatedTransforms)),
+    };
+    if (this.closed) return;
     const where = report.location?.line
-      ? `${report.location.file}:${report.location.line}:${report.location.column}`
-      : (report.location?.file ?? report.sources.map(withoutQuery).join("\n"));
-    const key = `${report.code}\0${report.why}\0${where}`;
+      ? [report.location.file, report.location.line, report.location.column]
+      : [report.location?.file, runtimeCallSiteKey(report.sources[0])];
+    const key = JSON.stringify([report.code, report.why, where]);
     if (this.reports.has(key) || this.reports.size >= MAX_REPORTS) return;
     this.reports.set(key, report);
     this.reported(report);
@@ -89,30 +103,61 @@ function parseReport(payload: unknown): RuntimeFrameworkDiagnostic | undefined {
 async function locate(
   server: ViteDevServer,
   sources: string[],
+  invalidatedTransforms: WeakSet<object>,
 ): Promise<Pick<RuntimeFrameworkDiagnostic, "location" | "locationGap">> {
   const [source] = sources;
   if (!source) return { locationGap: "The runtime reported no call site." };
-  const unmapped = `Doctor did not map the call site ${withoutQuery(source)} to a source file in the dev server's module graph.`;
-  const [, at, line, column] = CALL_SITE.exec(source) ?? [];
+  const unmapped = `Doctor did not map the call site ${source} to a source file in the dev server's module graph.`;
+  const [, at, line, column] = RUNTIME_CALL_SITE.exec(source) ?? [];
   const url = at && servedUrl(at, server.config.base);
   if (!url) return { locationGap: unmapped };
-  const graph = server.environments?.client?.moduleGraph ?? server.moduleGraph;
-  const module = await graph.getModuleByUrl(url).catch(() => undefined);
+  const module = await clientGraph(server)
+    .getModuleByUrl(url)
+    .catch(() => undefined);
   const file = module?.file;
   if (!file) return { locationGap: unmapped };
-  const map = module.transformResult?.map;
-  const partial = {
-    location: { file },
-    locationGap: `The dev server's source map for ${url} does not map line ${line}, column ${column} back to ${file}.`,
-  };
-  if (!map || !map.mappings) return partial;
-  const original = originalPositionFor(new TraceMap(map as SourceMapInput, file), {
-    line: Number(line),
-    column: Number(column) - 1,
-  });
-  if (original.line === null || !original.source || withoutQuery(original.source) !== file)
-    return partial;
-  return { location: { file, line: original.line, column: original.column + 1 } };
+  const partial = (locationGap: string) => ({ location: { file }, locationGap });
+  const generatedLine = Number(line);
+  const generatedColumn = Number(column);
+  if (
+    !Number.isSafeInteger(generatedLine) ||
+    generatedLine < 1 ||
+    !Number.isSafeInteger(generatedColumn) ||
+    generatedColumn < 1
+  )
+    return partial(`The runtime reported invalid coordinates in ${source}.`);
+
+  const transform = module.transformResult;
+  const map = transform?.map;
+  const timestamp = Number(VITE_HMR_TIMESTAMP.exec(url)?.[1] ?? 0);
+  const hmrTimestamp = module.lastHMRTimestamp ?? 0;
+  const invalidationTimestamp = module.lastInvalidationTimestamp ?? 0;
+  if (
+    (transform && invalidatedTransforms.has(transform)) ||
+    timestamp !== hmrTimestamp ||
+    timestamp < invalidationTimestamp
+  )
+    return partial(
+      `Doctor cannot match the call site ${source} to the current dev server transform.`,
+    );
+
+  const notMapped = `The dev server's source map for ${source} does not map back to ${file}.`;
+  if (!map?.mappings) return partial(notMapped);
+  try {
+    const original = originalPositionFor(new TraceMap(map as SourceMapInput, file), {
+      line: generatedLine,
+      column: generatedColumn - 1,
+    });
+    if (original.line !== null && original.source && original.source.split("?")[0] === file)
+      return { location: { file, line: original.line, column: original.column + 1 } };
+  } catch {
+    return partial(`Doctor could not read the dev server's source map for ${source}.`);
+  }
+  return partial(notMapped);
+}
+
+function clientGraph(server: ViteDevServer) {
+  return server.environments?.client?.moduleGraph ?? server.moduleGraph;
 }
 
 /** The dev server URL of a reported call site, without the origin and the Vite `base`. */
@@ -126,8 +171,4 @@ function servedUrl(at: string, base: string): string | undefined {
   else return undefined;
   if (base !== "/" && path.startsWith(base)) path = `/${path.slice(base.length)}`;
   return path;
-}
-
-function withoutQuery(source: string): string {
-  return source.replace(/\?[^:]*(?=(?::\d+:\d+)?$)/, "");
 }

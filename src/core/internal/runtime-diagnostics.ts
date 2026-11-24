@@ -1,6 +1,9 @@
+import { relative } from "pathe";
 import type { DiagnosticEvidence, RuntimeFrameworkDiagnostic, SourceRange } from "../primitives.js";
 import { pushDiagnostic, sourceTextFor } from "./diagnostics.js";
+import { runtimeCallSiteKey } from "./runtime-call-site.js";
 import type { ScanSession } from "./scan-session.js";
+import { sha256 } from "./utils.js";
 
 export const FRAMEWORK_DIAGNOSTICS_EVIDENCE = "frameworkDiagnostics";
 
@@ -39,6 +42,17 @@ export function reportRuntimeFrameworkDiagnostics(session: ScanSession): void {
       category: "runtime",
       file,
       range,
+      fingerprint: range
+        ? undefined
+        : sha256(
+            JSON.stringify([
+              "doctor/runtime/framework-diagnostic",
+              relative(session.root, file),
+              report.code,
+              report.why,
+              runtimeCallSiteKey(report.sources[0]),
+            ]),
+          ),
       sources: range ? [`${file}:${range.line}:${range.column}`] : undefined,
       why: `${report.code}: ${report.why}`,
       suggestion: suggestion(report),

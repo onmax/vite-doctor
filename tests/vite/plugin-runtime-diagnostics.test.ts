@@ -7,6 +7,7 @@ import type { Diagnostic, DoctorRunResult } from "../../src/core/index.ts";
 import { doctor } from "../../src/plugin.ts";
 
 const doctorRuns = vi.hoisted(() => [] as Array<Promise<DoctorRunResult | undefined>>);
+const warn = vi.fn<Logger["warn"]>();
 
 vi.mock("../../src/doctor.ts", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../src/doctor.ts")>();
@@ -31,12 +32,16 @@ export function load(options: Options) {
 }
 `;
 
-async function withServer(run: (server: ViteDevServer, root: string) => Promise<void>) {
+async function withServer(
+  run: (server: ViteDevServer, root: string) => Promise<void>,
+  captureReport?: (callback: (payload: unknown) => void) => void,
+) {
   const root = await mkdtemp(join(tmpdir(), "doctor-runtime-diagnostics-"));
   doctorRuns.length = 0;
+  warn.mockClear();
   const silent: Logger = {
     info() {},
-    warn() {},
+    warn,
     warnOnce() {},
     error() {},
     clearScreen() {},
@@ -51,16 +56,50 @@ async function withServer(run: (server: ViteDevServer, root: string) => Promise<
       root,
       configFile: false,
       customLogger: silent,
-      plugins: [doctor({ run: "serve", rules: "vite/env/no-client-secret-pattern", cache: false })],
-      server: { port: 0, watch: null },
+      plugins: [
+        captureReport && {
+          name: "capture-runtime-reports",
+          configureServer(server) {
+            vi.spyOn(server.ws, "on").mockImplementation((event, callback) => {
+              if (event === "nostics:report") {
+                captureReport((payload) =>
+                  callback(payload, {
+                    send() {},
+                    get socket(): never {
+                      throw new Error("No socket in middleware mode");
+                    },
+                  }),
+                );
+              }
+            });
+          },
+        },
+        doctor({ run: "serve", rules: "vite/env/no-client-secret-pattern", cache: false }),
+      ],
+      server: { port: 0, watch: null, ...(captureReport && { middlewareMode: true, ws: false }) },
       optimizeDeps: { noDiscovery: true },
     });
-    await server.listen();
+    if (!captureReport) await server.listen();
     await run(server, root);
   } finally {
     await server?.close();
     await rm(root, { recursive: true, force: true });
   }
+}
+
+async function withLocalReports(
+  run: (server: ViteDevServer, root: string, send: (payload: unknown) => void) => Promise<void>,
+) {
+  let send: ((payload: unknown) => void) | undefined;
+  await withServer(
+    async (server, root) => {
+      await vi.waitFor(() => expect(doctorRuns).toHaveLength(1), { timeout: 15_000 });
+      await run(server, root, send!);
+    },
+    (callback) => {
+      send = callback;
+    },
+  );
 }
 
 function origin(server: ViteDevServer) {
@@ -105,7 +144,9 @@ async function waitForRuntimeDiagnostics(count: number): Promise<Diagnostic[]> {
 
 /** The line and column, both 1-based, of `needle` in the code Vite serves for `path`. */
 async function servedPosition(server: ViteDevServer, path: string, needle: string) {
-  const code = await (await fetch(`${origin(server)}${path}`)).text();
+  const code = server.config.server.middlewareMode
+    ? (await server.transformRequest(path))!.code
+    : await (await fetch(`${origin(server)}${path}`)).text();
   const lines = code.split("\n");
   const line = lines.findIndex((text) => text.includes(needle));
   return { line: line + 1, column: lines[line]!.indexOf(needle) + 1 };
@@ -130,7 +171,7 @@ test("a nostics report from the browser becomes a DOC0040 Diagnostic at the sour
     expect(line).not.toBe(7);
     const client = await connectClient(server);
     try {
-      client.send(asyncDataReport(`${origin(server)}/entry.ts?t=1700000000000:${line}:${column}`));
+      client.send(asyncDataReport(`${origin(server)}/entry.ts:${line}:${column}`));
       const [diagnostic] = await waitForRuntimeDiagnostics(1);
       expect(diagnostic).toMatchObject({
         ruleId: "doctor/runtime/framework-diagnostic",
@@ -213,7 +254,7 @@ test("a repeated nostics report is reported once", async () => {
     const { line, column } = await servedPosition(server, "/entry.ts", "useAsyncData(");
     const client = await connectClient(server);
     try {
-      for (const timestamp of [1, 2, 3])
+      for (const timestamp of [1700000000001, 1700000000002, 1700000000003])
         client.send(asyncDataReport(`${origin(server)}/entry.ts?t=${timestamp}:${line}:${column}`));
       client.send({
         name: "NUXT_E4011",
@@ -243,5 +284,68 @@ test("saving the reported file drops its runtime report until the runtime report
     } finally {
       client.close();
     }
+  });
+});
+
+test("an old browser call site is not traced through a replacement transform", async () => {
+  await withLocalReports(async (server, root, send) => {
+    const previous = await servedPosition(server, "/entry.ts", "useAsyncData(");
+    const module = (await server.environments.client.moduleGraph.getModuleByUrl("/entry.ts"))!;
+    const file = join(root, "entry.ts");
+    await writeFile(file, `\n\n${entry.replace("useAsyncData", "replacement")}`);
+    server.watcher.emit("change", file);
+    await vi.waitFor(() => expect(module.lastHMRTimestamp).toBeGreaterThan(0));
+    const refreshed = `/entry.ts?t=${module.lastHMRTimestamp}`;
+    const current = await servedPosition(server, refreshed, "replacement(");
+    expect(current).toEqual(previous);
+    send(asyncDataReport(`/entry.ts:${previous.line}:${previous.column}`));
+    const [stale] = await waitForRuntimeDiagnostics(1);
+    expect(stale).toMatchObject({ file });
+    expect(stale!.range).toBeUndefined();
+    expect(stale!.evidence?.some(({ summary }) => summary.includes("Partial location:"))).toBe(
+      true,
+    );
+
+    send(asyncDataReport(`${refreshed}:${current.line}:${current.column}`));
+    const diagnostics = await waitForRuntimeDiagnostics(2);
+    expect(diagnostics.find(({ range }) => range)).toMatchObject({
+      file,
+      range: { line: 9, column: 10 },
+    });
+  });
+});
+
+test("non-positive or unsafe generated coordinates remain partial evidence", async () => {
+  await withLocalReports(async (server, root, send) => {
+    await servedPosition(server, "/entry.ts", "useAsyncData(");
+    for (const coordinates of ["1:0", "0:1", "1:9007199254740992"])
+      send(asyncDataReport(`/entry.ts:${coordinates}`));
+    const diagnostics = await waitForRuntimeDiagnostics(3);
+    expect(diagnostics.every(({ file, range }) => file === join(root, "entry.ts") && !range)).toBe(
+      true,
+    );
+  });
+});
+
+test("distinct generated sites in an unmapped module survive successive serve deltas", async () => {
+  await withLocalReports(async (server, root, send) => {
+    const file = join(root, "plain.js");
+    await writeFile(file, "export function load() {\n  warn();\n  warn();\n}\n");
+    await servedPosition(server, "/plain.js", "warn(");
+    send(asyncDataReport(`/plain.js:2:3`));
+    const [first] = await waitForRuntimeDiagnostics(1);
+    expect(first).toMatchObject({ file });
+    expect(first!.range).toBeUndefined();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
+
+    send(asyncDataReport(`/plain.js?t=1700000000001:2:3`));
+    send(asyncDataReport(`/plain.js:3:3`));
+    const diagnostics = await waitForRuntimeDiagnostics(2);
+    expect(diagnostics.every((diagnostic) => diagnostic.file === file && !diagnostic.range)).toBe(
+      true,
+    );
+    expect(new Set(diagnostics.map(({ fingerprint }) => fingerprint)).size).toBe(2);
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(2));
+    expect(warn).toHaveBeenLastCalledWith(expect.stringContaining("1 new Diagnostic"));
   });
 });
