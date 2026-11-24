@@ -214,15 +214,33 @@ test.each([`@click="todos.items = replacement; add()"`, `v-model="todos.items"`]
   },
 );
 
-test("VUE0049 reports after a template replaces the receiver with a plain array", async () => {
-  const diagnostics = await run(
-    component(
-      `const todos = shallowRef({ items: [] }); function add() { todos.value.items.push('a') }`,
-      `<p>{{ todos.items.length }}</p><button @click="todos.items = []; add()">Reset</button>`,
+test.each([
+  ["Array", "[]", "length", "push('a')"],
+  ["Map", "new Map()", "size", "set('a', 1)"],
+  ["Set", "new Set()", "size", "add('a')"],
+])("VUE0049 stays quiet for a template-local %s constructor", async (name, init, size, mutate) => {
+  expect(
+    await run(
+      component(
+        `const todos = shallowRef({ items: ${init} }); function Replacement() { return reactive(${init}) }; function add() { todos.value.items.${mutate} }`,
+        `<p>{{ todos.items.${size} }}</p><button @click="const ${name} = Replacement; todos.items = new ${name}()">Replace</button><button @click="add">Add</button>`,
+      ),
     ),
-  );
-  expect(diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([RULE_ID]);
+  ).toEqual([]);
 });
+
+test.each(["todos.group.items = []", "todos.group = { items: [] }"])(
+  "VUE0049 reports after a plain template replacement: %s",
+  async (replacement) => {
+    const diagnostics = await run(
+      component(
+        `const todos = shallowRef({ group: { items: [] } }); function add() { todos.value.group.items.push('a') }`,
+        `<p>{{ todos.group.items.length }}</p><button @click="${replacement}; add()">Reset</button>`,
+      ),
+    );
+    expect(diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([RULE_ID]);
+  },
+);
 
 test("VUE0049 ignores a handler assignment to a template local", async () => {
   const diagnostics = await run(

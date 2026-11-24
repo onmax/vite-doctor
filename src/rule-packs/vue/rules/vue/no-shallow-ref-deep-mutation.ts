@@ -146,7 +146,9 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
       if (!readReactively && !(templateScope && renderTemplateReads(ctx).has(name))) continue;
       for (const mutation of mutations) {
         if (assignedIn.has(script.owner(mutation.node))) continue;
-        if (writes.some((write) => changesReceiver(script, mutation, write.path, write.operation)))
+        if (
+          writes.some((write) => changesReceiver(undefined, mutation, write.path, write.operation))
+        )
           continue;
         if (
           mutations.some(
@@ -181,7 +183,7 @@ interface Mutation {
 }
 
 function changesReceiver(
-  script: IndexedScript,
+  script: IndexedScript | undefined,
   mutation: Mutation,
   path: PropertyPath,
   operation: AnyNode,
@@ -287,7 +289,11 @@ function memberMutation(
  * A value that could be reactive itself, such as `shallowRef(reactive({}))`, tracks its own
  * changes, so the rule stays quiet unless every value the ref is given is known to be plain.
  */
-function mutatesPlainValue(script: IndexedScript, value: AnyNode, mutation: Mutation): boolean {
+function mutatesPlainValue(
+  script: IndexedScript | undefined,
+  value: AnyNode,
+  mutation: Mutation,
+): boolean {
   let node = unwrapTs(value);
   for (const key of mutation.path) {
     if (node?.type !== "ObjectExpression" || key === undefined) return false;
@@ -309,7 +315,7 @@ function mutatesPlainValue(script: IndexedScript, value: AnyNode, mutation: Muta
   );
 }
 
-function plainKind(script: IndexedScript, node: AnyNode): string | undefined {
+function plainKind(script: IndexedScript | undefined, node: AnyNode): string | undefined {
   if (node?.type === "ObjectExpression") {
     return node.properties.every(
       (property: AnyNode) =>
@@ -323,7 +329,7 @@ function plainKind(script: IndexedScript, node: AnyNode): string | undefined {
   }
   if (node?.type === "ArrayExpression") return "array";
   if (node?.type !== "NewExpression" || node.callee?.type !== "Identifier") return undefined;
-  if (script.references.get(node.callee)?.resolved) return undefined;
+  if (!script || script.references.get(node.callee)?.resolved) return undefined;
   return { Map: "map", Set: "set", Array: "array" }[node.callee.name as string];
 }
 
