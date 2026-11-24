@@ -95,10 +95,7 @@ function componentsWithoutHydration(
   const behindBoundary = reachComponents(graph, boundaryTargets, () => true);
   const potentialEntries = new Set<string>();
   const nuxtEntries = new Set<string>();
-  const preparedGlobals = new Set<string>();
   for (const app of new Set(apps.values())) {
-    for (const component of app.components.values())
-      if (component.global) preparedGlobals.add(resolve(ctx.project.root, component.file));
     const resolved = app.manifest?.resolvedApp;
     for (const source of [
       resolved?.mainComponent,
@@ -110,16 +107,10 @@ function componentsWithoutHydration(
   }
   for (const node of graph.components.values()) {
     const app = apps.get(node.file);
-    const unindexedGlobal =
-      app &&
-      !preparedGlobals.has(node.file) &&
-      node.file.startsWith(`${app.appDir}/components/`) &&
-      /\.global(?:\.island)?\.vue$/.test(node.file);
     if (
       !behindBoundary.has(node.file) ||
       node.hasUntrackedImporter ||
       nuxtEntries.has(node.file) ||
-      unindexedGlobal ||
       (app && /(?:^|\/)(?:(?:pages|layouts)\/|(?:app|error)\.vue$)/.test(node.relativePath))
     )
       potentialEntries.add(node.file);

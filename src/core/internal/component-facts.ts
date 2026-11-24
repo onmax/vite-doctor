@@ -213,6 +213,10 @@ function readScriptDeclarations(
   };
   const inherit = option("inheritAttrs");
   const components = option("components");
+  const registry =
+    components === "absent" || components === "unknown"
+      ? undefined
+      : localComponentRegistry(program, components.value);
   const name = option("name");
   if (
     name !== "absent" &&
@@ -226,17 +230,10 @@ function readScriptDeclarations(
     !delegated &&
     (name === "absent" || facts.runtimeComponentName !== undefined) &&
     (components === "absent" ||
-      (components !== "unknown" &&
-        components.value?.type === "ObjectExpression" &&
-        components.value.properties.every(
-          (property: AnyNode) => propertyKey(property) !== undefined,
-        )));
-  if (
-    components !== "absent" &&
-    components !== "unknown" &&
-    components.value?.type === "ObjectExpression"
-  ) {
-    facts.localComponents = components.value.properties
+      registry?.properties.every((property: AnyNode) => propertyKey(property) !== undefined) ===
+        true);
+  if (registry) {
+    facts.localComponents = registry.properties
       .map(propertyKey)
       .filter((name: unknown): name is string => typeof name === "string");
   }
@@ -255,6 +252,28 @@ function readScriptDeclarations(
     if (!declaresProps && !plainScriptCode && option("props") === "absent") facts.props = [];
     if (!declaresEmits && !plainScriptCode && option("emits") === "absent") facts.emits = [];
   }
+}
+
+function localComponentRegistry(program: AnyNode, value: AnyNode): AnyNode {
+  if (value?.type === "ObjectExpression") return value;
+  if (value?.type !== "Identifier") return undefined;
+  const { scopes } = analyzeScriptProgram(program, "module");
+  for (const scope of scopes) {
+    const variable = scope.references.find((reference) => reference.identifier === value)?.resolved;
+    if (!variable || variable.defs.length !== 1) continue;
+    const definition = variable.defs[0];
+    if (
+      definition?.type === "Variable" &&
+      definition.parent.kind === "const" &&
+      definition.node.id.type === "Identifier" &&
+      definition.node.init?.type === "ObjectExpression" &&
+      variable.references.every(
+        (reference) => reference.init === true || reference.identifier === value,
+      )
+    )
+      return definition.node.init;
+  }
+  return undefined;
 }
 
 function componentOptions(declaration: AnyNode): AnyNode {
