@@ -1,5 +1,5 @@
 import { getCallSites } from "node:util";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { nuxtIgnoreFileHash } from "../../core/internal/nuxt-inventory.js";
 import {
@@ -18,8 +18,15 @@ import {
 } from "nuxt/kit";
 import type { Nuxt, NuxtModule } from "nuxt/schema";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
-import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
+import type {
+  DoctorConfig,
+  NuxtDoctorManifest,
+  NuxtModuleSource,
+  NuxtResolvedMiddleware,
+  NuxtResolvedRoute,
+} from "../../core/index.js";
 import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
+import { sha256 } from "../../core/internal/utils.js";
 import type { NuxtAppRegistrationDirectory } from "../../core/primitives.js";
 export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 
@@ -69,6 +76,9 @@ type NuxtDoctorEvidence = {
   composableScan?: { dirs: string; entries: Promise<unknown[]> };
   moduleSources?: NuxtModuleSource[];
   extensions?: string[];
+  app?: { middleware?: unknown[] };
+  routes?: NuxtResolvedRoute[];
+  routerOptions?: { files?: unknown[] };
 };
 
 async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
@@ -90,6 +100,9 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     composableScan: undefined as NuxtDoctorEvidence["composableScan"],
     moduleSources: undefined as NuxtModuleSource[] | undefined,
     extensions: undefined as string[] | undefined,
+    app: undefined as NuxtDoctorEvidence["app"],
+    routes: undefined as NuxtDoctorEvidence["routes"],
+    routerOptions: undefined as NuxtDoctorEvidence["routerOptions"],
   };
 
   // Nuxt removes every hook when it starts closing, so the final manifest write cannot call them.
@@ -194,6 +207,8 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     evidence.composableScan = undefined;
   });
 
+  const resolvedPageHashes = new WeakMap<unknown[], Map<string, string>>();
+  let publishedPageHashes: Map<string, string> | undefined;
   nuxt.hook?.("pages:resolved", (pages: any[]) => {
     evidence.pages = flattenPages(pages).map((page: any) => ({
       path: page.path,
@@ -201,6 +216,29 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
       name: page.name,
       mode: page.mode,
     }));
+    if (!nuxt.options.experimental?.scanPageMeta) return;
+    const rootDir = nuxt.options.rootDir ?? process.cwd();
+    const sourceHashes = new Map<string, string>();
+    for (const page of evidence.pages) {
+      if (typeof page.file !== "string") continue;
+      const file = resolve(rootDir, page.file);
+      if (sourceHashes.has(file)) continue;
+      try {
+        sourceHashes.set(file, sha256(readFileSync(file, "utf8")));
+      } catch {
+        continue;
+      }
+    }
+    resolvedPageHashes.set(pages, sourceHashes);
+  });
+
+  nuxt.hook?.("app:templates", (app: NuxtDoctorEvidence["app"]) => {
+    evidence.app = app;
+  });
+
+  // Modules registered after this one push their files into the same context.
+  nuxt.hook?.("pages:routerOptions", (context: NuxtDoctorEvidence["routerOptions"]) => {
+    evidence.routerOptions = context;
   });
 
   nuxt.hook?.("prerender:routes", (ctx: any) => {
@@ -235,6 +273,18 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
           const result = await delegate.call(this, name, ...args);
           if (name === "imports:dirs")
             evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
+          if (name === "app:templates") {
+            const pages = (args[0] as { pages?: unknown[] } | undefined)?.pages;
+            const sourceHashes = pages && resolvedPageHashes.get(pages);
+            if (sourceHashes !== publishedPageHashes) {
+              evidence.routes =
+                pages && sourceHashes
+                  ? serializeRoutes(nuxt.options.rootDir ?? process.cwd(), pages, sourceHashes)
+                  : undefined;
+              publishedPageHashes = sourceHashes;
+              await writeManifest(nuxt, evidence);
+            }
+          }
           return result;
         };
       },
@@ -435,6 +485,16 @@ export async function writeManifest(
           mode: page.mode,
         }))
       : (evidence?.pages ?? []),
+    middleware: evidence?.app ? serializeMiddleware(rootDir, evidence.app.middleware) : undefined,
+    routes: Object.hasOwn(nuxt.options.router?.options ?? {}, "routes")
+      ? undefined
+      : evidence?.routes,
+    routerOptionsFiles: evidence?.routerOptions
+      ? toArray(evidence.routerOptions.files)
+          .map((file: any) => file?.path)
+          .filter((path): path is string => typeof path === "string")
+          .map((path) => resolve(rootDir, path))
+      : undefined,
     prerenderRoutes: [
       ...new Set([
         ...toArray(nuxt.options.nitro?.prerender?.routes).map(String),
@@ -530,6 +590,45 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
     entries.push(path && isAbsolute(path) ? { name, source: relative(rootDir, path) } : { name });
   }
   return entries;
+}
+
+function serializeMiddleware(
+  rootDir: string,
+  middleware: unknown[] = [],
+): NuxtResolvedMiddleware[] {
+  return middleware.flatMap((entry: any) =>
+    typeof entry?.name === "string" && typeof entry.path === "string"
+      ? [{ name: entry.name, path: resolve(rootDir, entry.path), global: entry.global === true }]
+      : [],
+  );
+}
+
+// vue-router joins a relative child path onto its parent's full path.
+function serializeRoutes(
+  rootDir: string,
+  pages: unknown[],
+  sourceHashes: Map<string, string>,
+  parentPath?: string,
+): NuxtResolvedRoute[] {
+  return pages.flatMap((page: any) => {
+    const own = typeof page?.path === "string" ? page.path : "";
+    const path =
+      parentPath === undefined || own.startsWith("/")
+        ? own
+        : parentPath + (own && (parentPath.endsWith("/") ? "" : "/") + own);
+    const dynamic = page?.meta?.__nuxt_dynamic_meta_key;
+    const alias = (Array.isArray(page?.alias) ? page.alias : [page?.alias]).filter(Boolean);
+    const route: NuxtResolvedRoute = { path };
+    if (typeof page?.name === "string") route.name = page.name;
+    if (typeof page?.file === "string") {
+      route.file = resolve(rootDir, page.file);
+      route.sourceHash = sourceHashes.get(route.file);
+    }
+    if (page?.redirect !== undefined) route.redirect = page.redirect;
+    if (alias.length) route.alias = alias;
+    if (dynamic instanceof Set && dynamic.size) route.dynamic = [...dynamic].map(String);
+    return [route, ...serializeRoutes(rootDir, toArray(page?.children), sourceHashes, path)];
+  });
 }
 
 async function appRegistration(

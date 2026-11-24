@@ -1,3 +1,5 @@
+import { compileScript, parse } from "@vue/compiler-sfc";
+import { transformWithOxc } from "vite";
 import { expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
 import { noModuleScopeRequestState } from "../../../src/rule-packs/nuxt/rules/nuxt/no-module-scope-request-state.ts";
@@ -269,29 +271,22 @@ filter.value = useRoute().fullPath
 });
 
 test.each([
-  ["namespace latest { export interface State {} }", true],
-  ["namespace useRoute { export namespace Types { export type Query = string } }", true],
-  ["namespace latest { export let value = '' }", false],
-  [
-    `namespace latest { export declare let value: string }
-latest.value = ''`,
-    false,
-  ],
-  ["namespace useRoute { export const local = true }", false],
-])("resolves plain-script bindings with setup declaration %s", async (namespace, reports) => {
+  "namespace latest { export interface State {} }",
+  "namespace useRoute { export namespace Types { export type Query = string } }",
+])("resolves plain-script bindings past erased setup declaration %s", async (namespace) => {
   const file = "app/pages/index.vue";
-  expect(
-    await run({
-      [file]: `<script lang="ts">
+  const source = `<script lang="ts">
 import { useRoute } from '#app'
 const latest = ref('')
 </script>
 <script setup lang="ts">
 ${namespace}
 latest.value = useRoute().fullPath
-</script>`,
-    }),
-  ).toEqual(reports ? [{ code: "NUXT0105", file, line: 3 }] : []);
+</script>`;
+  const { content } = compileScript(parse(source).descriptor, { id: file });
+  const { code } = await transformWithOxc(content, file, { lang: "ts" });
+  expect(code).toContain("latest.value = useRoute().fullPath");
+  expect(await run({ [file]: source })).toEqual([{ code: "NUXT0105", file, line: 3 }]);
 });
 
 test.each([

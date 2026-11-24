@@ -44,6 +44,7 @@ export { noDivergingUseStateInit } from "./no-diverging-usestate-init.js";
 export { noPrivateRuntimeConfigInClient } from "./no-private-runtime-config-in-client.js";
 export { asyncDataHandlerMustReturn } from "./async-data-handler-must-return.js";
 export { noIslandDisabledPluginDependency } from "./no-island-disabled-plugin-dependency.js";
+export { noGlobalMiddlewareRedirectLoop } from "./no-global-middleware-redirect-loop.js";
 export { requireStableAsyncDataKey } from "./require-stable-async-data-key.js";
 export { preferExplicitUseStateKeyInExportedComposables } from "./prefer-explicit-use-state-key-in-exported-composables.js";
 export { noComposableAfterAwait } from "./no-composable-after-await.js";
@@ -112,6 +113,7 @@ import { noDivergingUseStateInit } from "./no-diverging-usestate-init.js";
 import { noPrivateRuntimeConfigInClient } from "./no-private-runtime-config-in-client.js";
 import { asyncDataHandlerMustReturn } from "./async-data-handler-must-return.js";
 import { noIslandDisabledPluginDependency } from "./no-island-disabled-plugin-dependency.js";
+import { noGlobalMiddlewareRedirectLoop } from "./no-global-middleware-redirect-loop.js";
 import { requireStableAsyncDataKey } from "./require-stable-async-data-key.js";
 import { preferExplicitUseStateKeyInExportedComposables } from "./prefer-explicit-use-state-key-in-exported-composables.js";
 import { noComposableAfterAwait } from "./no-composable-after-await.js";
@@ -182,6 +184,7 @@ const rules = [
   noPrivateRuntimeConfigInClient,
   asyncDataHandlerMustReturn,
   noIslandDisabledPluginDependency,
+  noGlobalMiddlewareRedirectLoop,
   requireStableAsyncDataKey,
   preferExplicitUseStateKeyInExportedComposables,
   noComposableAfterAwait,

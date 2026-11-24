@@ -102,6 +102,7 @@ export const nuxtDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0103", ruleId: "nuxt/fetch/handler-must-return" },
   { code: "NUXT0104", ruleId: "nuxt/plugins/no-island-disabled-dependency" },
   { code: "NUXT0105", ruleId: "nuxt/ssr/no-request-data-in-module-state" },
+  { code: "NUXT0107", ruleId: "nuxt/routing/no-global-middleware-redirect-loop" },
 ]);
 
 export const diagnostics = nuxtDiagnosticRegistry.diagnostics;
