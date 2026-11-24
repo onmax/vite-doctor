@@ -9,6 +9,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "PKG0006", ruleId: "package/no-pinned-singleton" },
   { code: "PKG0007", ruleId: "package/no-unforwarded-peer" },
   { code: "PKG0008", ruleId: "package/no-duplicate-singleton" },
+  { code: "PKG0009", ruleId: "package/no-condition-after-default" },
   { code: "MCP0001", ruleId: "mcp/tools/require-annotation-title" },
   { code: "MCP0002", ruleId: "mcp/tools/require-safety-hint" },
   { code: "MCP0003", ruleId: "mcp/tools/valid-name" },

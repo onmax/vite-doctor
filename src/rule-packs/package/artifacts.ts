@@ -864,7 +864,7 @@ function externalPackageName(specifier: string): string | null {
     : specifier.split("/")[0]!;
 }
 
-function validExportTarget(value: string, root: string): boolean {
+export function validExportTarget(value: string, root: string): boolean {
   return (
     value.startsWith("./") &&
     !value
