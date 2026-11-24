@@ -59,11 +59,6 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       wrappers.some(({ tag, defaultSlot, shadowed }) => {
         if (!defaultSlot || shadowed) return false;
         const binding = findBinding(tag);
-        if (
-          !binding &&
-          node.facts.localComponents?.some((name) => tagCandidates(tag).includes(name))
-        )
-          return false;
         const name = binding?.source === "#components" ? binding.imported : pascalCase(tag);
         if (
           binding?.source === "vue-client-only" ||
@@ -73,9 +68,13 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
         if (!nuxt || name !== "ClientOnly" || (binding && binding.source !== "#components"))
           return false;
         const registered = registry?.get(name);
+        if (registered)
+          return /(?:^|\/)nuxt\/dist\/app\/components\/client-only(?:\.[^/]+)?$/.test(
+            registered.file,
+          );
         return (
-          !registered ||
-          /(?:^|\/)nuxt\/dist\/app\/components\/client-only(?:\.[^/]+)?$/.test(registered.file)
+          !!binding ||
+          !node.facts.localComponents?.some((name) => tagCandidates(tag).includes(name))
         );
       });
     for (const render of node.facts.dynamicRenders) {

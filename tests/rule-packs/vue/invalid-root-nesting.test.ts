@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { buildNuxt, loadNuxt } from "nuxt/kit";
@@ -272,6 +280,68 @@ test.each([
   });
   expect(located(result)).toEqual(reports ? [["VUE0052", "app/components/Panel.vue", 5]] : []);
 });
+
+test(
+  "VUE0052 follows Nuxt's static ClientOnly transform but not literal is lookup",
+  { timeout: 90000 },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-client-only-"));
+    const cwd = process.cwd();
+    try {
+      symlinkSync(
+        fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+        join(root, "node_modules"),
+        "junction",
+      );
+      for (const [path, contents] of Object.entries({
+        "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }),
+        "nuxt.config.ts": "export default { routeRules: { '/': { prerender: true } } }",
+        "app/components/Card.vue": component("<div>card</div>"),
+        "app/components/Wrapper.vue": component("<section><slot /></section>"),
+        "app/pages/index.vue": `<script>
+import Wrapper from '../components/Wrapper.vue'
+const components = { ClientOnly: Wrapper }
+export default { components }
+</script>
+<script setup>
+import Card from '../components/Card.vue'
+</script>
+<template>
+  <ClientOnly><p><Card />static-default-marker</p></ClientOnly>
+  <component is="ClientOnly"><p><Card />literal-is-marker</p></component>
+</template>`,
+      })) {
+        const file = join(root, path);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, contents);
+      }
+      process.chdir(root);
+      const nuxt = await loadNuxt({
+        cwd: root,
+        overrides: { dev: false, modules: [nuxtDoctorModule], telemetry: false },
+      });
+      try {
+        await buildNuxt(nuxt);
+      } finally {
+        await nuxt.close();
+      }
+      const html = readFileSync(join(root, ".output/public/index.html"), "utf8");
+      expect(html).not.toContain("static-default-marker");
+      expect(html).toContain("<p><div>card</div>literal-is-marker</p>");
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        cache: false,
+        rules: noInvalidRootNesting.meta.id,
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
+      });
+      expect(located(result)).toEqual([["VUE0052", "app/pages/index.vue", 11]]);
+    } finally {
+      process.chdir(cwd);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test.each([true, false])(
   "VUE0052 follows prepared Nuxt global registrations (scanning: %s)",
