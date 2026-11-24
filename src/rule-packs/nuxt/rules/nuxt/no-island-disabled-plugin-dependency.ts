@@ -267,12 +267,11 @@ function islandsRender(ctx: RuleContext, app: AppRoots, sources: readonly string
   }
   const checkComponents = !components && defaults("components");
   const checkPages = inventory?.hasServerPageIslands === undefined && defaults("pages");
+  if (checkPages && hasTopLevelServerPage(app.sourceDirs, sources)) return true;
   const vueFiles = new Set(sources.filter((file) => file.endsWith(".vue")));
   const matches = app.sourceDirs.some((dir) =>
     [...vueFiles].some((file) => {
       const path = relative(dir, file);
-      if (checkPages && /^pages\/[\w-]+\.server\.vue$/.test(path))
-        return !vueFiles.has(file.replace(SERVER_COMPONENT_RE, ".client.vue"));
       if (!checkComponents || !path.startsWith("components/")) return false;
       return (
         path.startsWith("components/islands/") ||
@@ -284,6 +283,32 @@ function islandsRender(ctx: RuleContext, app: AppRoots, sources: readonly string
   );
   if (!matches) recordRegistrationGap(ctx, "island");
   return matches;
+}
+
+function hasTopLevelServerPage(sourceDirs: readonly string[], sources: readonly string[]) {
+  const pages = new Set<string>();
+  for (const dir of sourceDirs) {
+    for (const file of sources) {
+      const path = relative(dir, file);
+      if (path.startsWith("pages/")) pages.add(path.slice("pages/".length));
+    }
+  }
+  const extension = /\.(?:vue|[cm]?[jt]s|[jt]sx)$/;
+  const serverPage = /\.server\.vue$/;
+  const stems = new Set(
+    [...pages]
+      .filter((page) => extension.test(page))
+      .map((page) => page.replace(extension, "").replace(/\.(?:client|server)$/, "")),
+  );
+  return [...pages].some((page) => {
+    if (!serverPage.test(page) || pages.has(page.replace(serverPage, ".client.vue"))) return false;
+    const stem = page.replace(serverPage, "");
+    if (!/^(?:[\w[\].-]+\/)*[\w[\].-]+$/.test(stem)) return false;
+    for (let parent = dirname(stem); parent !== "."; parent = dirname(parent)) {
+      if (stems.has(parent)) return false;
+    }
+    return true;
+  });
 }
 
 function recordRegistrationGap(ctx: RuleContext, kind: "island" | "plugin") {

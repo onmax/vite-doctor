@@ -99,10 +99,59 @@ describe("nuxt/plugins/no-island-disabled-dependency", () => {
     );
     await withPreparedApp(
       {
-        "app/pages/standalone.server.vue": server,
+        "app/pages/[slug].server.vue": server,
       },
-      async ({ scan }) => expect(await scan()).toHaveLength(1),
+      async ({ root, write, scan }) => {
+        expect(await scan()).toHaveLength(1);
+        write("app/pages/README.md", "# Pages");
+        expect(await scan()).toHaveLength(1);
+        rmSync(join(root, "app/pages/[slug].server.vue"));
+        expect(await scan()).toEqual([]);
+      },
     );
+  });
+
+  test("keeps resolved registrations after unrelated files change", async () => {
+    await withPreparedApp(
+      {
+        ...island,
+        "nuxt.config.ts":
+          "export default { dir: { assets: 'styles' }, plugins: ['~/runtime/auth'] }",
+        "app/plugins/auth.ts": "export default defineNuxtPlugin(() => {})",
+        "app/runtime/auth.ts": auth,
+      },
+      async ({ root, write, scan }) => {
+        expect(await scan()).toHaveLength(1);
+        write("app/plugins/README.md", "# Plugins");
+        write("app/plugins/helpers/format.ts", "export const format = String");
+        write("app/pages/README.md", "# Pages");
+        write("app/components/README.md", "# Components");
+        expect(await scan()).toHaveLength(1);
+        rmSync(join(root, "app/plugins/README.md"));
+        expect(await scan()).toHaveLength(1);
+      },
+    );
+  });
+
+  test("recognizes top-level dynamic and directory server pages without Nuxt prepare", async () => {
+    const plugins = { "app/plugins/auth.ts": auth, "app/plugins/api.ts": api };
+    const server = "<template><div /></template>";
+    expect(await run({ ...plugins, "app/pages/[slug].server.vue": server })).toHaveLength(1);
+    expect(await run({ ...plugins, "app/pages/catalog/index.server.vue": server })).toHaveLength(1);
+    expect(
+      await run({
+        ...plugins,
+        "app/pages/catalog.vue": "<template><NuxtPage /></template>",
+        "app/pages/catalog/index.server.vue": server,
+      }),
+    ).toEqual([]);
+    expect(
+      await run({
+        ...plugins,
+        "app/pages/[slug].vue": "<template><NuxtPage /></template>",
+        "app/pages/[slug]/details.server.vue": server,
+      }),
+    ).toEqual([]);
   });
 
   test("uses default island roots and withholds reports for unknown or disabled registration", async () => {
@@ -167,10 +216,18 @@ describe("nuxt/plugins/no-island-disabled-dependency", () => {
           componentIslands: "auto",
           hasServerPageIslands: false,
           appRegistration: {
-            components: { directories: { "app/components": ["Chart.server.vue"] }, files: [] },
-            pages: { directories: { "app/pages": [] }, files: [] },
+            components: {
+              directories: [
+                { path: "app/components", patterns: ["**/*.vue"], entries: ["Chart.server.vue"] },
+              ],
+              files: [],
+            },
+            pages: {
+              directories: [{ path: "app/pages", patterns: ["**/*.vue"], entries: [] }],
+              files: [],
+            },
             plugins: {
-              directories: { "app/plugins": ["api.ts"] },
+              directories: [{ path: "app/plugins", patterns: ["*.ts"], entries: ["api.ts"] }],
               files: ["app/runtime/auth.client.ts"],
             },
           },

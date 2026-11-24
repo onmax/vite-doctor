@@ -348,8 +348,14 @@ export interface NuxtKeyedComposable {
   source?: string;
 }
 
+export interface NuxtAppRegistrationDirectory {
+  path: string;
+  patterns: string[];
+  ignore?: string[];
+}
+
 export interface NuxtAppRegistrationSnapshot {
-  directories: Record<string, string[]>;
+  directories: Array<NuxtAppRegistrationDirectory & { entries: string[] }>;
   files: string[];
 }
 

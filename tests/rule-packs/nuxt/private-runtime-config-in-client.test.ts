@@ -236,6 +236,8 @@ describe("nuxt/runtime/no-private-runtime-config-in-client", () => {
           ({ code }) => code === "NUXT0102" || code === "NUXT0104",
         );
       expect(await scan()).toEqual([]);
+      writeFileSync(join(root, "app/components/README.md"), "# Components");
+      expect(await scan()).toEqual([]);
       writeFileSync(
         join(root, "app/pages/raw.vue"),
         page("import Report from '~/components/Report.vue'").replace("<div />", "<Report />"),

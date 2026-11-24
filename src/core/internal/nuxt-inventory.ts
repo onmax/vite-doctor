@@ -1,7 +1,8 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, globSync, statSync } from "node:fs";
 import { relative, resolve } from "pathe";
 import { isNuxtManifestCurrent } from "./runtime-graph.js";
 import type {
+  NuxtAppRegistrationDirectory,
   NuxtAppRegistrationSnapshot,
   NuxtDoctorManifest,
   NuxtKeyedComposable,
@@ -95,24 +96,25 @@ export function createNuxtProjectInventory(
   };
 }
 
-function registrationDirectory(directory: string): string[] {
-  try {
-    return readdirSync(directory, { recursive: true, encoding: "utf8" }).map(toPosixPath).sort();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
+function registrationDirectory({ path, patterns, ignore }: NuxtAppRegistrationDirectory): string[] {
+  return globSync(patterns, { cwd: path, exclude: ignore, withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isFile() ||
+        (entry.isSymbolicLink() &&
+          statSync(resolve(entry.parentPath, entry.name), { throwIfNoEntry: false })?.isFile()),
+    )
+    .map((entry) => relative(path, resolve(entry.parentPath, entry.name)))
+    .sort();
 }
 
 export function snapshotNuxtAppRegistration(
-  directories: string[],
+  directories: NuxtAppRegistrationDirectory[],
   files: string[],
 ): NuxtAppRegistrationSnapshot | undefined {
   try {
     return {
-      directories: Object.fromEntries(
-        [...new Set(directories)].map((dir) => [dir, registrationDirectory(dir)]),
-      ),
+      directories: directories.map((dir) => ({ ...dir, entries: registrationDirectory(dir) })),
       files: [...new Set(files.filter((file) => existsSync(file)))].sort(),
     };
   } catch {
@@ -121,13 +123,14 @@ export function snapshotNuxtAppRegistration(
 }
 
 function registrationIsCurrent(root: string, snapshot?: NuxtAppRegistrationSnapshot): boolean {
-  if (!snapshot) return false;
+  if (!snapshot || !Array.isArray(snapshot.directories)) return false;
   try {
     return (
       snapshot.files.every((file) => existsSync(resolve(root, file))) &&
-      Object.entries(snapshot.directories).every(
-        ([dir, entries]) =>
-          JSON.stringify(entries) === JSON.stringify(registrationDirectory(resolve(root, dir))),
+      snapshot.directories.every(
+        ({ entries, ...dir }) =>
+          JSON.stringify(entries) ===
+          JSON.stringify(registrationDirectory({ ...dir, path: resolve(root, dir.path) })),
       )
     );
   } catch {

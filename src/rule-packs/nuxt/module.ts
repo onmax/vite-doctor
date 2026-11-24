@@ -533,16 +533,38 @@ function appRegistration(
 ): NuxtDoctorManifest["appRegistration"] {
   const app = nuxt.apps.default;
   if (!app) return undefined;
-  const { rootDir, srcDir, alias } = nuxt.options;
+  const { rootDir, srcDir, alias, extensions, pages } = nuxt.options;
   const layers = getLayerDirectories(nuxt);
+  const patterns = (prefix: string, exts = extensions) =>
+    exts.map((ext) => `${prefix}.${ext.replace(/^\./, "")}`);
+  const pageOptions = typeof pages === "object" ? pages : undefined;
   const files = (paths: Array<string | undefined>, base = rootDir) =>
     paths.flatMap((path) => (path ? [resolve(base, path)] : []));
   return {
     components: Array.isArray(app.components)
       ? snapshotNuxtAppRegistration(
           componentDirs.flatMap((entry) => {
-            const path = typeof entry === "string" ? entry : (entry as { path?: string })?.path;
-            return typeof path === "string" ? [resolve(srcDir, resolveAlias(path, alias))] : [];
+            const dir =
+              typeof entry === "string"
+                ? { path: entry }
+                : (entry as {
+                    path?: string;
+                    pattern?: string;
+                    extensions?: string[];
+                    ignore?: string[];
+                  });
+            if (!dir?.path) return [];
+            return [
+              {
+                path: resolve(srcDir, resolveAlias(dir.path, alias)),
+                patterns: dir.pattern ? [dir.pattern] : patterns("**/*", dir.extensions),
+                ignore: [
+                  "**/*{M,.m,-m}ixin.{js,ts,jsx,tsx}",
+                  "**/*.d.{ts,mts,cts,vue.ts,vue.mts,vue.cts}",
+                  ...(dir.ignore ?? []),
+                ],
+              },
+            ];
           }),
           files(
             app.components.map(({ filePath }) => filePath),
@@ -551,12 +573,18 @@ function appRegistration(
         )
       : undefined,
     pages: snapshotNuxtAppRegistration(
-      layers.map(({ appPages }) => appPages),
+      layers.map(({ appPages }) => ({
+        path: appPages,
+        patterns: pageOptions?.pattern ? [pageOptions.pattern].flat() : patterns("**/*"),
+      })),
       files(flattenPages(app.pages ?? []).map(({ file }) => file)),
     ),
     plugins: Array.isArray(app.plugins)
       ? snapshotNuxtAppRegistration(
-          layers.map(({ appPlugins }) => appPlugins),
+          layers.map(({ appPlugins }) => ({
+            path: appPlugins,
+            patterns: [...patterns("*"), ...patterns("*/index")],
+          })),
           files(app.plugins.map(({ src }) => src)),
         )
       : undefined,
