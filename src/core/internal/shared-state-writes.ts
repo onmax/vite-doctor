@@ -45,8 +45,15 @@ type IsGlobal = (id: Node) => boolean;
 
 /** How a reference reaches the state: through a namespace member, a call, or both. */
 interface Entry {
-  members: readonly string[];
+  slot?: ExportSlot;
+  namespace?: boolean;
   call: boolean;
+}
+
+interface ExportSlot {
+  file: string;
+  name: string;
+  origins: Array<{ slot: ExportSlot; namespace: boolean }>;
 }
 
 const ARRAY_MUTATORS = new Set([
@@ -83,43 +90,51 @@ export async function findSharedStateWrites(
   binding: SharedStateBinding,
 ): Promise<SharedStateWrite[]> {
   const writes = new Map<string, SharedStateWrite>();
-  const visited = new Set<string>();
-  const exportSlot = (file: string, name: string) => JSON.stringify([file, name]);
-  const pending: Array<{ file: string; path: readonly string[]; history: ReadonlySet<string> }> = [
-    {
-      file: binding.file,
-      path: [binding.exportName],
-      history: new Set([exportSlot(binding.file, binding.exportName)]),
-    },
-  ];
+  const slots = new Map<string, ExportSlot>();
+  const pending: ExportSlot[] = [];
+  const exportSlot = (file: string, name: string) => {
+    const key = JSON.stringify([file, name]);
+    let slot = slots.get(key);
+    if (!slot) {
+      slots.set(key, (slot = { file, name, origins: [] }));
+      pending.push(slot);
+    }
+    return slot;
+  };
+  const owner = exportSlot(binding.file, binding.exportName);
+  const consumers: Array<() => Promise<SharedStateWrite[]>> = [];
   const sources = new Map<string, Promise<LoadedSource | undefined>>();
+  const importers = new Map<string, Map<string, Set<string>>>();
   while (pending.length) {
     const target = pending.pop()!;
-    const key = JSON.stringify([target.file, target.path]);
-    if (visited.has(key)) continue;
-    visited.add(key);
-    const byImporter = new Map<string, Set<string>>();
-    for (const edge of graph.importersOf(target.file)) {
-      if (edge.typeOnly || edge.kind === "dynamic-import") continue;
-      let specifiers = byImporter.get(edge.from);
-      if (!specifiers) byImporter.set(edge.from, (specifiers = new Set()));
-      specifiers.add(edge.specifier);
+    let byImporter = importers.get(target.file);
+    if (!byImporter) {
+      importers.set(target.file, (byImporter = new Map()));
+      for (const edge of graph.importersOf(target.file)) {
+        if (edge.typeOnly || edge.kind === "dynamic-import") continue;
+        let specifiers = byImporter.get(edge.from);
+        if (!specifiers) byImporter.set(edge.from, (specifiers = new Set()));
+        specifiers.add(edge.specifier);
+      }
     }
     for (const [file, specifiers] of byImporter) {
       let loading = sources.get(file);
       if (!loading) sources.set(file, (loading = loadSource(ctx, file)));
       const source = await loading;
       if (!source) continue;
-      const found = await writesInFile(ctx, source, specifiers, target.path, binding);
-      if (file !== binding.file)
-        for (const write of found.writes) writes.set(`${write.file}:${write.range.start}`, write);
-      for (const path of found.reExports) {
-        const slot = exportSlot(file, path[0]!);
-        if (!target.history.has(slot))
-          pending.push({ file, path, history: new Set([...target.history, slot]) });
-      }
+      const scan = scanImports(
+        source,
+        specifiers,
+        target,
+        binding.access === "call",
+        (name, namespace) => exportSlot(file, name).origins.push({ slot: target, namespace }),
+      );
+      if (file !== binding.file && scan.length)
+        consumers.push(() => writesInFile(ctx, source, scan, owner, binding));
     }
   }
+  for (const collect of consumers)
+    for (const write of await collect()) writes.set(`${write.file}:${write.range.start}`, write);
   return [...writes.values()].sort((a, b) =>
     a.file === b.file ? a.range.start - b.range.start : a.file < b.file ? -1 : 1,
   );
@@ -262,18 +277,90 @@ async function loadSource(ctx: RuleContext, file: string): Promise<LoadedSource 
   return scope ? { file, text, script: scope } : undefined;
 }
 
+interface ImportedRoot {
+  variable: ScopeVariable;
+  scope: ScriptScope;
+  entry: Entry;
+}
+
+function scanImports(
+  source: LoadedSource,
+  specifiers: ReadonlySet<string>,
+  slot: ExportSlot,
+  call: boolean,
+  forward: (name: string, namespace: boolean) => void,
+): ImportedRoot[] {
+  const imported: ImportedRoot[] = [];
+  const { script, setup } = source;
+  const scanForwarding = (id: Node, parentOf: ParentOf, namespace: boolean) => {
+    const parent = parentOf(id);
+    if (
+      parent?.type === "ExportSpecifier" &&
+      parent.local === id &&
+      parent.exportKind !== "type" &&
+      parentOf(parent)?.exportKind !== "type"
+    )
+      forward(exportedName(parent.exported), namespace);
+    let outer = parent;
+    while (outer && WRAPPERS.has(outer.type)) outer = parentOf(outer);
+    if (outer?.type === "ExportDefaultDeclaration" && unwrap(outer.declaration) === id)
+      forward("default", namespace);
+  };
+  for (const scope of [script, setup]) {
+    if (!scope) continue;
+    const parentOf = parentIndex(scope);
+    const explicit = explicitExports(scope);
+    const stars = (scope.ast.body as Node[]).filter(isStarExport);
+    for (const statement of scope.ast.body as Node[]) {
+      if (!specifiers.has(statement.source?.value)) continue;
+      if (statement.type === "ImportDeclaration" && statement.importKind !== "type") {
+        for (const specifier of statement.specifiers ?? []) {
+          if (specifier.importKind === "type") continue;
+          const namespace = specifier.type === "ImportNamespaceSpecifier";
+          if (!namespace && importedName(specifier) !== slot.name) continue;
+          for (const variable of scope.scopeManager.getDeclaredVariables(specifier)) {
+            imported.push({ variable, scope, entry: { slot, namespace, call } });
+            for (const reference of variable.references)
+              scanForwarding(reference.identifier, parentOf, namespace);
+            if (script && scope === setup)
+              for (const id of unresolvedIds(script, variable.name))
+                scanForwarding(id, parentIndex(script), namespace);
+          }
+        }
+      } else if (statement.type === "ExportNamedDeclaration" && statement.exportKind !== "type") {
+        for (const specifier of statement.specifiers ?? [])
+          if (specifier.exportKind !== "type" && exportedName(specifier.local) === slot.name)
+            forward(exportedName(specifier.exported), false);
+      } else if (statement.type === "ExportAllDeclaration" && statement.exportKind !== "type") {
+        if (statement.exported) forward(exportedName(statement.exported), true);
+        else if (stars.length === 1 && slot.name !== "default" && !explicit.has(slot.name))
+          forward(slot.name, false);
+      }
+    }
+  }
+  return imported;
+}
+
+function importedName(specifier: Node): string {
+  return specifier.type === "ImportDefaultSpecifier" ? "default" : exportedName(specifier.imported);
+}
+
+function* unresolvedIds(scope: ScriptScope, name: string): Iterable<Node> {
+  for (const reference of scope.scopeManager.globalScope?.through ?? [])
+    if (reference.isValueReference && reference.identifier.name === name)
+      yield reference.identifier;
+}
+
 async function writesInFile(
   ctx: RuleContext,
   source: LoadedSource,
-  specifiers: ReadonlySet<string>,
-  [exportName, ...members]: readonly string[],
+  imported: ImportedRoot[],
+  owner: ExportSlot,
   binding: SharedStateBinding,
-): Promise<{ writes: SharedStateWrite[]; reExports: string[][] }> {
+): Promise<SharedStateWrite[]> {
   const { script, setup, text, file } = source;
   const writes: SharedStateWrite[] = [];
-  const reExports: string[][] = [];
   const templateNames = new Map<string, Entry>();
-  const call = binding.access === "call";
   const scriptNames = moduleValueNames(script);
   const setupNames = moduleValueNames(setup);
   const hoistedSetupNames = new Set<string>();
@@ -286,22 +373,9 @@ async function writesInFile(
 
   const visitReference = (id: Node, entry: Entry, scope: ScriptScope) => {
     const parentOf = parentIndex(scope);
-    const parent = parentOf(id);
-    if (
-      parent?.type === "ExportSpecifier" &&
-      parent.local === id &&
-      parent.exportKind !== "type" &&
-      parentOf(parent)?.exportKind !== "type"
-    ) {
-      reExports.push([exportedName(parent.exported), ...entry.members]);
-      return;
-    }
-    let outer = parent;
-    while (outer && WRAPPERS.has(outer.type)) outer = parentOf(outer);
-    if (outer?.type === "ExportDefaultDeclaration" && unwrap(outer.declaration) === id)
-      reExports.push(["default", ...entry.members]);
-    const root = rootFrom(id, entry, parentOf);
-    if (!root) return;
+    const match = rootFrom(id, entry, parentOf, owner);
+    if (!match) return;
+    const { root } = match;
     const isGlobal = (name: Node) =>
       !scope.references.get(name)?.resolved?.defs.length &&
       !(scope === setup ? scriptNames : hoistedSetupNames).has(name.name);
@@ -312,60 +386,24 @@ async function writesInFile(
     if (declarator?.type !== "VariableDeclarator" || declarator.init !== root) return;
     if (declarator.id?.type !== "Identifier" || parentOf(declarator)?.kind !== "const") return;
     for (const derived of scope.scopeManager.getDeclaredVariables(declarator))
-      visitRoots(derived, { members: [], call: false }, scope);
+      visitRoots(derived, { call: false }, scope);
   };
 
   const visitRoots = (variable: ScopeVariable, entry: Entry, scope: ScriptScope) => {
     if (setup && isModuleVariable(variable)) {
       if (scope === setup || !setupNames.has(variable.name)) {
         templateNames.set(variable.name, entry);
-        if (scope !== setup) visitUnresolvedRoots(setup, variable.name, entry);
+        if (scope !== setup)
+          for (const id of unresolvedIds(setup, variable.name)) visitReference(id, entry, setup);
       }
       if (script && scope === setup && hoistedSetupNames.has(variable.name))
-        visitUnresolvedRoots(script, variable.name, entry);
+        for (const id of unresolvedIds(script, variable.name)) visitReference(id, entry, script);
     }
     for (const reference of variable.references)
       if (!reference.init) visitReference(reference.identifier, entry, scope);
   };
 
-  const visitUnresolvedRoots = (scope: ScriptScope, name: string, entry: Entry) => {
-    for (const reference of scope.scopeManager.globalScope?.through ?? [])
-      if (reference.isValueReference && reference.identifier.name === name)
-        visitReference(reference.identifier, entry, scope);
-  };
-
-  for (const scope of [script, setup]) {
-    if (!scope) continue;
-    const explicit = explicitExports(scope);
-    const stars = (scope.ast.body as Node[]).filter(isStarExport);
-    for (const statement of scope.ast.body as Node[]) {
-      if (!specifiers.has(statement.source?.value)) continue;
-      if (statement.type === "ImportDeclaration" && statement.importKind !== "type") {
-        for (const specifier of statement.specifiers ?? []) {
-          if (specifier.importKind === "type") continue;
-          let entry: Entry | undefined;
-          if (specifier.type === "ImportNamespaceSpecifier")
-            entry = { members: [exportName!, ...members], call };
-          else if (specifier.type === "ImportDefaultSpecifier")
-            entry = exportName === "default" ? { members, call } : undefined;
-          else if (exportedName(specifier.imported) === exportName) entry = { members, call };
-          if (!entry) continue;
-          for (const variable of scope.scopeManager.getDeclaredVariables(specifier))
-            visitRoots(variable, entry, scope);
-        }
-      } else if (statement.type === "ExportNamedDeclaration" && statement.exportKind !== "type") {
-        for (const specifier of statement.specifiers ?? []) {
-          if (specifier.exportKind !== "type" && exportedName(specifier.local) === exportName)
-            reExports.push([exportedName(specifier.exported), ...members]);
-        }
-      } else if (statement.type === "ExportAllDeclaration" && statement.exportKind !== "type") {
-        if (statement.exported)
-          reExports.push([exportedName(statement.exported), exportName!, ...members]);
-        else if (stars.length === 1 && exportName !== "default" && !explicit.has(exportName!))
-          reExports.push([exportName!, ...members]);
-      }
-    }
-  }
+  for (const { variable, entry, scope } of imported) visitRoots(variable, entry, scope);
 
   if (templateNames.size && source.descriptor)
     writes.push(
@@ -373,12 +411,13 @@ async function writesInFile(
         ctx,
         source,
         templateNames,
+        owner,
         binding.shape,
         collectionAt,
         new Set([...scriptNames, ...setupNames]),
       )),
     );
-  return { writes, reExports };
+  return writes;
 }
 
 function moduleValueNames(scope: ScriptScope | undefined): Set<string> {
@@ -436,6 +475,7 @@ async function templateWrites(
   ctx: RuleContext,
   source: LoadedSource,
   names: ReadonlyMap<string, Entry>,
+  owner: ExportSlot,
   shape: SharedStateBinding["shape"],
   collectionAt: CollectionAt,
   scriptNames: ReadonlySet<string>,
@@ -468,13 +508,13 @@ async function templateWrites(
     for (const id of ids) {
       const entry = names.get(id.name);
       if (!entry || shadowed.has(id.name)) continue;
-      const root = rootFrom(id, entry, parentOf);
-      if (!root) continue;
+      const match = rootFrom(id, entry, parentOf, owner);
+      if (!match) continue;
       const write = classifyWrite(
-        root,
+        match.root,
         parentOf,
         shape,
-        entry.members.length === 0,
+        match.direct,
         collectionAt,
         isGlobal,
         modelTarget,
@@ -637,21 +677,51 @@ function assignmentOf(node: Node, parentOf: ParentOf): Node {
   }
 }
 
-/** The node a reference reaches the state through: the identifier, `ns.state`, or `useStore()`. */
-function rootFrom(id: Node, entry: Entry, parentOf: ParentOf): Node {
-  let root = id;
-  for (const member of entry.members) {
-    const parent = parentOf(root);
-    if (parent?.type !== "MemberExpression" || parent.object !== root) return undefined;
-    if (memberName(parent) !== member) return undefined;
-    root = parent;
+/** Match export slots against the reference's actual member chain, not all possible paths. */
+function rootFrom(
+  id: Node,
+  entry: Entry,
+  parentOf: ParentOf,
+  owner: ExportSlot,
+): { root: Node; direct: boolean } | undefined {
+  const memberOf = (node: Node, name: string): Node => {
+    const parent = parentOf(node);
+    if (
+      parent?.type === "MemberExpression" &&
+      parent.object === node &&
+      memberName(parent) === name
+    )
+      return parent;
+  };
+  const finish = (node: Node) => {
+    const direct = node === id;
+    if (!entry.call) return { root: node, direct };
+    const call = parentOf(node);
+    if (call?.type === "CallExpression" && call.callee === node) return { root: call, direct };
+  };
+  if (!entry.slot) return finish(id);
+  const first = entry.namespace ? memberOf(id, entry.slot.name) : id;
+  if (!first) return undefined;
+  if (entry.slot === owner) return finish(first);
+
+  const pending = [{ slot: entry.slot, node: first }];
+  const visited = new Map<Node, Set<ExportSlot>>();
+  while (pending.length) {
+    const { slot, node } = pending.pop()!;
+    if (slot === owner) {
+      const match = finish(node);
+      if (match) return match;
+      continue;
+    }
+    let slots = visited.get(node);
+    if (!slots) visited.set(node, (slots = new Set()));
+    if (slots.has(slot)) continue;
+    slots.add(slot);
+    for (const origin of slot.origins) {
+      const next = origin.namespace ? memberOf(node, origin.slot.name) : node;
+      if (next) pending.push({ slot: origin.slot, node: next });
+    }
   }
-  if (entry.call) {
-    const parent = parentOf(root);
-    if (parent?.type !== "CallExpression" || parent.callee !== root) return undefined;
-    root = parent;
-  }
-  return root;
 }
 
 function toWrite(
