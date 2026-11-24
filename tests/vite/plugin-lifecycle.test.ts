@@ -198,6 +198,17 @@ export { use${name}A }
     await expect(customApp.buildApp()).rejects.toThrow(/PINIA0003/);
     await clientApp.buildApp();
 
+    const first = await createBuilder(config);
+    const second = await createBuilder(config);
+    await first.build(first.environments.client!);
+    await second.build(second.environments.ssr!);
+
+    const third = await createBuilder(config);
+    await third.build(third.environments.client!);
+    const fourth = await createBuilder(config);
+    await expect(third.build(third.environments.ssr!)).rejects.toThrow(/PINIA0003/);
+    await fourth.build(fourth.environments.ssr!);
+
     await writeFile(
       join(root, "entry.ts"),
       `import { defineStore } from 'pinia'\n${cycle("Shared", "true")}`,

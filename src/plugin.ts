@@ -57,26 +57,32 @@ declare module "vite" {
 }
 
 export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
+  return createDoctorPlugin(options);
+}
+
+function createDoctorPlugin(
+  options: ViteDoctorSurfaceOptions,
+  sessionWarnings?: Set<string>,
+): Plugin {
   let config: ResolvedConfig | undefined;
   let ran = false;
   let serveRun: ServeDoctorRun | undefined;
-  let checkedTargets = new WeakSet<BuildTarget>();
-  const buildWarnings = new WeakMap<ResolvedConfig["inlineConfig"], Set<string>>();
+  const checkedTargets = new WeakSet<BuildTarget>();
 
   async function checkBuild(
     resolved: ResolvedConfig,
     fail: (message: string) => never,
     targets?: BuildTarget[],
   ) {
-    const warnings = buildWarnings.get(resolved.inlineConfig);
     const { runSurfaceDoctor } = await import("./plugin-run.js");
     const outcome = await runSurfaceDoctor(
       surfaceRunInput(resolved, options, targets),
       surfaceExtensions(resolved, options),
     );
     const maxWarnings = options.maxWarnings;
-    if (warnings) for (const warning of outcome.warningKeys) warnings.add(warning);
-    const overBudget = warnings && maxWarnings !== undefined && warnings.size > maxWarnings;
+    if (sessionWarnings) for (const warning of outcome.warningKeys) sessionWarnings.add(warning);
+    const overBudget =
+      sessionWarnings && maxWarnings !== undefined && sessionWarnings.size > maxWarnings;
     if ((outcome.shouldFail || overBudget) && (options.mode ?? "error") === "error") {
       fail(outcome.report || "Vite Doctor checks failed.");
     } else if (outcome.report) {
@@ -107,10 +113,16 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     configResolved(resolved) {
       config = resolved;
       ran = false;
-      checkedTargets = new WeakSet();
-      if (resolved.command === "build" && options.maxWarnings !== undefined) {
-        buildWarnings.set(resolved.inlineConfig, new Set());
-      }
+      if (
+        sessionWarnings ||
+        resolved.command !== "build" ||
+        options.maxWarnings === undefined ||
+        !resolved.environments
+      )
+        return;
+      const plugins = resolved.plugins as Plugin[];
+      const index = plugins.indexOf(plugin);
+      if (index >= 0) plugins[index] = createDoctorPlugin(options, new Set());
     },
     configureServer(server) {
       if (options.enabled === false || !shouldRun(options.run ?? "build", "serve")) return;
@@ -120,24 +132,19 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       serveRun = new ServeDoctorRun(server, options);
     },
     async buildStart() {
-      if (options.enabled === false || ran) return;
-      const resolved = config;
+      const target = this.environment;
+      if (options.enabled === false || (target ? checkedTargets.has(target) : ran)) return;
+      const resolved = target?.getTopLevelConfig() ?? config;
       if (!resolved || !shouldRun(options.run ?? "build", resolved.command)) return;
 
       if (resolved.command === "serve") {
         const run = serveRun;
-        if (run?.server.config !== resolved) return;
+        if (ran || run?.server.config !== resolved) return;
         ran = true;
         run.startAfterListening();
         return;
       }
-      const target = this.environment;
-      if (target && checkedTargets.has(target)) return;
-      await checkBuild(
-        target?.getTopLevelConfig() ?? resolved,
-        (message) => this.error(message),
-        target ? [target] : undefined,
-      );
+      await checkBuild(resolved, (message) => this.error(message), target ? [target] : undefined);
       if (target) checkedTargets.add(target);
       else ran = true;
     },
