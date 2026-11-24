@@ -41,6 +41,7 @@ export const coreDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0036", ruleId: "doctor/inline/unused-suppression" },
   { code: "DOC0037", ruleId: "doctor/inline/unknown-suppression-rule" },
   { code: "DOC0038", ruleId: "doctor/config/default-config-file" },
+  { code: "DOC0040", ruleId: "doctor/runtime/framework-diagnostic" },
 ]);
 
 export const diagnostics = coreDiagnosticRegistry.diagnostics;
@@ -59,4 +60,5 @@ export const reportedDoctorRuleIds: ReadonlySet<string> = new Set([
   "doctor/inline/unused-suppression",
   "doctor/inline/unknown-suppression-rule",
   "doctor/config/default-config-file",
+  "doctor/runtime/framework-diagnostic",
 ]);

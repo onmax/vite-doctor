@@ -6,6 +6,7 @@ import {
   nuxtForFile,
   setupRuntimes,
   storeResolver,
+  type EnvironmentResolution,
   type LocatedStore as Located,
   type SetupStoreUse,
   type StoreWithUses,
@@ -59,7 +60,7 @@ export const noCircularSetupStateRead = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast"],
+    consumesEvidence: ["ast", "runtime"],
     cost: "medium",
   },
   create(ctx) {
@@ -73,14 +74,15 @@ export const noCircularSetupStateRead = createRule({
             }),
           ),
         );
-        const edges = storeEdges(ctx, stores);
+        const environments = importResolutionEvidence(ctx.project.runtimeEvidence?.vite);
         const seen = new Set<string>();
-        for (const runtime of setupRuntimes) {
-          for (const cycle of cycles(
-            stores,
-            edges.filter((edge) => edge.use.runtimes & runtime),
-          )) {
-            reportCycle(ctx, cycle, runtime, seen);
+        for (const runtime of Object.values(setupRuntimes)) {
+          const resolutions = environments.length
+            ? environments.filter((environment) => environment.runtime === runtime)
+            : [undefined];
+          for (const resolution of resolutions) {
+            const edges = storeEdges(ctx, stores, runtime, resolution);
+            for (const cycle of cycles(stores, edges)) reportCycle(ctx, cycle, runtime, seen);
           }
         }
       },
@@ -88,17 +90,39 @@ export const noCircularSetupStateRead = createRule({
   },
 });
 
-function storeEdges(ctx: RuleContext, stores: LocatedStore[]): StoreEdge[] {
+function storeEdges(
+  ctx: RuleContext,
+  stores: LocatedStore[],
+  runtime: number,
+  resolution: EnvironmentResolution | undefined,
+): StoreEdge[] {
   const edges: StoreEdge[] = [];
-  const { resolveUse } = storeResolver(ctx, stores);
+  const { resolveUse } = storeResolver(ctx, stores, resolution);
   for (const from of stores) {
     for (const use of from.store.uses) {
+      if (!(use.runtimes & runtime)) continue;
       const target = resolveUse(from.module.file, use.target);
       if (!target || target.store === from || !target.store.store.setup) continue;
       edges.push({ from, to: target.store, use, byName: target.byName });
     }
   }
   return edges;
+}
+
+function importResolutionEvidence(runtime: unknown): EnvironmentResolution[] {
+  if (!runtime || typeof runtime !== "object" || !("importResolution" in runtime)) return [];
+  const evidence = runtime.importResolution;
+  if (!evidence || typeof evidence !== "object") return [];
+  const { root, environments } = evidence as Record<string, unknown>;
+  if (typeof root !== "string" || !environments || typeof environments !== "object") return [];
+  return Object.values(environments).flatMap((environment) => {
+    if (!environment || typeof environment !== "object") return [];
+    const { consumer, extensions } = environment as Record<string, unknown>;
+    if (consumer !== "client" && consumer !== "server") return [];
+    if (!Array.isArray(extensions) || !extensions.every((ext) => typeof ext === "string"))
+      return [];
+    return [{ root, runtime: setupRuntimes[consumer], extensions }];
+  });
 }
 
 /** Strongly connected groups of two or more stores; every read between them lies on a cycle. */
@@ -156,7 +180,11 @@ function reportCycle(ctx: RuleContext, cycle: StoreEdge[], runtime: number, seen
   );
   const [primary, ...others] = sites;
   if (!primary) return;
-  const key = JSON.stringify(sites.map((site) => site.location));
+  const storeKey = ({ module, store }: LocatedStore) => `${module.file}:${store.binding?.start}`;
+  const key = JSON.stringify([
+    [...new Set(cycle.map(({ from }) => storeKey(from)))].sort(),
+    sites.map(({ location, edge }) => [location, storeKey(edge.to)]),
+  ]);
   if (seen.has(key)) return;
   seen.add(key);
   const ids = [...new Set(cycle.map((edge) => `"${edge.from.store.id}"`))];

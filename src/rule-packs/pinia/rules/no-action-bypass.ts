@@ -5,7 +5,6 @@ import {
   type RuleContext,
   type SourceRange,
 } from "../../../core/index.js";
-import { isTransformedAppFile } from "../../../core/internal/auto-import-edges.js";
 import { analyzeScript, type ScriptScope } from "../../../core/internal/script-scope.js";
 import { createVueScriptForParsing, parseSfcFile } from "../../../core/internal/sfc.js";
 import {
@@ -22,6 +21,7 @@ import { diagnostics } from "../diagnostics.js";
 import {
   collectStoreModules,
   isPiniaSource,
+  isTransformedAppFile,
   nuxtForFile,
   readStoreDefinition,
   resolvedCalleeImport,

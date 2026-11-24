@@ -430,6 +430,25 @@ export interface ProjectInfo {
   runtimeEvidence?: Record<string, unknown>;
 }
 
+/**
+ * A diagnostic a framework reported at runtime, such as a `nostics` report from the browser
+ * during dev. A Plugin Surface contributes them as `{ reports }` under the `frameworkDiagnostics`
+ * Runtime Evidence.
+ */
+export interface RuntimeFrameworkDiagnostic {
+  /** The framework's own Diagnostic Code, such as `NUXT_E3004`. */
+  code: string;
+  why: string;
+  fix?: string;
+  docs?: string;
+  /** Call sites exactly as the runtime reported them. */
+  sources: string[];
+  /** The source file, and the 1-based position when a source map proves it. */
+  location?: { file: string; line?: number; column?: number };
+  /** Why the location is missing or has no position. */
+  locationGap?: string;
+}
+
 export interface WorkspacePackage {
   /** Path relative to the Doctor Run root; `.` is the workspace root. */
   root: string;
@@ -705,26 +724,17 @@ export interface ImportGraphEdge {
   from: string;
   /** The imported file, when the specifier resolves to a source file in the Doctor Run. */
   to?: string;
-  /**
-   * The specifier as written, such as `./b` or `~/utils/format`. For an `auto-import` edge, the
-   * auto-imported identifier, such as `useCart`.
-   */
+  /** The specifier as written, such as `./b` or `~/utils/format`. */
   specifier: string;
-  /**
-   * `import` declarations, `export ... from` re-exports, `import()` with a string literal, or a
-   * script reference to a Nuxt auto-import whose source is a file of the run.
-   */
-  kind: "import" | "re-export" | "dynamic-import" | "auto-import";
+  /** `import` declarations, `export ... from` re-exports, or `import()` with a string literal. */
+  kind: "import" | "re-export" | "dynamic-import";
   /** Whether TypeScript erases the dependency: `import type` or `export type ... from`. */
   typeOnly: boolean;
-  /**
-   * The import or re-export declaration, the `import()` call, or the file's first
-   * unshadowed reference to the auto-imported identifier.
-   */
+  /** The import or re-export declaration, or the `import()` call. */
   range?: SourceRange;
 }
 
-/** Files that evaluate each other through static runtime imports and Nuxt auto-imports. */
+/** Files that evaluate each other through static runtime imports. */
 export interface ImportCycle {
   /** Every file in the strongly connected group, as sorted absolute paths. */
   files: readonly string[];
@@ -736,23 +746,19 @@ export interface ImportCycle {
   path: readonly ImportGraphEdge[];
 }
 
-/** Project Inventory of which source files import or auto-import which, built from File Facts. */
+/** Project Inventory of which source files import which, built from File Facts. */
 export interface ImportGraph {
   /** Every source file in the Doctor Run with File Facts, as absolute paths. */
   files: readonly string[];
-  /**
-   * Every import, re-export, literal dynamic import, and project-owned Nuxt auto-import. Each
-   * file's written edges come in source order, followed by its auto-import edges.
-   */
+  /** Every import, re-export, and literal dynamic import, in source order per file. */
   edges: readonly ImportGraphEdge[];
   /** Edges written in `file`, an absolute path. */
   importsOf(file: string): readonly ImportGraphEdge[];
   /** Edges that resolve to `file`, an absolute path. */
   importersOf(file: string): readonly ImportGraphEdge[];
   /**
-   * Groups of two or more files joined by static imports, re-exports, and auto-imports, which Nuxt
-   * compiles to static imports. Type-only edges are erased and dynamic imports run later, so
-   * neither forms a cycle.
+   * Groups of two or more files joined by static imports and re-exports. Type-only edges are
+   * erased and dynamic imports run later, so neither forms a cycle.
    */
   cycles: readonly ImportCycle[];
 }
@@ -778,7 +784,6 @@ export interface GraphEdge {
     | "export"
     | "re-export"
     | "type-re-export"
-    | "auto-import"
     | "virtual-root";
 }
 
