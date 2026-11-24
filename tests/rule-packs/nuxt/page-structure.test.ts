@@ -370,9 +370,20 @@ describe("nuxt/pages/single-root-node", () => {
       "nuxt.config.ts": pageTransition,
       "app/pages/index.vue": template("\n  <div>\n    <h1>Home</h1>\n  </div>\n"),
       "app/pages/about.vue": template("<slot />"),
+      "app/pages/conditional.vue": template('<main v-if="shown" /><slot v-else />'),
     });
 
     expect(diagnostics).toEqual([]);
+  });
+
+  test("reports a standalone root comment even when one branch renders a slot", async () => {
+    const diagnostics = await run(id, {
+      "nuxt.config.ts": pageTransition,
+      "app/pages/index.vue": template('<!-- note --><main v-if="shown" /><slot v-else />'),
+    });
+    expect(diagnostics.map((diagnostic) => diagnostic.why)).toEqual([
+      expect.stringContaining("a comment at its root"),
+    ]);
   });
 });
 

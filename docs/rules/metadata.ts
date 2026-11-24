@@ -2313,6 +2313,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/attrs/no-multi-root-fallthrough": {
+    description:
+      'Finds a component usage that passes attributes or listeners, such as `class`, `id` or `@click`, to a component whose template has more than one root node, when the component declares none of them as props, `defineModel()` props or emits, keeps `inheritAttrs` on, and never reads `$attrs`, `useAttrs()` or `getCurrentInstance()`. A `v-if`/`v-else-if`/`v-else` chain counts as one root and comments are not roots, as in Vue\'s compiler. Doctor reports at the usage, only for usages it resolved to the component, and skips spreads such as `v-bind="obj"`, `key` and `ref`, and `update:*` model listeners. Components whose props it cannot read, such as `defineProps<ImportedProps>()` or an Options API `props` option, are skipped; listeners are skipped when the emits are unreadable. Strict Preset only.',
+    why: "Vue normally forwards undeclared attributes and listeners to a single root element or component. With several roots, Vue does not automatically attach them and warns in development. A component can still emit an undeclared event and invoke the caller's listener; missing DOM inheritance does not mean the listener is unused.",
+    recommendedReplacement:
+      'Bind `$attrs` on the intended root with `v-bind="$attrs"` or wrap the template in one root element. Declare inputs the component consumes as props. If the component emits the event, declare it in `emits` or `defineEmits()` and keep the caller’s listener.',
+    examples: [
+      {
+        title: "Bind $attrs on the root that should receive them",
+        language: "vue",
+        invalid:
+          '<!-- PageLayout.vue -->\n<template>\n  <header>Title</header>\n  <main><slot /></main>\n</template>\n\n<!-- Page.vue -->\n<template>\n  <PageLayout class="page" />\n</template>',
+        valid:
+          '<!-- PageLayout.vue -->\n<template>\n  <header>Title</header>\n  <main v-bind="$attrs"><slot /></main>\n</template>\n\n<!-- Page.vue -->\n<template>\n  <PageLayout class="page" />\n</template>',
+      },
+    ],
+  },
   "vue/attrs/no-watch-use-attrs": {
     description:
       "Flags watch() calls whose source is the useAttrs() object itself, which Vue never re-runs.",

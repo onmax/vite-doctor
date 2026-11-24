@@ -627,6 +627,8 @@ export interface ComponentUsageFact {
    */
   bindings: Array<{
     name: string;
+    /** The static key Vue compiles into the component VNode. */
+    vnodeKey: string;
     expression: string;
     model?: boolean;
     modifiers?: boolean;
@@ -635,9 +637,22 @@ export interface ComponentUsageFact {
   /** Object spreads, `v-bind="attrs"` and `v-on="handlers"`, and dynamic arguments such as `:[name]`. */
   spreads: Array<{ directive: "bind" | "on"; expression: string; range: SourceRange }>;
   /** `@event` listeners with a static argument, named as written. */
-  listeners: Array<{ event: string; expression?: string; range: SourceRange }>;
+  listeners: Array<{
+    event: string;
+    modifiers: string[];
+    vnodeKey: string;
+    expression?: string;
+    range: SourceRange;
+  }>;
   /** Other directives on the element, such as `if`, `show`, `slot`, `for`, or a custom directive. */
   directives: string[];
+  /**
+   * The nearest enclosing element in the same template, skipping `<template>` wrappers such as
+   * `v-if`, `v-for`, and slot templates. `element` is false for a component, a built-in such as
+   * `<Transition>`, or a `<slot>` outlet, whose rendered parent element is elsewhere. Absent at
+   * the template root.
+   */
+  parent?: { tag: string; element: boolean };
   /** Names that an enclosing `v-for` or `v-slot` introduces, or a `v-for` on this element. */
   scope: string[];
   /** Whether this element or an ancestor has `v-for`. */
@@ -649,6 +664,23 @@ export interface ComponentPropFact {
   /** Whether the declaration gives the prop a default value. */
   default: boolean;
   range?: SourceRange;
+}
+
+/** One root node of a component template. */
+export interface ComponentRootFact {
+  /** One entry for an unconditional root, or one per branch of a `v-if` chain. */
+  branches: ComponentRootBranch[];
+}
+
+/**
+ * What a root, or one branch of a root `v-if` chain, renders: an HTML or SVG `element`, a
+ * `component` (built-ins such as `<Transition>` included), a `<slot>` outlet, a `fragment`
+ * (a `<template>` branch or a root `v-for`), or `text`. `tag` is set for elements and components.
+ */
+export interface ComponentRootBranch {
+  kind: "element" | "component" | "slot" | "fragment" | "text";
+  tag?: string;
+  range: SourceRange;
 }
 
 /** What a Vue SFC declares in `<script setup>` and renders in its template. */
@@ -677,8 +709,21 @@ export interface ComponentFacts {
    * outlets, and slot templates: an element, text, an interpolation, or a built-in component.
    */
   ownMarkup: boolean;
-  /** Template root nodes, comments excluded. */
+  /**
+   * Template root nodes as Vue renders them: a `v-if`/`v-else-if`/`v-else` chain is one root, and
+   * comments and whitespace are not roots. Development builds keep root comments, but Vue still
+   * passes fallthrough attributes to a single element among them.
+   */
   rootNodes: number;
+  /** What each of the `rootNodes` roots renders, in source order. */
+  roots: ComponentRootFact[];
+  /**
+   * The `inheritAttrs` option: `false` when the component sets `inheritAttrs: false`, `undefined`
+   * when Doctor cannot read the option statically.
+   */
+  inheritAttrs?: boolean;
+  /** Whether the template reads `$attrs` or the script references `useAttrs` or `getCurrentInstance`. */
+  readsAttrs: boolean;
   /** Equality comparisons between two member paths as written, such as `id === props.activeId`. */
   comparisons: Array<{ left: string; right: string; in: "script" | "template" }>;
   /** Components the template renders, in source order. */

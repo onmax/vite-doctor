@@ -203,6 +203,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/component/max-props": "Prop surface size",
 
   "vue/attrs/no-duplicate-attr-inheritance": "Duplicate $attrs",
+  "vue/attrs/no-multi-root-fallthrough": "Multi-root attrs",
   "vue/attrs/no-watch-use-attrs": "Watching attrs",
   "vue/attrs/require-explicit-emits": "Undeclared emits",
 

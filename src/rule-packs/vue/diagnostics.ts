@@ -51,6 +51,7 @@ export const vueDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0046", ruleId: "vue/template/require-toggle-inside-transition" },
   { code: "VUE0047", ruleId: "vue/attrs/require-explicit-emits" },
   { code: "VUE0048", ruleId: "vue/state/no-external-shared-state-mutation" },
+  { code: "VUE0051", ruleId: "vue/attrs/no-multi-root-fallthrough" },
 ]);
 
 export const diagnostics = vueDiagnosticRegistry.diagnostics;

@@ -37,9 +37,10 @@ export function parseScriptResult(
   file: string,
   source: string,
   lang = langFromFile(file),
+  options: Pick<ParserOptions, "astType" | "range"> = {},
 ): { ast: Record<string, unknown> | null; errors: string[]; incomplete: boolean } {
   try {
-    const result = parseScriptSync(file, source, { sourceType: "module", lang });
+    const result = parseScriptSync(file, source, { sourceType: "module", lang, ...options });
     const errors = result.errors
       .filter((error) => error.severity === "Error")
       .map((error) => error.message);
