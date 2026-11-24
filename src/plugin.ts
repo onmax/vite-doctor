@@ -17,6 +17,10 @@ import {
   type DiagnosticState,
 } from "./plugin-delta.js";
 import type { SurfaceRunInput, SurfaceRunOutcome } from "./plugin-run.js";
+import type {
+  ViteBuildEnvironment,
+  ViteBuildEvidence,
+} from "./rule-packs/vite/rules/build-evidence.js";
 import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
 
 export interface ViteDoctorSurfaceOptions {
@@ -58,12 +62,14 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
   let config: ResolvedConfig | undefined;
   let ran = false;
   let serveRun: ServeDoctorRun | undefined;
+  let built = new Map<string, ViteBuildEnvironment>();
 
   return {
     name: "vite-doctor",
     configResolved(resolved) {
       config = resolved;
       ran = false;
+      built = new Map();
     },
     configureServer(server) {
       if (options.enabled === false || !shouldRun(options.run ?? "build", "serve")) return;
@@ -98,6 +104,37 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       if (!outcome.report) return;
       if (outcome.hasFindings) resolved.logger.warn(outcome.report);
       else resolved.logger.info(outcome.report);
+    },
+    async generateBundle(_output, bundle) {
+      if (options.enabled === false) return;
+      const resolved = this.environment?.getTopLevelConfig() ?? config;
+      if (resolved?.command !== "build" || !shouldRun(options.run ?? "build", "build")) return;
+      const environment = collectBuildEnvironment(
+        this,
+        bundle,
+        resolved.root,
+        this.environment?.name ?? (resolved.build.ssr ? "ssr" : "client"),
+        this.environment?.config.consumer,
+      );
+      built.set(environment.name, environment);
+      // Build Evidence Rules ask whether server code reached the browser, so a client bundle is
+      // the point where they have something to check. Earlier server environments are included.
+      // A client bundle that reads no browser stub gives them nothing to report.
+      if (environment.consumer !== "client" || !environment.browserStubReads.length) return;
+      const { runBuildEvidenceDoctor } = await import("./plugin-run.js");
+      const outcome = await runBuildEvidenceDoctor(
+        surfaceRunInput(resolved, options, {
+          root: resolved.root,
+          environments: [...built.values()],
+        }),
+        surfaceExtensions(resolved, options),
+      );
+      if (!outcome?.diagnostics.length) return;
+      if (outcome.shouldFail && (options.mode ?? "error") === "error") {
+        this.error(outcome.report);
+        return;
+      }
+      resolved.logger.warn(outcome.report);
     },
     closeBundle() {
       if (serveRun && this.environment?.getTopLevelConfig() === serveRun.server.config) {
@@ -365,7 +402,11 @@ function surfaceConfig(
   return options.config ?? config.doctor;
 }
 
-function surfaceRunInput(config: ResolvedConfig, options: ViteDoctorSurfaceOptions) {
+function surfaceRunInput(
+  config: ResolvedConfig,
+  options: ViteDoctorSurfaceOptions,
+  build?: ViteBuildEvidence,
+) {
   return {
     options: {
       root: surfaceRoot(config, options),
@@ -380,7 +421,10 @@ function surfaceRunInput(config: ResolvedConfig, options: ViteDoctorSurfaceOptio
       cache: options.cache ?? true,
       format: options.format,
     },
-    vite: { inventory: viteInventory(config), evidence: viteRuntimeEvidence(config) },
+    vite: {
+      inventory: viteInventory(config),
+      evidence: { ...viteRuntimeEvidence(config), ...(build ? { build } : {}) },
+    },
   } satisfies SurfaceRunInput;
 }
 
@@ -445,6 +489,81 @@ function viteRuntimeEvidence(config: ResolvedConfig) {
         }
       : undefined,
   };
+}
+
+interface BundledChunk {
+  type: "chunk";
+  fileName: string;
+  isEntry: boolean;
+  facadeModuleId: string | null;
+  moduleIds: readonly string[];
+  modules: Record<string, { code: string | null } | undefined>;
+}
+
+interface BundleModuleGraph {
+  getModuleInfo(id: string): {
+    importers: readonly string[];
+    dynamicImporters: readonly string[];
+    importedIds: readonly string[];
+    dynamicallyImportedIds: readonly string[];
+  } | null;
+}
+
+// Vite resolves Node built-ins and `browser: false` mappings in client builds to this module.
+const BROWSER_STUB_ID = "__vite-browser-external";
+// The binding a bundler gives the stub's exports in an importer's rendered code.
+const BROWSER_STUB_BINDING = /vite_?browser_?external/i;
+// Rolldown keeps the stub's binding declaration even when no code reads it, as in an
+// `import.meta.env.SSR` branch it removed. Only the reads left after it count.
+const BROWSER_STUB_DECLARATION =
+  /^var [\w$]+ = (?:\/\* @__PURE__ \*\/ )?(?:__toESM\()?require_[\w$]*vite_?browser_?external[\w$]*\(\)(?:, 1\))?;$/gim;
+
+/** Ids only: chunk code is read to see whether a stub is still referenced, never kept. */
+function collectBuildEnvironment(
+  graph: BundleModuleGraph,
+  bundle: Record<string, { type: string }>,
+  root: string,
+  name: string,
+  consumer: "client" | "server" | undefined,
+): ViteBuildEnvironment {
+  const id = (moduleId: string) => buildModuleId(root, moduleId);
+  const environment: ViteBuildEnvironment = {
+    name,
+    consumer,
+    chunks: [],
+    entries: [],
+    importers: {},
+    browserStubReads: [],
+  };
+  for (const output of Object.values(bundle)) {
+    if (output.type !== "chunk") continue;
+    const chunk = output as BundledChunk;
+    environment.chunks.push({
+      fileName: chunk.fileName,
+      isEntry: chunk.isEntry,
+      modules: chunk.moduleIds.map(id),
+    });
+    if (chunk.isEntry && chunk.facadeModuleId) environment.entries.push(id(chunk.facadeModuleId));
+    for (const moduleId of chunk.moduleIds) {
+      const info = graph.getModuleInfo(moduleId);
+      if (!info) continue;
+      environment.importers[id(moduleId)] = [...info.importers, ...info.dynamicImporters].map(id);
+      const imported = [...info.importedIds, ...info.dynamicallyImportedIds];
+      if (!imported.some((item) => item.startsWith(BROWSER_STUB_ID))) continue;
+      const code = (chunk.modules[moduleId]?.code ?? "")
+        // The first line of a rendered module can be a comment naming the module itself.
+        .replace(/^\/\/[^\n]*\n/, "")
+        .replace(BROWSER_STUB_DECLARATION, "");
+      if (BROWSER_STUB_BINDING.test(code)) environment.browserStubReads.push(id(moduleId));
+    }
+  }
+  return environment;
+}
+
+function buildModuleId(root: string, id: string): string {
+  if (id.startsWith("\0") || !isAbsolute(id)) return id;
+  const path = relative(root, id);
+  return path.startsWith("../") || isAbsolute(path) ? id : path;
 }
 
 function shouldRun(run: NonNullable<ViteDoctorSurfaceOptions["run"]>, command: "build" | "serve") {
