@@ -52,13 +52,17 @@ export const noIslandDisabledPluginDependency = createRule({
         const sources = new Set(await ctx.inventory.sourcePaths());
         const registered = ctx.project.nuxt?.manifest?.resolvedPlugins;
         if (!registered) {
-          const explicit = explicitPluginPaths(ctx, root);
+          const explicit = explicitPluginCandidates(ctx, root, sources);
           const candidates = [...sources].filter(
             (file) =>
               owningWorkspacePackage(packages, relative(ctx.project.root, file)) === owner ||
-              explicit.has(file),
+              explicit.paths.has(file),
           );
-          if (findDependencies(readPlugins(ctx, candidates), false).length) {
+          const plugins = readPlugins(ctx, candidates);
+          if (
+            findDependencies(plugins, false).length ||
+            (explicit.unresolved && plugins.some(canDependDuringIslands))
+          ) {
             recordRegistrationGap(ctx, root, islands === undefined ? "island" : "plugin");
           }
           return;
@@ -84,6 +88,10 @@ export const noIslandDisabledPluginDependency = createRule({
     };
   },
 });
+
+function canDependDuringIslands(plugin: PluginMeta): boolean {
+  return !plugin.islandsDisabled && !!plugin.dependsOn?.length;
+}
 
 function findDependencies(plugins: PluginMeta[], requireUnique = true) {
   const names = new Map<string, PluginMeta[]>();
@@ -147,14 +155,18 @@ function readPlugins(ctx: RuleContext, files: string[]): PluginMeta[] {
   });
 }
 
-function explicitPluginPaths(ctx: RuleContext, root: string): Set<string> {
+function explicitPluginCandidates(ctx: RuleContext, root: string, sources: Set<string>) {
   const paths = new Set<string>();
+  let unresolved = false;
   for (const extension of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
     const config = join(root, `nuxt.config.${extension}`);
     const text = ctx.fs.readText(config);
     if (text === undefined) continue;
     const plugins = readExportedNuxtOption(config, text, "plugins");
-    if (plugins?.type !== "ArrayExpression") break;
+    if (plugins?.type !== "ArrayExpression") {
+      unresolved = plugins !== undefined;
+      break;
+    }
     for (const element of plugins.elements ?? []) {
       const entry = unwrap(element);
       const src =
@@ -167,16 +179,20 @@ function explicitPluginPaths(ctx: RuleContext, root: string): Set<string> {
             )?.value
           : entry;
       const value = unwrap(src)?.value;
-      if (typeof value !== "string") continue;
-      if (value.startsWith("./") || value.startsWith("../") || isAbsolute(value)) {
-        paths.add(resolve(root, value));
-      } else if (value.startsWith("~~/") || value.startsWith("@@/")) {
-        paths.add(resolve(root, value.slice(3)));
-      }
+      const path =
+        typeof value !== "string"
+          ? undefined
+          : value.startsWith("./") || value.startsWith("../") || isAbsolute(value)
+            ? resolve(root, value)
+            : value.startsWith("~~/") || value.startsWith("@@/")
+              ? resolve(root, value.slice(3))
+              : undefined;
+      if (path && sources.has(path)) paths.add(path);
+      else unresolved = true;
     }
     break;
   }
-  return paths;
+  return { paths, unresolved };
 }
 
 function readPlugin(file: string, text: string): PluginMeta | undefined {
