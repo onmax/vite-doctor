@@ -256,7 +256,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         if (env?.config.consumer !== "client") return;
         const resolved = env.getTopLevelConfig();
         const { collectBuildEnvironment } = await import("./plugin-build-evidence.js");
-        const { environment, missingMaps } = collectBuildEnvironment(
+        const { environment, missingMapFiles } = collectBuildEnvironment(
           this,
           output,
           bundle,
@@ -265,18 +265,28 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
           privateMaps.delete(env) && output.sourcemap === "hidden",
           stubResolutions.get(env),
         );
-        if (missingMaps) {
-          resolved.logger.warnOnce(
-            `[vite-doctor] VITE0033 verification skipped for client output in ${env.name}: ` +
-              'source maps are unavailable. Set build.sourcemap: "hidden" to enable verification.',
-          );
-        }
-        if (!environment.browserStubReads.length) return;
+        if (!environment.browserStubReads.length && !missingMapFiles.size) return;
 
         const watch = watchReports.get(env);
         const reports = watch ?? buildReports;
         return (reports.pending = reports.pending.then(async () => {
           const evidence = { root: resolved.root, environments: [environment] };
+          const extensions = surfaceExtensions(resolved, options);
+          const { hasEnabledBuildEvidenceCandidate, runBuildEvidenceDoctor } =
+            await import("./plugin-run.js");
+          if (
+            missingMapFiles.size &&
+            (await hasEnabledBuildEvidenceCandidate(
+              surfaceRunInput(resolved, options, undefined, evidence),
+              extensions,
+              missingMapFiles,
+            ))
+          ) {
+            resolved.logger.warnOnce(
+              `[vite-doctor] VITE0033 verification skipped for client output in ${env.name}: ` +
+                'source maps are unavailable. Set build.sourcemap: "hidden" to enable verification.',
+            );
+          }
           const doctorRoot = surfaceRoot(resolved, options);
           environment.browserStubReads = environment.browserStubReads.filter(({ id }) => {
             const file = buildModuleFile(evidence, id);
@@ -288,10 +298,9 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
             );
           });
           if (!environment.browserStubReads.length) return;
-          const { runBuildEvidenceDoctor } = await import("./plugin-run.js");
           const outcome = await runBuildEvidenceDoctor(
             surfaceRunInput(resolved, options, undefined, evidence),
-            surfaceExtensions(resolved, options),
+            extensions,
           );
           if (!outcome.diagnostics.length) return;
           for (const diagnostic of outcome.diagnostics) reports.reported.add(diagnostic.id);

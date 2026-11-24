@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { build, createBuilder, type InlineConfig, type Logger } from "vite";
 import { expect, test, vi } from "vite-plus/test";
 import { runViteDoctor } from "../../src/doctor.ts";
-import { doctor } from "../../src/plugin.ts";
+import { doctor, type ViteDoctorSurfaceOptions } from "../../src/plugin.ts";
 
 const rule = "vite/build/no-node-builtin-in-client-chunk";
 const liveFs = 'import fs from "node:fs";\nconsole.log(fs.readFileSync("x"));';
@@ -332,6 +332,60 @@ test("explains how to enable VITE0033 when a later output hook prevents private 
       build({ ...options, build: { ...options.build, sourcemap: "hidden" } }),
     ).rejects.toThrow("VITE0033");
   });
+});
+
+test.each<{
+  name: string;
+  rules: NonNullable<ViteDoctorSurfaceOptions["config"]>;
+  skipped: boolean;
+}>([
+  { name: "globally disabled", rules: { rules: { [rule]: "off" } }, skipped: false },
+  { name: "no presets selected", rules: { extends: [] }, skipped: false },
+  {
+    name: "disabled for the candidate",
+    rules: { overrides: [{ files: ["src/main.ts"], rules: { [rule]: "off" } }] },
+    skipped: false,
+  },
+  {
+    name: "re-enabled only for an unrelated file",
+    rules: {
+      rules: { [rule]: "off" },
+      overrides: [{ files: ["src/other.ts"], rules: { [rule]: "warn" } }],
+    },
+    skipped: false,
+  },
+  {
+    name: "re-enabled for the candidate",
+    rules: {
+      rules: { [rule]: "off" },
+      overrides: [{ files: ["src/main.ts"], rules: { [rule]: "error" } }],
+    },
+    skipped: true,
+  },
+])("checks missing maps with VITE0033 $name", async ({ rules, skipped }) => {
+  await withProject(
+    { "src/main.ts": `import "./other";\n${liveFs}`, "src/other.ts": 'console.log("other");' },
+    async (root) => {
+      const { logger, warnings } = capture();
+      await build(
+        config(root, logger, {
+          plugins: [
+            doctor({ rules: rule, cache: false, config: rules }),
+            {
+              name: "host-asset-names",
+              outputOptions: {
+                order: "post",
+                handler: (output) => ({ ...output, assetFileNames: "assets/[name][extname]" }),
+              },
+            },
+          ],
+        }),
+      );
+      expect(warnings.some((message) => message.includes("VITE0033 verification skipped"))).toBe(
+        skipped,
+      );
+    },
+  );
 });
 
 test("preserves host hidden maps requested by a later output hook", async () => {

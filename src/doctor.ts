@@ -81,16 +81,20 @@ export async function viteDoctorExtensions(
 }
 
 export async function runViteDoctor(options: DoctorRunOptions) {
+  const result = await runDoctor(await viteDoctorRunOptions(options));
+  return { ...result, version: viteDoctorVersion };
+}
+
+export async function viteDoctorRunOptions(options: DoctorRunOptions): Promise<DoctorRunOptions> {
   const extensions = await viteDoctorExtensions(options);
-  const result = await runDoctor({
+  return {
     ...options,
     extensions: [
       ...extensions,
       ...(options.extensions ?? []),
       ...(await hostDoctorExtensions(options)),
     ],
-  });
-  return { ...result, version: viteDoctorVersion };
+  };
 }
 
 export async function hostDoctorExtensions(

@@ -14,7 +14,8 @@ import type {
   RuntimeFrameworkDiagnostic,
 } from "./core/index.js";
 import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
-import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
+import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
+import { runViteDoctor, shouldFailDoctorRun, viteDoctorRunOptions } from "./doctor.js";
 import type { SurfaceDiagnostic, SurfaceEvidenceGap } from "./plugin-delta.js";
 import { BUILD_EVIDENCE_RULE } from "./rule-packs/vite/rules/build-evidence.js";
 
@@ -42,10 +43,7 @@ export async function runSurfaceDoctor(
   input: SurfaceRunInput,
   extensions: DoctorExtensionInput[],
 ): Promise<SurfaceRunOutcome> {
-  const result = await runViteDoctor({
-    ...input.options,
-    extensions: [viteSurfaceExtension(input), ...extensions],
-  });
+  const result = await runViteDoctor(surfaceDoctorOptions(input, extensions));
   const report = createReport(result, input.options.format).trimEnd();
   const shouldFail =
     reportStatus(result) === "incomplete" || shouldFailDoctorRun(result, input.options.maxWarnings);
@@ -74,6 +72,30 @@ export async function runSurfaceDoctor(
       reportStatus({ ...result, project: { ...result.project, evidenceGaps: undefined } }) ===
       "incomplete",
   };
+}
+
+function surfaceDoctorOptions(input: SurfaceRunInput, extensions: DoctorExtensionInput[]) {
+  return { ...input.options, extensions: [viteSurfaceExtension(input), ...extensions] };
+}
+
+export async function hasEnabledBuildEvidenceCandidate(
+  input: SurfaceRunInput,
+  extensions: DoctorExtensionInput[],
+  candidates: ReadonlySet<string>,
+): Promise<boolean> {
+  const options = surfaceDoctorOptions(input, extensions);
+  const session = await createScanSession(
+    await viteDoctorRunOptions({ ...options, rules: BUILD_EVIDENCE_RULE }),
+  );
+  return (
+    session.enabledRules.some((rule) => rule.meta.id === BUILD_EVIDENCE_RULE) &&
+    session.files.some(
+      (file) =>
+        candidates.has(file.path) &&
+        (!session.scopedReport || file.reportEligibility) &&
+        fileRuleConfig(session, BUILD_EVIDENCE_RULE, file.path).enabled,
+    )
+  );
 }
 
 /**

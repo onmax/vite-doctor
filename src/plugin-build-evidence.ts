@@ -51,7 +51,7 @@ export function collectBuildEnvironment(
     }),
   );
   const outputDir = output.dir ?? dirname(output.file ?? resolve(root, "dist/index.js"));
-  let missingMaps = false;
+  const missingMapFiles = new Set<string>();
   for (const chunk of chunks) {
     const map = chunk.map;
     const mapFile = chunk.sourcemapFileName ?? `${chunk.fileName}.map`;
@@ -81,9 +81,10 @@ export function collectBuildEnvironment(
     }
     if (!candidates.size || !stubChunks.size || !resolutions?.size) continue;
     if (!map) {
-      missingMaps ||= [...resolutions].some(([key, resolvedId]) => {
-        return isBrowserStub(resolvedId) && candidates.has(key.slice(0, key.indexOf("\0")));
-      });
+      for (const [key, resolvedId] of resolutions) {
+        const importer = key.slice(0, key.indexOf("\0"));
+        if (isBrowserStub(resolvedId) && candidates.has(importer)) missingMapFiles.add(importer);
+      }
       continue;
     }
     environment.browserStubReads.push(
@@ -98,7 +99,7 @@ export function collectBuildEnvironment(
       ),
     );
   }
-  return { environment, missingMaps };
+  return { environment, missingMapFiles };
 }
 
 function traceReads(
