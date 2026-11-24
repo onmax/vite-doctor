@@ -244,6 +244,7 @@ function setupMemberWrite(
 
   const setupOperations: AnyNode[] = [];
   const functionOperations = new Map<AnyNode, AnyNode[]>();
+  const firstSuspension = new Map<AnyNode, AnyNode>();
   for (const operation of scriptNodesOfType(
     program,
     "AssignmentExpression",
@@ -253,11 +254,27 @@ function setupMemberWrite(
     "ForOfStatement",
     "CallExpression",
     "NewExpression",
+    "AwaitExpression",
   )) {
     let scope = operation.__doctorParent;
     while (scope && scope !== program && !FUNCTION_TYPES.has(scope.type)) {
       scope = scope.__doctorParent;
     }
+    if (scope?.async) {
+      const operand =
+        operation.type === "AwaitExpression"
+          ? operation.argument
+          : operation.type === "ForOfStatement" && operation.await
+            ? operation.right
+            : null;
+      if (
+        operand &&
+        operand.end < (firstSuspension.get(scope)?.end ?? Infinity) &&
+        !sources.isSkippedOperation?.(operation)
+      )
+        firstSuspension.set(scope, operand);
+    }
+    if (operation.type === "AwaitExpression") continue;
     if (scope === program) {
       if (operation.end <= reference.start && operation.end > object.end)
         setupOperations.push(operation);
@@ -269,19 +286,60 @@ function setupMemberWrite(
   }
 
   const callMayWrite = (call: AnyNode) => {
-    const pending = [call];
+    const pending: { invocation: AnyNode; canAwait: boolean; resolvedFunction?: AnyNode }[] = [
+      { invocation: call, canAwait: true },
+    ];
     const visited = new Set<AnyNode>();
+    const visitedAwaited = new Set<AnyNode>();
+    const forwardedCalls = new Map<AnyNode, Set<AnyNode>>();
+    const awaitedForwardedCalls = new Map<AnyNode, Set<AnyNode>>();
     while (pending.length > 0) {
-      const invocation = pending.pop();
-      for (const expression of [invocation.callee, ...invocation.arguments]) {
-        const fn = localFunction(expression, sources.programBinding);
-        if (!fn || visited.has(fn)) continue;
-        visited.add(fn);
-        for (const operation of functionOperations.get(fn) ?? []) {
-          if (sources.isSkippedOperation?.(operation)) continue;
-          if (mayWrite(operation)) return true;
-          if (isCall(operation)) pending.push(operation);
+      const next = pending.pop();
+      if (!next) break;
+      const { invocation, canAwait, resolvedFunction } = next;
+      const fn = resolvedFunction ?? localFunction(invocation.callee, sources.programBinding);
+      if (!fn || fn.generator) continue;
+      const awaited =
+        fn.async &&
+        canAwait &&
+        enclosingExpression(invocation).__doctorParent?.type === "AwaitExpression";
+      const forwarded = directParameterCall(fn);
+      if (
+        forwarded &&
+        !invocation.arguments.some((argument: AnyNode) => argument.type === "SpreadElement")
+      ) {
+        const callback = localFunction(
+          invocation.arguments[forwarded.index],
+          sources.programBinding,
+        );
+        if (callback && !sources.isSkippedOperation?.(forwarded.call)) {
+          const calls = awaited ? awaitedForwardedCalls : forwardedCalls;
+          let callbacks = calls.get(forwarded.call);
+          if (!callbacks) calls.set(forwarded.call, (callbacks = new Set()));
+          if (!callbacks.has(callback)) {
+            callbacks.add(callback);
+            pending.push({
+              invocation: forwarded.call,
+              canAwait: awaited,
+              resolvedFunction: callback,
+            });
+          }
         }
+      }
+      const seen = awaited ? visitedAwaited : visited;
+      if (seen.has(fn)) continue;
+      seen.add(fn);
+      const boundary = awaited ? undefined : firstSuspension.get(fn);
+      for (const operation of functionOperations.get(fn) ?? []) {
+        if (sources.isSkippedOperation?.(operation)) continue;
+        if (
+          boundary &&
+          (operation.end > boundary.end ||
+            (operation.end === boundary.end && operation.start < boundary.start))
+        )
+          continue;
+        if (mayWrite(operation)) return true;
+        if (isCall(operation)) pending.push({ invocation: operation, canAwait: awaited });
       }
     }
     return false;
@@ -308,6 +366,25 @@ function setupMemberWrite(
         : UNKNOWN_VALUE;
   }
   return value;
+}
+
+function directParameterCall(fn: AnyNode): { call: AnyNode; index: number } | undefined {
+  let body = fn.body;
+  if (body?.type === "BlockStatement") {
+    if (body.body.length !== 1) return;
+    const statement = body.body[0];
+    if (statement.type !== "ExpressionStatement" && statement.type !== "ReturnStatement") return;
+    body = statement.expression ?? statement.argument;
+  }
+  let call = unwrapExpression(body);
+  if (call?.type === "AwaitExpression") call = unwrapExpression(call.argument);
+  if (call?.type !== "CallExpression") return;
+  const callee = unwrapExpression(call.callee);
+  if (callee?.type !== "Identifier") return;
+  const index = fn.params.findIndex(
+    (parameter: AnyNode) => parameter.type === "Identifier" && parameter.name === callee.name,
+  );
+  if (index >= 0) return { call, index };
 }
 
 function localFunction(

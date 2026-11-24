@@ -196,6 +196,102 @@ ${after}`,
   expect(result.diagnostics).toHaveLength(0);
 });
 
+test.each([
+  [
+    "a promise continuation",
+    "void Promise.resolve().then(resetTheme)",
+    "function",
+    "preferences.theme = 'light'",
+    1,
+  ],
+  [
+    "an uninvoked function argument",
+    "Object.freeze(resetTheme)",
+    "function",
+    "preferences.theme = 'light'",
+    1,
+  ],
+  [
+    "a local wrapper that schedules its argument",
+    "const schedule = (fn: () => void) => Promise.resolve().then(fn); void schedule(resetTheme)",
+    "function",
+    "preferences.theme = 'light'",
+    1,
+  ],
+  [
+    "a local wrapper that calls its argument",
+    "const invoke = (fn: () => void) => fn(); invoke(resetTheme)",
+    "function",
+    "preferences.theme = 'light'",
+    0,
+  ],
+  [
+    "an unawaited async write",
+    "void resetTheme()",
+    "async function",
+    "await 0; preferences.theme = 'light'",
+    1,
+  ],
+  [
+    "an awaited async write",
+    "await resetTheme()",
+    "async function",
+    "await 0; preferences.theme = 'light'",
+    0,
+  ],
+  [
+    "a write in the synchronous prefix",
+    "void resetTheme()",
+    "async function",
+    "preferences.theme = 'light'; await 0",
+    0,
+  ],
+  [
+    "a write in the await operand",
+    "void resetTheme()",
+    "async function",
+    "await (preferences.theme = 'light')",
+    0,
+  ],
+  [
+    "an awaited assignment value",
+    "void resetTheme()",
+    "async function",
+    "preferences.theme = await 'light'",
+    1,
+  ],
+  [
+    "an unawaited outer helper",
+    "void resetTheme()",
+    "async function",
+    "await overwrite(); async function overwrite() { await 0; preferences.theme = 'light' }",
+    1,
+  ],
+  [
+    "an awaited outer helper",
+    "await resetTheme()",
+    "async function",
+    "await overwrite(); async function overwrite() { await 0; preferences.theme = 'light' }",
+    0,
+  ],
+  ["an unconsumed generator", "resetTheme()", "function*", "preferences.theme = 'light'", 1],
+])("orders a helper write for %s", async (_, invocation, declaration, body, count) => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: page(
+      `const preferences = { theme: useCookie('theme').value }
+${invocation}
+const rendered = preferences.theme
+${declaration} resetTheme() { ${body} }`,
+      "<div>{{ rendered }}</div>",
+    ),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { swr: 60 },
+    }),
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});
+
 test.each(["const alias = alias", "const alias = other; const other = alias"])(
   "traces rendered cookies past an uncalled helper with a cyclic alias: %s",
   async (declaration) => {
