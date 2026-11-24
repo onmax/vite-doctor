@@ -84,12 +84,13 @@ In the reply that reports the setup, tell the person in one or two sentences tha
 ## Workflow
 
 1. Use `vite-doctor . --changed --format agent` for uncommitted work. Use `vite-doctor . --since <base-ref> --format agent` for a committed branch or pull request. Run Doctor without either scope flag when Git is unavailable or the user asks for a project audit.
-2. Read `status`, `scope`, and every Diagnostic's code, message, remediation, confidence, relative location, evidence, and optional edit plan.
+2. Read `status`, `scope`, and every Diagnostic's code, message, remediation, confidence, relative location, evidence, related locations, and optional edit plan.
 3. Work only on Diagnostics owned by the requested change. Do not widen the task to unrelated findings.
 4. Apply the smallest fix that satisfies the remediation and preserves project conventions. Treat structured edit plans as proposed edits, not permission to skip review.
-5. Replace the `<rule>` item in `commandArgs.verify` with the Diagnostic's Rule ID. Execute the first array item with the remaining items as literal arguments, without a shell, from `project.cwd`.
-6. Execute `commandArgs.rerun` the same way before finishing. Report remaining Diagnostics or incomplete evidence exactly. If only shell execution is available, `commands` contains quoted POSIX command templates; replace placeholders with correctly quoted literal arguments before running them.
-7. Use the Diagnostic Reference URL when the inline remediation is ambiguous or framework behavior needs confirmation. Routine fixes should not require network access.
+5. When a Diagnostic's `related` lists several sites (an import cycle, stores that read each other during setup, one `useState` key initialized in several places, shared state written from many files), the sites share one cause. Read every related location before editing. Find that cause, usually an import from a lower layer to a higher one or a missing owner such as a composable or store action, and fix it once for all sites. Do not make it go away by moving code between the listed files, suppressing or baselining the Diagnostic, or turning an import into a dynamic `import()` the remediation does not name: each hides the cause and leaves it in place. The rerun must show the whole group cleared.
+6. Replace the `<rule>` item in `commandArgs.verify` with the Diagnostic's Rule ID. Execute the first array item with the remaining items as literal arguments, without a shell, from `project.cwd`.
+7. Execute `commandArgs.rerun` the same way before finishing. Report remaining Diagnostics or incomplete evidence exactly. If only shell execution is available, `commands` contains quoted POSIX command templates; replace placeholders with correctly quoted literal arguments before running them.
+8. Use the Diagnostic Reference URL when the inline remediation is ambiguous or framework behavior needs confirmation. Routine fixes should not require network access.
 
 ## Rules
 
