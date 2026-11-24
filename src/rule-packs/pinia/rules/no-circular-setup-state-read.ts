@@ -52,7 +52,7 @@ const NUXT_EXTENSIONS = [
   ".json",
 ];
 const REMEDIATION =
-  "Defer every reported read to a computed() getter or an action that runs after setup, or break the cycle by moving a useStore() call out of setup.";
+  "Defer every reported read to a computed() getter or an action that runs after setup, or break the cycle by moving a useStore() call out of setup. Do not move a read into another store on the cycle or suppress this Diagnostic: the cycle stays, and which read fails still depends on which store is created first.";
 
 export const noCircularSetupStateRead = createRule({
   meta: {

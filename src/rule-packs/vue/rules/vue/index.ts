@@ -47,6 +47,8 @@ export { noUselessTemplateAttributes } from "./no-useless-template-attributes.js
 export { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
 export { requireExplicitEmits } from "./require-explicit-emits.js";
 export { noExternalSharedStateMutation } from "./no-external-shared-state-mutation.js";
+export { noShallowRefDeepMutation } from "./no-shallow-ref-deep-mutation.js";
+export { noPropertyReadWatchSource } from "./no-property-read-watch-source.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
@@ -97,6 +99,8 @@ import { noUselessTemplateAttributes } from "./no-useless-template-attributes.js
 import { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
 import { requireExplicitEmits } from "./require-explicit-emits.js";
 import { noExternalSharedStateMutation } from "./no-external-shared-state-mutation.js";
+import { noShallowRefDeepMutation } from "./no-shallow-ref-deep-mutation.js";
+import { noPropertyReadWatchSource } from "./no-property-read-watch-source.js";
 
 import { defineRulePack } from "../../../../core/index.js";
 
@@ -151,6 +155,8 @@ const rules = [
   requireToggleInsideTransition,
   requireExplicitEmits,
   noExternalSharedStateMutation,
+  noShallowRefDeepMutation,
+  noPropertyReadWatchSource,
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,

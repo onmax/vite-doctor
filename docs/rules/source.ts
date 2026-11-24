@@ -1001,6 +1001,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia", "https://pinia.vuejs.org/");
   }
 
+  if (rule.id === "vue/reactivity/no-shallow-ref-deep-mutation") {
+    add(
+      "Vue reducing reactivity overhead for large immutable structures",
+      "https://vuejs.org/guide/best-practices/performance.html#reduce-reactivity-overhead-for-large-immutable-structures",
+    );
+    add("Vue triggerRef()", "https://vuejs.org/api/reactivity-advanced.html#triggerref");
+  }
+
+  if (rule.id === "vue/watch/no-property-read-source") {
+    add("Vue watch()", "https://vuejs.org/api/reactivity-core.html#watch");
+  }
+
   if (rule.id === "vue/attrs/require-explicit-emits") {
     add(
       "Vue declaring emitted events",
@@ -1068,6 +1080,20 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");
   }
 
+  if (rule.id === "nuxt/runtime/no-private-runtime-config-in-client") {
+    add("Nuxt runtime config", "https://nuxt.com/docs/4.x/guide/going-further/runtime-config");
+  }
+
+  if (rule.id === "nuxt/fetch/handler-must-return") {
+    add("Nuxt useAsyncData", "https://nuxt.com/docs/4.x/api/composables/use-async-data");
+    add("Nuxt data fetching", "https://nuxt.com/docs/4.x/getting-started/data-fetching");
+  }
+
+  if (rule.id === "nuxt/plugins/no-island-disabled-dependency") {
+    add("Nuxt plugins", "https://nuxt.com/docs/4.x/guide/directory-structure/app/plugins");
+    add("NuxtIsland", "https://nuxt.com/docs/4.x/api/components/nuxt-island");
+  }
+
   if (rule.id === "nuxt/state/no-diverging-usestate-init") {
     add("Nuxt clearNuxtState", "https://nuxt.com/docs/4.x/api/utils/clear-nuxt-state");
     add("Nuxt state management", "https://nuxt.com/docs/4.x/getting-started/state-management");
@@ -1099,7 +1125,11 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   }
 
   if (rule.framework === "nitro") {
-    add("Nitro handlers", "https://nitro.build/guide/routing");
+    add("Nitro handlers", "https://nitro.build/docs/routing");
+  }
+
+  if (rule.id === "nitro/cache/require-varies-for-header-read") {
+    add("Nitro cache", "https://nitro.build/guide/cache");
   }
 
   if (rule.framework === "vite" && rule.category === "env") {
