@@ -299,6 +299,7 @@ export interface NuxtProjectInfo {
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+    resolvedRouteRules?: Record<string, unknown>;
     pages?: Array<{ path?: string; file?: string; name?: string }>;
     prerenderRoutes?: string[];
     buildManifest?: {
@@ -381,6 +382,8 @@ export interface NuxtDoctorManifest {
   granularCachedData?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
+  /** Nitro's resolved `routeRules`; unset when the manifest was written before Nitro started. */
+  resolvedRouteRules?: Record<string, unknown>;
   ssr?: boolean;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];

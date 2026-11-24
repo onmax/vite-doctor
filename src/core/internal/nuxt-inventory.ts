@@ -18,6 +18,7 @@ export interface NuxtProjectInventory {
   isCurrent: boolean;
   serverHandlers: NuxtDoctorManifest["serverHandlers"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+  resolvedRouteRules?: Record<string, unknown>;
   pages: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes: string[];
   buildManifest?: {
@@ -62,6 +63,7 @@ export function createNuxtProjectInventory(
       ...handler,
       file: resolve(root, handler.file),
     })),
+    resolvedRouteRules: manifest?.resolvedRouteRules,
     pages: manifest?.pages ?? [],
     prerenderRoutes: manifest?.prerenderRoutes ?? [],
     buildManifest: manifest?.buildManifest,

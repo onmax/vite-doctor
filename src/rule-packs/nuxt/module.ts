@@ -49,6 +49,7 @@ type NuxtAutoImportContext = {
 };
 
 type NuxtDoctorEvidence = {
+  nitroOptions?: { routeRules?: Record<string, unknown> };
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
@@ -69,6 +70,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   nuxt.options.doctor = options;
 
   const evidence = {
+    nitroOptions: undefined as NuxtDoctorEvidence["nitroOptions"],
     resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
     serverInventory: undefined as Record<string, string[]> | undefined,
     serverHandlerMtimes: undefined as Record<string, number> | undefined,
@@ -91,6 +93,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
+    evidence.nitroOptions = nitro.options;
     const captureHandlers = async () => {
       const environments = new Set([
         nitro.options.dev ? "dev" : "prod",
@@ -373,6 +376,11 @@ export async function writeManifest(
       Object.entries(nuxt.options.alias ?? {}).map(([key, value]) => [key, String(value)]),
     ),
     routeRules: nuxt.options.routeRules ?? {},
+    // Nitro's options merge nuxt.config, `nitro.routeRules`, Nuxt's own rules and inline
+    // `defineRouteRules`, normalized the way Nitro's runtime matches them.
+    resolvedRouteRules: evidence?.nitroOptions?.routeRules
+      ? JSON.parse(JSON.stringify(evidence.nitroOptions.routeRules))
+      : undefined,
     ssr: nuxt.options.ssr !== false,
     serverHandlers: toArray(nuxt.options.serverHandlers).map((handler: any) => ({
       route: handler.route,

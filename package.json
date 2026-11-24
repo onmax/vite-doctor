@@ -90,6 +90,7 @@
     "pathe": "catalog:prod",
     "picocolors": "catalog:prod",
     "picomatch": "catalog:prod",
+    "radix3": "catalog:prod",
     "semver": "catalog:prod",
     "std-env": "catalog:prod",
     "typescript": "catalog:analysis",
