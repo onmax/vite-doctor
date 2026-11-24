@@ -1,4 +1,4 @@
-import { dirname, relative, resolve } from "pathe";
+import { basename, dirname, relative, resolve } from "pathe";
 import { createRule, type RuleContext } from "../../../core/index.js";
 import { analyzeScript } from "../../../core/internal/script-scope.js";
 import { VITE_CONFIG_FILES } from "../../../core/internal/vite-config-file.js";
@@ -391,7 +391,31 @@ function owningWorkspacePackage(ctx: RuleContext) {
 
 function owningProjectUsesVitest(ctx: RuleContext): boolean {
   const owner = owningWorkspacePackage(ctx);
-  const root = owner ? resolve(ctx.project.root, owner.root) : ctx.project.root;
+  const projectRoot = ctx.project.root;
+  const root = owner ? resolve(projectRoot, owner.root) : projectRoot;
+  const key = `vite:uses-vitest:${root}`;
+  const cached = ctx.cache.get<boolean>(key);
+  if (cached !== undefined) return cached;
+  const usesVitest =
+    declaresDependency(ctx, root, "vitest") ||
+    findConfig(ctx, root, VITEST_CONFIG_FILES) !== undefined ||
+    ((declaresDependency(ctx, root, "vite-plus") ||
+      (root !== projectRoot && declaresDependency(ctx, projectRoot, "vite-plus"))) &&
+      readTestConfig(ctx, root, VITE_CONFIG_FILES) !== undefined) ||
+    (root !== projectRoot && selectsVitestProject(ctx, projectRoot, root));
+  ctx.cache.set(key, usesVitest);
+  return usesVitest;
+}
+
+const VITEST_CONFIG_FILES = ["ts", "mts", "cts", "js", "mjs", "cjs"].map(
+  (extension) => `vitest.config.${extension}`,
+);
+const VITEST_ROOT_CONFIG_FILES = [
+  ...VITEST_CONFIG_FILES,
+  ...VITEST_CONFIG_FILES.map((name) => name.replace("vitest.", "vite.")),
+];
+
+function declaresDependency(ctx: RuleContext, root: string, name: string): boolean {
   const manifest = ctx.fs.readJson(resolve(root, "package.json"));
   if (manifest && typeof manifest === "object") {
     for (const field of [
@@ -401,11 +425,68 @@ function owningProjectUsesVitest(ctx: RuleContext): boolean {
       "peerDependencies",
     ]) {
       const deps = (manifest as Record<string, unknown>)[field];
-      if (deps && typeof deps === "object" && Object.hasOwn(deps, "vitest")) return true;
+      if (deps && typeof deps === "object" && Object.hasOwn(deps, name)) return true;
     }
   }
-  return VITE_CONFIG_FILES.some((name) =>
-    ctx.fs.stat(resolve(root, `vitest${name.slice("vite".length)}`))?.isFile(),
+  return false;
+}
+
+function findConfig(ctx: RuleContext, dir: string, names: readonly string[]) {
+  return names.map((name) => resolve(dir, name)).find((file) => ctx.fs.stat(file)?.isFile());
+}
+
+function readTestConfig(ctx: RuleContext, dir: string, names: readonly string[]) {
+  const file = findConfig(ctx, dir, names);
+  const text = file && ctx.fs.readText(file);
+  const scope = text && analyzeScript(text, "ts");
+  if (!scope) return;
+  const config = staticConfig(scope);
+  const test = config && objectProperties(scope, config.get("test"));
+  if (test) return { scope, config, test };
+}
+
+function selectsVitestProject(ctx: RuleContext, dir: string, ownerRoot: string): boolean {
+  const testConfig = readTestConfig(ctx, dir, VITEST_ROOT_CONFIG_FILES);
+  if (!testConfig) return false;
+  const { scope, config, test } = testConfig;
+  const rootOption = test.get("root") ?? config.get("root");
+  const rootPath = rootOption ? staticString(resolveConst(scope, rootOption)) : ".";
+  if (rootPath === null) return false;
+  const root = resolve(dir, rootPath);
+  const projects = resolveConst(scope, test.get("projects"));
+  if (projects?.type !== "ArrayExpression") return false;
+
+  const entries: AnyNode[] = projects.elements.map((element: AnyNode) =>
+    resolveConst(scope, element),
+  );
+  const paths = entries.flatMap((entry) => {
+    const path = staticString(entry);
+    return path === null ? [] : [path.replace("<rootDir>", () => root)];
+  });
+  const exclude = [
+    "**/node_modules/**",
+    ...paths.filter((path) => path.startsWith("!")).map((path) => path.slice(1)),
+  ];
+  const matchesOwner = (path: string) => {
+    if (path === ownerRoot) return ctx.fs.stat(path)?.isDirectory();
+    return (
+      dirname(path) === ownerRoot &&
+      /^vite(?:st)?(?:\.[\w-]+)?\.config\./.test(basename(path)) &&
+      ctx.fs.stat(path)?.isFile()
+    );
+  };
+  return (
+    paths.some((path) => {
+      if (path.startsWith("!")) return false;
+      if (!/[*?{[()]/.test(path)) return matchesOwner(resolve(root, path));
+      return ctx.fs.glob(path, { cwd: root, exclude }).some(matchesOwner);
+    }) ||
+    entries.some((entry) => {
+      const project = objectProperties(scope, entry);
+      const options = project && objectProperties(scope, project.get("test"));
+      const path = staticString(resolveConst(scope, options?.get("root") ?? project?.get("root")));
+      return path !== null && resolve(root, path) === ownerRoot;
+    })
   );
 }
 
@@ -416,9 +497,7 @@ function projectViteConfig(ctx: RuleContext): string | undefined {
   const owner = owningWorkspacePackage(ctx);
   if (owner && owner.framework !== "vite" && owner.framework !== "vue") return;
   const configRoot = owner ? resolve(root, owner.root) : root;
-  return VITE_CONFIG_FILES.map((name) => resolve(configRoot, name)).find((file) =>
-    ctx.fs.stat(file)?.isFile(),
-  );
+  return findConfig(ctx, configRoot, VITE_CONFIG_FILES);
 }
 
 interface StaticEnvFacts {

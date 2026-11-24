@@ -97,6 +97,44 @@ if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.m
     ).toEqual([]);
   });
 
+  test("recognizes Vitest configured through Vite+ without a Vitest dependency", async () => {
+    expect(
+      await run([noUnprefixedClientEnv], {
+        "package.json": JSON.stringify({ devDependencies: { "vite-plus": "^1.6.0" } }),
+        "vite.config.ts": "export default { test: { environment: 'node' } }",
+        "src/main.ts": "console.log(import.meta.env.VITEST, import.meta.env.API_URL)",
+      }),
+    ).toEqual([expect.stringMatching(/^VITE0030: import\.meta\.env\.API_URL is undefined/)]);
+  });
+
+  test.each([
+    ["vitest.config.ts", "['apps/web']"],
+    ["vite.config.ts", "['apps/w*']"],
+    ["vitest.config.ts", "['apps/web/vite.config.ts']"],
+    ["vitest.config.ts", "[{ root: 'apps/web' }]"],
+  ])("scopes %s project selection %s to matching apps", async (file, projects) => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ devDependencies: { vitest: "^4.0.0" } }),
+      "pnpm-workspace.yaml": 'packages:\n  - "apps/*"\n',
+      [file]: config(`{ test: { projects: ${projects} } }`),
+    };
+    for (const app of ["web", "admin"]) {
+      files[`apps/${app}/package.json`] = JSON.stringify({
+        name: app,
+        devDependencies: { vite: "^8.0.0" },
+      });
+      files[`apps/${app}/vite.config.ts`] = config("{}");
+      files[`apps/${app}/src/main.ts`] = "console.log(import.meta.env.VITEST)";
+    }
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnprefixedClientEnv],
+      files,
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.file).toMatch(/apps\/admin\/src\/main\.ts$/);
+  });
+
   test("leaves test files alone", async () => {
     expect(
       await run([noUnprefixedClientEnv], {
