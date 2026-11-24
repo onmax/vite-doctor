@@ -427,6 +427,10 @@ function viteRuntimeEvidence(config: ResolvedConfig) {
   ];
   return {
     buildSsr: Boolean(config.build?.ssr),
+    clientHmr:
+      config.command === "serve" && config.server
+        ? { root: config.root, enabled: config.server.hmr !== false }
+        : undefined,
     ssrExternal: config.ssr?.external ?? [],
     ssrNoExternal: config.ssr?.noExternal ?? [],
     envExposure: hasResolvedConsumers

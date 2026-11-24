@@ -1954,6 +1954,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/hmr/no-circular-import-at-hmr-boundary": {
+    description:
+      "Reports import cycles in Vite's HMR importer graph that pass through an HMR boundary: a Vue SFC or a module that calls import.meta.hot.accept() for its own updates.",
+    why: "When an edit reaches an HMR boundary, the Vite dev server checks whether the boundary's importers lead back into the chain the update came through. If they do, it sends the update with isWithinCircularImport, and the browser re-imports the boundary. That re-import can re-evaluate modules of the cycle, and if it throws, for example because a module reads a binding of the cycle before it is initialized, the Vite client logs that the module failed to apply HMR as it's within a circular import and reloads the whole page. So the cycle can turn an edit into a full reload; when the re-import succeeds, HMR still applies. Vite records every resolvable import as an importer, including import() calls with a literal path, so Doctor builds the same graph: static imports, re-exports, and dynamic imports, without type-only imports, which TypeScript erases. A lazy route component therefore still closes the loop when the component imports the router. Doctor treats every .vue file as a boundary because @vitejs/plugin-vue makes SFCs accept their own updates in dev, unless resolved Vite dev evidence for the Doctor Run root or a parent root sets server.hmr to false. Vite plugin config hooks can override even a literal setting in the config file. Doctor does not execute host config on the CLI and, without applicable resolved dev evidence, assumes the plugin's default and says so in the evidence. It treats modules that call import.meta.hot.accept() or import.meta.hot.accept(callback) as boundaries, read from the AST, so comments and strings do not count. accept('./dep', callback) accepts updates of the dependency rather than the module itself, and acceptExports accepts only the listed exports, so Doctor leaves both out rather than guess whether they stop an update inside the cycle. It reports one Diagnostic per group of files, at the import that enters the boundary, with every edge of the loop as related locations. DOC0001, under --analyses graph, reports static evaluation cycles as an architecture problem; this Strict-only Rule reports the HMR cycles that reach a boundary, with the Vite dev consequence, and the two can name the same group.",
+    recommendedReplacement:
+      "Remove the boundary's import back into the cycle. Move the constants or helpers the component needs from the router or store into a module that imports neither side, or read them at runtime instead of importing the module, such as useRouter() in a component instead of the router instance. Lazy-loading the component with import() does not break the HMR cycle, because Vite records dynamic imports as importers. Do not add import.meta.hot.decline() or suppress the Diagnostic; that keeps the cycle.",
+    examples: [
+      {
+        title: "Get the router at runtime instead of importing it",
+        language: "ts",
+        invalid:
+          "// src/router.ts\nexport const router = createRouter({ history: createWebHistory(), routes: [{ path: '/', component: () => import('./Page.vue') }] })\n\n// src/Page.vue <script setup>\nimport { router } from './router'\nconst go = () => router.push('/')",
+        valid:
+          "// src/router.ts\nexport const router = createRouter({ history: createWebHistory(), routes: [{ path: '/', component: () => import('./Page.vue') }] })\n\n// src/Page.vue <script setup>\nimport { useRouter } from 'vue-router'\nconst router = useRouter()\nconst go = () => router.push('/')",
+      },
+    ],
+  },
   "vite/hmr/require-dispose-for-side-effects": {
     description:
       "Checks that Vite hmr code includes the dispose for side effects needed for predictable behavior.",
