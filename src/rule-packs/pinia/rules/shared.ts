@@ -75,6 +75,7 @@ const NUXT_EXTENSIONS = [
   ".vue",
   ".json",
 ];
+const COMPANION_SUFFIX = /^\.(?:(?:test|spec)\.[cm]?[jt]sx?|d\.[cm]?ts)$/;
 
 const TRANSPARENT_WRAPPERS = new Set([
   "ParenthesizedExpression",
@@ -647,9 +648,11 @@ export function storeResolver<S extends StoreDefinition>(
     const dir = dirname(base);
     const filename = basename(base);
     const prefix = `${filename}.`;
-    const candidates = ctx.fs
-      .readDir(dir)
-      ?.filter((entry) => entry.name.startsWith(prefix) && isFile(resolve(dir, entry.name)));
+    const candidates = ctx.fs.readDir(dir)?.filter((entry) => {
+      if (!entry.name.startsWith(prefix)) return false;
+      const suffix = entry.name.slice(filename.length);
+      return !COMPANION_SUFFIX.test(suffix) && isFile(resolve(dir, entry.name));
+    });
     if (!candidates?.length) return undefined;
     if (candidates.length > 1) return null;
     const candidate = candidates[0]!.name;

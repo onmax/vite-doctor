@@ -333,6 +333,43 @@ Object.assign(cart, { items: [] }, { total: 0 })`,
     },
   );
 
+  test.each([
+    ["stores/cart.ts", "stores/cart.test.ts"],
+    ["stores/cart.ts", "stores/cart.d.ts"],
+    ["stores/cart/index.ts", "stores/cart.test.ts"],
+    ["stores/cart/index.ts", "stores/cart/index.spec.ts"],
+  ])("resolves the Nuxt registration to %s alongside %s", async (store, sibling) => {
+    const result = await runNuxt(
+      {
+        [store]: setupCart,
+        [sibling]: "export {}",
+        "a.ts": nuxtWriter("useCartStore", "import { useCartStore } from '#imports'"),
+        "b.ts": nuxtWriter("useCartStore"),
+      },
+      [{ name: "useCartStore", from: "~/stores/cart" }],
+    );
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.file).toMatch(store);
+    expect(result.diagnostics[0]?.related).toHaveLength(2);
+  });
+
+  test.each([".tsx", ".custom.tsx"])(
+    "leaves a Nuxt registration unresolved alongside a runtime candidate with suffix %s",
+    async (suffix) => {
+      const result = await runNuxt(
+        {
+          "nuxt.config.ts": `export default defineNuxtConfig({ vite: { resolve: { extensions: ['${suffix}', '.ts'] } } })`,
+          "stores/cart.ts": setupCart,
+          [`stores/cart${suffix}`]: "export const useCartStore = () => ({ items: [] })",
+          "a.ts": nuxtWriter("useCartStore", "import { useCartStore } from '#imports'"),
+          "b.ts": nuxtWriter("useCartStore"),
+        },
+        [{ name: "useCartStore", from: "~/stores/cart" }],
+      );
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
+
   test("does not guess an explicit #imports binding without a current manifest", async () => {
     const writer = nuxtWriter("useCartStore", "import { useCartStore } from '#imports'");
     const result = await runNuxt({ "a.ts": writer, "b.ts": writer }, null);
