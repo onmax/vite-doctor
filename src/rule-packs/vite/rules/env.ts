@@ -396,12 +396,13 @@ function owningProjectUsesVitest(ctx: RuleContext): boolean {
   const key = `vite:uses-vitest:${root}`;
   const cached = ctx.cache.get<boolean>(key);
   if (cached !== undefined) return cached;
+  const localConfig = findConfig(ctx, root, VITEST_CONFIG_FILES);
   const usesVitest =
     declaresDependency(ctx, root, "vitest") ||
-    findConfig(ctx, root, VITEST_CONFIG_FILES) !== undefined ||
+    (localConfig !== undefined && vitestConfigRoot(ctx, localConfig) === root) ||
     ((declaresDependency(ctx, root, "vite-plus") ||
       (root !== projectRoot && declaresDependency(ctx, projectRoot, "vite-plus"))) &&
-      readTestConfig(ctx, root, VITE_CONFIG_FILES) !== undefined) ||
+      readTestConfig(ctx, root, VITE_CONFIG_FILES)?.test !== undefined) ||
     (root !== projectRoot && selectsVitestProject(ctx, projectRoot, root));
   ctx.cache.set(key, usesVitest);
   return usesVitest;
@@ -437,20 +438,55 @@ function findConfig(ctx: RuleContext, dir: string, names: readonly string[]) {
 
 function readTestConfig(ctx: RuleContext, dir: string, names: readonly string[]) {
   const file = findConfig(ctx, dir, names);
-  const text = file && ctx.fs.readText(file);
-  const scope = text && analyzeScript(text, "ts");
+  return file ? readVitestConfig(ctx, file) : undefined;
+}
+
+function readVitestConfig(ctx: RuleContext, file: string) {
+  const text = ctx.fs.readText(file);
+  const scope = text === undefined ? null : analyzeScript(text, "ts");
   if (!scope) return;
   const config = staticConfig(scope);
-  const test = config && objectProperties(scope, config.get("test"));
-  if (test) return { scope, config, test };
+  if (!config) return;
+  const test = config.has("test") ? objectProperties(scope, config.get("test")) : undefined;
+  if (test !== null) return { scope, config, test };
+}
+
+function vitestRootOption({
+  scope,
+  config,
+  test,
+}: NonNullable<ReturnType<typeof readVitestConfig>>) {
+  const testRoot = test?.get("root");
+  if (testRoot) {
+    const path = staticString(resolveConst(scope, testRoot));
+    if (path !== "") return path;
+  }
+  const root = config.get("root");
+  return root ? staticString(resolveConst(scope, root)) : ".";
+}
+
+function vitestConfigRoot(ctx: RuleContext, file: string): string | undefined {
+  const config = readVitestConfig(ctx, file);
+  const path = config && vitestRootOption(config);
+  if (typeof path === "string") return resolve(dirname(file), path);
+}
+
+function selectedVitestRoot(ctx: RuleContext, path: string): string | undefined {
+  const stat = ctx.fs.stat(path);
+  if (stat?.isDirectory()) {
+    const config = findConfig(ctx, path, VITEST_ROOT_CONFIG_FILES);
+    return config ? vitestConfigRoot(ctx, config) : path;
+  }
+  if (stat?.isFile() && /^vite(?:st)?(?:\.[\w-]+)?\.config\./.test(basename(path))) {
+    return vitestConfigRoot(ctx, path);
+  }
 }
 
 function selectsVitestProject(ctx: RuleContext, dir: string, ownerRoot: string): boolean {
   const testConfig = readTestConfig(ctx, dir, VITEST_ROOT_CONFIG_FILES);
-  if (!testConfig) return false;
-  const { scope, config, test } = testConfig;
-  const rootOption = test.get("root") ?? config.get("root");
-  const rootPath = rootOption ? staticString(resolveConst(scope, rootOption)) : ".";
+  if (!testConfig?.test) return false;
+  const { scope, test } = testConfig;
+  const rootPath = vitestRootOption(testConfig);
   if (rootPath === null) return false;
   const root = resolve(dir, rootPath);
   const projects = resolveConst(scope, test.get("projects"));
@@ -467,14 +503,7 @@ function selectsVitestProject(ctx: RuleContext, dir: string, ownerRoot: string):
     "**/node_modules/**",
     ...paths.filter((path) => path.startsWith("!")).map((path) => path.slice(1)),
   ];
-  const matchesOwner = (path: string) => {
-    if (path === ownerRoot) return ctx.fs.stat(path)?.isDirectory();
-    return (
-      dirname(path) === ownerRoot &&
-      /^vite(?:st)?(?:\.[\w-]+)?\.config\./.test(basename(path)) &&
-      ctx.fs.stat(path)?.isFile()
-    );
-  };
+  const matchesOwner = (path: string) => selectedVitestRoot(ctx, path) === ownerRoot;
   return (
     paths.some((path) => {
       if (path.startsWith("!")) return false;

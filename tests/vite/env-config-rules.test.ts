@@ -107,6 +107,16 @@ if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.m
     ).toEqual([expect.stringMatching(/^VITE0030: import\.meta\.env\.API_URL is undefined/)]);
   });
 
+  test("does not treat a Vite+ config without a test block as Vitest evidence", async () => {
+    expect(
+      await run([noUnprefixedClientEnv], {
+        "package.json": JSON.stringify({ devDependencies: { "vite-plus": "^1.6.0" } }),
+        "vite.config.ts": config("{}"),
+        "src/main.ts": "console.log(import.meta.env.VITEST)",
+      }),
+    ).toEqual([expect.stringMatching(/^VITE0030: import\.meta\.env\.VITEST is undefined/)]);
+  });
+
   test.each([
     ["vitest.config.ts", "['apps/web']"],
     ["vite.config.ts", "['apps/w*']"],
@@ -133,6 +143,43 @@ if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.m
     });
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]?.file).toMatch(/apps\/admin\/src\/main\.ts$/);
+  });
+
+  test.each([
+    ["apps/admin/vitest.unit.config.ts", "vitest.unit.config.ts", "{ root: '../web' }", false],
+    ["apps/a*", "vitest.config.ts", "{ root: '../web' }", false],
+    [
+      "apps/*/vitest.config.ts",
+      "vitest.config.ts",
+      "{ root: '../admin', test: { root: '../web' } }",
+      false,
+    ],
+    ["apps/admin", "vitest.config.ts", "{ root: process.env.TEST_ROOT }", true],
+    ["apps/admin/vitest.unit.config.ts", "vitest.unit.config.ts", null, true],
+  ])("uses the effective root of %s (%s, %s)", async (entry, file, body, unknown) => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ devDependencies: { vitest: "^4.0.0" } }),
+      "pnpm-workspace.yaml": 'packages:\n  - "apps/*"\n',
+      "vitest.config.ts": config(`{ test: { projects: [${JSON.stringify(entry)}] } }`),
+    };
+    for (const app of ["admin", "web"]) {
+      files[`apps/${app}/package.json`] = JSON.stringify({
+        name: app,
+        devDependencies: { vite: "^8.0.0" },
+      });
+      files[`apps/${app}/vite.config.ts`] = config("{}");
+      files[`apps/${app}/src/main.ts`] = "console.log(import.meta.env.VITEST)";
+    }
+    if (body) files[`apps/admin/${file}`] = config(body);
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnprefixedClientEnv],
+      files,
+    });
+    const owners = result.diagnostics.map(({ file }) => file?.split("/").at(-3) ?? "");
+    expect(owners.sort((left, right) => left.localeCompare(right))).toEqual(
+      unknown ? ["admin", "web"] : ["admin"],
+    );
   });
 
   test("leaves test files alone", async () => {
