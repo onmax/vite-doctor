@@ -141,7 +141,7 @@ export const useRightStore = defineStore('right', () => {
     expect(result.diagnostics[0]!.why).toContain("auto-import");
   });
 
-  test("ignores reads Pinia supports and stores that only read one way", async () => {
+  test("ignores deferred reads and genuinely one-way initialization", async () => {
     const result = await run({
       // (a) the same stores reading each other only inside computed() and actions
       "src/stores/x.ts": `import { defineStore } from 'pinia'
@@ -155,7 +155,7 @@ export const useXStore = defineStore('x', () => {
     await Promise.resolve()
     return y.name
   }
-  watch(() => y.name, () => {})
+  function observe() { return y.name }
   y.$subscribe(() => {})
   return { name, summary, sync }
 })
@@ -183,11 +183,8 @@ export const useSettingsStore = defineStore('settings', () => {
 `,
       "src/stores/session.ts": `import { defineStore } from 'pinia'
 import { computed } from 'vue'
-import { useSettingsStore } from './settings'
 export const useSessionStore = defineStore('session', () => {
-  const settings = useSettingsStore()
-  const theme = computed(() => settings.locale)
-  return { locale: 'en', theme }
+  return { locale: 'en' }
 })
 `,
       // (c) option stores using each other in getters and actions
@@ -217,6 +214,112 @@ export const useUserStore = defineStore('user', {
 `,
     });
     expect(result.diagnostics).toEqual([]);
+  });
+
+  test("reports only the eager read when a deferred read still leaves both calls eager", async () => {
+    const result = await run({
+      "stores/x.ts": x,
+      "stores/y.ts": y.replace("  x.name", "  const later = () => x.name"),
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      file: expect.stringMatching(/stores\/x\.ts$/),
+      related: [],
+    });
+  });
+
+  test.each([
+    ["watch source", "import { watch as observe } from 'vue'", "observe(() => x.name, () => {})"],
+    ["watchEffect", "import * as Vue from 'vue'", "Vue.watchEffect(() => x.name)"],
+    ["immediate invocation", "", ";(() => x.name)()"],
+    ["$state", "", "x.$state.name"],
+    ["aliased ref extraction", "import { storeToRefs as refs } from 'pinia'", "refs(x)"],
+    ["namespace ref extraction", "import * as Vue from 'vue'", "Vue.toRefs(x)"],
+  ])("reports eager reads through %s", async (_case, imports, read) => {
+    const result = await run({
+      "stores/x.ts": x,
+      "stores/y.ts": `${imports}\n${y.replace("  x.name", `  ${read}`)}`,
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.related).toHaveLength(1);
+  });
+
+  test("ignores shadowed ref helpers and deferred watch callbacks", async () => {
+    const result = await run({
+      "stores/x.ts": x.replace(
+        "  y.name",
+        "  const toRefs = (_store: unknown) => ({})\n  toRefs(y)",
+      ),
+      "stores/y.ts": `import { watch, watchEffect } from 'vue'\n${y.replace("  x.name", "  watch(() => 1, () => x.name)\n  watchEffect(() => x.name, { flush: 'post' })")}`,
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test.each([false, true])(
+    "checks SSR-compatible creation and read paths (overlap: %s)",
+    async (overlap) => {
+      const result = await run({
+        "stores/x.ts": x.replace(
+          "  const y = useYStore()\n  y.name",
+          "  if (import.meta.env.SSR) useYStore().name",
+        ),
+        "stores/y.ts": y.replace(
+          "  const x = useXStore()\n  x.name",
+          `  if (${overlap ? "" : "!"}import.meta.env.SSR) useXStore().name`,
+        ),
+      });
+      expect(result.diagnostics).toHaveLength(overlap ? 1 : 0);
+    },
+  );
+
+  test("only reports reads in the runtime that can complete the cycle", async () => {
+    const result = await run({
+      "stores/x.ts": x.replace("  y.name", "  if (import.meta.env.SSR) y.name"),
+      "stores/y.ts": y.replace(
+        "  const x = useXStore()\n  x.name",
+        "  if (!import.meta.env.SSR) useXStore().name",
+      ),
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      file: expect.stringMatching(/stores\/y\.ts$/),
+      related: [],
+    });
+  });
+
+  test.each(["direct", "barrel", "unresolved", "private auto-import"])(
+    "does not substitute an unrelated store for a %s binding",
+    async (kind) => {
+      const result = await run({
+        "stores/x.ts": x.replace(
+          "import { useYStore } from './y'",
+          {
+            direct: "import { useYStore } from './y'",
+            barrel: "import { useYStore } from './index'",
+            unresolved: "import { useYStore } from './missing'",
+            "private auto-import": "",
+          }[kind]!,
+        ),
+        "stores/y.ts":
+          y.replace("export const useYStore", "const useYStore") +
+          "\nexport const helper = () => ({ name: 'helper' })\nexport { helper as useYStore }\n",
+        "stores/index.ts": "export { helper as useYStore } from './y'\n",
+      });
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
+
+  test("resolves aliased store exports through a barrel", async () => {
+    const result = await run({
+      "stores/x.ts": x.replace("from './y'", "from './index'"),
+      "stores/y.ts":
+        y.replace("export const useYStore", "const privateStore") +
+        "\nexport { privateStore as exportedStore }\n",
+      "stores/barrel.ts": "export { exportedStore as useYStore } from './y'\n",
+      "stores/index.ts": "export * from './barrel'\n",
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.confidence).toBe("heuristic-high");
   });
 
   test("ignores unresolved, shadowed, and ambiguous store calls", async () => {

@@ -21,12 +21,17 @@ export interface StoreDefinition {
 export interface SetupStoreUse {
   callee: { name: string; start: number; end: number };
   target: SetupStoreUseTarget;
-  reads: Array<{ start: number; end: number }>;
+  runtimes: number;
+  reads: Array<{ start: number; end: number; runtimes: number }>;
 }
+
+const CLIENT = 1;
+const SERVER = 2;
+export const setupRuntimes = [CLIENT, SERVER];
 
 export type SetupStoreUseTarget =
   /** A store defined in the same file under `name`. */
-  | { kind: "local"; name: string }
+  | { kind: "local"; start: number }
   /** `name` imported from `source`. */
   | { kind: "import"; name: string; source: string }
   /** No import or declaration, as with `@pinia/nuxt` or `unplugin-auto-import`. */
@@ -53,6 +58,15 @@ const TRANSPARENT_WRAPPERS = new Set([
 ]);
 
 const FUNCTIONS = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
+const UNKNOWN_OPTION = Symbol("unknown Vue watcher option");
+const EARLY_STORE_PROPERTIES = new Set([
+  "$id",
+  "$patch",
+  "$reset",
+  "$subscribe",
+  "$onAction",
+  "$dispose",
+]);
 
 // Code in these nodes runs later than the setup function body, or not at all.
 const DEFERRED_SCOPES = new Set([
@@ -120,10 +134,19 @@ function analyzeStoreScript(
 ): { definitions: StoreDefinition[]; references: Map<number, ScopeReference> } {
   if (program?.type !== "Program") return { definitions: [], references: new Map() };
   const references = scopeReferences(program, source);
-  const callees = piniaDefineStoreCallees(program, references);
   const definitions: StoreDefinition[] = [];
   walk(program, [], (node, ancestors) => {
-    if (node.type !== "CallExpression" || !callees.has(unwrap(node.callee)?.start)) return;
+    if (node.type !== "CallExpression") return;
+    const callee = unwrap(node.callee);
+    if (
+      importedCallee(callee, references, "pinia") !== "defineStore" &&
+      !(
+        callee?.type === "Identifier" &&
+        callee.name === "defineStore" &&
+        references.get(callee.start)?.resolved === null
+      )
+    )
+      return;
     const id = readStoreId(node);
     if (!id) return;
     definitions.push({ ...id, binding: readBinding(node, ancestors), setup: readSetup(node) });
@@ -161,55 +184,31 @@ function scopeReferences(program: AnyNode, source: string): Map<number, ScopeRef
   return references;
 }
 
-function piniaDefineStoreCallees(
-  program: AnyNode,
+function importedCallee(
+  node: AnyNode,
   references: Map<number, ScopeReference>,
-): Set<number> {
-  const callees = new Set<number>();
-  const identifiers = new Set<number>();
-  const namespaces = new Set<number>();
-  for (const reference of references.values()) {
-    if (!reference.isValueReference) continue;
-    const identifier = reference.identifier;
-    const variable = reference.resolved;
-    if (!variable) {
-      if (identifier.name === "defineStore") identifiers.add(identifier.range[0]);
-      continue;
-    }
-    for (const definition of variable.defs) {
-      if (
-        definition.type !== "ImportBinding" ||
-        definition.parent.type !== "ImportDeclaration" ||
-        definition.parent.source.value !== "pinia" ||
-        definition.parent.importKind === "type"
-      )
-        continue;
-      const binding = definition.node;
-      if (
-        binding.type === "ImportSpecifier" &&
-        binding.importKind !== "type" &&
-        importedName(binding) === "defineStore"
-      ) {
-        identifiers.add(identifier.range[0]);
-      } else if (binding.type === "ImportNamespaceSpecifier") {
-        namespaces.add(identifier.range[0]);
-      }
-    }
-  }
-  walk(program, [], (node) => {
-    if (node.type !== "CallExpression") return;
-    const callee = unwrap(node.callee);
-    if (callee?.type === "Identifier" && identifiers.has(callee.start)) callees.add(callee.start);
-    if (
-      callee?.type === "MemberExpression" &&
-      !callee.computed &&
-      callee.object?.type === "Identifier" &&
-      namespaces.has(callee.object.start) &&
-      callee.property?.name === "defineStore"
-    )
-      callees.add(callee.start);
-  });
-  return callees;
+  source: string,
+): string | undefined {
+  const callee = unwrap(node);
+  const member = callee?.type === "MemberExpression";
+  const identifier = member ? unwrap(callee.object) : callee;
+  if (identifier?.type !== "Identifier") return undefined;
+  const reference = references.get(identifier.start);
+  const definitions = reference?.resolved?.defs;
+  if (!reference?.isValueReference || definitions?.length !== 1) return undefined;
+  const definition = definitions[0]!;
+  if (
+    definition.type !== "ImportBinding" ||
+    definition.parent.type !== "ImportDeclaration" ||
+    definition.parent.source.value !== source ||
+    definition.parent.importKind === "type"
+  )
+    return undefined;
+  const binding = definition.node;
+  if (member && binding.type === "ImportNamespaceSpecifier") return memberName(callee);
+  if (!member && binding.type === "ImportSpecifier" && binding.importKind !== "type")
+    return importedName(binding);
+  return undefined;
 }
 
 function setupUses(
@@ -220,22 +219,25 @@ function setupUses(
   const uses: SetupStoreUse[] = [];
   const bindings = new Map<unknown, SetupStoreUse>();
   const identifiers: Array<{ node: AnyNode; ancestors: AnyNode[] }> = [];
-  walkSynchronous(setup.body, (node, ancestors) => {
+  walkSynchronous(setup.body, references, (node, ancestors) => {
     if (node.type === "Identifier") identifiers.push({ node, ancestors: [...ancestors] });
     if (node.type !== "CallExpression") return;
     const callee = unwrap(node.callee);
     if (callee?.type !== "Identifier") return;
     const target = storeUseTarget(references.get(callee.start), callee.name, localStores);
     if (!target) return;
+    const runtimes = executionRuntimes(node, ancestors);
+    if (!runtimes) return;
     const use: SetupStoreUse = {
       callee: { name: callee.name, start: callee.start, end: callee.end },
       target,
+      runtimes,
       reads: [],
     };
     uses.push(use);
     const { expression, parent } = enclosing(node, ancestors);
-    const read = readOf(expression, parent, ancestors);
-    if (read) use.reads.push(read);
+    const read = readOf(expression, parent, ancestors, references);
+    if (read) use.reads.push({ ...read, runtimes });
     if (
       parent?.type === "VariableDeclarator" &&
       parent.init === expression &&
@@ -250,8 +252,9 @@ function setupUses(
     const use = reference?.isValueReference && bindings.get(reference.resolved);
     if (!use || reference.init) continue;
     const { expression, parent } = enclosing(node, ancestors);
-    const read = readOf(expression, parent, ancestors);
-    if (read) use.reads.push(read);
+    const read = readOf(expression, parent, ancestors, references);
+    const runtimes = use.runtimes & executionRuntimes(node, ancestors);
+    if (read && runtimes) use.reads.push({ ...read, runtimes });
   }
   for (const use of uses) use.reads.sort((a, b) => a.start - b.start);
   return uses;
@@ -280,7 +283,7 @@ function storeUseTarget(
       source: String(definition.parent.source.value),
     };
   if (definition.type === "Variable" && localStores.has(definition.name.range[0]))
-    return { kind: "local", name };
+    return { kind: "local", start: definition.name.range[0] };
   return undefined;
 }
 
@@ -293,11 +296,12 @@ function readOf(
   expression: AnyNode,
   parent: AnyNode,
   ancestors: AnyNode[],
+  references: Map<number, ScopeReference>,
 ): { start: number; end: number } | undefined {
   if (!parent) return undefined;
   if (parent.type === "MemberExpression" && parent.object === expression) {
-    const name = parent.computed ? staticString(parent.property) : parent.property?.name;
-    if (typeof name !== "string" || name.startsWith("$")) return undefined;
+    const name = memberName(parent);
+    if (name === undefined || EARLY_STORE_PROPERTIES.has(name)) return undefined;
     const outer = enclosing(parent, ancestors.slice(0, ancestors.lastIndexOf(parent)));
     if (
       (outer.parent?.type === "AssignmentExpression" && outer.parent.left === outer.expression) ||
@@ -320,7 +324,8 @@ function readOf(
   if (
     parent.type === "CallExpression" &&
     parent.arguments?.[0] === expression &&
-    ["storeToRefs", "toRefs"].includes(unwrap(parent.callee)?.name)
+    (importedCallee(parent.callee, references, "pinia") === "storeToRefs" ||
+      importedCallee(parent.callee, references, "vue") === "toRefs")
   )
     return { start: parent.start, end: parent.end };
   return undefined;
@@ -374,6 +379,10 @@ function importedName(specifier: AnyNode): string {
     : specifier.imported.value;
 }
 
+function memberName(node: AnyNode): string | undefined {
+  return node.computed ? staticString(node.property) : node.property?.name;
+}
+
 function readBinding(call: AnyNode, ancestors: AnyNode[]): StoreDefinition["binding"] {
   const { expression, parent } = enclosing(call, ancestors);
   if (
@@ -392,11 +401,98 @@ function unwrap(node: AnyNode): AnyNode {
 }
 
 /** Walks the code that runs when `body` runs, skipping nested functions and classes. */
-function walkSynchronous(body: AnyNode, visit: (node: AnyNode, ancestors: AnyNode[]) => void) {
+function walkSynchronous(
+  body: AnyNode,
+  references: Map<number, ScopeReference>,
+  visit: (node: AnyNode, ancestors: AnyNode[]) => void,
+) {
   walk(body, [], (node, ancestors) => {
     visit(node, ancestors);
-    return !DEFERRED_SCOPES.has(node.type);
+    return (
+      !DEFERRED_SCOPES.has(node.type) ||
+      (FUNCTIONS.has(node.type) && eagerlyInvoked(node, ancestors, references))
+    );
   });
+}
+
+function eagerlyInvoked(
+  node: AnyNode,
+  ancestors: AnyNode[],
+  references: Map<number, ScopeReference>,
+) {
+  const { expression, parent } = enclosing(node, ancestors);
+  const call = parent?.type === "ArrayExpression" ? ancestors.at(-2) : parent;
+  if (call?.type !== "CallExpression" || node.async || node.generator) return false;
+  if (call.callee === expression) return true;
+  const api = importedCallee(call.callee, references, "vue");
+  const [source, callback, options] = call.arguments;
+  if (api === "watch") {
+    if (source === expression || source === parent) return true;
+    return callback === expression && optionValue(options, "immediate") === true;
+  }
+  if (source !== expression) return false;
+  const flush = optionValue(callback, "flush");
+  return (
+    api === "watchSyncEffect" ||
+    (api === "watchEffect" && (flush === undefined || flush === "pre" || flush === "sync"))
+  );
+}
+
+function optionValue(options: AnyNode, name: string): unknown {
+  if (!options) return undefined;
+  const object = unwrap(options);
+  if (object?.type !== "ObjectExpression") return UNKNOWN_OPTION;
+  for (let index = object.properties.length - 1; index >= 0; index--) {
+    const property = object.properties[index];
+    if (property.type !== "Property" || property.computed) return UNKNOWN_OPTION;
+    if ((property.key.name ?? property.key.value) !== name) continue;
+    const value = unwrap(property.value);
+    return value?.type === "Literal" ? value.value : UNKNOWN_OPTION;
+  }
+  return undefined;
+}
+
+function executionRuntimes(node: AnyNode, ancestors: AnyNode[]): number {
+  let runtimes = CLIENT | SERVER;
+  let child = node;
+  for (let index = ancestors.length - 1; index >= 0; index--) {
+    const parent = ancestors[index];
+    if (
+      (parent.type === "IfStatement" || parent.type === "ConditionalExpression") &&
+      child !== parent.test
+    )
+      runtimes &= conditionRuntimes(parent.test, child === parent.consequent);
+    if (parent.type === "LogicalExpression" && child === parent.right)
+      runtimes &=
+        parent.operator === "??" ? 0 : conditionRuntimes(parent.left, parent.operator === "&&");
+    child = parent;
+  }
+  return runtimes;
+}
+
+function conditionRuntimes(node: AnyNode, truthy: boolean): number {
+  const test = unwrap(node);
+  if (test?.type === "UnaryExpression" && test.operator === "!")
+    return conditionRuntimes(test.argument, !truthy);
+  if (test?.type === "Literal" && typeof test.value === "boolean")
+    return test.value === truthy ? CLIENT | SERVER : 0;
+  if (test?.type === "LogicalExpression" && test.operator !== "??") {
+    const left = conditionRuntimes(test.left, truthy);
+    const right = conditionRuntimes(test.right, truthy);
+    return (test.operator === "&&") === truthy ? left & right : left | right;
+  }
+  const object = unwrap(test?.object);
+  if (
+    test?.type === "MemberExpression" &&
+    memberName(test) === "SSR" &&
+    object?.type === "MemberExpression" &&
+    memberName(object) === "env" &&
+    object.object?.type === "MetaProperty" &&
+    object.object.meta?.name === "import" &&
+    object.object.property?.name === "meta"
+  )
+    return truthy ? SERVER : CLIENT;
+  return 0;
 }
 
 function walk(
