@@ -211,6 +211,60 @@ export const counter = useCounterStore()`,
   });
 
   test.each([
+    [
+      "an explicit server registration",
+      "{ ssr: true, plugins: [{ src: '~/plugins/counter.client.ts', mode: 'server' }] }",
+      {},
+      true,
+    ],
+    [
+      "a server plugin importing it",
+      "{ ssr: true }",
+      { "app/plugins/consumer.server.ts": "import './counter.client'" },
+      true,
+    ],
+    [
+      "a universal plugin importing it through a barrel",
+      "{ ssr: true }",
+      {
+        "app/plugins/consumer.ts":
+          "import { counter } from '../barrel'; export default defineNuxtPlugin(() => { console.log(counter) })",
+        "app/barrel.ts": "export { counter } from './plugins/counter.client'",
+      },
+      true,
+    ],
+    [
+      "only a client plugin importing it",
+      "{ ssr: true }",
+      { "app/plugins/consumer.client.ts": "import './counter.client'" },
+      false,
+    ],
+    [
+      "an explicit client registration",
+      "{ ssr: true, plugins: [{ src: '~/plugins/counter.client', mode: 'client' }] }",
+      {},
+      false,
+    ],
+    ["an unknown plugins list", "{ ssr: true, plugins: configuredPlugins }", {}, true],
+  ] satisfies [string, string, Record<string, string>, boolean][])(
+    "checks SSR execution with %s",
+    async (_, config, extraFiles, warns) => {
+      const result = await runNuxt(rule, {
+        "nuxt.config.ts": `export default defineNuxtConfig(${config})`,
+        "stores/counter.ts": counterSetup,
+        "app/plugins/counter.client.ts": `import { useCounterStore } from '../../stores/counter'
+import { createPinia, setActivePinia } from 'pinia'
+setActivePinia(createPinia())
+export const counter = useCounterStore()
+export default defineNuxtPlugin(() => {})`,
+        ...extraFiles,
+      });
+      expect(result.diagnostics.map((item) => item.code)).toEqual(warns ? ["PINIA0006"] : []);
+      if (warns) expect(result.diagnostics[0]!.why).toContain("every request shares the store");
+    },
+  );
+
+  test.each([
     ["<script setup>", component("const counter = useCounterStore()")],
     [
       "setup()",
