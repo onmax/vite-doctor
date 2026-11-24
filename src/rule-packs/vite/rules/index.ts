@@ -28,6 +28,8 @@ export { noUrlPathnameAsFsPath } from "./config-paths.js";
 
 export { noFragmentInVirtualId } from "./virtual-ids.js";
 
+export { noCircularImportAtHmrBoundary } from "./hmr-cycles.js";
+
 export { noLoadEnvAllInDefine } from "./loadenv-define.js";
 
 export { noUnreachableHook } from "./plugin-apply.js";
@@ -67,6 +69,8 @@ import { noLossySetCookieBridge } from "./response-bridge.js";
 import { noUrlPathnameAsFsPath } from "./config-paths.js";
 
 import { noFragmentInVirtualId } from "./virtual-ids.js";
+
+import { noCircularImportAtHmrBoundary } from "./hmr-cycles.js";
 
 import { noLoadEnvAllInDefine } from "./loadenv-define.js";
 
@@ -110,6 +114,8 @@ const rules = [
   noUrlPathnameAsFsPath,
 
   noFragmentInVirtualId,
+
+  noCircularImportAtHmrBoundary,
 
   noUnprefixedClientEnv,
   noLoadEnvAllInDefine,

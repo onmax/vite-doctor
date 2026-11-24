@@ -32,7 +32,8 @@ export const noUnreachableHook = createRule({
         if (apply.length !== 1 || staticString(apply[0].value) !== "build") return;
         for (const property of node.properties) {
           const hook = keyName(property);
-          if (hook === null || !(hook in serveOnlyHooks) || !isHook(property.value)) continue;
+          if (hook === null || !Object.hasOwn(serveOnlyHooks, hook) || !isHook(property.value))
+            continue;
           ctx.report(
             diagnostics.VITE0032({
               why: `Vite never calls ${hook} on this plugin: apply: "build" drops it whenever Vite resolves config for vite dev, vite preview, or createServer, which all use the serve command, and only ${serveOnlyHooks[hook]} calls ${hook}.`,

@@ -261,6 +261,7 @@ export function local(): Plugin {
     ["function apply", "apply: (_, env) => env.command === 'build', configureServer() {}"],
     ["dynamic apply", "apply: command, configureServer() {}"],
     ["spread plugins", "...base, apply: 'build', configureServer() {}"],
+    ["ordinary object methods", "apply: 'build', toString() { return 'local' }"],
   ])("stays quiet for %s", async (_, body) => {
     expect(
       await run([noUnreachableHook], {
