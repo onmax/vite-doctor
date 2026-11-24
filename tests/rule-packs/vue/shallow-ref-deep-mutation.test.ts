@@ -222,6 +222,49 @@ function append() { buffer.value.push('click') }`;
   },
 );
 
+test.each([
+  [
+    `const label = computed(() => ['ready'].map(key => statuses.value[key]).join(', '))`,
+    "{{ label }}",
+  ],
+  [`watch(() => ['ready'].map(key => statuses.value[key]).join(', '), () => {})`, "Complete"],
+  [
+    `watchEffect(() => ['ready'].forEach(async key => { console.log(statuses.value[key]); await Promise.resolve() }))`,
+    "Complete",
+  ],
+])("VUE0049 counts synchronous array callback reads: %s", async (reader, buttonText) => {
+  const diagnostics = await run(
+    component(
+      `const statuses = shallowRef({ ready: 'pending' });
+function complete() { statuses.value.ready = 'done' }
+${reader}`,
+      `<button @click="complete">${buttonText}</button>`,
+    ),
+  );
+  expect(diagnostics.map(({ ruleId }) => ruleId)).toEqual([RULE_ID]);
+});
+
+test.each([
+  `[].map(() => statuses.value.ready)`,
+  `[,].map(() => statuses.value.ready)`,
+  `custom.map(() => statuses.value.ready)`,
+  `['ready'].map(async key => { await Promise.resolve(); return statuses.value[key] })`,
+  `['ready'].map(key => Promise.resolve().then(() => statuses.value[key]))`,
+  `['ready'].map(function* (key) { yield statuses.value[key] })`,
+])("VUE0049 ignores array-like callbacks without tracked reads: %s", async (read) => {
+  expect(
+    await run(
+      component(
+        `const statuses = shallowRef({ ready: 'pending' });
+const custom = { map: callback => Promise.resolve().then(callback) };
+function complete() { statuses.value.ready = 'done' }
+const label = computed(() => ${read});`,
+        `<button @click="complete">{{ label }}</button>`,
+      ),
+    ),
+  ).toEqual([]);
+});
+
 test("VUE0049 stays quiet when a helper mutates only for the effect that reads the ref", async () => {
   expect(
     await run(

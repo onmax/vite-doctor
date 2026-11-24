@@ -50,6 +50,18 @@ const ARRAY_MUTATORS = new Set([
   "fill",
   "copyWithin",
 ]);
+const ARRAY_ITERATORS = new Set([
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flatMap",
+  "forEach",
+  "map",
+  "some",
+]);
 const MAP_MUTATORS = new Set(["set", "delete", "clear"]);
 const SET_MUTATORS = new Set(["add", "delete", "clear"]);
 const FUNCTION_TYPES = new Set([
@@ -350,13 +362,27 @@ function readerRegistration(script: IndexedScript, call: AnyNode, argument: AnyN
   );
 }
 
+function runsInline(call: AnyNode, callback: AnyNode): boolean {
+  if (call?.type !== "CallExpression") return false;
+  if (call.callee === callback) return true;
+  if (call.arguments[0] !== callback || call.callee?.type !== "MemberExpression") return false;
+  const method = memberName(call.callee);
+  const receiver = unwrapTs(call.callee.object);
+  return (
+    method !== undefined &&
+    ARRAY_ITERATORS.has(method) &&
+    receiver?.type === "ArrayExpression" &&
+    receiver.elements.some((element: AnyNode) => element && element.type !== "SpreadElement")
+  );
+}
+
 /** A read is evidence only while the getter or effect is executing synchronously. */
 function trackedReader(script: IndexedScript, at: AnyNode): AnyNode {
   for (let fn = script.owner(at); fn; fn = script.owner(at)) {
-    if (fn.async && awaitsBefore(script, fn, at)) return undefined;
+    if (fn.generator || (fn.async && awaitsBefore(script, fn, at))) return undefined;
     const [call, child] = valueParent(script, fn);
     if (readerRegistration(script, call, child)) return call;
-    if (call?.type !== "CallExpression" || call.callee !== child) return undefined;
+    if (!runsInline(call, child)) return undefined;
     at = call;
   }
   return undefined;
