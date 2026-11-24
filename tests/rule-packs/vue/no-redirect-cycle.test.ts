@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { buildNuxt, loadNuxt } from "nuxt/kit";
+import { buildNuxt, loadNuxt, updateTemplates } from "nuxt/kit";
 import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { runViteDoctor } from "../../../src/doctor.ts";
@@ -253,7 +253,7 @@ test.each([
   expect(result.diagnostics).toEqual([]);
 });
 
-test("Nuxt refreshes redirect evidence after re-resolving a template-only page edit", async () => {
+test("Nuxt refreshes redirect evidence only for the matching page resolution", async () => {
   const root = mkdtempSync(join(tmpdir(), "doctor-nuxt-redirect-prepare-"));
   const cwd = process.cwd();
   let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
@@ -339,8 +339,26 @@ test("Nuxt refreshes redirect evidence after re-resolving a template-only page e
 
     writeFileSync(nonAnchor, nuxtPage("/home"));
     expect(await diagnostics()).toEqual([]);
-    await nuxt.callHook("builder:watch", "change", "pages/b.vue");
+    const resolving = Promise.withResolvers<void>();
+    const releaseResolution = Promise.withResolvers<void>();
+    const removeHook = nuxt.hook("pages:resolved", () => {
+      resolving.resolve();
+      return releaseResolution.promise;
+    });
+    const watch = nuxt.callHook("builder:watch", "change", "pages/b.vue");
+    try {
+      await Promise.race([resolving.promise, watch]);
+      await nuxt.runWithContext(() =>
+        updateTemplates({ filter: (template) => template.filename === "imports.mjs" }),
+      );
+      expect(await diagnostics()).toEqual([]);
+    } finally {
+      removeHook();
+      releaseResolution.resolve();
+      await watch;
+    }
     await nuxt.callHook("builder:generateApp", {});
+    expect(nuxt.vfs["#build/routes.mjs"]).toContain('redirect: "/home"');
     expect(readManifest().routes).toContainEqual(
       expect.objectContaining({
         path: "/b",

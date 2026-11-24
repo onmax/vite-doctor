@@ -207,7 +207,8 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     evidence.composableScan = undefined;
   });
 
-  let resolvedPageHashes: Map<string, string> | undefined;
+  const resolvedPageHashes = new WeakMap<unknown[], Map<string, string>>();
+  let publishedPageHashes: Map<string, string> | undefined;
   nuxt.hook?.("pages:resolved", (pages: any[]) => {
     evidence.pages = flattenPages(pages).map((page: any) => ({
       path: page.path,
@@ -228,7 +229,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
         continue;
       }
     }
-    resolvedPageHashes = sourceHashes;
+    resolvedPageHashes.set(pages, sourceHashes);
   });
 
   nuxt.hook?.("app:templates", (app: NuxtDoctorEvidence["app"]) => {
@@ -272,17 +273,17 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
           const result = await delegate.call(this, name, ...args);
           if (name === "imports:dirs")
             evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
-          if (name === "app:templates" && resolvedPageHashes) {
-            const app = args[0] as { pages?: unknown[] } | undefined;
-            evidence.routes = Array.isArray(app?.pages)
-              ? serializeRoutes(
-                  nuxt.options.rootDir ?? process.cwd(),
-                  app.pages,
-                  resolvedPageHashes,
-                )
-              : undefined;
-            resolvedPageHashes = undefined;
-            await writeManifest(nuxt, evidence);
+          if (name === "app:templates") {
+            const pages = (args[0] as { pages?: unknown[] } | undefined)?.pages;
+            const sourceHashes = pages && resolvedPageHashes.get(pages);
+            if (sourceHashes !== publishedPageHashes) {
+              evidence.routes =
+                pages && sourceHashes
+                  ? serializeRoutes(nuxt.options.rootDir ?? process.cwd(), pages, sourceHashes)
+                  : undefined;
+              publishedPageHashes = sourceHashes;
+              await writeManifest(nuxt, evidence);
+            }
           }
           return result;
         };
