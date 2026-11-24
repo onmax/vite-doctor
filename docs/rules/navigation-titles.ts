@@ -130,10 +130,12 @@ export const ruleNavigationTitles: Record<string, string> = {
   "package/no-pinned-singleton": "Pinned singletons",
   "package/no-unforwarded-peer": "Forwarded peers",
   "package/no-duplicate-singleton": "Duplicate singletons",
+  "package/no-condition-after-default": "Default condition",
 
   "mcp/tools/require-annotation-title": "Annotation titles",
   "mcp/tools/require-safety-hint": "Safety hints",
   "mcp/tools/valid-name": "Tool names",
+  "pinia/stores/no-circular-setup-state-read": "Circular setup reads",
   "pinia/stores/store-name-matches-id": "Store names",
   "pinia/stores/unique-store-id": "Unique store ids",
 

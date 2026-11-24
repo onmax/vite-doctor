@@ -13,6 +13,7 @@ import type {
   DoctorRunResult,
   RuntimeFrameworkDiagnostic,
 } from "./core/index.js";
+import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
 import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
 import type { SurfaceDiagnostic, SurfaceEvidenceGap } from "./plugin-delta.js";
 import { BUILD_EVIDENCE_RULE } from "./rule-packs/vite/rules/build-evidence.js";
@@ -29,6 +30,7 @@ export interface SurfaceRunOutcome {
   report: string;
   shouldFail: boolean;
   hasFindings: boolean;
+  warningKeys: string[];
   /** The reported Diagnostics, so a serve-mode Plugin Surface can log what changed between runs. */
   diagnostics: SurfaceDiagnostic[];
   evidenceGaps: SurfaceEvidenceGap[];
@@ -53,6 +55,12 @@ export async function runSurfaceDoctor(
     report,
     shouldFail,
     hasFindings,
+    warningKeys:
+      input.options.maxWarnings === undefined
+        ? []
+        : result.diagnostics
+            .filter((diagnostic) => diagnostic.severity === "warn")
+            .map(diagnosticOccurrenceKey),
     diagnostics: result.diagnostics.map((diagnostic) => surfaceDiagnostic(result, diagnostic)),
     evidenceGaps: (result.project.evidenceGaps ?? []).map((gap) => ({
       ...gap,
