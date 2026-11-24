@@ -134,7 +134,7 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
         } else if (use.kind === "mutation") mutations.push(use);
         else if (use.kind === "watch-source") hasDirectWatchSource = true;
         else if (use.kind === "trigger" || use.kind === "other") mayTrigger = true;
-        else if (use.kind === "read") {
+        if (use.kind === "read" || use.kind === "mutation") {
           const reader = reactiveReader(script, id);
           if (reader) reactiveReaders.add(reader);
         }
@@ -395,7 +395,8 @@ function runsLater(
   seen: Set<AnyNode>,
 ): DeferredPath {
   const outsideEffect = readerEvidence(timing);
-  if (!timing.asyncSetup && fn.async && awaitsBefore(script, fn, at)) return outsideEffect;
+  if (!timing.asyncSetup && fn.async && awaitsBefore(script, fn, at))
+    return readerEvidence(timing, reactiveReader(script, at));
   const [parent, child] = valueParent(script, fn);
   if (parent?.type === "CallExpression" && parent.arguments.includes(child))
     return deferredCallback(script, parent, child, timing);

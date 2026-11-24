@@ -101,6 +101,40 @@ export function useCart() {
   expect(diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([RULE_ID]);
 });
 
+test.each([
+  ["[]", "push('ready')", "join(', ') || 'empty'"],
+  ["new Map()", "set('ready', true)", "get('ready')"],
+  ["new Set()", "add('ready')", "has('ready')"],
+])("VUE0049 counts computed collection reads on %s", async (initial, write, read) => {
+  const diagnostics = await run(
+    component(
+      `const queue = shallowRef(${initial});
+const label = computed(() => queue.value.${read});
+function add() { queue.value.${write} }`,
+      `<button @click="add">{{ label }}</button>`,
+    ),
+  );
+  expect(diagnostics.map(({ ruleId }) => ruleId)).toEqual([RULE_ID]);
+});
+
+test.each([
+  ["[]", "push('ready')", "shift()"],
+  ["{ count: 0 }", "count = 1", "count++"],
+])(
+  "VUE0049 counts a separate effect's reads even when it mutates %s",
+  async (initial, write, read) => {
+    const diagnostics = await run(
+      component(
+        `const state = shallowRef(${initial});
+watchEffect(() => console.log(state.value.${read}));
+function change() { state.value.${write} }`,
+        `<button @click="change">Change</button>`,
+      ),
+    );
+    expect(diagnostics.map(({ ruleId }) => ruleId)).toEqual([RULE_ID]);
+  },
+);
+
 test("VUE0049 does not treat a microtask during async setup as a post-setup write", async () => {
   expect(
     await run(
@@ -146,6 +180,18 @@ test.each([
       )
     ).map(({ ruleId }) => ruleId),
   ).toEqual([RULE_ID]);
+});
+
+test("VUE0049 does not count an async effect as its own consumer", async () => {
+  expect(
+    await run(
+      component(
+        `const queue = shallowRef([]);
+watchPostEffect(async () => { await Promise.resolve(); queue.value.push('ready'); });`,
+        "<p>Queue</p>",
+      ),
+    ),
+  ).toEqual([]);
 });
 
 test("VUE0049 stays quiet when a helper mutates only for the effect that reads the ref", async () => {
