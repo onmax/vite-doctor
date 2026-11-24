@@ -1,4 +1,4 @@
-import { relative, resolve } from "pathe";
+import { isAbsolute, relative, resolve } from "pathe";
 import type { RuleContext } from "../../../core/index.js";
 import { analyzeScript, scopeDialect } from "../../../core/internal/script-scope.js";
 import {
@@ -21,7 +21,7 @@ import {
   unwrapExpression,
   walk,
 } from "./nitro-handlers.js";
-import { literalValue, propertyKey, unwrapConfig } from "./server-layout.js";
+import { literalValue, nitroServerDirs, propertyKey, unwrapConfig } from "./server-layout.js";
 
 export interface NitroStorageMount {
   /** The mount base as unstorage normalizes it, without the trailing colon. */
@@ -41,7 +41,16 @@ export interface NitroStorageInventory {
   possibleMounts?: string[];
 }
 
-const NITRO_2_NON_NODE = /^(?:cloudflare(?:-|$)|deno(?:-|$))/;
+const NITRO_2_NODE = new Set([
+  "cli",
+  "deno-server",
+  "node",
+  "node-cluster",
+  "node-listener",
+  "node-server",
+  "vercel",
+]);
+const NITRO_2_NON_NODE = /^(?:cloudflare(?:-|$)|deno$|deno-deploy$|vercel-edge$)/;
 const SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const MODULE_SCRIPT = /\.(?:[cm]?js|[cm]?ts)$/;
 const MAX_MODULE_FILES = 400;
@@ -58,16 +67,16 @@ export function nitroStorageInventory(ctx: RuleContext): NitroStorageInventory {
   const project = ctx.project;
   const gaps: string[] = [];
   const major = nitroMajor(ctx);
-  const preset = nitroDeployPreset(ctx);
   const mounts: NitroStorageMount[] = [{ base: "assets", source: "builtin" }];
   const possibleMounts: string[] = [];
+  const sources = nitroConfigSources(ctx);
   if (major === 2) {
     for (const base of ["root", "src", "build", "cache"])
       mounts.push({ base, source: "devStorage" });
-    if (preset?.startsWith("node-")) mounts.push({ base: "data", source: "builtin" });
-    else if (!preset || !NITRO_2_NON_NODE.test(preset)) possibleMounts.push("data");
+    const node = nitro2NodeOption(ctx, sources);
+    if (node === true) mounts.push({ base: "data", source: "builtin" });
+    else if (node === undefined) possibleMounts.push("data");
   } else if (major !== 3) gaps.push("package.json");
-  const sources = nitroConfigSources(ctx);
   for (const source of sources) {
     const file = relative(project.root, source.file);
     if (!source.nitro || source.nuxt === null) {
@@ -111,7 +120,8 @@ export function nitroStorageInventory(ctx: RuleContext): NitroStorageInventory {
       if (!entries) gaps.push(file);
       else
         for (const entry of entries) {
-          const files = moduleFiles(ctx, entry.startsWith("/") ? entry : `./${entry}`);
+          const path = runtimePluginPath(ctx, entry, major, source.nitro);
+          const files = path === undefined ? undefined : moduleFiles(ctx, path);
           if (!files || files.some((file) => mayMountStorage(ctx, file))) gaps.push(file);
         }
     }
@@ -137,6 +147,34 @@ export function nitroStorageInventory(ctx: RuleContext): NitroStorageInventory {
     ];
   }
   return inventory;
+}
+
+function nitro2NodeOption(ctx: RuleContext, sources: ReturnType<typeof nitroConfigSources>) {
+  const overrides = sources.map(({ nitro }) => findProperty(nitro, "node")).filter(Boolean);
+  if (overrides.length) {
+    const value = literalValue(overrides[0]);
+    return typeof value === "boolean" && overrides.every((node) => literalValue(node) === value)
+      ? value
+      : undefined;
+  }
+  const preset = nitroDeployPreset(ctx);
+  if (!preset) return undefined;
+  if (NITRO_2_NODE.has(preset)) return true;
+  if (NITRO_2_NON_NODE.test(preset)) return false;
+}
+
+function runtimePluginPath(
+  ctx: RuleContext,
+  entry: string,
+  major: number | undefined,
+  options: any,
+) {
+  if (isAbsolute(entry)) return entry;
+  if (major !== 2 || ctx.project.framework !== "nitro") return `./${entry}`;
+  if (entry.includes("{{") || findProperty(options, "alias") !== undefined) return undefined;
+  const [srcDir] = nitroServerDirs(ctx);
+  if (/^(?:~~|@@)\//.test(entry)) return resolve(ctx.project.root, entry.slice(3));
+  return srcDir ? resolve(srcDir, entry.replace(/^[~@]\//, "")) : undefined;
 }
 
 export function storageCoverage(inventory: NitroStorageInventory, base: string, item?: string) {
@@ -194,7 +232,7 @@ function readNuxtModules(ctx: RuleContext, nuxt: any, gaps: string[]): boolean {
 /** The script files of a Nuxt module, or undefined when Doctor cannot find or bound them. */
 function moduleFiles(ctx: RuleContext, name: string): string[] | undefined {
   const root = ctx.project.root;
-  if (name.startsWith(".") || name.startsWith("/")) {
+  if (name.startsWith(".") || isAbsolute(name)) {
     const base = resolve(root, name);
     const file = ["", ".ts", ".mjs", ".js", "/index.ts", "/index.mjs", "/index.js"]
       .map((extension) => base + extension)

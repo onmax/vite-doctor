@@ -246,6 +246,22 @@ test("scans runtime mounts independently of include", async () => {
   expect(result.diagnostics).toEqual([]);
 });
 
+test("inspects a registered Nitro 2 plugin relative to srcDir", async () => {
+  const result = await run(
+    {
+      "nitro.config.ts": "export default { srcDir: './src', plugins: ['./extras/storage'] }",
+      "src/api/track.ts": sessionsRoute,
+      "src/extras/storage.ts": "export default () => console.log('ready')",
+      "extras/storage.ts": "export default () => useStorage().mount('sessions', driver)",
+    },
+    "nitro",
+    { nitropack: "^2.13.4" },
+    ["src/api/**"],
+  );
+  expect(result.inventory?.complete).toBe(true);
+  expect(result.diagnostics).toHaveLength(1);
+});
+
 test("ignores comments and Vue mounts and skips only dev routes", async () => {
   const result = await run(
     {
@@ -294,6 +310,25 @@ test("Nitro 3 does not mount data by default", async () => {
   expect(result.diagnostics).toHaveLength(1);
 });
 
+test.each([
+  ["deno-server", "", true],
+  ["vercel-edge", "", false],
+  ["node-server", ", node: false", false],
+])("uses Nitro 2's effective node option for %s%s", async (preset, node, mounted) => {
+  const result = await run(
+    {
+      "nitro.config.ts": `export default { preset: '${preset}'${node} }`,
+      "routes/track.ts": "export default () => useStorage('data').getItem('record')",
+    },
+    "nitro",
+    { nitropack: "^2.13.4" },
+  );
+  expect(
+    result.inventory?.mounts.some(({ base, source }) => base === "data" && source === "builtin"),
+  ).toBe(mounted);
+  expect(result.diagnostics).toHaveLength(mounted ? 0 : 1);
+});
+
 test("a child mount covers matching item keys and supports listing, not sibling keys", async () => {
   const result = await run({
     "nuxt.config.ts":
@@ -302,9 +337,10 @@ test("a child mount covers matching item keys and supports listing, not sibling 
 useStorage('sessions').getItem('archive/alice')
 useStorage('sessions').getKeys()
 const store = useStorage('sessions')
-store['getItem']('live:bob')`,
+store['getItem']('live:bob')
+useStorage('sessions').getItem('archive')`,
   });
-  expect(result.diagnostics.map(({ line }) => line)).toEqual([1, 4]);
+  expect(result.diagnostics.map(({ line }) => line)).toEqual([1, 4, 6]);
 });
 
 test("an explicit root mount covers otherwise undeclared bases", async () => {
