@@ -1125,10 +1125,10 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/layouts/app-renders-nuxtlayout": {
     description:
-      "Finds an app.vue that never renders `<NuxtLayout>` while the app has files in layouts/. Doctor follows the components app.vue renders and stays quiet when any other component renders `<NuxtLayout>`, when no layer has an app.vue (Nuxt's default app renders the layout), or when the app component comes from a layer it cannot read. Render functions and components it cannot resolve are treated as possibly rendering the layout.",
+      "Finds a custom app component that never renders `<NuxtLayout>` while the app has registered layouts. Doctor follows components and pages reachable from the app, not unused components. It uses the prepared layout inventory when available and stays quiet when it cannot establish which layouts Nuxt registers or follow a render target. Nuxt's built-in app already renders the layout.",
     why: "Nuxt renders layouts only through `<NuxtLayout>`. Without it, layouts/default.vue and every layout a page selects with `definePageMeta({ layout })` are ignored, so pages render without their header, navigation, or wrapper. Nuxt reports this in development as NUXT_E4007: its check-if-layout-used plugin warns when layouts exist but no `<NuxtLayout>` was rendered.",
     recommendedReplacement:
-      "Wrap `<NuxtPage />` in `<NuxtLayout>` in app.vue. If the app does not use layouts, delete the layouts/ directory.",
+      "Wrap `<NuxtPage />` in `<NuxtLayout>` in app.vue, or remove the unused layouts.",
     examples: [
       {
         title: "Render layouts from app.vue",
@@ -1263,7 +1263,7 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/pages/single-root-node": {
     description:
-      "Finds pages, and layouts, that have more than one root node, or a text or comment root, while a route transition applies to them. Doctor reports a page only when a page transition is proven: the `transition` prop on every `<NuxtPage>`, the page's `definePageMeta({ pageTransition })`, or `app.pageTransition` in nuxt.config. It reports a layout only when `app.layoutTransition` is on. A `v-if`/`v-else-if`/`v-else` chain counts as one root. Pages whose transition depends on runtime values, or whose root is a `<slot>`, are not reported.",
+      "Finds pages and layouts with multiple roots, or a text or comment root, when a transition applies on a known route. Doctor checks the reachable `<NuxtPage>` outlet, matched route metadata, and app defaults in Nuxt's precedence order. It checks only registered layouts it can associate with a `<NuxtLayout>` outlet and a transition. A `v-if`/`v-else-if`/`v-else` chain counts as one root; runtime-dependent transitions and lone `<slot>` roots are not reported.",
     why: "Nuxt wraps pages in a `<Transition>` when a page transition is on, and layouts when a layout transition is on. A `<Transition>` can only animate a single element, so a page with several root nodes, or a text root, does not animate when you navigate to or from it. Vue keeps template comments in development, so a comment next to the root element also turns the page into a fragment there. Nuxt reports this in development as NUXT_E4004 for pages and NUXT_E4002 for layouts. Both are off by default (`app.pageTransition` and `app.layoutTransition` default to false), so pages without a transition are not reported.",
     recommendedReplacement:
       "Wrap the template in a single root element, such as a `<div>`, and move comments inside it.",
@@ -1438,7 +1438,7 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/routing/parent-page-requires-nuxtpage": {
     description:
-      "Finds a page such as pages/users.vue that has a sibling pages/users/ directory, which makes it the parent route of the pages inside, but never renders `<NuxtPage>`. Doctor follows the components the page renders and accepts `<NuxtPage>` or `<RouterView>` anywhere among them. When the page uses a render function, a dynamic `<component :is>`, or an auto-imported component Doctor cannot resolve, it treats the page as possibly rendering the outlet. Without a Nuxt manifest, apps that change which files are pages through `ignore`, `pages` options, or .nuxtignore are skipped.",
+      "Finds a parent route component that never renders `<NuxtPage>` or `<RouterView>` directly or through another component. Doctor uses Nuxt's prepared parent-child relationships when available, including across layers. Without those relationships, it uses standard directory conventions only when configuration and layer evidence allow it. Unresolved render targets are treated as possibly rendering the outlet.",
     why: 'Nuxt turns pages/users.vue next to pages/users/[id].vue into a parent route with a child route. The child renders inside the parent\'s `<NuxtPage>`, so without one, navigating to /users/1 shows only the parent page. Nuxt reports this in development as NUXT_E4016, "the parent page does not render `<NuxtPage />`, so the nested page cannot be displayed", or as NUXT_E4011 when no page renders `<NuxtPage>` at all.',
     recommendedReplacement:
       "Render `<NuxtPage />` in the parent page where the child should appear. If the pages are not meant to nest, move pages/users.vue to pages/users/index.vue.",

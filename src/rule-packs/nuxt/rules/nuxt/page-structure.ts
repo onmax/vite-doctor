@@ -1,6 +1,7 @@
 import { basename, dirname, join, relative, resolve } from "pathe";
 import type {
   ComponentUsageGraph,
+  ComponentUsageFact,
   RuleContext,
   SourceRange,
   TemplateElementNode,
@@ -65,6 +66,11 @@ export type OutletSearch =
   | { state: "unknown"; reason: string }
   | { state: "absent" };
 
+export const PAGE_OUTLETS = new Set(["NuxtPage", "RouterView"]);
+export const LAYOUT_OUTLETS = new Set(["NuxtLayout"]);
+export const PAGE_OUTLET_MENTION = /\b(?:NuxtPage|RouterView|nuxt-page|router-view)\b/;
+export const LAYOUT_OUTLET_MENTION = /\b(?:NuxtLayout|nuxt-layout)\b/;
+
 /**
  * Whether the SFC renders one of `outlets` itself or through components it renders. An outlet
  * Doctor could reach only through a guess, such as an auto-imported tag it cannot resolve or a
@@ -77,15 +83,28 @@ export function findOutlet(
   outlets: ReadonlySet<string>,
   mention: RegExp,
 ): OutletSearch {
+  const { usages, unknown } = reachableOutlets(ctx, graph, start, outlets, mention);
+  if (usages.length) return { state: "renders" };
+  return unknown ? { state: "unknown", reason: unknown } : { state: "absent" };
+}
+
+export function reachableOutlets(
+  ctx: RuleContext,
+  graph: ComponentUsageGraph,
+  start: string,
+  outlets: ReadonlySet<string>,
+  mention: RegExp,
+) {
   const byName = componentsByName(graph);
   const registry = ctx.project.nuxt?.components;
   const queue: Array<{ file: string; certain: boolean }> = [{ file: start, certain: true }];
-  const seen = new Set<string>();
+  const seen = new Map<string, boolean>();
+  const usages: ComponentUsageFact[] = [];
   let unknown: string | undefined;
   while (queue.length) {
     const { file, certain } = queue.shift()!;
-    if (seen.has(file)) continue;
-    seen.add(file);
+    if (seen.get(file) === true || (seen.has(file) && !certain)) continue;
+    seen.set(file, certain);
     const node = graph.components.get(file);
     const text = ctx.fs.readText(file);
     const name = displayPath(ctx, file);
@@ -93,16 +112,17 @@ export function findOutlet(
       unknown ??= `Doctor has no component facts for ${name}.`;
       continue;
     }
-    if (node.facts.usages.some((usage) => outlets.has(pascalTag(usage.tag)))) {
-      if (certain) return { state: "renders" };
-      unknown ??= `An auto-imported tag may resolve to ${name}, which renders the outlet.`;
-      continue;
+    const found = node.facts.usages.filter((usage) => outlets.has(pascalTag(usage.tag)));
+    if (found.length) {
+      if (certain) usages.push(...found);
+      else unknown ??= `An auto-imported tag may resolve to ${name}, which renders the outlet.`;
     }
     if (!/<template[\s>]/.test(text)) {
       unknown ??= `${name} has no <template>, so it may render through a render function.`;
       continue;
     }
-    if (mention.test(text)) unknown ??= `${name} names the outlet outside a template tag.`;
+    if (!found.length && mention.test(text))
+      unknown ??= `${name} names the outlet outside a template tag.`;
     if (/<component[\s>/]/.test(text))
       unknown ??= `${name} renders a dynamic <component :is>, which Doctor cannot resolve.`;
     for (const edge of node.renders) {
@@ -111,17 +131,17 @@ export function findOutlet(
         continue;
       }
       const tag = pascalTag(edge.usage.tag);
+      if (outlets.has(tag)) continue;
       const entry = registry?.get(tag) ?? registry?.get(edge.usage.tag);
-      if (entry?.file && !graph.components.has(resolve(ctx.project.root, entry.file))) {
-        const source = ctx.fs.readText(resolve(ctx.project.root, entry.file));
-        if (source === undefined || mention.test(source))
-          unknown ??= `<${edge.usage.tag}> resolves to ${entry.file}, which Doctor does not analyze.`;
+      if (entry?.file || node.facts.imports.some((binding) => pascalTag(binding.local) === tag)) {
+        unknown ??= `Doctor cannot follow <${edge.usage.tag}> in ${name}.`;
+        continue;
       }
       for (const candidate of tagCandidates(tag, byName))
         queue.push({ file: candidate, certain: false });
     }
   }
-  return unknown ? { state: "unknown", reason: unknown } : { state: "absent" };
+  return { usages, unknown };
 }
 
 function componentsByName(graph: ComponentUsageGraph): Map<string, string[]> {
@@ -273,23 +293,35 @@ export type MetaFlag = "on" | "off" | "unknown" | undefined;
 
 /** A `definePageMeta()` key as the page sets it statically; undefined when it does not set it. */
 export function pageMetaFlag(script: AnyNode, key: string): MetaFlag {
-  let flag: MetaFlag;
+  return pageMetaValue(script, key, transitionFlag);
+}
+
+export function transitionFlag(value: AnyNode): MetaFlag {
+  if (value?.type === "ObjectExpression") return "on";
+  if (value?.type === "Literal") {
+    if (value.value === null) return undefined;
+    if (typeof value.value === "boolean") return value.value ? "on" : "off";
+  }
+  return "unknown";
+}
+
+export function pageMetaValue<T>(
+  script: AnyNode,
+  key: string,
+  read: (value: AnyNode) => T,
+): T | "unknown" | undefined {
+  let result: T | "unknown" | undefined;
   for (const statement of script?.body ?? []) {
     const call = unwrap(statement.type === "ExpressionStatement" ? statement.expression : null);
     if (call?.type !== "CallExpression" || call.callee?.name !== "definePageMeta") continue;
     const meta = unwrap(call.arguments?.[0]);
     if (meta?.type !== "ObjectExpression") return "unknown";
     for (const property of meta.properties ?? []) {
-      if (property.type !== "Property") return "unknown";
-      if (propertyName(property) !== key) continue;
-      const value = unwrap(property.value);
-      if (value?.type === "ObjectExpression") flag = "on";
-      else if (value?.type === "Literal" && typeof value.value === "boolean")
-        flag = value.value ? "on" : "off";
-      else return "unknown";
+      if (property.type !== "Property" || propertyName(property) === null) result = "unknown";
+      else if (propertyName(property) === key) result = read(unwrap(property.value));
     }
   }
-  return flag;
+  return result;
 }
 
 export type RootShape =
@@ -370,22 +402,114 @@ function meaningfulChildren(element: TemplateElementNode): number {
  * changes which files are pages, such as `ignore`, `pages.pattern`, or `.nuxtignore`, makes that
  * reading unreliable.
  */
-export function routesAreKnown(ctx: RuleContext, root: string): boolean {
-  if (ctx.project.nuxt?.manifest?.isCurrent && ctx.project.nuxt.manifest.pages?.length) return true;
-  if (ctx.fs.exists(join(root, ".nuxtignore"))) return false;
-  for (const extension of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
-    const text = ctx.fs.readText(join(root, `nuxt.config.${extension}`));
-    if (text === undefined) continue;
-    return !/\b(?:ignore|ignorePrefix|dir)\s*:|\bpages\s*:\s*(?!true\b)|pages:extend/.test(text);
-  }
-  return true;
+function scanIsReliable(ctx: RuleContext, layer: NuxtAppSource, kind: "pages" | "layouts") {
+  if (ctx.fs.exists(join(layer.root, ".nuxtignore"))) return false;
+  const text = configFile(ctx, layer.root)?.text ?? "";
+  return (
+    !/\b(?:ignore|ignorePrefix|dir|extensions)\s*['"]?\s*:/.test(text) &&
+    (kind === "pages"
+      ? !/\bpages\s*['"]?\s*:\s*(?!\s*true\b)|pages:(?:extend|resolved)/.test(text)
+      : !/app:resolve|app:templates/.test(text))
+  );
 }
 
-// The manifest lists the routes Nuxt resolved, children included.
-export function isManifestRoute(ctx: RuleContext, file: string): boolean {
+function currentManifest(ctx: RuleContext, layers: NuxtAppSource[]) {
   const manifest = ctx.project.nuxt?.manifest;
-  if (!manifest?.isCurrent || !manifest.pages?.length) return true;
-  return manifest.pages.some(
-    (page) => !!page.file && resolve(ctx.project.root, page.file) === file,
+  return manifest?.isCurrent && layers[0]?.root === ctx.project.root ? manifest : undefined;
+}
+
+export interface PageRoute {
+  file: string;
+  parent: string | null;
+  path?: string;
+}
+
+export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
+  const manifest = currentManifest(ctx, layers);
+  const pages = manifest?.pages ?? [];
+  if (manifest?.resolvedApp?.pagesResolved || pages.some((page) => page.parentFile !== undefined))
+    return pages.flatMap((page): PageRoute[] =>
+      page.file
+        ? [
+            {
+              file: resolve(ctx.project.root, page.file),
+              parent: page.parentFile ? resolve(ctx.project.root, page.parentFile) : null,
+              path: page.path,
+            },
+          ]
+        : [],
+    );
+  if (pages.length || layers.length !== 1 || unreadLayers(ctx, layers)) return undefined;
+  const layer = layers[0]!;
+  if (!scanIsReliable(ctx, layer, "pages")) return undefined;
+  const dir = join(layer.srcDir, "pages");
+  const files = sources.filter((file) => isInsideDir(file, dir) && isScannedNuxtFile(file));
+  const stems = new Map(files.map((file) => [file.replace(/\.[^.]+$/, ""), file]));
+  return files.map((file): PageRoute => {
+    let folder = dirname(file);
+    while (folder !== dir) {
+      const parent = stems.get(folder);
+      if (parent)
+        return {
+          file,
+          parent,
+          path: folder === dirname(file) && basename(file).startsWith("index.") ? "" : undefined,
+        };
+      folder = dirname(folder);
+    }
+    return { file, parent: null };
+  });
+}
+
+export function registeredLayouts(
+  ctx: RuleContext,
+  layers: NuxtAppSource[],
+  sources: readonly string[],
+) {
+  const app = currentManifest(ctx, layers)?.resolvedApp;
+  if (app)
+    return Object.entries(app.layouts).map(([name, file]) => ({
+      name,
+      file: resolve(ctx.project.root, file),
+    }));
+  if (
+    layers.length !== 1 ||
+    unreadLayers(ctx, layers) ||
+    !scanIsReliable(ctx, layers[0]!, "layouts")
+  )
+    return undefined;
+  const dir = join(layers[0]!.srcDir, "layouts");
+  const files = sources.filter((file) => isInsideDir(file, dir) && isScannedNuxtFile(file));
+  return files
+    .filter((file) => !/^index\.[^.]+$/.test(relative(dir, file)))
+    .map((file) => ({
+      name: relative(dir, file)
+        .replace(/\.[^.]+$/, "")
+        .replace(/\/index$/i, "")
+        .replace(/([a-z\d])([A-Z])/g, "$1-$2")
+        .replace(/[/_]/g, "-")
+        .toLowerCase(),
+      file,
+    }));
+}
+
+/** Undefined is Nuxt's built-in app; null means the selected app cannot be established. */
+export function mainApp(ctx: RuleContext, layers: NuxtAppSource[]): string | null | undefined {
+  const component = currentManifest(ctx, layers)?.resolvedApp?.mainComponent;
+  if (component) {
+    const file = resolve(ctx.project.root, component);
+    if (/\/nuxt\/dist\/(?:pages\/runtime\/app|app\/components\/welcome)\.vue$/.test(file))
+      return undefined;
+    return file;
+  }
+  const owners = layers.map((layer) =>
+    (ctx.fs.readDir(layer.srcDir) ?? []).filter(
+      (entry) => entry.isFile() && /^[Aa]pp\.(?:vue|[cm]?[jt]sx?)$/.test(entry.name),
+    ),
   );
+  const index = owners.findIndex((entries) => entries.length);
+  if (index !== 0 && unreadLayers(ctx, layers)) return null;
+  if (index < 0) return undefined;
+  const files = owners[index]!;
+  return files.length === 1 ? join(layers[index]!.srcDir, files[0]!.name) : null;
 }

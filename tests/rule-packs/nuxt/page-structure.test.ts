@@ -1,6 +1,18 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { buildNuxt, loadNuxt } from "nuxt/kit";
+import { dirname, join } from "pathe";
 import { describe, expect, test } from "vite-plus/test";
-import type { DoctorRule } from "../../../src/core/index.ts";
+import {
+  defineDoctorExtension,
+  defineRulePack,
+  runDoctor,
+  type DoctorRule,
+  type NuxtDoctorManifest,
+} from "../../../src/core/index.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
+import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import nuxtRulePack from "../../../src/rule-packs/nuxt/rules/nuxt/index.ts";
 
 const rule = (id: string) => nuxtRulePack.rules.find((candidate) => candidate.meta.id === id)!;
@@ -96,6 +108,17 @@ describe("nuxt/routing/parent-page-requires-nuxtpage", () => {
     expect(dynamic).toEqual([]);
   });
 
+  test("does not infer absence through an imported TypeScript render component", async () => {
+    expect(
+      await run(id, {
+        "app/pages/users.vue": template("<Shell />", "import Shell from '../components/Shell'"),
+        "app/pages/users/[id].vue": template("<div>User</div>"),
+        "app/components/Shell.ts":
+          "import { NuxtPage } from '#components'; export default () => h(NuxtPage)",
+      }),
+    ).toEqual([]);
+  });
+
   test("stays quiet for pages without a child directory and ignored child files", async () => {
     const diagnostics = await run(id, {
       "app/pages/users.vue": template("<div>Users</div>"),
@@ -125,6 +148,7 @@ describe("nuxt/layouts/app-renders-nuxtlayout", () => {
       "app/app.vue": template("<div><NuxtPage /></div>"),
       "app/layouts/default.vue": template("<div><slot /></div>"),
       "app/pages/index.vue": template("<div>Home</div>"),
+      "app/components/Unused.vue": template("<NuxtLayout />"),
     });
 
     expect(diagnostics).toHaveLength(1);
@@ -177,6 +201,22 @@ describe("nuxt/layouts/app-renders-nuxtlayout", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  test("stays quiet at unknown imported render targets and layout inventories", async () => {
+    const files = {
+      "app/app.vue": template("<NuxtPage />"),
+      "app/layouts/default.vue": template("<div><slot /></div>"),
+    };
+    expect(await run(id, { ...files, ".nuxtignore": "app/layouts/**" })).toEqual([]);
+    expect(
+      await run(id, {
+        ...files,
+        "app/app.vue": template("<Shell />", "import Shell from './Shell'"),
+        "app/Shell.ts":
+          "import { NuxtLayout } from '#components'; export default () => h(NuxtLayout)",
+      }),
+    ).toEqual([]);
+  });
+
   test("stays quiet when an auto-imported component may render NuxtLayout", async () => {
     const diagnostics = await run(id, {
       "app/app.vue": template("<AppShell />"),
@@ -197,6 +237,7 @@ describe("nuxt/pages/single-root-node", () => {
     const diagnostics = await run(id, {
       "nuxt.config.ts": pageTransition,
       "app/pages/index.vue": template("\n  <h1>Home</h1>\n  <p>Welcome</p>\n"),
+      "app/components/Unused.vue": template('<NuxtPage :transition="false" />'),
     });
 
     expect(diagnostics).toHaveLength(1);
@@ -238,6 +279,44 @@ describe("nuxt/pages/single-root-node", () => {
     expect(diagnostics.map((diagnostic) => diagnostic.why)).toEqual([
       expect.stringContaining("NUXT_E4002"),
     ]);
+  });
+
+  test("uses the route's effective layout transition and page outlet", async () => {
+    const files = {
+      "nuxt.config.ts": "export default defineNuxtConfig({ app: { layoutTransition: true } })",
+      "app/app.vue": template(
+        '<NuxtLayout><NuxtPage :transition="{ fade: false }.fade" /></NuxtLayout>',
+      ),
+      "app/layouts/default.vue": template("<header /><slot />"),
+      "app/pages/index.vue": template(
+        "<h1>Home</h1><p>Welcome</p>",
+        "definePageMeta({ layoutTransition: false })",
+      ),
+    };
+    expect(await run(id, files)).toEqual([]);
+    expect(
+      (
+        await run(id, {
+          ...files,
+          "app/app.vue": template(
+            "<NuxtLayout><NuxtPage :transition=\"{ name: 'fade' }\" /></NuxtLayout>",
+          ),
+        })
+      ).map((item) => item.file),
+    ).toEqual([expect.stringMatching(/pages\/index\.vue$/)]);
+  });
+
+  test("uses child metadata for an index route's parent transition", async () => {
+    expect(
+      await run(id, {
+        "nuxt.config.ts": pageTransition,
+        "app/pages/users.vue": template("<h1>Users</h1><NuxtPage />"),
+        "app/pages/users/index.vue": template(
+          "<div>User</div>",
+          "definePageMeta({ pageTransition: false })",
+        ),
+      }),
+    ).toEqual([]);
   });
 
   test("treats a v-if chain as one root", async () => {
@@ -360,4 +439,140 @@ describe("nuxt/routing/navigate-to-external", () => {
 
     expect(diagnostics).toEqual([]);
   });
+
+  test("uses the nearest script or template binding and follows Nuxt import aliases", async () => {
+    const diagnostics = await run(id, {
+      "app/pages/index.vue": page(
+        "import { navigateTo, navigateTo as go } from '#app'\nfunction local(navigateTo: Function) { navigateTo('https://shadowed.test') }\ngo('https://script.test')",
+        `<button v-for="navigateTo in []" @click="navigateTo('https://loop.test')" />
+         <button @click="((navigateTo) => navigateTo('https://parameter.test'))(local)" />
+         <button @click="go('https://template.test')" />`,
+      ),
+    });
+    expect(diagnostics.map((item) => item.why).sort()).toEqual([
+      expect.stringContaining("https://script.test"),
+      expect.stringContaining("https://template.test"),
+    ]);
+  });
+
+  test("checks the verified #imports registry instead of assuming the exported name", async () => {
+    const files = {
+      "app/pages/index.vue": page(
+        "import { navigateTo } from '#imports'\nnavigateTo('https://example.test')",
+      ),
+    };
+    expect(await run(id, files)).toEqual([]);
+    for (const entry of [
+      { name: "go", as: "navigateTo", from: "~/utils/nav" },
+      { name: "navigateTo", from: "nuxt/dist/app/composables/router" },
+    ]) {
+      const diagnostics = await run(id, {
+        ...files,
+        ".nuxt/doctor.manifest.json": JSON.stringify({
+          generatedAt: new Date(Date.now() + 10000).toISOString(),
+          autoImportEnabled: true,
+          autoImports: [entry],
+        }),
+      });
+      expect(diagnostics).toHaveLength(entry.name === "go" ? 0 : 1);
+    }
+  });
+});
+
+test("uses prepared routes across layers and Nuxt's effective layout registrations", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-page-structure-"));
+  const cwd = process.cwd();
+  let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
+  try {
+    symlinkSync(
+      fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+      join(root, "node_modules"),
+      "junction",
+    );
+    const files = {
+      "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }),
+      "nuxt.config.ts": "export default { extends: ['./base'], dir: { layouts: 'shells' } }",
+      "base/nuxt.config.ts": "export default {}",
+      ".nuxtignore": "app/shells/ignored.vue",
+      "app/app.vue": template("<NuxtPage />"),
+      "app/pages/users.vue": template("<div>Users</div>"),
+      "app/pages/users/[id].vue": template("<div>User</div>"),
+      "app/pages/teams.vue": template("<div>Teams</div>"),
+      "base/app/pages/teams/[id].vue": template("<div>Team</div>"),
+      "app/shells/default.vue": template("<div><slot /></div>"),
+      "app/shells/ignored.vue": template("<div>Ignored</div>"),
+      "base/app/layouts/default.vue": template("<div>Shadowed</div>"),
+    };
+    for (const [file, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), text);
+    }
+    process.chdir(root);
+    nuxt = await loadNuxt({
+      cwd: root,
+      overrides: {
+        _prepare: true,
+        modules: [nuxtDoctorModule],
+        telemetry: false,
+        hooks: {
+          "pages:extend"(pages) {
+            const child = pages.find((page) => page.path === "/users")?.children?.shift();
+            if (child) pages.push({ ...child, path: "/user/:id" });
+          },
+        },
+      },
+    });
+    await buildNuxt(nuxt);
+    await nuxt.close();
+    nuxt = undefined;
+    const manifest = JSON.parse(
+      readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"),
+    ) as NuxtDoctorManifest;
+    expect(manifest.pages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: join(root, "app/pages/users/[id].vue"), parentFile: null }),
+        expect.objectContaining({
+          file: join(root, "base/app/pages/teams/[id].vue"),
+          parentFile: join(root, "app/pages/teams.vue"),
+        }),
+      ]),
+    );
+    expect(manifest.resolvedApp?.layouts).toEqual({
+      default: join(root, "app/shells/default.vue"),
+    });
+    const rules = [
+      rule("nuxt/routing/parent-page-requires-nuxtpage"),
+      rule("nuxt/layouts/app-renders-nuxtlayout"),
+    ];
+    const report = await runDoctor({
+      root,
+      framework: "nuxt",
+      cache: false,
+      extensions: [
+        defineDoctorExtension({
+          name: "fixture",
+          rulePacks: [
+            defineRulePack({
+              name: "fixture",
+              version: "0.0.0",
+              rules,
+              presets: { recommended: rules.map((rule) => rule.meta.id) },
+            }),
+          ],
+        }),
+      ],
+    });
+    const nested = report.diagnostics.filter((item) => item.code === "NUXT0098");
+    expect(nested.map((item) => item.file)).toEqual([expect.stringMatching(/pages\/teams\.vue$/)]);
+    const layout = report.diagnostics.filter((item) => item.code === "NUXT0099");
+    expect(layout).toHaveLength(1);
+    expect(layout[0]?.related?.[0]?.file).toMatch(/shells\/default\.vue$/);
+  } finally {
+    try {
+      await nuxt?.close();
+    } finally {
+      process.chdir(cwd);
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
 });

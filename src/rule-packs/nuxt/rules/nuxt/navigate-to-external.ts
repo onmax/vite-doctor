@@ -1,6 +1,10 @@
+import type { SFCDescriptor } from "@vue/compiler-sfc";
+import type { AST } from "vue-eslint-parser";
 import type { RuleContext } from "../../../../core/index.js";
+import { fileScriptScope, type ScopeVariable } from "../../../../core/internal/script-scope.js";
 import { diagnostics } from "../../diagnostics.js";
-import { AnyNode, createRule, isRuntimeAppFile, walkScriptLocal } from "./shared.js";
+import { AnyNode, createRule, isRuntimeAppFile } from "./shared.js";
+import { scriptNodesOfType } from "./script-index.js";
 
 const RULE_ID = "nuxt/routing/navigate-to-external";
 // ufo's hasProtocol(toPath, { acceptRelative: true }), which navigateTo uses to spot external URLs.
@@ -8,9 +12,8 @@ const PROTOCOL = /^[\s\w\0+.-]{2,}:([/\\]{2})?/;
 const PROTOCOL_RELATIVE = /^([/\\]\s*){2,}[^/\\]/;
 // With `external: true` these still throw (NUXT_E2002), so adding the option would not help.
 const SCRIPT_PROTOCOL = /^[\s\0]*(?:blob|data|javascript|vbscript):/i;
-const NUXT_SOURCES = new Set(["#app", "#imports", "nuxt/app", "#app/composables/router"]);
-const NUXT_AUTO_IMPORT_SOURCE =
-  /^(?:#app|#imports|nuxt\/app|nuxt)(?:\/|$)|(?:^|\/)nuxt\/dist\/app\//;
+const NUXT_SOURCES = new Set(["#app", "nuxt/app", "#app/composables/router"]);
+const NUXT_AUTO_IMPORT_SOURCE = /^(?:#app|nuxt\/app|nuxt)(?:\/|$)|(?:^|\/)nuxt\/dist\/app\//;
 
 export const navigateToExternal = createRule({
   meta: {
@@ -26,88 +29,108 @@ export const navigateToExternal = createRule({
   },
   create(ctx) {
     if (!isRuntimeAppFile(ctx)) return;
-    const binding = topLevelBinding(ctx.file.scriptAst);
-    const check = (call: AnyNode) => {
+    const scope = fileScriptScope(ctx);
+    if (!scope) return;
+    const check = (call: AnyNode, offset = 0) => {
       const url = externalUrl(call);
-      if (url) report(ctx, call, url);
+      if (url) {
+        const [start, end] = call.range ?? [call.start, call.end];
+        report(ctx, { start: start + offset, end: end + offset }, url);
+      }
     };
     return {
-      CallExpression(node: AnyNode) {
-        if (node.callee?.type !== "Identifier" || node.callee.name !== "navigateTo") return;
-        const local = ctx.helpers.hasLocalBinding(node.callee);
-        if (local ? binding === "nuxt" : isNuxtAutoImport(ctx)) check(node);
+      Program() {
+        for (const call of scriptNodesOfType(scope.ast, "CallExpression")) {
+          if (call.callee?.type !== "Identifier") continue;
+          const reference = scope.references.get(call.callee);
+          if (reference && isNuxtBinding(ctx, call.callee.name, reference.resolved)) check(call);
+        }
       },
-      template: {
-        directive(node) {
-          if (!node.exp || binding === "other" || (!binding && !isNuxtAutoImport(ctx))) return;
-          const expression = ctx.helpers.parseTemplateExpression(node.exp);
-          walkScriptLocal(expression, (child) => {
+      async SFC(sfc) {
+        const { script, template } = sfc.descriptor as SFCDescriptor;
+        if (script || !template || template.src || (template.lang && template.lang !== "html"))
+          return;
+        const bindings = scope.scopeManager.scopes.find((item) => item.type === "module")?.set;
+        const [{ parseForESLint }, tsParser] = await Promise.all([
+          import("vue-eslint-parser"),
+          import("@typescript-eslint/parser"),
+        ]);
+        const prefix = "<template>";
+        const offset = template.loc.start.offset - prefix.length;
+        let root;
+        try {
+          root = parseForESLint(`${prefix}${template.content}</template>`, {
+            filePath: ctx.file.path,
+            parser: { "<template>": tsParser },
+            sourceType: "module",
+            ecmaVersion: "latest",
+          }).ast.templateBody;
+        } catch {
+          return;
+        }
+        if (!root) return;
+        visitTemplate(root, (node) => {
+          for (const { id, variable } of node.references) {
+            const call = id.parent;
             if (
-              child.type === "CallExpression" &&
-              child.callee?.type === "Identifier" &&
-              child.callee.name === "navigateTo"
+              !variable &&
+              call?.type === "CallExpression" &&
+              call.callee === id &&
+              isNuxtBinding(ctx, id.name, bindings?.get(id.name))
             )
-              check(child);
-          });
-        },
+              check(call, offset);
+          }
+        });
       },
     };
   },
 });
 
-/** Whether the module declares `navigateTo` itself, as an import from Nuxt or as anything else. */
-function topLevelBinding(program: AnyNode): "nuxt" | "other" | undefined {
-  for (const statement of program?.body ?? []) {
-    if (statement.type === "ImportDeclaration") {
-      for (const specifier of statement.specifiers ?? []) {
-        if (specifier.local?.name !== "navigateTo") continue;
-        const imported = specifier.imported?.name ?? specifier.imported?.value;
-        return specifier.type === "ImportSpecifier" &&
-          imported === "navigateTo" &&
-          NUXT_SOURCES.has(statement.source.value)
-          ? "nuxt"
-          : "other";
-      }
-      continue;
-    }
-    const declaration =
-      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-    if (declaration?.type === "FunctionDeclaration" && declaration.id?.name === "navigateTo")
-      return "other";
+function visitTemplate(
+  node: AST.VElement | AST.VText | AST.VExpressionContainer,
+  visit: (expression: AST.VExpressionContainer) => void,
+) {
+  if (node.type === "VExpressionContainer") visit(node);
+  if (node.type !== "VElement") return;
+  for (const attribute of node.startTag.attributes) {
+    if (!attribute.directive) continue;
+    if (attribute.key.argument?.type === "VExpressionContainer") visit(attribute.key.argument);
+    if (attribute.value) visit(attribute.value);
+  }
+  for (const child of node.children) visitTemplate(child, visit);
+}
+
+function isNuxtBinding(ctx: RuleContext, name: string, binding: ScopeVariable | null | undefined) {
+  if (!binding?.isValueVariable)
+    return !!ctx.project.nuxt?.autoImportEnabled && isNuxtAutoImport(ctx, name, false);
+  return binding.defs.some((definition) => {
+    if (definition.type !== "ImportBinding") return false;
+    const { node, parent } = definition;
     if (
-      declaration?.type === "VariableDeclaration" &&
-      declaration.declarations.some((item: AnyNode) => patternNames(item.id).includes("navigateTo"))
+      node.type !== "ImportSpecifier" ||
+      node.importKind === "type" ||
+      parent.type !== "ImportDeclaration" ||
+      parent.importKind === "type"
     )
-      return "other";
-  }
-  return undefined;
+      return false;
+    const imported = node.imported.type === "Identifier" ? node.imported.name : node.imported.value;
+    return parent.source.value === "#imports"
+      ? isNuxtAutoImport(ctx, imported, true)
+      : imported === "navigateTo" && NUXT_SOURCES.has(parent.source.value);
+  });
 }
 
-function patternNames(pattern: AnyNode): string[] {
-  switch (pattern?.type) {
-    case "Identifier":
-      return [pattern.name];
-    case "ObjectPattern":
-      return pattern.properties.flatMap((property: AnyNode) =>
-        patternNames(property.type === "RestElement" ? property.argument : property.value),
-      );
-    case "ArrayPattern":
-      return pattern.elements.flatMap(patternNames);
-    case "AssignmentPattern":
-      return patternNames(pattern.left);
-    case "RestElement":
-      return patternNames(pattern.argument);
-    default:
-      return [];
-  }
-}
-
-function isNuxtAutoImport(ctx: RuleContext): boolean {
+function isNuxtAutoImport(ctx: RuleContext, name: string, explicit: boolean): boolean {
   const nuxt = ctx.project.nuxt;
-  if (!nuxt?.autoImportEnabled) return false;
-  const entry = nuxt.autoImports.get("navigateTo");
-  if (!entry) return !nuxt.autoImportsAuthoritative;
-  return entry.name === "navigateTo" && NUXT_AUTO_IMPORT_SOURCE.test(entry.from);
+  if (!nuxt || (explicit && !nuxt.autoImportsAuthoritative)) return false;
+  const entry = nuxt.autoImports.get(name);
+  if (!entry) return name === "navigateTo" && !nuxt.autoImportsAuthoritative;
+  return (
+    entry.name === "navigateTo" &&
+    !entry.type &&
+    (NUXT_AUTO_IMPORT_SOURCE.test(entry.from) ||
+      (!explicit && entry.from === "#imports" && entry.kind === "nuxt"))
+  );
 }
 
 /** The URL prefix the call navigates to when it is an external URL without `external: true`. */

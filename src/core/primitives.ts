@@ -299,7 +299,8 @@ export interface NuxtProjectInfo {
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
-    pages?: Array<{ path?: string; file?: string; name?: string }>;
+    pages?: NuxtDoctorManifest["pages"];
+    resolvedApp?: NuxtDoctorManifest["resolvedApp"];
     prerenderRoutes?: string[];
     buildManifest?: {
       hasBuildManifest: boolean;
@@ -386,7 +387,12 @@ export interface NuxtDoctorManifest {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
-  pages?: Array<{ path?: string; file?: string; name?: string }>;
+  pages?: Array<{ path?: string; file?: string; name?: string; parentFile?: string | null }>;
+  resolvedApp?: {
+    mainComponent?: string;
+    layouts: Record<string, string>;
+    pagesResolved?: boolean;
+  };
   prerenderRoutes?: string[];
   buildManifest?: {
     hasBuildManifest: boolean;

@@ -52,7 +52,8 @@ type NuxtDoctorEvidence = {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
-  pages?: Array<{ path?: string; file?: string; name?: string }>;
+  pages?: NuxtDoctorManifest["pages"];
+  resolvedApp?: NuxtDoctorManifest["resolvedApp"];
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
   componentDirs?: unknown[];
@@ -72,7 +73,8 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
     serverInventory: undefined as Record<string, string[]> | undefined,
     serverHandlerMtimes: undefined as Record<string, number> | undefined,
-    pages: [] as Array<{ path?: string; file?: string; name?: string }>,
+    pages: undefined as NuxtDoctorManifest["pages"],
+    resolvedApp: undefined as NuxtDoctorManifest["resolvedApp"],
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
     componentDirs: [] as unknown[],
@@ -187,11 +189,20 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("pages:resolved", (pages: any[]) => {
-    evidence.pages = flattenPages(pages).map((page: any) => ({
-      path: page.path,
-      file: page.file,
-      name: page.name,
-    }));
+    evidence.pages = flattenPages(pages);
+  });
+
+  nuxt.hook?.("app:templatesGenerated", (app: any) => {
+    evidence.resolvedApp = {
+      mainComponent: app.mainComponent,
+      layouts: Object.fromEntries(
+        Object.entries(app.layouts as Record<string, { file: string }>).map(([name, layout]) => [
+          name,
+          layout.file,
+        ]),
+      ),
+      pagesResolved: evidence.pages !== undefined,
+    };
   });
 
   nuxt.hook?.("prerender:routes", (ctx: any) => {
@@ -384,6 +395,7 @@ export async function writeManifest(
     serverInventory: evidence?.serverInventory,
     serverHandlerMtimes: evidence?.serverHandlerMtimes,
     pages: evidence?.pages ?? [],
+    resolvedApp: evidence?.resolvedApp,
     prerenderRoutes: [
       ...new Set([
         ...toArray(nuxt.options.nitro?.prerender?.routes).map(String),
@@ -474,8 +486,14 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
   return entries;
 }
 
-function flattenPages(pages: any[]): any[] {
-  return toArray(pages).flatMap((page: any) => [page, ...flattenPages(page.children)]);
+function flattenPages(
+  pages: any[] | undefined,
+  parentFile: string | null = null,
+): NonNullable<NuxtDoctorManifest["pages"]> {
+  return toArray(pages).flatMap((page) => [
+    { path: page.path, file: page.file, name: page.name, parentFile },
+    ...flattenPages(page.children, page.file ?? parentFile),
+  ]);
 }
 
 function toArray<T = unknown>(value: T[] | Record<string, T> | undefined | null): T[] {

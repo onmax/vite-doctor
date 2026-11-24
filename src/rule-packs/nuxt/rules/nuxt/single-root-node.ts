@@ -1,24 +1,29 @@
-import type {
-  ComponentUsageFact,
-  ComponentUsageGraph,
-  RuleContext,
-} from "../../../../core/index.js";
+import type { ComponentUsageFact, RuleContext } from "../../../../core/index.js";
+import { parseScript } from "../../../../core/internal/script.js";
 import { diagnostics } from "../../diagnostics.js";
-import { createRule } from "./shared.js";
+import { unwrap } from "./nuxt-config-ast.js";
+import { createRule, type AnyNode } from "./shared.js";
 import {
   displayPath,
-  isInsideDir,
-  isManifestRoute,
-  isScannedNuxtFile,
+  LAYOUT_OUTLETS,
+  LAYOUT_OUTLET_MENTION,
+  mainApp,
   nuxtLayerSources,
+  PAGE_OUTLETS,
+  PAGE_OUTLET_MENTION,
   pageMetaFlag,
+  pageMetaValue,
+  pageRoutes,
   pascalTag,
+  reachableOutlets,
   readAppConfigFlag,
   readSfc,
-  routesAreKnown,
+  registeredLayouts,
   templateRootShape,
+  transitionFlag,
   type ConfigFlag,
   type MetaFlag,
+  type PageRoute,
   type RootShape,
 } from "./page-structure.js";
 
@@ -45,23 +50,91 @@ export const singleRootNode = createRule({
       async onWorkspaceEnd() {
         const sources = await ctx.inventory.sourcePaths();
         const graph = await ctx.inventory.componentUsage();
-        const outlet = nuxtPageTransition(graph);
         for (const layers of nuxtLayerSources(ctx)) {
+          const routes = pageRoutes(ctx, layers, sources);
+          const app = mainApp(ctx, layers);
+          if (!routes || app === null) continue;
           const pageConfig = readAppConfigFlag(ctx, layers, "pageTransition");
           const layoutConfig = readAppConfigFlag(ctx, layers, "layoutTransition");
-          for (const layer of layers) {
-            const pagesDir = `${layer.srcDir}/pages`;
-            const routesKnown = routesAreKnown(ctx, layer.root);
-            for (const file of sources) {
-              if (!file.endsWith(".vue") || !isScannedNuxtFile(file)) continue;
-              if (isInsideDir(file, pagesDir) && routesKnown && isManifestRoute(ctx, file)) {
-                await checkPage(ctx, file, outlet, pageConfig);
-              } else if (isInsideDir(file, `${layer.srcDir}/layouts`)) {
-                if (layoutConfig?.state !== "on") continue;
-                const source = `app.layoutTransition in ${displayPath(ctx, layoutConfig.file)}`;
-                await checkFile(ctx, file, "layout", source);
-              }
+          const layouts = registeredLayouts(ctx, layers, sources) ?? [];
+          const sourcesByFile = new Map<string, ReturnType<typeof readSfc>>();
+          const readPage = (file: string) => {
+            let sfc = sourcesByFile.get(file);
+            if (!sfc) sourcesByFile.set(file, (sfc = readSfc(ctx, file)));
+            return sfc;
+          };
+          const pending = new Map<string, { kind: "page" | "layout"; source: string }>();
+          const outlets = new Map<string, ReturnType<typeof reachableOutlets>>();
+          const getPageOutlets = (file: string) => {
+            let result = outlets.get(file);
+            if (!result) {
+              result = reachableOutlets(ctx, graph, file, PAGE_OUTLETS, PAGE_OUTLET_MENTION);
+              outlets.set(file, result);
             }
+            return result;
+          };
+          const layoutOutlets = app
+            ? reachableOutlets(ctx, graph, app, LAYOUT_OUTLETS, LAYOUT_OUTLET_MENTION).usages
+            : [undefined];
+          const byFile = new Map<string, PageRoute | null>();
+          for (const route of routes) byFile.set(route.file, byFile.has(route.file) ? null : route);
+          const defaultParents = new Set(
+            routes.filter((route) => route.path === "").map((route) => route.parent),
+          );
+          for (const route of routes) {
+            if (defaultParents.has(route.file)) continue;
+            const chain = routeChain(route, byFile);
+            if (!chain) continue;
+            const routeOutlets = chain.map(({ parent }) => {
+              const owner = parent ?? app;
+              return owner ? routeOutlet(getPageOutlets(owner)) : undefined;
+            });
+            if (routeOutlets.includes(null)) continue;
+            let pageMeta: MetaFlag;
+            let layoutMeta: MetaFlag;
+            let layoutName: LayoutName;
+            for (const { file } of chain) {
+              const sfc = file.endsWith(".vue") ? await readPage(file) : undefined;
+              if (!sfc?.template) {
+                pageMeta = layoutMeta = layoutName = "unknown";
+                continue;
+              }
+              pageMeta = pageMetaFlag(sfc.script, "pageTransition") ?? pageMeta;
+              layoutMeta = pageMetaFlag(sfc.script, "layoutTransition") ?? layoutMeta;
+              layoutName = pageMetaValue(sfc.script, "layout", staticLayoutName) ?? layoutName;
+            }
+            for (const [index, { file }] of chain.entries()) {
+              const outlet = routeOutlets[index];
+              const flag = outlet ? outletTransition(outlet) : "unset";
+              const source =
+                flag === "on"
+                  ? "the transition prop on <NuxtPage>"
+                  : flag === "unset"
+                    ? enabledTransition(ctx, pageMeta, pageConfig, "pageTransition")
+                    : undefined;
+              if (source) pending.set(file, { kind: "page", source });
+            }
+            const source = enabledTransition(ctx, layoutMeta, layoutConfig, "layoutTransition");
+            if (source) {
+              for (const outlet of layoutOutlets) addLayout(outlet, layoutName, source);
+            }
+          }
+          if (!routes.length && layoutConfig?.state === "on") {
+            const source = enabledTransition(ctx, undefined, layoutConfig, "layoutTransition")!;
+            for (const outlet of layoutOutlets) addLayout(outlet, undefined, source);
+          }
+          for (const [file, { kind, source }] of pending)
+            if (file.endsWith(".vue")) await checkFile(ctx, file, kind, source);
+
+          function addLayout(
+            outlet: ComponentUsageFact | undefined,
+            layoutName: LayoutName,
+            source: string,
+          ) {
+            const name = outlet ? (layoutProp(outlet) ?? layoutName) : layoutName;
+            if (name === false || name === "unknown") return;
+            const layout = layouts.find((candidate) => candidate.name === (name ?? "default"));
+            if (layout) pending.set(layout.file, { kind: "layout", source });
           }
         }
       },
@@ -69,19 +142,15 @@ export const singleRootNode = createRule({
   },
 });
 
-async function checkPage(
+function enabledTransition(
   ctx: RuleContext,
-  file: string,
-  outlet: OutletTransition,
+  meta: MetaFlag,
   config: ConfigFlag | undefined,
+  key: "pageTransition" | "layoutTransition",
 ) {
-  if (outlet === "unknown") return;
-  if (outlet === "on") return checkFile(ctx, file, "page", "the transition prop on <NuxtPage>");
-  const sfc = await readSfc(ctx, file);
-  const meta: MetaFlag = sfc?.script ? pageMetaFlag(sfc.script, "pageTransition") : undefined;
-  if (meta === "on") return checkFile(ctx, file, "page", "definePageMeta({ pageTransition })");
+  if (meta === "on") return `definePageMeta({ ${key} })`;
   if (meta === undefined && config?.state === "on")
-    return checkFile(ctx, file, "page", `app.pageTransition in ${displayPath(ctx, config.file)}`);
+    return `app.${key} in ${displayPath(ctx, config.file)}`;
 }
 
 async function checkFile(ctx: RuleContext, file: string, kind: "page" | "layout", source: string) {
@@ -92,34 +161,67 @@ async function checkFile(ctx: RuleContext, file: string, kind: "page" | "layout"
   report(ctx, file, sfc.text, kind, shape, source);
 }
 
-type OutletTransition = "unset" | "on" | "unknown";
-
-/**
- * NuxtPage's `transition` prop overrides page meta and app config. When every <NuxtPage> sets
- * it to a truthy literal, every page transitions; when any sets something else, Doctor cannot
- * tell which pages it renders.
- */
-function nuxtPageTransition(graph: ComponentUsageGraph): OutletTransition {
-  const values = [...graph.components.values()].flatMap((node) =>
-    node.facts.usages.filter((usage) => pascalTag(usage.tag) === "NuxtPage").map(transitionProp),
-  );
-  // An explicit `false` turns off transitions for the pages that <NuxtPage> renders.
-  if (values.some((value) => value === "off" || value === "unknown")) return "unknown";
-  if (values.length && values.every((value) => value === "on")) return "on";
-  return "unset";
+function routeChain(route: PageRoute, byFile: Map<string, PageRoute | null>) {
+  const chain = [route];
+  const seen = new Set([route.file]);
+  while (route.parent) {
+    const parent = byFile.get(route.parent);
+    if (!parent || seen.has(parent.file)) return undefined;
+    seen.add(parent.file);
+    chain.unshift(parent);
+    route = parent;
+  }
+  return chain;
 }
 
-function transitionProp(usage: ComponentUsageFact): OutletTransition | "off" {
-  if (usage.spreads.some((spread) => spread.directive === "bind")) return "unknown";
+function routeOutlet({ usages, unknown }: ReturnType<typeof reachableOutlets>) {
+  if (unknown || usages.length !== 1) return null;
+  const usage = usages[0]!;
+  if (
+    pascalTag(usage.tag) !== "NuxtPage" ||
+    usage.spreads.some((spread) => spread.directive === "bind") ||
+    usage.bindings.some((binding) => ["name", "route"].includes(binding.name)) ||
+    usage.attributes.some((attribute) => attribute.name === "name" && attribute.value !== "default")
+  )
+    return null;
+  return usage;
+}
+
+function outletTransition(usage: ComponentUsageFact) {
   const attribute = usage.attributes.find((attr) => attr.name === "transition");
   // A Boolean prop written as a bare attribute is true.
   if (attribute) return attribute.value === undefined || attribute.value === "" ? "on" : "unknown";
   const binding = usage.bindings.find((bind) => bind.name === "transition");
   if (!binding) return "unset";
-  const expression = binding.expression.trim();
-  if (expression === "true" || expression.startsWith("{")) return "on";
-  if (expression === "false") return "off";
-  return "unknown";
+  return transitionFlag(parseExpression(binding.expression)) ?? "unset";
+}
+
+type LayoutName = string | false | undefined;
+
+function staticLayoutName(value: AnyNode): LayoutName {
+  if (value?.type !== "Literal") return "unknown";
+  if (value.value === null) return undefined;
+  return typeof value.value === "string" || value.value === false ? value.value : "unknown";
+}
+
+function layoutProp(usage: ComponentUsageFact): LayoutName {
+  if (
+    usage.spreads.some((spread) => spread.directive === "bind") ||
+    usage.attributes.some((attr) => attr.name === "fallback") ||
+    usage.bindings.some((bind) => bind.name === "fallback")
+  )
+    return "unknown";
+  const binding = usage.bindings.find((bind) => bind.name === "name");
+  if (binding) return staticLayoutName(parseExpression(binding.expression));
+  return usage.attributes.find((attr) => attr.name === "name")?.value;
+}
+
+function parseExpression(text: string): AnyNode {
+  const program = parseScript("expression.ts", `(${text})`) as AnyNode;
+  const statement = program?.body?.[0];
+  return program?.body?.length === 1 && statement?.type === "ExpressionStatement"
+    ? unwrap(statement.expression)
+    : undefined;
 }
 
 function report(
