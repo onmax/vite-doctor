@@ -16,6 +16,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "PINIA0001", ruleId: "pinia/stores/unique-store-id" },
   { code: "PINIA0002", ruleId: "pinia/stores/store-name-matches-id" },
   { code: "PINIA0003", ruleId: "pinia/stores/no-circular-setup-state-read" },
+  { code: "PINIA0004", ruleId: "pinia/state/no-action-bypass" },
   { code: "SHAD0001", ruleId: "shadcn/no-restyle" },
   { code: "SHAD0002", ruleId: "shadcn/no-raw-colors" },
   { code: "SHAD0003", ruleId: "shadcn/no-arbitrary-values" },
