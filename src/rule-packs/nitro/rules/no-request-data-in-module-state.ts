@@ -6,6 +6,7 @@ import {
   unwrapExpression,
   type RequestValueSources,
 } from "../../../core/internal/request-values.js";
+import { scriptNodesOfType } from "../../../core/internal/script-index.js";
 import { isNitroRuntimeFile } from "./server-layout.js";
 import {
   type AnyNode,
@@ -146,7 +147,7 @@ function writtenValues(reference: AnyNode, shape: Shape): AnyNode[] {
       parent.property?.name === "set" &&
       call?.type === "CallExpression" &&
       call.callee === parent &&
-      isConstantKey(call.arguments?.[0])
+      staticPropertyKey(call.arguments?.[0], true) !== undefined
       ? call.arguments.slice(1, 2)
       : [];
   }
@@ -156,7 +157,7 @@ function writtenValues(reference: AnyNode, shape: Shape): AnyNode[] {
     target.__doctorParent.object === target
   ) {
     target = target.__doctorParent;
-    if (target.computed && !isConstantKey(target.property)) return [];
+    if (target.computed && staticPropertyKey(target.property, true) === undefined) return [];
   }
   const assignment = target.__doctorParent;
   if (
@@ -170,48 +171,94 @@ function writtenValues(reference: AnyNode, shape: Shape): AnyNode[] {
     parent?.type === "CallExpression" &&
     parent.arguments?.[0] === reference &&
     isObjectAssign(parent.callee)
-  )
-    return parent.arguments.slice(1).flatMap((source: AnyNode) => fixedProperties(source));
+  ) {
+    const slots = new Map<string, AnyNode>();
+    for (const source of parent.arguments.slice(1)) collectFixedProperties(source, slots);
+    return [...slots.values()];
+  }
   return [];
 }
 
-function fixedProperties(source: AnyNode, depth = 0): AnyNode[] {
-  if (depth > 5) return [];
+function collectFixedProperties(source: AnyNode, slots: Map<string, AnyNode>, depth = 0): void {
   const object = unwrapExpression(source);
-  if (object?.type === "Identifier") {
+  if (depth <= 5 && object?.type === "Identifier") {
     const binding = resolveLexicalBinding(object);
-    return binding?.type === "VariableDeclarator" &&
-      binding.id?.type === "Identifier" &&
-      binding.__doctorParent?.kind === "const"
-      ? fixedProperties(binding.init, depth + 1)
-      : [];
+    if (isUnmodifiedObjectSource(binding)) collectFixedProperties(binding.init, slots, depth + 1);
+    else slots.clear();
+    return;
   }
-  if (object?.type !== "ObjectExpression") return [];
-  return object.properties.flatMap((property: AnyNode) => {
-    if (property.type === "SpreadElement") return fixedProperties(property.argument, depth + 1);
-    return property.type === "Property" && (!property.computed || isConstantKey(property.key))
-      ? [property.value]
-      : [];
+  if (depth > 5 || object?.type !== "ObjectExpression") {
+    slots.clear();
+    return;
+  }
+  for (const property of object.properties) {
+    if (property.type === "SpreadElement") {
+      collectFixedProperties(property.argument, slots, depth + 1);
+      continue;
+    }
+    const key = staticPropertyKey(property.key, property.computed);
+    if (key === undefined) slots.clear();
+    else if (property.kind !== "init") slots.delete(key);
+    else if (key !== "__proto__" || property.computed || property.shorthand || property.method)
+      slots.set(key, property.value);
+  }
+}
+
+function isUnmodifiedObjectSource(binding: AnyNode, depth = 0): boolean {
+  if (
+    depth > 5 ||
+    binding?.type !== "VariableDeclarator" ||
+    binding.id?.type !== "Identifier" ||
+    binding.__doctorParent?.kind !== "const" ||
+    binding.__doctorParent.__doctorParent?.type === "ExportNamedDeclaration"
+  )
+    return false;
+
+  let program = binding;
+  while (program.__doctorParent) program = program.__doctorParent;
+  return scriptNodesOfType(program, "Identifier").every((node) => {
+    if (node.name !== binding.id.name || node === binding.id) return true;
+    let use = node;
+    while (unwrapExpression(use.__doctorParent) === node) use = use.__doctorParent;
+    const parent = use.__doctorParent;
+    if (!parent?.computed && parent?.key === use && parent.value !== use) return true;
+    if (parent?.type === "MemberExpression" && !parent.computed && parent.property === use)
+      return true;
+    if (resolveLexicalBinding(node) !== binding) return true;
+
+    if (parent?.type === "VariableDeclarator" && parent.init === use)
+      return isUnmodifiedObjectSource(parent, depth + 1);
+    if (parent?.type === "SpreadElement") return parent.__doctorParent?.type === "ObjectExpression";
+    return (
+      parent?.type === "CallExpression" &&
+      isObjectAssign(parent.callee) &&
+      parent.arguments.indexOf(use) > 0
+    );
   });
 }
 
-function isConstantKey(node: AnyNode, depth = 0): boolean {
+function staticPropertyKey(node: AnyNode, computed: boolean, depth = 0): string | undefined {
   const key = unwrapExpression(node);
-  if (key?.type === "Identifier" && depth < 5) {
-    const binding = resolveLexicalBinding(key);
-    return (
-      binding?.type === "VariableDeclarator" &&
-      binding.id?.type === "Identifier" &&
-      binding.__doctorParent?.kind === "const" &&
-      isConstantKey(binding.init, depth + 1)
-    );
+  if (key?.type === "Identifier") {
+    if (!computed) return key.name;
+    if (depth < 5) {
+      const binding = resolveLexicalBinding(key);
+      if (
+        binding?.type === "VariableDeclarator" &&
+        binding.id?.type === "Identifier" &&
+        binding.__doctorParent?.kind === "const"
+      )
+        return staticPropertyKey(binding.init, true, depth + 1);
+    }
   }
-  return (
-    key?.type === "Literal" ||
+  if (key?.type === "TemplateLiteral" && !key.expressions.length)
+    return key.quasis[0]?.value.cooked ?? undefined;
+  if (
+    (key?.type === "Literal" && !key.regex) ||
     key?.type === "StringLiteral" ||
-    key?.type === "NumericLiteral" ||
-    (key?.type === "TemplateLiteral" && !key.expressions?.length)
-  );
+    key?.type === "NumericLiteral"
+  )
+    return String(key.bigint ?? key.value);
 }
 
 function isNewMap(node: AnyNode) {
@@ -230,6 +277,7 @@ function isObjectAssign(callee: AnyNode) {
     !node.computed &&
     node.object?.type === "Identifier" &&
     node.object.name === "Object" &&
+    !resolveLexicalBinding(node.object) &&
     node.property?.name === "assign"
   );
 }
