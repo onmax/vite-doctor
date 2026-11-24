@@ -245,6 +245,7 @@ export interface NuxtProjectInfo {
   autoImports: Map<string, AutoImportEntry>;
   /** All resolved auto-import entries, including names shadowed in the lookup map. */
   autoImportEntries?: AutoImportEntry[];
+  runtimeAutoImportEntries?: AutoImportEntry[];
   /**
    * Nitro's runtime auto-imports for server files, as Nitro resolved them. `entries` is unset when
    * the manifest does not record them, and `authoritative` is false when the manifest is stale.
@@ -254,6 +255,9 @@ export interface NuxtProjectInfo {
     authoritative: boolean;
     entries?: AutoImportEntry[];
     scanDirs?: string[];
+    plugins?: string[];
+    aliases?: Record<string, string>;
+    customResolver?: boolean;
     installedPackageJsonPath?: string;
     scan?: NuxtDoctorManifest["nitroAutoImportScan"];
     transform?: NuxtDoctorManifest["nitroAutoImportTransform"];
@@ -375,12 +379,17 @@ export interface NuxtDoctorManifest {
     exclude: Array<{ source: string; flags: string }>;
   };
   autoImports: unknown[];
+  /** Runtime winners, separate from raw collision candidates in autoImports. */
+  runtimeAutoImports?: unknown[];
   /** Unset when Nitro was not initialized, `false` when server auto-imports are off. */
   nitroAutoImportEnabled?: boolean;
   /** Nitro's resolved runtime auto-imports, with aliases resolved to paths. */
   nitroAutoImports?: unknown[];
   /** Resolved Nitro scan roots, separate from the server handler freshness inventory. */
   nitroScanDirs?: string[];
+  nitroPlugins?: string[];
+  nitroAliases?: Record<string, string>;
+  nitroAutoImportCustomResolver?: boolean;
   nitroAutoImportScan?: {
     version: string;
     dirs: Array<string | { glob: string; types?: boolean }>;

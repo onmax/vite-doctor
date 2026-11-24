@@ -31,12 +31,15 @@ export const noCircularImportAtHmrBoundary = createRule({
         const vueHmr = clientHmrSetting(ctx);
         // Vite's importer graph, which HMR propagation walks: every resolved import, re-export
         // and literal import() that survives TypeScript's type erasure.
-        const successors = new Map<string, ImportGraphEdge[]>();
+        const successors = new Map<string, HmrImportEdge[]>();
         for (const edge of graph.edges) {
-          if (!edge.to || edge.to === edge.from || edge.typeOnly) continue;
+          const { kind } = edge;
+          if (kind === "auto-import" || !edge.to || edge.to === edge.from || edge.typeOnly)
+            continue;
+          const writtenEdge = { ...edge, kind };
           const list = successors.get(edge.from);
-          if (list) list.push(edge);
-          else successors.set(edge.from, [edge]);
+          if (list) list.push(writtenEdge);
+          else successors.set(edge.from, [writtenEdge]);
         }
         const groups = computeSccs(graph.files, (file) =>
           (successors.get(file) ?? []).map((edge) => edge.to!),
@@ -97,7 +100,9 @@ export const noCircularImportAtHmrBoundary = createRule({
   },
 });
 
-const EDGE_VERB: Record<ImportGraphEdge["kind"], string> = {
+type HmrImportEdge = ImportGraphEdge & { kind: Exclude<ImportGraphEdge["kind"], "auto-import"> };
+
+const EDGE_VERB: Record<HmrImportEdge["kind"], string> = {
   import: "imports",
   "re-export": "re-exports",
   "dynamic-import": "lazily imports",
@@ -156,10 +161,10 @@ function clientHmrSetting(ctx: RuleContext): { disabled: boolean; note: string }
 function loopThroughBoundary(
   files: readonly string[],
   boundaries: ReadonlySet<string>,
-  successors: ReadonlyMap<string, ImportGraphEdge[]>,
-): ImportGraphEdge[] | undefined {
+  successors: ReadonlyMap<string, HmrImportEdge[]>,
+): HmrImportEdge[] | undefined {
   const group = new Set(files);
-  let loop: ImportGraphEdge[] | undefined;
+  let loop: HmrImportEdge[] | undefined;
   for (const boundary of [...boundaries].sort()) {
     const found = shortestLoopThrough(boundary, group, successors);
     if (found && (!loop || found.length < loop.length)) loop = found;
@@ -174,9 +179,9 @@ function loopThroughBoundary(
 function shortestLoopThrough(
   start: string,
   group: ReadonlySet<string>,
-  successors: ReadonlyMap<string, ImportGraphEdge[]>,
-): ImportGraphEdge[] | undefined {
-  const via = new Map<string, ImportGraphEdge>();
+  successors: ReadonlyMap<string, HmrImportEdge[]>,
+): HmrImportEdge[] | undefined {
+  const via = new Map<string, HmrImportEdge>();
   let frontier = [start];
   while (frontier.length) {
     const next: string[] = [];

@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "pathe";
 import { expect, test } from "vite-plus/test";
+import { createUnimport, type Import } from "unimport";
 import {
   createRule,
   defineDoctorExtension,
@@ -9,6 +10,7 @@ import {
   type ImportGraph,
 } from "../../src/core/index.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
+import nuxtDoctorModule from "../../src/rule-packs/nuxt/module.ts";
 
 const cycleRule = "workspace/dead-code/circular-dependency";
 
@@ -18,12 +20,21 @@ const useB = "export function useB(n = 0) {\n  return n > 0 ? useA() : 0\n}\n";
 interface RunOptions {
   manifest?: boolean;
   analyses?: string;
-  autoImports?: (root: string) => unknown[];
+  autoImports?: (root: string) => Import[];
+  rawCandidates?: boolean;
   layers?: (root: string) => unknown[];
   concurrent?: boolean;
 }
 
 function manifestFor(root: string, options: RunOptions) {
+  const entries = [
+    { name: "ref", from: "vue", kind: "vue" },
+    { name: "useFetch", from: "#app/composables/fetch", kind: "nuxt" },
+    { name: "useA", from: join(root, "app/composables/useA.ts"), kind: "app" },
+    { name: "useB", from: join(root, "app/composables/useB.ts"), kind: "app" },
+    { name: "formatPrice", from: "~/utils/format", kind: "app" },
+    ...(options.autoImports?.(root) ?? []),
+  ];
   return JSON.stringify({
     nuxtVersion: "4.4.6",
     vueVersion: "3.5",
@@ -33,14 +44,8 @@ function manifestFor(root: string, options: RunOptions) {
     buildDir: join(root, ".nuxt"),
     generatedAt: new Date(Date.now() + 1000).toISOString(),
     autoImportEnabled: true,
-    autoImports: [
-      { name: "ref", from: "vue", kind: "vue" },
-      { name: "useFetch", from: "#app/composables/fetch", kind: "nuxt" },
-      { name: "useA", from: join(root, "app/composables/useA.ts"), kind: "app" },
-      { name: "useB", from: join(root, "app/composables/useB.ts"), kind: "app" },
-      { name: "formatPrice", from: "~/utils/format", kind: "app" },
-      ...(options.autoImports?.(root) ?? []),
-    ],
+    autoImports: entries,
+    runtimeAutoImports: entries.filter((entry) => !("type" in entry && entry.type)),
     components: [],
     layers: options.layers?.(root) ?? [{ root, priority: 0 }],
     routeRules: {},
@@ -89,8 +94,32 @@ async function run(files: Record<string, string>, options: RunOptions = {}) {
       "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "4.4.6" } }),
       ...files,
     };
-    if (manifest) fixture[".nuxt/doctor.manifest.json"] = manifestFor(root, options);
+    if (manifest && !options.rawCandidates)
+      fixture[".nuxt/doctor.manifest.json"] = manifestFor(root, options);
     writeFixture(root, fixture);
+    if (options.rawCandidates) {
+      const imports = JSON.parse(manifestFor(root, options)).autoImports as Import[];
+      const context = createUnimport({ imports });
+      const hooks = new Map<string, (payload?: any) => unknown>();
+      await nuxtDoctorModule({}, {
+        _version: "4.4.6",
+        options: { rootDir: root, srcDir: join(root, "app"), buildDir: ".nuxt", modules: [] },
+        hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
+        async callHook() {},
+      } as any);
+      await hooks.get("imports:context")!(context);
+      await hooks.get("imports:extend")!(imports);
+      await hooks.get("prepare:types")!();
+      const evidence = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+      expect(evidence.autoImports).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "useB", from: join(root, "app/composables/useB.ts") }),
+        ]),
+      );
+      expect(evidence.runtimeAutoImports).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "useB" })]),
+      );
+    }
     const result = await runViteDoctor({
       root,
       framework: "nuxt",
@@ -336,6 +365,40 @@ test("an export removed after the manifest was generated withholds the edges and
       ),
     ]),
   );
+});
+
+test.each(["export enum Mode { Ready }", "export const { Mode } = { Mode: 1 }"])(
+  "a fresh registry accepts %s without suppressing an unrelated cycle",
+  async (source) => {
+    const { cycles, gaps } = await run(
+      {
+        "app/composables/useA.ts": useA,
+        "app/composables/useB.ts": useB,
+        "app/utils/mode.ts": source,
+      },
+      { autoImports: (root) => [{ name: "Mode", from: join(root, "app/utils/mode.ts") }] },
+    );
+    expect(cycles).toHaveLength(1);
+    expect(gaps).toEqual([]);
+  },
+);
+
+test("a winning type-only candidate does not revive a discarded runtime binding", async () => {
+  const { autoImportEdges, cycles } = await run(
+    {
+      "app/composables/useA.ts": useA,
+      "app/composables/useB.ts": useB,
+      "app/types.ts": "export type B = number",
+    },
+    {
+      rawCandidates: true,
+      autoImports: (root) => [
+        { name: "B", as: "useB", from: join(root, "app/types.ts"), type: true, priority: 2 },
+      ],
+    },
+  );
+  expect(autoImportEdges).toEqual(["app/composables/useB.ts -useA-> app/composables/useA.ts"]);
+  expect(cycles).toEqual([]);
 });
 
 test("files in a layer's configured serverDir get no app auto-import edges", async () => {

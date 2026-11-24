@@ -307,9 +307,7 @@ export async function buildGraphPhase(session: ScanSession): Promise<void> {
   session.facts = await sourceFacts(session);
   const frame = session.ruleInputs.frame();
   const index = createGraphIndex(session, frame.fs);
-  const autoImports = graphAnalyses
-    ? await collectAutoImportEdges(session, (path) => index.resolveFile(path))
-    : [];
+  const autoImports = graphAnalyses ? await collectAutoImportEdges(session, index) : [];
   session.graph = buildWorkspaceGraph(session, frame.fs, index, autoImports);
   session.graphSummary = summarizeGraph(session.graph);
   session.cache.recordGraph(key, session.graphSummary, frame.readInputs());

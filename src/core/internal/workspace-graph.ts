@@ -535,7 +535,7 @@ export async function importGraphInventory(session: ScanSession): Promise<Import
   if (cached) return cached;
   session.facts = await sourceFacts(session);
   const index = createGraphIndex(session, session.ruleInputs.frame().fs);
-  await collectAutoImportEdges(session, (path) => index.resolveFile(path));
+  await collectAutoImportEdges(session, index);
   return sessionImportGraph(session, index);
 }
 

@@ -54,6 +54,7 @@ type EvidenceBuildManifest = {
 
 type NuxtAutoImportContext = {
   getImports?: () => Promise<unknown[]> | unknown[];
+  getImportMap?: () => Promise<Map<string, unknown>> | Map<string, unknown>;
 };
 
 type NitroAutoImportEvidence = Pick<
@@ -61,6 +62,9 @@ type NitroAutoImportEvidence = Pick<
   | "nitroAutoImportEnabled"
   | "nitroAutoImports"
   | "nitroScanDirs"
+  | "nitroPlugins"
+  | "nitroAliases"
+  | "nitroAutoImportCustomResolver"
   | "nitroAutoImportScan"
   | "nitroAutoImportTransform"
 >;
@@ -356,6 +360,9 @@ export async function writeManifest(
             ),
           ].sort(),
     autoImports,
+    runtimeAutoImports: evidence?.autoImportContext?.getImportMap
+      ? normalizeAutoImports([...(await evidence.autoImportContext.getImportMap()).values()])
+      : undefined,
     components: toArray(nuxt.options.components ?? nuxt._components),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({
@@ -560,6 +567,9 @@ async function captureNitroAutoImports(nitro: any, root: string): Promise<NitroA
   const evidence: NitroAutoImportEvidence = {
     nitroAutoImportEnabled: enabled,
     nitroScanDirs: toArray<string>(nitro.options.scanDirs).map((dir) => resolve(dir)),
+    nitroPlugins: toArray<string>(nitro.options.plugins).map((file) => resolve(root, file)),
+    nitroAliases: nitro.options.alias,
+    nitroAutoImportCustomResolver: typeof imports?.resolveId === "function",
   };
   if (!enabled || !nitro.unimport?.getImportMap) return evidence;
 

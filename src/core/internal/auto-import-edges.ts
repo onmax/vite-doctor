@@ -9,6 +9,7 @@ import type {
   SourceRange,
 } from "../primitives.js";
 import type { ScanSession } from "./scan-session.js";
+import type { GraphIndex } from "./workspace-graph.js";
 import { loadSourceFile, walkAstFacts } from "./facts.js";
 import { verifyNitroAutoImportScan } from "./nitro-auto-import-scan.js";
 import {
@@ -40,7 +41,7 @@ export function sessionAutoImportEdges(session: ScanSession): readonly AutoImpor
 
 /**
  * Collects edges for unshadowed runtime reads of auto-imports whose source is a file of the run.
- * Files in Nitro's server roots resolve against Nitro's registry, matching the
+ * Server files and their dependencies resolve against Nitro's registry, matching the
  * transform each bundle runs. Auto-imports from packages (`ref`, `useFetch`) never become edges.
  * Template references are left out: rendered components are Component Usage, and template
  * expressions are not scope-analyzed. Only a current Nuxt manifest proves which names are
@@ -49,11 +50,11 @@ export function sessionAutoImportEdges(session: ScanSession): readonly AutoImpor
  */
 export function collectAutoImportEdges(
   session: ScanSession,
-  resolveFile: (absolutePath: string) => number | undefined,
+  index: GraphIndex,
 ): Promise<readonly AutoImportEdge[]> {
   let pending = edgesBySession.get(session);
   if (!pending) {
-    pending = collect(session, resolveFile).then((edges) => {
+    pending = collect(session, index).then((edges) => {
       completedEdges.set(session, edges);
       return edges;
     });
@@ -64,46 +65,76 @@ export function collectAutoImportEdges(
 
 async function collect(
   session: ScanSession,
-  resolveFile: (absolutePath: string) => number | undefined,
+  index: GraphIndex,
 ): Promise<readonly AutoImportEdge[]> {
   const edges: AutoImportEdge[] = [];
   const registries = new Map<string, Registry>();
   const gaps = new Map<string, EvidenceGap>();
   const factsById = new Map(session.facts.map((fact) => [fact.fileId, fact]));
   const ids = new Map<NuxtProjectInfo, number>();
-
+  const serverFiles = new Set<number>();
+  const nitroQueue: FileFacts[] = [];
+  const scanTargets = new Map<NuxtProjectInfo, Set<number | undefined>>();
+  const projectOf = (fact: FileFacts) => session.handlesByPath.get(fact.path)?.project.nuxt;
+  const enqueue = (file: number | undefined, nuxt: NuxtProjectInfo) => {
+    const fact = file === undefined ? undefined : factsById.get(file);
+    if (fact && !serverFiles.has(fact.fileId) && projectOf(fact) === nuxt) {
+      serverFiles.add(fact.fileId);
+      nitroQueue.push(fact);
+    }
+  };
   for (const fact of session.facts) {
+    const nuxt = projectOf(fact);
+    if (!nuxt) continue;
+    if (!ids.has(nuxt)) {
+      ids.set(nuxt, ids.size);
+      if (nuxt.manifest?.isCurrent) {
+        for (const file of [
+          ...(nuxt.manifest.resolvedServerHandlers ?? []).map((handler) => handler.file),
+          ...(nuxt.nitroAutoImports?.plugins ?? []),
+        ])
+          enqueue(index.resolveFile(file), nuxt);
+        scanTargets.set(
+          nuxt,
+          new Set(
+            nuxt.nitroAutoImports?.entries
+              ?.filter(({ from }) => isAbsolute(from))
+              .map(({ from }) => index.resolveFile(from)),
+          ),
+        );
+      }
+    }
+    if (isServerFile(fact, nuxt)) enqueue(fact.fileId, nuxt);
+  }
+
+  async function collectFile(fact: FileFacts, server: boolean) {
     const handle = session.handlesByPath.get(fact.path);
     const nuxt = handle?.project.nuxt;
-    if (!handle || !nuxt) continue;
-    const server = isServerFile(fact, nuxt);
+    if (!handle || !nuxt) return;
     const nitro = nuxt.nitroAutoImports;
-    if (server ? nitro?.enabled === false : !nuxt.autoImportEnabled) continue;
-    if (!ids.has(nuxt)) ids.set(nuxt, ids.size);
+    if (server ? nitro?.enabled === false : !nuxt.autoImportEnabled) return;
     const key = `${ids.get(nuxt)}:${server ? "nitro" : "nuxt"}`;
-    if (gaps.has(key)) continue;
-    const entries = server
-      ? nitro?.entries
-      : (nuxt.autoImportEntries ?? [...nuxt.autoImports.values()]);
+    if (gaps.has(key)) return;
+    const entries = server ? nitro?.entries : nuxt.runtimeAutoImportEntries;
     if (
       server
-        ? !nitro?.authoritative || !nitro.scan || !nitro.transform
-        : !nuxt.autoImportsAuthoritative
+        ? !nitro?.authoritative || !nitro.scan || !nitro.transform || nitro.customResolver !== false
+        : !nuxt.autoImportsAuthoritative || !entries
     ) {
       gaps.set(
         key,
         server ? unprovenNitroAutoImportsGap(session, nuxt) : unprovenAutoImportsGap(session, nuxt),
       );
-      continue;
+      return;
     }
-    if (!entries) continue;
+    if (!entries) return;
     const text = handle.text;
     if (
       server
         ? !isTransformedNitroFile(fact.path, text, nitro?.transform)
         : !isTransformedAppFile(fact, nuxt)
     )
-      continue;
+      return;
     let registry = registries.get(key);
     if (!registry) {
       const scan = server ? nitro?.scan : undefined;
@@ -115,11 +146,16 @@ async function collect(
         );
         if (verification !== "current") {
           gaps.set(key, unprovenNitroAutoImportsGap(session, nuxt, verification));
-          continue;
+          return;
         }
       }
       const aliases = server ? [] : appAliases(nuxt);
-      registry = projectOwnedAutoImports(entries, aliases, resolveFile, factsById);
+      registry = projectOwnedAutoImports(
+        entries,
+        aliases,
+        (path) => index.resolveFile(path),
+        factsById,
+      );
       registries.set(key, registry);
       if (registry.stale)
         gaps.set(
@@ -127,19 +163,20 @@ async function collect(
           staleAutoImportsGap(session, nuxt, registry.stale, server ? "Nitro" : "Nuxt"),
         );
     }
-    if (registry.stale) continue;
+    if (registry.stale) return;
     const owned = registry.owned;
     // A Unicode escape can spell a registered name without its literal text.
-    if (!text.includes("\\u") && ![...owned.keys()].some((name) => text.includes(name))) continue;
+    if (!text.includes("\\u") && ![...owned.keys()].some((name) => text.includes(name))) return;
     const script = await scriptSource(fact, handle);
     const scope = script && analyzeScript(script.text, script.dialect);
-    if (!scope) continue;
+    if (!scope) return;
     const seen = new Set<string>();
     for (const reference of runtimeReads(scope, script.setup)) {
       const name = reference.identifier.name;
       const to = owned.get(name);
       if (to === undefined || to === fact.fileId || seen.has(name)) continue;
       seen.add(name);
+      if (server) enqueue(to, nuxt);
       const [start, end] = reference.identifier.range;
       edges.push({
         from: fact.fileId,
@@ -150,9 +187,45 @@ async function collect(
     }
   }
 
+  for (const fact of nitroQueue) {
+    const nuxt = projectOf(fact)!;
+    for (const item of [...fact.imports, ...fact.reExports, ...fact.dynamicImports]) {
+      if (
+        item.source === null ||
+        ("kind" in item && item.kind === "type") ||
+        ("typeOnly" in item && item.typeOnly)
+      )
+        continue;
+      const path = sourcePath(item.source, Object.entries(nuxt.nitroAutoImports?.aliases ?? {}));
+      enqueue(path ? index.resolveFile(path) : index.resolveImport(fact, item.source), nuxt);
+    }
+    await collectFile(fact, true);
+  }
+
+  for (const fact of session.facts) {
+    if (serverFiles.has(fact.fileId)) continue;
+    const nuxt = projectOf(fact);
+    if (!nuxt) continue;
+    if (hasUncertainRuntime(fact, nuxt, scanTargets.get(nuxt))) {
+      const key = `${ids.get(nuxt)}:runtime`;
+      const gap = gaps.get(key);
+      if (gap) gap.files?.push(fact.relativePath);
+      else
+        gaps.set(key, {
+          source: "vite-doctor/nuxt",
+          message:
+            "Nitro scans these files but the graph cannot establish their runtime bundle, so Doctor withheld their auto-import edges.",
+          files: [fact.relativePath],
+        });
+      continue;
+    }
+    await collectFile(fact, false);
+  }
+
   if (gaps.size)
     session.project.evidenceGaps = [...(session.project.evidenceGaps ?? []), ...gaps.values()];
-  return edges;
+  const order = new Map(session.facts.map((fact, position) => [fact.fileId, position]));
+  return edges.sort((left, right) => order.get(left.from)! - order.get(right.from)!);
 }
 
 /**
@@ -286,11 +359,23 @@ async function scriptSource(
 }
 
 function isServerFile(fact: FileFacts, nuxt: NuxtProjectInfo): boolean {
-  return (
-    nuxt.nitroAutoImports?.scanDirs?.some((dir) => fact.path.startsWith(`${dir}/`)) ||
-    nuxt.layers.some((layer) =>
-      fact.path.startsWith(`${resolve(layer.root, layer.serverDir ?? "server")}/`),
-    )
+  return nuxt.layers.some((layer) =>
+    fact.path.startsWith(`${resolve(layer.root, layer.serverDir ?? "server")}/`),
+  );
+}
+
+function hasUncertainRuntime(
+  fact: FileFacts,
+  nuxt: NuxtProjectInfo,
+  scanTargets: ReadonlySet<number | undefined> | undefined,
+): boolean {
+  const nitro = nuxt.nitroAutoImports;
+  return Boolean(
+    nitro?.enabled &&
+    nuxt.manifest?.isCurrent &&
+    !nuxt.manifest.appScanRoots.some((dir) => fact.path.startsWith(`${dir}/`)) &&
+    (scanTargets?.has(fact.fileId) ||
+      nitro.scanDirs?.some((dir) => fact.path.startsWith(`${dir}/`))),
   );
 }
 
@@ -340,9 +425,12 @@ type EvidenceGap = NonNullable<ScanSession["project"]["evidenceGaps"]>[number];
 
 function unprovenAutoImportsGap(session: ScanSession, nuxt: NuxtProjectInfo): EvidenceGap {
   const manifest = manifestFile(session, nuxt);
+  const reason = nuxt.autoImportsAuthoritative
+    ? `${manifest} does not record Nuxt's resolved runtime auto-imports`
+    : `${manifest} is ${nuxt.manifestPath ? "stale" : "missing"}`;
   return {
     source: "vite-doctor/nuxt",
-    message: `${manifest} is ${nuxt.manifestPath ? "stale" : "missing"}, so Doctor cannot prove which names Nuxt auto-imports from project files, and the import graph has no auto-import edges. ${missingEdgesConsequence} Register vite-doctor/nuxt and run nuxt prepare, then rerun Doctor.`,
+    message: `${reason}, so Doctor cannot prove which names Nuxt auto-imports from project files, and the import graph has no auto-import edges. ${missingEdgesConsequence} Register vite-doctor/nuxt and run nuxt prepare, then rerun Doctor.`,
     files: [manifest],
   };
 }
@@ -360,6 +448,8 @@ function unprovenNitroAutoImportsGap(
     reason = `Nitro's auto-import scan inputs changed or could not be read after ${manifest} captured them`;
   else if (nuxt.nitroAutoImports?.entries === undefined)
     reason = `${manifest} does not record Nitro's auto-imports`;
+  else if (nuxt.nitroAutoImports.customResolver === true)
+    reason = "Nitro's custom auto-import resolver can change the injected target per file";
   else if (nuxt.nitroAutoImports.authoritative)
     reason = `${manifest} does not record verified evidence for Nitro's auto-import scan or transform`;
   else reason = `${manifest} is stale`;

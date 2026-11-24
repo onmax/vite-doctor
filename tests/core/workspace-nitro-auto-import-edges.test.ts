@@ -33,6 +33,10 @@ async function manifestFor(root: string, options: ManifestOptions) {
   const unimport = createUnimport(imports);
   await unimport.init();
   const nitroAutoImports = options.nitroAutoImports ?? (() => []);
+  const appImports = [
+    { name: "ref", from: "vue", kind: "vue" },
+    { name: "useApp", from: join(root, "app/composables/useApp.ts"), kind: "app" },
+  ];
   return JSON.stringify({
     nuxtVersion: "4.4.6",
     vueVersion: "3.5",
@@ -42,11 +46,10 @@ async function manifestFor(root: string, options: ManifestOptions) {
     buildDir: join(root, ".nuxt"),
     generatedAt: new Date(Date.now() + 1000).toISOString(),
     autoImportEnabled: true,
-    autoImports: [
-      { name: "ref", from: "vue", kind: "vue" },
-      { name: "useApp", from: join(root, "app/composables/useApp.ts"), kind: "app" },
-    ],
+    autoImports: appImports,
+    runtimeAutoImports: appImports,
     nitroAutoImportEnabled: options.nitroAutoImportEnabled ?? true,
+    nitroAutoImportCustomResolver: false,
     nitroAutoImportScan: await captureNitroAutoImportScan(
       await import("unimport"),
       unimport.version,
@@ -292,6 +295,8 @@ async function withNitroManifest(
   options: {
     appAutoImport?: boolean;
     extraScanDir?: boolean;
+    extraImportDirs?: string[];
+    handler?: string;
     imports?: Record<string, unknown>;
     beforeInit?: (root: string) => void;
     afterInit?: (root: string) => void;
@@ -357,7 +362,10 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
     const scanDirs = [join(root, "server"), ...(options.extraScanDir ? [join(root, "extra")] : [])];
     const imports = {
       autoImport: true,
-      dirs: scanDirs.map((dir) => join(dir, "utils/**/*")),
+      dirs: [
+        ...scanDirs.map((dir) => join(dir, "utils/**/*")),
+        ...(options.extraImportDirs ?? []).map((dir) => join(root, dir)),
+      ],
       imports: [{ name: "useA", as: "useServerA", from: "#server/utils/a" }],
       ...options.imports,
     };
@@ -378,13 +386,25 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
       hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
       async callHook() {},
     } as any);
+    await hooks.get("imports:context")!(
+      createUnimport({
+        imports: [{ name: "useApp", from: join(root, "app/composables/useApp.ts") }],
+      }),
+    );
     const nitroHooks = new Map<string, () => Promise<void>>();
     const cwd = options.relativeTransformPaths
       ? vi.spyOn(process, "cwd").mockReturnValue(root)
       : undefined;
     try {
       await hooks.get("nitro:init")!({
-        options: { imports, scanDirs, alias: { "#server": join(root, "server") }, handlers: [] },
+        options: {
+          imports,
+          scanDirs,
+          alias: { "#server": join(root, "server") },
+          handlers: options.handler
+            ? [{ handler: join(root, options.handler), route: "/test" }]
+            : [],
+        },
         unimport,
         scannedHandlers: [],
         hooks: {
@@ -456,18 +476,70 @@ test("Nitro injection works independently of disabled app auto-imports", () =>
     { appAutoImport: false },
   ));
 
-test("a cycle can cross the layer serverDir and an extra Nitro scanDir", () =>
+test.each([
+  { kind: "scanDir", extraScanDir: true },
+  { kind: "imports.dirs", extraImportDirs: ["extra/utils/**/*"] },
+])(
+  "a cycle can cross the layer serverDir and an extra Nitro $kind",
+  ({ kind: _kind, ...options }) =>
+    withNitroManifest(
+      { "server/utils/b.ts": "export const other = 1", "extra/utils/b.ts": useB },
+      async (root) => {
+        const { autoImportEdges, cycles } = await analyze(root);
+        expect(autoImportEdges).toEqual([
+          "extra/utils/b.ts -useA-> server/utils/a.ts",
+          "server/utils/a.ts -useB-> extra/utils/b.ts",
+        ]);
+        expect(cycles).toHaveLength(1);
+      },
+      options,
+    ),
+);
+
+test("configured Nitro handlers and their imports use the server registry outside scan roots", () =>
   withNitroManifest(
-    { "server/utils/b.ts": "export const other = 1", "extra/utils/b.ts": useB },
+    {
+      "lib/handler.ts": "export { handler as default } from './nested'",
+      "lib/nested.ts": "export const handler = () => useA()",
+      "server/utils/a.ts":
+        "import handler from '../../lib/handler'; export const useA = () => handler()",
+    },
     async (root) => {
       const { autoImportEdges, cycles } = await analyze(root);
-      expect(autoImportEdges).toEqual([
-        "extra/utils/b.ts -useA-> server/utils/a.ts",
-        "server/utils/a.ts -useB-> extra/utils/b.ts",
-      ]);
-      expect(cycles).toHaveLength(1);
+      expect(autoImportEdges).toContain("lib/nested.ts -useA-> server/utils/a.ts");
+      expect(cycles.some((cycle) => cycle.message.includes("lib/nested.ts"))).toBe(true);
     },
-    { extraScanDir: true },
+    { handler: "lib/handler.ts" },
+  ));
+
+test("custom import dirs do not make unreachable files Nitro consumers", () =>
+  withNitroManifest(
+    {
+      "lib/unused.ts": "export const unused = () => useA()",
+      "app/utils/appOnly.ts": "export const appOnly = () => [useA(), useApp()]",
+    },
+    async (root) => {
+      const { autoImportEdges, gaps } = await analyze(root);
+      expect(
+        autoImportEdges.filter((edge) => edge.startsWith("lib/") || edge.startsWith("app/")),
+      ).toEqual(["app/utils/appOnly.ts -useApp-> app/composables/useApp.ts"]);
+      expect(gaps).toContainEqual(expect.stringContaining("cannot establish their runtime bundle"));
+    },
+    { extraImportDirs: ["lib/**/*", "app/utils/**/*"] },
+  ));
+
+test("Nitro's custom resolver withholds unproven injection targets even in trusted runs", () =>
+  withNitroManifest(
+    { "server/lib/replacement.ts": "export const useB = () => 1" },
+    async (root) => {
+      const { autoImportEdges, cycles, gaps } = await analyze(root, true);
+      expect(autoImportEdges).toEqual([]);
+      expect(cycles).toEqual([]);
+      expect(gaps).toEqual([expect.stringContaining("custom auto-import resolver")]);
+    },
+    {
+      imports: { resolveId: (from: string) => from.replace("/utils/b.ts", "/lib/replacement.ts") },
+    },
   ));
 
 test.each([
