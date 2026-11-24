@@ -1954,6 +1954,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/hmr/no-circular-import-at-hmr-boundary": {
+    description:
+      "Reports static import cycles that pass through an HMR boundary: a Vue SFC or a module that calls import.meta.hot.accept.",
+    why: "When an edit reaches an HMR boundary, the Vite dev server checks whether the boundary's importers lead back into the chain the update came through. If they do, it sends the update with isWithinCircularImport, and the browser re-imports the boundary. That re-import re-evaluates the modules of the cycle in a new order, and if it throws, for example because a module reads a binding of the cycle before it is initialized, the Vite client logs that the module failed to apply HMR as it's within a circular import and reloads the whole page. So the cycle can turn an edit into a full reload; when the re-import succeeds, HMR still applies. Doctor reads the import graph, treats every .vue file as a boundary because @vitejs/plugin-vue makes SFCs accept their own updates in dev, and treats modules that call import.meta.hot.accept or acceptExports as boundaries. It reports one Diagnostic per group of files joined by static imports or re-exports, at the import that enters the boundary, with every import edge of the loop as related locations. Type-only imports and dynamic import() calls do not form cycles. DOC0001, under --analyses graph, reports every import cycle as an architecture problem; this Strict-only Rule reports only the cycles that reach an HMR boundary, with the Vite dev consequence, and the two can name the same group.",
+    recommendedReplacement:
+      "Break the cycle at the edge where a lower layer, such as a router or store, imports the component. In a route record, load the component lazily with component: () => import('./Page.vue'), which Vite and Vue Router recommend for route components anyway. Otherwise move the constants or helpers the lower layer needs out of the component into a module that imports neither side. Do not add import.meta.hot.decline() or suppress the Diagnostic; that keeps the cycle.",
+    examples: [
+      {
+        title: "Lazy-load the route component",
+        language: "ts",
+        invalid:
+          "// src/router.ts\nimport Page from './Page.vue'\nexport const router = createRouter({ history: createWebHistory(), routes: [{ path: '/', component: Page }] })\n\n// src/Page.vue <script setup>\nimport { router } from './router'",
+        valid:
+          "// src/router.ts\nexport const router = createRouter({ history: createWebHistory(), routes: [{ path: '/', component: () => import('./Page.vue') }] })\n\n// src/Page.vue <script setup>\nimport { router } from './router'",
+      },
+    ],
+  },
   "vite/hmr/require-dispose-for-side-effects": {
     description:
       "Checks that Vite hmr code includes the dispose for side effects needed for predictable behavior.",
