@@ -1105,7 +1105,11 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   }
 
   if (rule.framework === "nitro") {
-    add("Nitro handlers", "https://nitro.build/guide/routing");
+    add("Nitro handlers", "https://nitro.build/docs/routing");
+  }
+
+  if (rule.id === "nitro/cache/require-varies-for-header-read") {
+    add("Nitro cache", "https://nitro.build/guide/cache");
   }
 
   if (rule.framework === "vite" && rule.category === "env") {

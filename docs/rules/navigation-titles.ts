@@ -8,6 +8,7 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "nitro/cloudflare/no-unguarded-als-enterwith": "ALS enterWith",
   "nitro/cache/no-module-scope-response-cache": "Module-scope caches",
+  "nitro/cache/require-varies-for-header-read": "Cached header reads",
   "nitro/config/require-absolute-generated-paths": "Generated paths",
   "nitro/context/no-navigateto-in-nitro": "navigateTo",
   "nitro/context/no-usenuxtapp-in-nitro": "useNuxtApp",
@@ -17,6 +18,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nitro/h3/prefer-nitro-h3": "nitro/h3 imports",
   "nitro/h3/prefer-redirect-response": "Redirect responses",
   "nitro/h3/prefer-with-base": "withBase",
+  "nitro/middleware/no-implicit-response": "Middleware returns",
   "nitro/migration/no-v2-imports": "Nitro 2 imports",
   "nitro/request/prefer-assert-method": "assertMethod",
   "nitro/request/prefer-get-request-ip": "Request IP utilities",
@@ -24,6 +26,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nitro/request/prefer-validated-body": "Validated body",
   "nitro/request/prefer-validated-query": "Validated query",
   "nitro/request/prefer-validated-router-params": "Validated params",
+  "nitro/routes/no-shadowed-file-handler": "Shadowed routes",
   "nitro/routes/require-default-handler": "Route handlers",
   "nitro/runtime/no-event-runtime-config-in-server": "Drop event (Nitro 3)",
   "nitro/runtime/no-process-env-in-server": "Server process.env",
