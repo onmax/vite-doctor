@@ -1,9 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "pathe";
-import { expect, test } from "vite-plus/test";
+import { createLogger, createServer } from "vite";
+import { expect, test, vi } from "vite-plus/test";
 import { runProjectFixture } from "../../src/core/testkit.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
+import { doctor } from "../../src/plugin.ts";
 import { noCircularImportAtHmrBoundary, viteRulePack } from "../../src/rules.ts";
 
 const ruleId = "vite/hmr/no-circular-import-at-hmr-boundary";
@@ -23,7 +25,7 @@ const app = {
   "src/Page.vue": page,
 };
 
-async function run(files: Record<string, string>, resolvedHmr?: boolean) {
+async function run(files: Record<string, string>, resolvedHmr?: boolean, unrelatedHost = false) {
   const result = await runProjectFixture({
     framework: "vue",
     rules: [noCircularImportAtHmrBoundary],
@@ -37,7 +39,12 @@ async function run(files: Record<string, string>, resolvedHmr?: boolean) {
               setup(api) {
                 api.registerRuntimeEvidenceContributor({
                   name: "vite",
-                  contribute: ({ root }) => ({ clientHmr: { root, enabled: resolvedHmr } }),
+                  contribute: ({ root }) => ({
+                    clientHmr: {
+                      root: unrelatedHost ? `${root}-other` : root,
+                      enabled: resolvedHmr,
+                    },
+                  }),
                 });
               },
             },
@@ -141,22 +148,70 @@ test("a callback-only accept call makes the module a boundary", async () => {
   ).toMatchObject([{ file: "src/a.js", line: 1 }]);
 });
 
-test("Vue SFCs are not boundaries when the Vite config sets server.hmr to false", async () => {
-  expect(
-    await run({
-      ...app,
-      "vite.config.ts":
-        'import vue from "@vitejs/plugin-vue";\nexport default { plugins: [vue()], server: { hmr: false } };\n',
-    }),
-  ).toEqual([]);
+test.each([false, true])("scoped serve runs honor resolved HMR enabled=%s", async (enabled) => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-hmr-serve-"));
+  try {
+    for (const [file, text] of Object.entries(app)) {
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), text);
+    }
+    const logger = createLogger("silent");
+    const reports: string[] = [];
+    logger.info =
+      logger.warn =
+      logger.error =
+        (message) => {
+          if (message.startsWith("{")) reports.push(message);
+        };
+    const server = await createServer({
+      root,
+      configFile: false,
+      customLogger: logger,
+      plugins: [
+        doctor({
+          run: "serve",
+          root: "src",
+          framework: "vue",
+          extends: ["auto", "vite/strict"],
+          rules: ruleId,
+          cache: false,
+          format: "json",
+        }),
+      ],
+      server: { hmr: enabled, middlewareMode: true, ws: false, watch: null },
+      optimizeDeps: { noDiscovery: true },
+    });
+    try {
+      await vi.waitFor(() => expect(reports).toHaveLength(1), { timeout: 15_000 });
+      if (enabled) {
+        expect(reports[0]).toContain("VITE0029");
+        expect(reports[0]).toContain("Resolved Vite dev config has client HMR enabled");
+      } else {
+        expect(reports[0]).not.toContain("VITE0029");
+      }
+    } finally {
+      await server.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test("says it assumes client HMR when the Vite config does not decide it", async () => {
-  const diagnostics = await run(app);
-  expect(diagnostics[0]!.evidence?.[0]).toContain("server.hmr");
+test("ignores resolved HMR evidence from a sibling root", async () => {
+  const diagnostics = await run(app, false, true);
+  expect(diagnostics).toMatchObject([{ code: "VITE0029" }]);
+  expect(diagnostics[0]!.evidence?.[0]).toContain("assumes client HMR is on");
 });
 
 test.each<[string, Record<string, string>]>([
+  ["static false", { "vite.config.ts": "export default { server: { hmr: false } };" }],
+  [
+    "a plugin config hook can override static false",
+    {
+      "vite.config.ts":
+        'export default { server: { hmr: false }, plugins: [{ name: "enable-hmr", config: () => ({ server: { hmr: true } }) }] };',
+    },
+  ],
   [
     "build-only setting",
     {
@@ -194,16 +249,6 @@ test.each<[string, Record<string, string>]>([
   const diagnostics = await run({ ...app, ...configs });
   expect(diagnostics).toMatchObject([{ code: "VITE0029" }]);
   expect(diagnostics[0]!.evidence?.[0]).toContain("assumes client HMR is on");
-});
-
-test("reads a static object wrapped in Vite's defineConfig", async () => {
-  expect(
-    await run({
-      ...app,
-      "vite.config.ts":
-        'import { defineConfig as config } from "vite"; export default config({ server: { hmr: false } });',
-    }),
-  ).toEqual([]);
 });
 
 test("prefers resolved Vite dev evidence over the default config file", async () => {

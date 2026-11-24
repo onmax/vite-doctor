@@ -1,13 +1,11 @@
-import type { Node, Program } from "oxc-parser";
-import { relative, resolve } from "pathe";
+import { isAbsolute, relative } from "pathe";
 import { createRule, type ImportGraphEdge, type RuleContext } from "../../../core/index.js";
 import { walkAstFacts } from "../../../core/internal/facts.js";
 import { computeSccs } from "../../../core/internal/import-graph.js";
-import { parseScriptResult, parseScriptSync } from "../../../core/internal/script.js";
+import { parseScriptResult } from "../../../core/internal/script.js";
 import { sha256 } from "../../../core/internal/utils.js";
-import { findViteConfigFile } from "../../../core/internal/vite-config-file.js";
 import { diagnostics } from "../../../diagnostics.js";
-import { memberPath, propertyName, type AnyNode } from "./shared.js";
+import { memberPath, type AnyNode } from "./shared.js";
 
 const RULE_ID = "vite/hmr/no-circular-import-at-hmr-boundary";
 
@@ -137,88 +135,21 @@ function clientHmrSetting(ctx: RuleContext): { disabled: boolean; note: string }
   const resolved = vite?.clientHmr;
   if (
     typeof resolved?.root === "string" &&
-    resolve(resolved.root) === resolve(root) &&
+    isAbsolute(resolved.root) &&
     typeof resolved.enabled === "boolean"
   ) {
-    return {
-      disabled: !resolved.enabled,
-      note: `Resolved Vite dev config has client HMR ${resolved.enabled ? "enabled" : "disabled"}.`,
-    };
-  }
-  const file =
-    ctx.project.framework === "nuxt" || ctx.project.nuxt
-      ? undefined
-      : findViteConfigFile(root, (path) => ctx.fs.exists(path));
-  const text = file && ctx.fs.readText(file);
-  if (file && text) {
-    const { program, errors } = parseScriptSync(file, text, {
-      astType: "ts",
-      preserveParens: false,
-    });
-    if (!errors.some((error) => error.severity === "Error") && staticallyDisablesHmr(program)) {
+    const scope = relative(resolved.root, root);
+    if (scope !== ".." && !scope.startsWith("../") && !isAbsolute(scope)) {
       return {
-        disabled: true,
-        note: `${relative(root, file)} exports server.hmr: false.`,
+        disabled: !resolved.enabled,
+        note: `Resolved Vite dev config has client HMR ${resolved.enabled ? "enabled" : "disabled"}.`,
       };
     }
   }
   return {
     disabled: false,
-    note: "Doctor did not resolve the dev server.hmr setting, so it assumes client HMR is on, as @vitejs/plugin-vue does by default in dev.",
+    note: "No resolved Vite dev server.hmr setting applies to this Doctor Run, so it assumes client HMR is on, as @vitejs/plugin-vue does by default in dev.",
   };
-}
-
-function staticallyDisablesHmr(program: Program): boolean {
-  const exported = program.body.find((node) => node.type === "ExportDefaultDeclaration");
-  let config: Node | undefined = unwrapConfigExpression(exported?.declaration);
-  if (config?.type === "CallExpression" && !config.optional && config.arguments.length === 1) {
-    const { callee } = config;
-    if (
-      callee.type === "Identifier" &&
-      program.body.some(
-        (node) =>
-          node.type === "ImportDeclaration" &&
-          node.source.value === "vite" &&
-          node.importKind !== "type" &&
-          node.specifiers.some(
-            (specifier) =>
-              specifier.type === "ImportSpecifier" &&
-              specifier.importKind !== "type" &&
-              propertyName(specifier.imported) === "defineConfig" &&
-              specifier.local.name === callee.name,
-          ),
-      )
-    ) {
-      config = unwrapConfigExpression(config.arguments[0]);
-    }
-  }
-  const hmr = staticProperty(staticProperty(config, "server"), "hmr");
-  return hmr?.type === "Literal" && hmr.value === false;
-}
-
-function unwrapConfigExpression(node: Node | undefined): Node | undefined {
-  while (
-    node?.type === "TSAsExpression" ||
-    node?.type === "TSSatisfiesExpression" ||
-    node?.type === "TSTypeAssertion" ||
-    node?.type === "TSNonNullExpression"
-  ) {
-    node = node.expression;
-  }
-  return node;
-}
-
-function staticProperty(node: Node | undefined, name: string): Node | undefined {
-  if (node?.type !== "ObjectExpression") return undefined;
-  for (let index = node.properties.length - 1; index >= 0; index--) {
-    const property = node.properties[index]!;
-    if (property.type !== "Property" || property.computed) return undefined;
-    if (propertyName(property.key) === name) {
-      return property.kind === "init" && !property.method && !property.shorthand
-        ? unwrapConfigExpression(property.value)
-        : undefined;
-    }
-  }
 }
 
 /** A shortest loop of the group that enters an HMR boundary, rotated to start at the edge into it. */

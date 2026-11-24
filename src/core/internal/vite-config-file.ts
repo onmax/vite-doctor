@@ -11,9 +11,6 @@ const VITE_CONFIG_FILES = [
   "vite.config.cts",
 ];
 
-export function findViteConfigFile(
-  root: string,
-  exists: (file: string) => boolean = existsSync,
-): string | undefined {
-  return VITE_CONFIG_FILES.map((name) => resolve(root, name)).find((file) => exists(file));
+export function findViteConfigFile(root: string): string | undefined {
+  return VITE_CONFIG_FILES.map((name) => resolve(root, name)).find((file) => existsSync(file));
 }
