@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -29,7 +29,11 @@ function runNuxt(rule: DoctorRule, files: Record<string, string>) {
 }
 
 function serverEntryManifest(serverAppEntryFiles: string[], generatedAt = "2099-01-01T00:00Z") {
-  return JSON.stringify({ generatedAt, serverAppEntryFiles });
+  return JSON.stringify({
+    generatedAt,
+    serverAppEntryFiles,
+    appRegistrationIgnore: { patterns: [], layerRoots: [], fileHash: null },
+  });
 }
 
 const counterSetup = `import { defineStore } from 'pinia'
@@ -51,23 +55,33 @@ setActivePinia(createPinia())
 export const counter = useCounterStore()
 export default defineNuxtPlugin(() => {})`;
 
-test.each([
+const serverPluginCases: Array<{
+  label: string;
+  options: string;
+  plugins: string[];
+  server: string[];
+  ignoreEdit?: { initial?: string; next?: string };
+}> = [
   {
+    label: "configured plugin exclusions",
     options: "dir: { plugins: 'boot' }, ignore: ['**/boot/unused.ts']",
     plugins: ["app/boot/unused.ts", "app/boot/start.ts"],
     server: ["app/boot/start.ts"],
   },
   {
+    label: "an aliased plugin directory",
     options: "dir: { plugins: '~/boot' }",
     plugins: ["app/boot/start.ts", "app/boot/browser.client.ts"],
     server: ["app/boot/start.ts"],
   },
   {
+    label: "an extensionless registration",
     options: "plugins: ['./app/extra/start']",
     plugins: ["app/extra/start.js", "app/extra/start.ts", "app/plugins/session.ts"],
     server: ["app/extra/start.js", "app/plugins/session.ts"],
   },
   {
+    label: "duplicate registrations",
     options: `plugins: [
       { src: '~/plugins/override.client.ts', mode: 'server' },
       { src: '~/plugins/override.client.ts', mode: 'client' },
@@ -77,14 +91,31 @@ test.each([
     plugins: ["app/plugins/override.client.ts", "app/extra/browser.ts"],
     server: ["app/plugins/override.client.ts"],
   },
-])(
-  "uses Nuxt's generated server plugin entry with $options",
-  async ({ options, plugins, server }) => {
+  ...[
+    { initial: undefined, next: "app/plugins/session.ts\n", change: "creating" },
+    { initial: "# ignore list\n", next: "app/plugins/session.ts\n", change: "editing" },
+    { initial: "# ignore list\n", next: undefined, change: "removing" },
+  ].map(({ change, ...ignoreEdit }) => ({
+    label: `default discovery before ${change} .nuxtignore`,
+    options: "",
+    plugins: ["app/plugins/session.ts"],
+    server: ["app/plugins/session.ts"],
+    ignoreEdit,
+  })),
+];
+test.each(serverPluginCases)(
+  "uses Nuxt's generated server plugin entry with $label",
+  async ({ options, plugins, server, ignoreEdit }) => {
+    const startupFile = "app/helpers/startup.ts";
     const files: Record<string, string> = {
       "nuxt.config.ts": `export default defineNuxtConfig({ ssr: true, pages: false, ${options} })`,
       "stores/counter.ts": counterSetup,
       ...Object.fromEntries(plugins.map((file) => [file, activatedPlugin])),
     };
+    if (ignoreEdit) {
+      files[startupFile] = activatedPlugin.replace("setActivePinia(createPinia())", "");
+      if (ignoreEdit.initial !== undefined) files[".nuxtignore"] = ignoreEdit.initial;
+    }
     const root = await mkdtemp(join(tmpdir(), "doctor-pinia-nuxt-"));
     const cwd = process.cwd();
     let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
@@ -121,15 +152,24 @@ test.each([
       expect(
         manifest.serverAppEntryFiles.filter((file: string) => plugins.includes(file)).sort(),
       ).toEqual([...server].sort());
-      const result = await runViteDoctor({
-        root,
-        framework: "nuxt",
-        cache: false,
-        rules: pinia.noModuleScopeStore.meta.id,
-      });
-      expect(result.diagnostics.map((item) => relative(root, item.file!)).sort()).toEqual(
-        [...server].sort(),
+      const diagnosticFiles = async () => {
+        const result = await runViteDoctor({
+          root,
+          framework: "nuxt",
+          cache: false,
+          rules: pinia.noModuleScopeStore.meta.id,
+        });
+        return result.diagnostics.map((item) => relative(root, item.file!)).sort();
+      };
+      expect(await diagnosticFiles()).toEqual(
+        (ignoreEdit ? [...server, startupFile] : [...server]).sort(),
       );
+      if (ignoreEdit) {
+        const ignoreFile = join(root, ".nuxtignore");
+        if (ignoreEdit.next === undefined) unlinkSync(ignoreFile);
+        else writeFileSync(ignoreFile, ignoreEdit.next);
+        expect(await diagnosticFiles()).toEqual([startupFile]);
+      }
     } finally {
       await nuxt?.close();
       process.chdir(cwd);

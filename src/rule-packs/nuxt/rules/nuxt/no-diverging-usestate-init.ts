@@ -77,7 +77,7 @@ function reportKey(ctx: RuleContext, key: string, inits: StateInit[]) {
   ctx.report(
     diagnostics.NUXT0097({
       why: `useState(${quoted}) is initialized with ${variants.length} different initializers: ${variants.map((init) => `${snippet(init.source)} at ${location(init)}`).join(", ")}. useState() only runs an initializer while key ${quoted} has no value. Once one initializer sets the value, the others are ignored, so route and render order can change the starting value.`,
-      fix: `Initialize ${quoted} in one composable and call it from every site that uses that state. If the sites mean different state, give each its own key instead.`,
+      fix: `Initialize ${quoted} in one composable and call it from every site that uses that state. If the sites mean different state, give each its own key instead. Do not copy one initializer into every site or suppress this Diagnostic: each site would still decide the starting value, and the next edit to one of them brings the divergence back.`,
       sources: inits.map(location),
     }),
     {

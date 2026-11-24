@@ -317,5 +317,5 @@ test("file Rules cannot read the import graph", async () => {
   });
   await expect(
     runRuleFixture({ rule, files: { "src/a.ts": "export const a = 1" } }),
-  ).rejects.toThrow(/set meta\.execution to "workspace"/);
+  ).rejects.toThrow(/must use workspace execution or declare uncached cross-file execution/);
 });

@@ -3,6 +3,7 @@ import { diagnostics } from "../diagnostics.js";
 import {
   collectStoreModules,
   findStoreUses,
+  importResolutionEvidence,
   nuxtForFile,
   setupRuntimes,
   storeResolver,
@@ -30,7 +31,7 @@ interface ReadSite {
 }
 
 const REMEDIATION =
-  "Defer every reported read to a computed() getter or an action that runs after setup, or break the cycle by moving a useStore() call out of setup.";
+  "Defer every reported read to a computed() getter or an action that runs after setup, or break the cycle by moving a useStore() call out of setup. Do not move a read into another store on the cycle or suppress this Diagnostic: the cycle stays, and which read fails still depends on which store is created first.";
 
 export const noCircularSetupStateRead = createRule({
   meta: {
@@ -107,22 +108,6 @@ function storeEdges(
     }
   }
   return edges;
-}
-
-function importResolutionEvidence(runtime: unknown): EnvironmentResolution[] {
-  if (!runtime || typeof runtime !== "object" || !("importResolution" in runtime)) return [];
-  const evidence = runtime.importResolution;
-  if (!evidence || typeof evidence !== "object") return [];
-  const { root, environments } = evidence as Record<string, unknown>;
-  if (typeof root !== "string" || !environments || typeof environments !== "object") return [];
-  return Object.values(environments).flatMap((environment) => {
-    if (!environment || typeof environment !== "object") return [];
-    const { consumer, extensions } = environment as Record<string, unknown>;
-    if (consumer !== "client" && consumer !== "server") return [];
-    if (!Array.isArray(extensions) || !extensions.every((ext) => typeof ext === "string"))
-      return [];
-    return [{ root, runtime: setupRuntimes[consumer], extensions }];
-  });
 }
 
 /** Strongly connected groups of two or more stores; every read between them lies on a cycle. */
