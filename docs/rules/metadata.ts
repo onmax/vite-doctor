@@ -3101,4 +3101,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/state/no-external-shared-state-mutation": {
+    description:
+      "Finds shared state that a module exports with Vue's `reactive()` or `ref()` and changes through its own exported functions, which two or more other files still write directly: assignments, `++`/`--`, `delete`, mutating array, Map and Set methods, and `Object.assign` in script, and the same writes plus `v-model` in `<script setup>` templates. Doctor follows the state through imports and re-exports and reports it once, at the declaration, with every external write as a related location. Reads, writes inside the owning module, writes through an alias such as `const s = store`, Pinia stores, props, and `defineModel` are not reported. Strict Preset only.",
+    why: "Vue's state management guide shows a module that exports reactive state and recommends defining the actions that mutate it in the same module, so every change can be found and traced from one place. When the module already provides those actions and components still write the state directly, the changes are scattered across files and skip whatever the actions enforce, such as validation or derived bookkeeping.",
+    recommendedReplacement:
+      "Call the module's existing actions from the components, or add an action for a change the module does not cover yet, such as a reset. Keep the state in the module; do not copy it into each component or move ownership into one component.",
+    examples: [
+      {
+        title: "Change shared state through the store's actions",
+        language: "vue",
+        invalid:
+          '<!-- store.ts -->\n<script lang="ts">\nexport const store = reactive({ count: 0 })\nexport function increment() {\n  store.count++\n}\n</script>\n\n<!-- Counter.vue and ResetButton.vue -->\n<script setup lang="ts">\nimport { store } from \'./store\'\n</script>\n\n<template>\n  <button @click="store.count++">{{ store.count }}</button>\n  <button @click="store.count = 0">Reset</button>\n</template>',
+        valid:
+          '<!-- store.ts -->\n<script lang="ts">\nexport const store = reactive({ count: 0 })\nexport function increment() {\n  store.count++\n}\nexport function reset() {\n  store.count = 0\n}\n</script>\n\n<!-- Counter.vue and ResetButton.vue -->\n<script setup lang="ts">\nimport { increment, reset, store } from \'./store\'\n</script>\n\n<template>\n  <button @click="increment()">{{ store.count }}</button>\n  <button @click="reset()">Reset</button>\n</template>',
+      },
+    ],
+  },
 } satisfies Record<string, RuleDocumentationMetadata>;
