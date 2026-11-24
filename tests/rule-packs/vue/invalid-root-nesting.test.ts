@@ -315,6 +315,8 @@ import Card from '../components/Card.vue'
 <template>
   <ClientOnly><p><Card />static-default-marker</p></ClientOnly>
   <component is="ClientOnly"><p><Card />literal-is-marker</p></component>
+  <slot is="vue:ClientOnly"><p><Card />slot-outlet-marker</p></slot>
+  <component is="vue:ClientOnly"><p><Card />prefixed-literal-marker</p></component>
 </template>`,
         "app/pages/excluded.vue": `<script lang="ts">
 import LocalWrapper from '../components/Wrapper.vue'
@@ -336,6 +338,8 @@ const ready = true
   <ClientOnly is="vue:Wrapper"><p><Card />renamed-wrapper-marker</p></ClientOnly>
   <Transition><ClientOnly><p><Card />transition-marker</p></ClientOnly></Transition>
   <ClientOnly is="vue:ClientOnly"><p><Card />same-wrapper-marker</p></ClientOnly>
+  <slot is="vue:ClientOnly"><p><Card />excluded-slot-outlet-marker</p></slot>
+  <Component is="vue:ClientOnly"><p><Card />excluded-prefixed-literal-marker</p></Component>
 </template>`,
       })) {
         const file = join(root, path);
@@ -355,6 +359,8 @@ const ready = true
       const html = readFileSync(join(root, ".output/public/index.html"), "utf8");
       expect(html).not.toContain("static-default-marker");
       expect(html).toContain("<p><div>card</div>literal-is-marker</p>");
+      expect(html).toContain("<p><div>card</div>slot-outlet-marker</p>");
+      expect(html).toContain("<p><div>card</div>prefixed-literal-marker</p>");
       const excluded = readFileSync(join(root, ".output/public/excluded/index.html"), "utf8");
       expect(excluded).toContain("<p><div>card</div>excluded-marker</p>");
       expect(excluded).toContain("<section><!--[--><!--]--></section>");
@@ -364,7 +370,8 @@ const ready = true
       expect(excluded).toContain("<p><div>card</div>renamed-wrapper-marker</p>");
       expect(excluded).not.toContain("transition-marker");
       expect(excluded).not.toContain("same-wrapper-marker");
-      const cli = new URL("../../../dist/cli.mjs", import.meta.url).href;
+      expect(excluded).toContain("<p><div>card</div>excluded-slot-outlet-marker</p>");
+      expect(excluded).toContain("<p><div>card</div>excluded-prefixed-literal-marker</p>");
       const report = join(root, "doctor-report.json");
       const scan = async () => {
         rmSync(report, { force: true });
@@ -374,18 +381,24 @@ const ready = true
             "--input-type=module",
             "--eval",
             `import { appendFileSync } from 'node:fs';
-           import { main } from ${JSON.stringify(cli)};
-           process.stdout.write = (chunk) => (appendFileSync(${JSON.stringify(report)}, chunk), true);
-           process.exitCode = await main(${JSON.stringify([
-             ".",
-             "--framework",
-             "nuxt",
-             "--no-cache",
-             "--format",
-             "json",
-             "--rules",
-             noInvalidRootNesting.meta.id,
-           ])});`,
+           import { createServer } from 'vite';
+           const server = await createServer({ root: ${JSON.stringify(cwd)}, configFile: false,
+             server: { middlewareMode: true, watch: null, ws: false } });
+           try {
+             const { main } = await server.ssrLoadModule('/src/cli-run.ts');
+             const write = process.stdout.write;
+             process.stdout.write = (chunk) => (appendFileSync(${JSON.stringify(report)}, chunk), true);
+             try { process.exitCode = await main(${JSON.stringify([
+               ".",
+               "--framework",
+               "nuxt",
+               "--no-cache",
+               "--format",
+               "json",
+               "--rules",
+               noInvalidRootNesting.meta.id,
+             ])}); } finally { process.stdout.write = write; }
+           } finally { await server.close(); }`,
           ],
           { cwd: root, encoding: "utf8" },
         );
@@ -400,12 +413,20 @@ const ready = true
         ["VUE0052", "app/pages/excluded.vue", 16],
         ["VUE0052", "app/pages/excluded.vue", 17],
         ["VUE0052", "app/pages/excluded.vue", 18],
+        ["VUE0052", "app/pages/excluded.vue", 21],
+        ["VUE0052", "app/pages/excluded.vue", 22],
         ["VUE0052", "app/pages/index.vue", 11],
+        ["VUE0052", "app/pages/index.vue", 12],
+        ["VUE0052", "app/pages/index.vue", 13],
       ]);
       rmSync(join(root, "app/pages/props.ts"));
       expect(await scan()).toEqual([
         ["VUE0052", "app/pages/excluded.vue", 18],
+        ["VUE0052", "app/pages/excluded.vue", 21],
+        ["VUE0052", "app/pages/excluded.vue", 22],
         ["VUE0052", "app/pages/index.vue", 11],
+        ["VUE0052", "app/pages/index.vue", 12],
+        ["VUE0052", "app/pages/index.vue", 13],
       ]);
     } finally {
       process.chdir(cwd);

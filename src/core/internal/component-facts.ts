@@ -740,14 +740,17 @@ function walkElement(
   }
   const kind = elementKind(element);
   if (kind === "markup") walk.facts.ownMarkup = true;
-  const dynamicIs =
-    element.tagType === 1 && (element.tag === "component" || element.tag === "Component")
-      ? element.props.find((prop) =>
-          prop.type === TemplateNodeType.ATTRIBUTE
-            ? prop.name === "is"
-            : prop.name === "bind" && prop.arg?.isStatic && prop.arg.content === "is",
-        )
-      : undefined;
+  const isComponent = element.tagType === 1;
+  const explicitDynamic =
+    isComponent && (element.tag === "component" || element.tag === "Component");
+  const isProp = isComponent
+    ? element.props.find((prop) =>
+        prop.type === TemplateNodeType.ATTRIBUTE
+          ? prop.name === "is"
+          : prop.name === "bind" && prop.arg?.isStatic && prop.arg.content === "is",
+      )
+    : undefined;
+  const dynamicIs = explicitDynamic ? isProp : undefined;
   let dynamicLiteral = false;
   let dynamicImport: string | undefined;
   if (dynamicIs?.type === TemplateNodeType.ATTRIBUTE) {
@@ -812,12 +815,12 @@ function walkElement(
   const slot = findTemplateDirective(element, "slot");
   const defaultSlot = !slot?.arg || (slot.arg.isStatic && slot.arg.content === "default");
   let childWrappers = wrappers;
-  if (element.tagType === 1 || element.tagType === 2) {
-    const staticIs = element.props.find(
-      (prop) => prop.type === TemplateNodeType.ATTRIBUTE && prop.name === "is",
-    );
-    const isValue = staticIs?.type === TemplateNodeType.ATTRIBUTE && staticIs.value?.content;
-    const renderTag = isValue && isValue.startsWith("vue:") ? isValue.slice(4) : element.tag;
+  if (isComponent || element.tagType === 2) {
+    const staticOverride =
+      !explicitDynamic && isProp?.type === TemplateNodeType.ATTRIBUTE
+        ? isProp.value?.content
+        : undefined;
+    const renderTag = staticOverride?.startsWith("vue:") ? staticOverride.slice(4) : element.tag;
     childWrappers = [
       ...wrappers,
       {
