@@ -201,10 +201,12 @@ export function readAppConfigFlag(
  * Without a Nuxt manifest Doctor only sees the root layer, so `extends` hides the others.
  */
 export function unreadLayers(ctx: RuleContext, layers: NuxtAppSource[]): string | undefined {
-  const known = ctx.project.nuxt?.layers.length ?? 0;
+  const projectApp = isProjectApp(ctx, layers);
+  const known = projectApp ? (ctx.project.nuxt?.layers.length ?? 0) : 0;
   if (known > layers.length)
     return `${known - layers.length} Nuxt layer(s) of the app are outside the Doctor Run.`;
-  if (layers.length !== 1 || ctx.project.nuxt?.manifest?.hasManifest) return undefined;
+  if (layers.length !== 1 || (projectApp && ctx.project.nuxt?.manifest?.hasManifest))
+    return undefined;
   const config = configFile(ctx, layers[0]!.root);
   if (config && /\bextends\s*:/.test(config.text))
     return `${displayPath(ctx, config.file)} extends layers Doctor cannot read without a Nuxt manifest.`;
@@ -414,10 +416,13 @@ function scanIsReliable(ctx: RuleContext, layer: NuxtAppSource, kind: "pages" | 
   );
 }
 
-export function conventionalPagesDirectory(ctx: RuleContext): string | undefined {
-  const layers = nuxtAppSources(ctx);
+export function conventionalPagesDirectory(
+  ctx: RuleContext,
+  layers = nuxtLayerSources(ctx).find((app) => isProjectApp(ctx, app)),
+): string | undefined {
+  if (!layers || layers.length !== 1 || !isProjectApp(ctx, layers)) return undefined;
   const [layer] = layers;
-  if (!layer || layers.length !== 1 || layer.root !== ctx.project.root) return undefined;
+  if (!layer) return undefined;
   if (layer.srcDir !== layer.root && layer.srcDir !== join(layer.root, "app")) return undefined;
   const preparedDir =
     ctx.project.nuxt?.manifest?.resolvedApp?.inputs?.pages?.directories[0]?.directory;
@@ -499,11 +504,13 @@ export function preparedPagesSourceChanged(ctx: RuleContext, conventionalDir: st
   );
 }
 
+function isProjectApp(ctx: RuleContext, layers: NuxtAppSource[]): boolean {
+  return layers[0]?.root === ctx.project.root;
+}
+
 function currentManifest(ctx: RuleContext, layers: NuxtAppSource[], kind: NuxtAppInventoryKind) {
   const manifest = ctx.project.nuxt?.manifest;
-  return manifest?.resolvedAppCurrent?.[kind] && layers[0]?.root === ctx.project.root
-    ? manifest
-    : undefined;
+  return manifest?.resolvedAppCurrent?.[kind] && isProjectApp(ctx, layers) ? manifest : undefined;
 }
 
 export interface PageRoute {
@@ -513,8 +520,8 @@ export interface PageRoute {
 }
 
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
-  const prepared = ctx.project.nuxt?.manifest?.resolvedApp;
-  const conventionalDir = prepared && conventionalPagesDirectory(ctx);
+  const prepared = isProjectApp(ctx, layers) ? ctx.project.nuxt?.manifest?.resolvedApp : undefined;
+  const conventionalDir = prepared && conventionalPagesDirectory(ctx, layers);
   const manifest = preparedPagesSourceChanged(ctx, conventionalDir)
     ? undefined
     : currentManifest(ctx, layers, "pages");

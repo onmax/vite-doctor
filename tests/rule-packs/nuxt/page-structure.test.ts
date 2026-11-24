@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { buildNuxt, loadNuxt } from "nuxt/kit";
-import { dirname, join } from "pathe";
+import { dirname, join, relative } from "pathe";
 import { describe, expect, test } from "vite-plus/test";
 import {
   defineDoctorExtension,
@@ -298,6 +298,7 @@ describe("nuxt/pages/single-root-node", () => {
       (
         await run(id, {
           ...files,
+          "app/components/Unused.vue": template('<NuxtPage :transition="false" />'),
           "app/app.vue": template(
             "<NuxtLayout><NuxtPage :transition=\"{ name: 'fade' }\" /></NuxtLayout>",
           ),
@@ -588,6 +589,7 @@ function runPreparedRules(root: string) {
   const rules = [
     rule("nuxt/routing/parent-page-requires-nuxtpage"),
     rule("nuxt/layouts/app-renders-nuxtlayout"),
+    rule("nuxt/pages/single-root-node"),
     rule("nuxt/routing/keepalive-requires-max"),
   ];
   return runDoctor({
@@ -609,6 +611,61 @@ function runPreparedRules(root: string) {
     ],
   });
 }
+
+test("scopes prepared routes and conventional fallbacks to each Nuxt app", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-prepared-two-apps-"));
+  const cwd = process.cwd();
+  const write = (path: string, text: string) => {
+    const file = join(root, path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, text);
+  };
+  try {
+    symlinkSync(
+      fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+      join(root, "node_modules"),
+      "junction",
+    );
+    write("package.json", JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }));
+    write("nuxt.config.ts", "export default {}\n");
+    write("app/pages/teams.vue", template("<div>Teams</div>"));
+    write("docs/nuxt.config.ts", "export default { app: { pageTransition: true } }\n");
+    write("docs/app/app.vue", template("<NuxtPage />"));
+    write("docs/app/layouts/default.vue", template("<div><slot /></div>"));
+    write("docs/app/pages/guides.vue", template("<div>Guides</div>"));
+    write("docs/app/pages/guides/[id].vue", template("<div>Guide</div>"));
+    write("docs/app/pages/index.vue", template("<h1>Docs</h1><p>Welcome</p>"));
+
+    const issues = async () =>
+      (await runPreparedRules(root)).diagnostics
+        .map(({ code, file }) => `${code} ${relative(root, file!)}`)
+        .sort((left, right) => left.localeCompare(right));
+    const docsIssues = [
+      "NUXT0098 docs/app/pages/guides.vue",
+      "NUXT0099 docs/app/app.vue",
+      "NUXT0100 docs/app/pages/index.vue",
+    ];
+    expect(await issues()).toEqual(docsIssues);
+
+    process.chdir(root);
+    const nuxt = await loadNuxt({
+      cwd: root,
+      overrides: { _prepare: true, modules: [nuxtDoctorModule], telemetry: false },
+    });
+    try {
+      await buildNuxt(nuxt);
+    } finally {
+      await nuxt.close();
+    }
+    expect.soft(await issues()).toEqual(docsIssues);
+
+    write("app/pages/teams/[id].vue", template("<div>Team</div>"));
+    expect(await issues()).toEqual(["NUXT0098 app/pages/teams.vue", ...docsIssues]);
+  } finally {
+    process.chdir(cwd);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test.each(["pages", "app/pages"])(
   "rechecks page selection after preparing %s",
