@@ -1,5 +1,10 @@
 import { relative } from "pathe";
-import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
+import {
+  createRule,
+  type NuxtProjectInfo,
+  type RuleContext,
+  type SourceRange,
+} from "../../../core/index.js";
 import { isTransformedAppFile } from "../../../core/internal/auto-import-edges.js";
 import { analyzeScript, type ScriptScope } from "../../../core/internal/script-scope.js";
 import { createVueScriptForParsing, parseSfcFile } from "../../../core/internal/sfc.js";
@@ -16,8 +21,9 @@ import {
 import { diagnostics } from "../diagnostics.js";
 import {
   collectStoreModules,
-  findStoreDefinitions,
+  isPiniaSource,
   nuxtForFile,
+  readStoreDefinition,
   resolvedCalleeImport,
   storeResolver,
   type LocatedStore,
@@ -95,48 +101,50 @@ export const noActionBypass = createRule({
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        const modules = await collectStoreModules(ctx, await ctx.inventory.sourcePaths());
-        const located = modules.flatMap((module) =>
-          findStoreDefinitions(module.program, module.text).map((store) => ({ store, module })),
-        );
-        if (!located.length) return;
-        const resolve = storeResolver(ctx, located);
-        const registeredStores = new Map<string, Map<LocatedStore, string[]>>();
-        function registeredNames(file: string, store: LocatedStore): string[] | undefined {
-          const nuxt = nuxtForFile(ctx, file);
-          if (!nuxt?.autoImportsAuthoritative) return undefined;
-          let byStore = registeredStores.get(file);
-          if (!byStore) {
-            registeredStores.set(file, (byStore = new Map()));
-            for (const [name, entry] of nuxt.autoImports) {
-              if (entry.type) continue;
-              const target = resolve(file, { kind: "import", source: "#imports", name });
-              if (!target) continue;
-              const names = byStore.get(target.store) ?? [];
-              names.push(name);
-              byStore.set(target.store, names);
+        const factoryAliases = new Map<NuxtProjectInfo, string[]>();
+        const modules = await collectStoreModules(
+          ctx,
+          await ctx.inventory.sourcePaths(),
+          (file, text) => {
+            if (text.includes("defineStore")) return true;
+            const nuxt = nuxtForFile(ctx, file);
+            if (!nuxt?.autoImportsAuthoritative) return false;
+            let aliases = factoryAliases.get(nuxt);
+            if (!aliases) {
+              aliases = [...nuxt.autoImports].flatMap(([name, entry]) =>
+                !entry.type && entry.name === "defineStore" && isPiniaSource(entry.from)
+                  ? [name]
+                  : [],
+              );
+              factoryAliases.set(nuxt, aliases);
             }
-          }
-          return byStore.get(store) ?? [];
-        }
+            return aliases.some((name) => text.includes(name));
+          },
+        );
         const storeCalls = new Map<string, Array<[number, number]>>();
+        const located: LocatedStore[] = [];
         const stores: AnalyzedStore[] = [];
         for (const module of modules) {
           const scope = await analyzeModule(module);
           if (!scope) continue;
-          const calls = defineStoreCalls(ctx, module.file, scope);
-          storeCalls.set(
-            module.file,
-            calls.map((call) => call.range),
-          );
-          const byId = new Map(calls.map((call) => [storeIdOffset(call), call]));
-          for (const store of located) {
-            if (store.module !== module) continue;
-            const call = byId.get(store.store.idStart);
-            const analyzed = call && analyzeStore(ctx, store, scope, call);
+          const ranges: Array<[number, number]> = [];
+          storeCalls.set(module.file, ranges);
+          const nuxt = nuxtForFile(ctx, module.file);
+          const implicit = implicitImportsEnabled(ctx, module.file);
+          walk(scope, scope.ast, (call, ancestors) => {
+            if (call.type !== "CallExpression" || !isDefineStoreCall(call, scope, nuxt, implicit))
+              return;
+            ranges.push(call.range);
+            const definition = readStoreDefinition(call, ancestors);
+            if (!definition) return;
+            const store = { store: definition, module };
+            located.push(store);
+            const analyzed = analyzeStore(ctx, store, scope, call);
             if (analyzed) stores.push(analyzed);
-          }
+          });
         }
+        if (!stores.length) return;
+        const { resolveUse, registeredNames } = storeResolver(ctx, located);
         const graph = await ctx.inventory.importGraph();
         for (const store of stores) {
           const writes = new Map<string, SharedStateWrite>();
@@ -162,7 +170,7 @@ export const noActionBypass = createRule({
                         const registered = registeredNames(file, store.located);
                         if (registered) return registered.includes(name) ? "resolved" : undefined;
                         if (kind === "explicit") return undefined;
-                        const target = resolve(file, { kind: "auto-import", name });
+                        const target = resolveUse(file, { kind: "auto-import", name });
                         if (target?.store !== store.located) return undefined;
                         return target.byName ? "by-name" : "resolved";
                       },
@@ -203,34 +211,23 @@ async function analyzeModule(module: StoreModule): Promise<ScriptScope | null> {
   return analyzeScript(script.text, script.lang === "jsx" || script.lang === "tsx" ? "tsx" : "ts");
 }
 
-function defineStoreCalls(ctx: RuleContext, file: string, scope: ScriptScope): AnyNode[] {
-  const calls: AnyNode[] = [];
-  const nuxt = nuxtForFile(ctx, file);
-  const implicit = implicitImportsEnabled(ctx, file);
-  walk(scope, scope.ast, (node) => {
-    if (node.type !== "CallExpression") return;
-    const callee = unwrap(node.callee);
-    const binding = calleeBinding(callee, scope, nuxt, implicit);
-    if (binding?.from === "pinia" && binding.name === "defineStore") calls.push(node);
-    else if (
-      !binding &&
-      implicit &&
-      !nuxt?.autoImportsAuthoritative &&
-      !nuxt?.autoImports.has("defineStore") &&
-      callee?.type === "Identifier" &&
-      callee.name === "defineStore" &&
-      scope.references.get(callee)?.resolved === null
-    )
-      calls.push(node);
-  });
-  return calls;
-}
-
-function storeIdOffset(call: AnyNode): number | undefined {
-  const first = unwrap(call.arguments[0]);
-  return first?.type === "ObjectExpression"
-    ? propertyValue(first, "id")?.range[0]
-    : first?.range[0];
+function isDefineStoreCall(
+  call: AnyNode,
+  scope: ScriptScope,
+  nuxt: NuxtProjectInfo | undefined,
+  implicit: boolean,
+): boolean {
+  const callee = unwrap(call.callee);
+  const binding = calleeBinding(callee, scope, nuxt, implicit);
+  if (binding) return binding.name === "defineStore" && isPiniaSource(binding.from);
+  return (
+    implicit &&
+    !nuxt?.autoImportsAuthoritative &&
+    !nuxt?.autoImports.has("defineStore") &&
+    callee?.type === "Identifier" &&
+    callee.name === "defineStore" &&
+    scope.references.get(callee)?.resolved === null
+  );
 }
 
 function implicitImportsEnabled(ctx: RuleContext, file: string): boolean {
@@ -583,10 +580,18 @@ function unwrap(node: AnyNode): AnyNode {
   return node;
 }
 
-function walk(scope: ScriptScope, node: AnyNode, visit: (node: AnyNode) => boolean | void) {
-  if (!node || typeof node.type !== "string" || visit(node) === false) return;
+function walk(
+  scope: ScriptScope,
+  node: AnyNode,
+  visit: (node: AnyNode, ancestors: AnyNode[]) => boolean | void,
+  ancestors: AnyNode[] = [],
+) {
+  if (!node || typeof node.type !== "string" || visit(node, ancestors) === false) return;
+  ancestors.push(node);
   for (const key of scope.visitorKeys[node.type] ?? []) {
     const value = node[key];
-    for (const child of Array.isArray(value) ? value : [value]) walk(scope, child, visit);
+    for (const child of Array.isArray(value) ? value : [value])
+      walk(scope, child, visit, ancestors);
   }
+  ancestors.pop();
 }

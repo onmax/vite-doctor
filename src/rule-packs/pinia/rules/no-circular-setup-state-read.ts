@@ -90,7 +90,7 @@ export const noCircularSetupStateRead = createRule({
 
 function storeEdges(ctx: RuleContext, stores: LocatedStore[]): StoreEdge[] {
   const edges: StoreEdge[] = [];
-  const resolveUse = storeResolver(ctx, stores);
+  const { resolveUse } = storeResolver(ctx, stores);
   for (const from of stores) {
     for (const use of from.store.uses) {
       const target = resolveUse(from.module.file, use.target);

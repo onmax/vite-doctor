@@ -1,9 +1,10 @@
 import { describe, expect, test } from "vite-plus/test";
+import type { DoctorRule } from "../../../src/core/index.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
 import * as pinia from "../../../src/rule-packs/pinia/index.ts";
 
 const RULE_ID = "pinia/state/no-action-bypass";
-const rule = (pinia as Record<string, any>).noActionBypass;
+const rule = pinia.noActionBypass;
 
 function run(files: Record<string, string>, dependencies: Record<string, string> = {}) {
   return runProjectFixture({
@@ -61,12 +62,12 @@ const nuxtWriter = (binding: string, imported = "") =>
 function runNuxt(
   files: Record<string, string>,
   autoImports: Array<{ name: string; from: string; as?: string }> | null,
-  { enabled = true, excluded = false, transformExcluded = false } = {},
+  { enabled = true, excluded = false, transformExcluded = false, fixtureRule = rule } = {},
 ) {
   return runProjectFixture({
     framework: "nuxt",
     dependencies: { pinia: "^3.0.0", "@pinia/nuxt": "^0.11.0" },
-    rules: [rule],
+    rules: [fixtureRule],
     config: excluded ? { exclude: ["cart.ts"] } : undefined,
     files: {
       ...(autoImports && {
@@ -86,6 +87,99 @@ function runNuxt(
 }
 
 describe(RULE_ID, () => {
+  const piniaRuntime = "/fixture/node_modules/@pinia/nuxt/dist/runtime/composables";
+
+  test.each([
+    ["defineStore", "", "defineStore", piniaRuntime],
+    ["defineStore", "import { defineStore } from '#imports'", "defineStore", piniaRuntime],
+    ["makeStore", "", "makeStore", piniaRuntime],
+    ["makeStore", "import { defineStore as makeStore } from '#imports'", "defineStore", "pinia"],
+  ])("recognizes Nuxt's %s factory with import %s", async (factory, imported, name, from) => {
+    const writer = nuxtWriter("useCartStore", "import { useCartStore } from './cart'");
+    const result = await runNuxt(
+      {
+        "cart.ts": optionCart
+          .replace("import { defineStore } from 'pinia'", imported)
+          .replace("= defineStore(", `= ${factory}(`),
+        "a.ts": writer,
+        "b.ts": writer,
+      },
+      [{ name: "defineStore", as: name, from }],
+      { enabled: Boolean(!imported) },
+    );
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
+  test.each([
+    [piniaRuntime, "", 0],
+    [piniaRuntime, "import { defineStore } from '#imports'", 0],
+    ["~~/custom", "", 1],
+    [piniaRuntime, "const defineStore = (_id, setup) => setup()", 1],
+  ])(
+    "only excludes dynamic store boundaries with Pinia bindings: %s (%s)",
+    async (from, factory, count) => {
+      const writer = nuxtWriter("useCartStore", "import { useCartStore } from './cart'");
+      const result = await runNuxt(
+        {
+          "a.ts": writer,
+          "b.ts": `import { useCartStore } from './cart'
+${factory}
+defineStore(String(1), () => { useCartStore().items = [] })`,
+        },
+        [{ name: "defineStore", from }],
+      );
+      expect(result.diagnostics).toHaveLength(count);
+    },
+  );
+
+  test("indexes Nuxt registrations once per resolution context, not per source file", async () => {
+    let unrelatedLookups = 0;
+    const fixtureRule: DoctorRule = {
+      ...rule,
+      create(ctx) {
+        return rule.create({
+          ...ctx,
+          fs: {
+            ...ctx.fs,
+            stat(path) {
+              if (path.includes("/unrelated/")) unrelatedLookups++;
+              return ctx.fs.stat(path);
+            },
+          },
+        });
+      },
+    };
+    const writer = nuxtWriter("useCartStore");
+    const decoys = Array.from({ length: 12 }, (_, index) => `decoy${index}`);
+    const result = await runNuxt(
+      {
+        "a.ts": writer,
+        "nested/b.ts": writer,
+        ...Object.fromEntries(decoys.map((name) => [`${name}/index.ts`, "export const noop = 0"])),
+      },
+      [
+        { name: "useCartStore", from: "~~/cart" },
+        ...decoys.map((name) => ({ name, from: `~~/unrelated/${name}.ts` })),
+      ],
+      { fixtureRule },
+    );
+    expect(result.diagnostics).toHaveLength(1);
+    expect(unrelatedLookups).toBeLessThan(20 * decoys.length);
+  });
+
+  test("resolves relative registrations independently in each caller directory", async () => {
+    const writer = nuxtWriter("useCartStore", "import { useCartStore } from '#imports'");
+    const result = await runNuxt(
+      {
+        "a.ts": writer,
+        "outside/b.ts": writer,
+        "outside/cart.ts": "export const useCartStore = () => ({ items: [] })",
+      },
+      [{ name: "useCartStore", from: "./cart" }],
+    );
+    expect(result.diagnostics).toEqual([]);
+  });
+
   test("does not report stores excluded from the Doctor Run", async () => {
     const writer = nuxtWriter("useCartStore", "import { useCartStore } from '#imports'");
     const result = await runNuxt(

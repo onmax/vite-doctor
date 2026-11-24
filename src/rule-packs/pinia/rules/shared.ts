@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, relative, resolve } from "pathe";
-import type { NuxtProjectInfo, RuleContext } from "../../../core/index.js";
+import type { AutoImportEntry, NuxtProjectInfo, RuleContext } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseScriptScope, type ScopeReference } from "../../../core/internal/script-scope.js";
 import { parseSfcFile, parseVueScripts } from "../../../core/internal/sfc.js";
@@ -111,6 +111,8 @@ export function findStoreUses(
 export async function collectStoreModules(
   ctx: RuleContext,
   sourcePaths?: readonly string[],
+  mentionsFactory: (file: string, text: string) => boolean = (_, text) =>
+    text.includes("defineStore"),
 ): Promise<StoreModule[]> {
   const files =
     sourcePaths ??
@@ -121,7 +123,7 @@ export async function collectStoreModules(
   for (const file of files) {
     if (/\.mdc?$/.test(file)) continue;
     const text = ctx.fs.readText(file);
-    if (!text?.includes("defineStore")) continue;
+    if (!text || !mentionsFactory(file, text)) continue;
     const program = file.endsWith(".vue")
       ? parseVueScripts(file, (await parseSfcFile(file, text)).descriptor, text)
       : parseScript(file, text);
@@ -166,9 +168,8 @@ function analyzeStoreScript(
       )
     )
       return;
-    const id = readStoreId(node);
-    if (!id) return;
-    definitions.push({ ...id, binding: readBinding(node, ancestors), setup: readSetup(node) });
+    const definition = readStoreDefinition(node, ancestors);
+    if (definition) definitions.push(definition);
   });
   return { definitions, references };
 }
@@ -269,9 +270,16 @@ function isRefHelper(
   const from = binding.from.replaceAll("\\", "/");
   return (
     (binding.name === "toRefs" && from === "vue") ||
-    (binding.name === "storeToRefs" &&
-      (from === "pinia" ||
-        /(?:^|\/)node_modules\/@pinia\/nuxt\/dist\/runtime\/composables(?:\.[cm]?js)?$/.test(from)))
+    (binding.name === "storeToRefs" && isPiniaSource(from))
+  );
+}
+
+export function isPiniaSource(source: string): boolean {
+  return (
+    source === "pinia" ||
+    /^(?:.*\/node_modules\/|node_modules\/)?@pinia\/nuxt\/dist\/runtime\/composables(?:\.[cm]?js)?$/.test(
+      source.replaceAll("\\", "/"),
+    )
   );
 }
 
@@ -403,6 +411,14 @@ function enclosing(node: AnyNode, ancestors: AnyNode[]): { expression: AnyNode; 
   while (index >= 0 && TRANSPARENT_WRAPPERS.has(ancestors[index].type))
     expression = ancestors[index--];
   return { expression, parent: ancestors[index] };
+}
+
+export function readStoreDefinition(
+  call: AnyNode,
+  ancestors: AnyNode[],
+): StoreDefinition | undefined {
+  const id = readStoreId(call);
+  return id && { ...id, binding: readBinding(call, ancestors), setup: readSetup(call) };
 }
 
 function readStoreId(call: AnyNode): Omit<StoreDefinition, "binding" | "setup"> | undefined {
@@ -598,7 +614,7 @@ export function storeResolver<S extends StoreDefinition>(
 
   function moduleFile(from: string, source: string) {
     const matches = new Set(
-      importBases(ctx, from, source).flatMap((base) => {
+      [...new Set(importBases(ctx, from, source))].flatMap((base) => {
         const file = importCandidates(base).find(
           (candidate) => byFile.has(candidate) || ctx.fs.stat(candidate)?.isFile(),
         );
@@ -689,10 +705,10 @@ export function storeResolver<S extends StoreDefinition>(
     return match;
   }
 
-  return (
+  function resolveUse(
     file: string,
     target: SetupStoreUseTarget,
-  ): { store: LocatedStore<S>; byName: boolean } | undefined => {
+  ): { store: LocatedStore<S>; byName: boolean } | undefined {
     const ownPackage = packageRoot(ctx, file);
     const nuxt = nuxtForFile(ctx, file);
     if (target.kind === "local") {
@@ -707,8 +723,7 @@ export function storeResolver<S extends StoreDefinition>(
     if (target.kind === "auto-import" && nuxt?.autoImportEnabled === false) return undefined;
     if (nuxt?.autoImportsAuthoritative) {
       const registration = nuxtValueImport(nuxt, target.name);
-      const imported = registration && moduleFile(file, registration.from);
-      const store = imported && exported(imported, registration.name);
+      const store = registration && registeredStore(file, registration);
       return store ? { store, byName: false } : undefined;
     }
     if (target.kind === "import" || nuxt?.autoImports.has(target.name)) return undefined;
@@ -718,7 +733,60 @@ export function storeResolver<S extends StoreDefinition>(
     const samePackage = named.filter((store) => packageRoot(ctx, store.module.file) === ownPackage);
     const candidates = samePackage.length ? samePackage : named;
     return candidates.length === 1 ? { store: candidates[0]!, byName: true } : undefined;
-  };
+  }
+
+  function registeredStore(file: string, registration: AutoImportEntry) {
+    const imported = moduleFile(file, registration.from);
+    return imported ? exported(imported, registration.name) : undefined;
+  }
+
+  type Registrations = Array<[string, AutoImportEntry]>;
+  type NamesByStore = Map<LocatedStore<S>, string[]>;
+  const inventories = new Map<
+    NuxtProjectInfo,
+    { shared: Registrations; relative: Registrations }
+  >();
+  const packageIndexes = new Map<string, NamesByStore>();
+  const directoryIndexes = new Map<string, NamesByStore>();
+
+  function indexRegistrations(file: string, entries: Registrations): NamesByStore {
+    const index: NamesByStore = new Map();
+    for (const [name, entry] of entries) {
+      const store = registeredStore(file, entry);
+      if (!store) continue;
+      let names = index.get(store);
+      if (!names) index.set(store, (names = []));
+      names.push(name);
+    }
+    return index;
+  }
+
+  function registeredNames(file: string, store: LocatedStore<S>): string[] | undefined {
+    const ownPackage = packageRoot(ctx, file);
+    const nuxt = nuxtForPackage(ctx, ownPackage);
+    if (!nuxt?.autoImportsAuthoritative) return undefined;
+    let inventory = inventories.get(nuxt);
+    if (!inventory) {
+      inventory = { shared: [], relative: [] };
+      inventories.set(nuxt, inventory);
+      for (const [name, entry] of nuxt.autoImports) {
+        if (entry.type) continue;
+        (isRelativeImport(entry.from) ? inventory.relative : inventory.shared).push([name, entry]);
+      }
+    }
+    let shared = packageIndexes.get(ownPackage);
+    if (!shared)
+      packageIndexes.set(ownPackage, (shared = indexRegistrations(file, inventory.shared)));
+    const names = shared.get(store) ?? [];
+    if (!inventory.relative.length) return names;
+    const directory = dirname(file);
+    let local = directoryIndexes.get(directory);
+    if (!local)
+      directoryIndexes.set(directory, (local = indexRegistrations(file, inventory.relative)));
+    return [...names, ...(local.get(store) ?? [])];
+  }
+
+  return { resolveUse, registeredNames };
 }
 
 function exportName(node: StoreModule["program"]): string {
@@ -744,23 +812,28 @@ function bindsName(pattern: StoreModule["program"], name: string): boolean {
   }
 }
 
+function isRelativeImport(specifier: string): boolean {
+  return specifier.startsWith("./") || specifier.startsWith("../");
+}
+
 function importBases(ctx: RuleContext, from: string, specifier: string): string[] {
   const bare = specifier.split("?")[0]!;
   const root = ctx.project.root;
-  const own = packageRoot(ctx, from);
-  let bases: string[] = [];
-  if (isAbsolute(bare)) bases = [bare];
-  else if (bare.startsWith("./") || bare.startsWith("../")) bases = [resolve(dirname(from), bare)];
-  else if (/^(?:~~|@@)\//.test(bare))
-    bases = [own, root].map((base) => resolve(base, bare.slice(3)));
-  else if (/^[~@]\//.test(bare)) {
-    const appDir = nuxtForFile(ctx, from)?.appDir;
-    bases = [
+  if (isAbsolute(bare)) return [bare];
+  if (isRelativeImport(bare)) return [resolve(dirname(from), bare)];
+  if (/^(?:~~|@@)\//.test(bare)) {
+    const own = packageRoot(ctx, from);
+    return [own, root].map((base) => resolve(base, bare.slice(3)));
+  }
+  if (/^[~@]\//.test(bare)) {
+    const own = packageRoot(ctx, from);
+    const appDir = nuxtForPackage(ctx, own)?.appDir;
+    return [
       ...(appDir ? [appDir] : []),
       ...[own, root].flatMap((base) => [resolve(base, "app"), resolve(base, "src"), base]),
     ].map((base) => resolve(base, bare.slice(2)));
   }
-  return bases;
+  return [];
 }
 
 function importCandidates(base: string): string[] {
@@ -774,7 +847,10 @@ function importCandidates(base: string): string[] {
 }
 
 export function nuxtForFile(ctx: RuleContext, file: string) {
-  const ownPackage = packageRoot(ctx, file);
+  return nuxtForPackage(ctx, packageRoot(ctx, file));
+}
+
+function nuxtForPackage(ctx: RuleContext, ownPackage: string) {
   return (
     ctx.project.workspaceNuxt?.find((item) => resolve(ctx.project.root, item.root) === ownPackage)
       ?.nuxt ?? ctx.project.nuxt
