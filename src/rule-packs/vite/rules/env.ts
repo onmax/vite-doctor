@@ -445,7 +445,7 @@ function readVitestConfig(ctx: RuleContext, file: string) {
   const text = ctx.fs.readText(file);
   const scope = text === undefined ? null : analyzeScript(text, "ts");
   if (!scope) return;
-  const config = staticConfig(scope);
+  const config = staticConfig(scope, "vitest");
   if (!config) return;
   const test = config.has("test") ? objectProperties(scope, config.get("test")) : undefined;
   if (test !== null) return { scope, config, test };

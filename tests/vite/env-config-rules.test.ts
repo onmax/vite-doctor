@@ -90,11 +90,23 @@ if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.m
   test("recognizes an owning Vitest config without a local dependency", async () => {
     expect(
       await run([noUnprefixedClientEnv], {
-        "vitest.config.mts": config("{}"),
+        "vitest.config.mts": `import { defineProject } from 'vitest/config'
+export default defineProject({})`,
         "vite.config.ts": config("{}"),
         "src/main.ts": "console.log(import.meta.env.TEST)",
       }),
     ).toEqual([]);
+  });
+
+  test("does not use an unrelated defineProject wrapper as Vitest evidence", async () => {
+    expect(
+      await run([noUnprefixedClientEnv], {
+        "vitest.config.ts": `import { defineProject } from './config'
+export default defineProject({})`,
+        "vite.config.ts": config("{}"),
+        "src/main.ts": "console.log(import.meta.env.VITEST)",
+      }),
+    ).toEqual([expect.stringMatching(/^VITE0030: import\.meta\.env\.VITEST is undefined/)]);
   });
 
   test("recognizes Vitest configured through Vite+ without a Vitest dependency", async () => {
@@ -146,6 +158,7 @@ if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.m
   });
 
   test.each([
+    ["apps/admin", "vitest.config.ts", "{ root: '../web' }", false],
     ["apps/admin/vitest.unit.config.ts", "vitest.unit.config.ts", "{ root: '../web' }", false],
     ["apps/a*", "vitest.config.ts", "{ root: '../web' }", false],
     [
@@ -170,7 +183,10 @@ if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.m
       files[`apps/${app}/vite.config.ts`] = config("{}");
       files[`apps/${app}/src/main.ts`] = "console.log(import.meta.env.VITEST)";
     }
-    if (body) files[`apps/admin/${file}`] = config(body);
+    if (body) {
+      files[`apps/admin/${file}`] = `import * as vitest from 'vitest/config'
+export default vitest.defineProject(${body})`;
+    }
     const result = await runProjectFixture({
       framework: "vite",
       rules: [noUnprefixedClientEnv],

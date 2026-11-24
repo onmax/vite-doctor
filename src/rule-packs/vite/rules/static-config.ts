@@ -91,7 +91,10 @@ export function simpleReturn(body: AnyNode): AnyNode {
     return last.argument;
 }
 
-export function staticConfig(scope: ScriptScope): Map<string, AnyNode> | null {
+export function staticConfig(
+  scope: ScriptScope,
+  kind: "vite" | "vitest" = "vite",
+): Map<string, AnyNode> | null {
   let exported: AnyNode;
   for (const statement of scope.ast.body) {
     if (statement.type === "ExportDefaultDeclaration") exported = statement.declaration;
@@ -129,11 +132,17 @@ export function staticConfig(scope: ScriptScope): Map<string, AnyNode> | null {
       callee.type === "MemberExpression" ? callee.object : callee,
     );
     if (!binding || binding.typeOnly || !VITE_MODULES.has(binding.source)) return null;
+    const wrapper =
+      callee.type === "MemberExpression"
+        ? binding.type === "ImportNamespaceSpecifier"
+          ? callee.computed
+            ? staticString(callee.property)
+            : propertyName(callee.property)
+          : null
+        : binding.imported;
     if (
-      binding.imported !== "defineConfig" &&
-      !(
-        binding.type === "ImportNamespaceSpecifier" && memberPath(callee)?.endsWith(".defineConfig")
-      )
+      wrapper !== "defineConfig" &&
+      !(kind === "vitest" && wrapper === "defineProject" && binding.source !== "vite")
     )
       return null;
     node = resolveConst(scope, node.arguments[0]);
