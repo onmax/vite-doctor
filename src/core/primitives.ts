@@ -287,6 +287,7 @@ export interface NuxtProjectInfo {
     scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
+    serverAppEntryFiles?: string[];
     keyedComposables: NuxtKeyedComposable[];
     aliases: Record<string, string>;
     autoImportTransform?: {
@@ -401,6 +402,8 @@ export interface NuxtDoctorManifest {
   keyedComposables?: unknown[];
   importsDirs?: string[];
   pluginFiles?: string[];
+  /** Nuxt-resolved app entries eligible for server-side rendering, relative to rootDir. */
+  serverAppEntryFiles?: string[];
   appScanRoots?: string[];
   sharedScanRoots?: string[];
 }

@@ -1,7 +1,5 @@
-import { join, relative, resolve } from "pathe";
+import { relative } from "pathe";
 import { createRule, type NuxtProjectInfo, type RuleContext } from "../../../core/index.js";
-import { ownPropertyName } from "../../../core/internal/shared-state-writes.js";
-import { parseScriptResult } from "../../../core/internal/script.js";
 import { diagnostics } from "../diagnostics.js";
 import { isPiniaSource, nuxtForFile } from "./shared.js";
 import {
@@ -46,7 +44,7 @@ export const noModuleScopeStore = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast", "graph"],
+    consumesEvidence: ["ast", "graph", "runtime"],
     cost: "medium",
   },
   create(ctx) {
@@ -54,15 +52,14 @@ export const noModuleScopeStore = createRule({
       async onWorkspaceEnd() {
         const collection = await collectStores(ctx);
         if (!collection.stores.length) return;
-        const execution = nuxtExecution(ctx);
+        const serverReachable = nuxtServerReachability(ctx);
         for (const call of await findStoreCalls(ctx, collection)) {
           if (call.context !== "module") continue;
           const argument = call.call.arguments[0];
           if (argument && !isMissingInstance(call, argument)) continue;
           const nuxt = nuxtForFile(ctx, call.file);
           const active = hasPriorActivation(ctx, call);
-          const server =
-            nuxt && nuxt.ssr !== false && (await execution(nuxt, call.file)) === "server";
+          const server = await serverReachable(nuxt, call.file);
           if (active && !server) continue;
           const consequences = [];
           if (!active)
@@ -108,199 +105,29 @@ export const noModuleScopeStore = createRule({
   },
 });
 
-const CLIENT_SUFFIX = /\.client(?:\.\w+)*$/;
-const SCRIPT_EXTENSION = /\.[cm]?[jt]sx?$/;
-const PLUGIN_EXTENSIONS = [".ts", ".js", ".mts", ".mjs", ".cts", ".cjs", ".tsx", ".jsx"];
-type Execution = "client" | "server" | "unknown";
-
-function nuxtExecution(ctx: RuleContext) {
-  const entryPoints = new Map<NuxtProjectInfo, ReturnType<typeof nuxtEntryPoints>>();
-  return async (nuxt: NuxtProjectInfo, file: string): Promise<Execution> => {
-    let entryPoint = entryPoints.get(nuxt);
-    if (!entryPoint) {
-      entryPoint = nuxtEntryPoints(ctx, nuxt);
-      entryPoints.set(nuxt, entryPoint);
+function nuxtServerReachability(ctx: RuleContext) {
+  const entries = new Map<NuxtProjectInfo, Set<string>>();
+  return async (nuxt: NuxtProjectInfo | undefined, file: string): Promise<boolean> => {
+    if (!nuxt?.manifest?.isCurrent || nuxt.ssr === false) return false;
+    let roots = entries.get(nuxt);
+    if (!roots) {
+      roots = new Set(nuxt.manifest.serverAppEntryFiles);
+      entries.set(nuxt, roots);
     }
+    if (!roots.size) return false;
     const graph = await ctx.inventory.importGraph();
     const pending = [file];
     const visited = new Set(pending);
-    let client = false;
-    let unknown = false;
     for (const path of pending) {
-      const mode = entryPoint(path);
-      if (mode === "server") return "server";
-      if (mode === "client") client = true;
-      let hasImporter = false;
+      if (roots.has(path)) return true;
       for (const edge of graph.importersOf(path)) {
-        if (edge.typeOnly || edge.kind === "dynamic-import") continue;
-        hasImporter = true;
-        if (visited.has(edge.from)) continue;
+        if (edge.typeOnly || edge.kind === "dynamic-import" || visited.has(edge.from)) continue;
         visited.add(edge.from);
         pending.push(edge.from);
       }
-      if (mode === "unknown" || (!mode && !hasImporter)) unknown = true;
     }
-    return client && !unknown ? "client" : "unknown";
+    return false;
   };
-}
-
-function nuxtEntryPoints(ctx: RuleContext, nuxt: NuxtProjectInfo) {
-  const appRoot =
-    nuxt.appRoots
-      .filter((root) => nuxt.appDir === root || nuxt.appDir.startsWith(`${root}/`))
-      .sort((left, right) => right.length - left.length)[0] ?? nuxt.layers[0]?.root;
-  const roots = new Map(nuxt.layers.map((layer) => [layer.root, layer.srcDir]));
-  if (appRoot) roots.set(appRoot, nuxt.appDir);
-  const configs = [...roots].map(([root, fallbackDir]) => {
-    const fields = readNuxtFields(ctx, root);
-    const source = fields?.get("srcDir");
-    const srcDir =
-      nuxt.manifest?.isCurrent || !source
-        ? (fallbackDir ?? root)
-        : typeof source.value === "string"
-          ? resolve(root, source.value)
-          : undefined;
-    return { root, srcDir, fields };
-  });
-  const app = configs.find(({ root }) => root === appRoot);
-  const registered = new Map<string, Execution>();
-  let registrationsKnown = true;
-  const directories = configs.flatMap(({ root, srcDir, fields }) => {
-    if (!srcDir || !fields) {
-      registrationsKnown = false;
-      return [];
-    }
-    const plugins = readPluginRegistrations(ctx, root, srcDir, fields, nuxt);
-    if (!plugins) registrationsKnown = false;
-    for (const [file, mode] of plugins ?? []) {
-      const existing = registered.get(file);
-      registered.set(file, existing && existing !== mode ? "unknown" : mode);
-    }
-    const dir = fields.get("dir");
-    const paths = dir ? staticFields(dir) : new Map<string, AnyNode>();
-    const directory = (name: string) => {
-      const value = paths?.get(name);
-      if (!paths || (value && typeof value.value !== "string")) return undefined;
-      const path = value?.value || name;
-      return path.startsWith("~") || path.startsWith("@") ? undefined : resolve(srcDir, path);
-    };
-    return [{ srcDir, pages: directory("pages"), plugins: directory("plugins") }];
-  });
-  const pages = app?.fields?.get("pages");
-  const pageOptions = staticFields(pages);
-  const scanPages =
-    app?.fields &&
-    (!pages ||
-      pages.value === true ||
-      (pageOptions &&
-        !pageOptions.has("pattern") &&
-        (!pageOptions.has("enabled") || pageOptions.get("enabled")?.value === true)));
-  const resolvedPages =
-    nuxt.manifest?.isCurrent && nuxt.manifest.pages?.length && appRoot
-      ? new Set(nuxt.manifest.pages.flatMap(({ file }) => (file ? [resolve(appRoot, file)] : [])))
-      : undefined;
-  const serverEntries = new Set(Object.values(nuxt.serverDirs).flat());
-  return (path: string): Execution | undefined => {
-    if (serverEntries.has(path)) return "server";
-    if (
-      resolvedPages?.has(path) ||
-      (!resolvedPages &&
-        scanPages &&
-        path.endsWith(".vue") &&
-        directories.some(({ pages }) => pages && path.startsWith(`${pages}/`)))
-    )
-      return CLIENT_SUFFIX.test(path) ? "client" : "server";
-    if (
-      directories.some(
-        ({ srcDir }) => path === join(srcDir, "app.vue") || path === join(srcDir, "error.vue"),
-      )
-    )
-      return "server";
-    if (registered.has(path)) return registrationsKnown ? registered.get(path) : "unknown";
-    for (const { plugins } of directories) {
-      if (!plugins || !path.startsWith(`${plugins}/`) || !SCRIPT_EXTENSION.test(path)) continue;
-      if (/^(?:[^/]+|[^/]+\/index\.[^/]+)$/.test(relative(plugins, path)))
-        return registrationsKnown ? (CLIENT_SUFFIX.test(path) ? "client" : "server") : "unknown";
-    }
-  };
-}
-
-function readNuxtFields(ctx: RuleContext, root: string) {
-  for (const extension of ["ts", "js", "mjs", "mts", "cjs", "cts"]) {
-    const file = join(root, `nuxt.config.${extension}`);
-    const text = ctx.fs.readText(file);
-    if (text === undefined) continue;
-    const { ast, errors } = parseScriptResult(file, text);
-    if (!ast || errors.length) return null;
-    const body = ast.body as AnyNode[];
-    let config = unwrap(body.find((node) => node.type === "ExportDefaultDeclaration")?.declaration);
-    if (config?.type === "CallExpression" && config.callee.name === "defineNuxtConfig")
-      config = unwrap(config.arguments[0]);
-    const fields = staticFields(config);
-    return fields && ![...fields.keys()].some((key) => key.startsWith("$")) ? fields : null;
-  }
-  return new Map<string, AnyNode>();
-}
-
-function readPluginRegistrations(
-  ctx: RuleContext,
-  root: string,
-  srcDir: string,
-  fields: Map<string, AnyNode>,
-  nuxt: NuxtProjectInfo,
-) {
-  const registrations = new Map<string, Execution>();
-  const plugins = fields.get("plugins");
-  if (!plugins) return registrations;
-  if (plugins.type !== "ArrayExpression") return null;
-  const aliasField = fields.get("alias");
-  const aliases = aliasField ? staticFields(aliasField) : new Map<string, AnyNode>();
-  if (!aliases) return null;
-  for (const entry of plugins.elements.map(unwrap)) {
-    const options = staticFields(entry);
-    const source = options ? options.get("src") : entry;
-    if (typeof source?.value !== "string") return null;
-    const specifier: string = source.value;
-    const [name = "", ...rest] = specifier.split("/");
-    const alias = aliases.get(name);
-    if (alias && typeof alias.value !== "string") return null;
-    const base =
-      alias?.value ??
-      (nuxt.manifest?.isCurrent ? nuxt.manifest.aliases[name] : undefined) ??
-      (name === "~" || name === "@" ? srcDir : name === "~~" || name === "@@" ? root : undefined);
-    const path = typeof base === "string" ? resolve(root, base, ...rest) : resolve(root, specifier);
-    const candidates = ctx.fs.stat(path)?.isFile()
-      ? [path]
-      : PLUGIN_EXTENSIONS.flatMap((ext) => [path + ext, join(path, `index${ext}`)]).filter((file) =>
-          ctx.fs.stat(file)?.isFile(),
-        );
-    if (candidates.length !== 1) return null;
-    const file = candidates[0]!;
-    if (!registrations.has(file)) registrations.set(file, pluginExecution(file, options));
-  }
-  return registrations;
-}
-
-function pluginExecution(specifier: string, options: Map<string, AnyNode> | null): Execution {
-  const ssr = options?.get("ssr");
-  if (ssr?.value === true) return "server";
-  if (ssr && ssr.value !== false) return "unknown";
-  const mode = options?.get("mode");
-  if (!mode) return CLIENT_SUFFIX.test(specifier) ? "client" : "server";
-  if (mode.value === "client") return "client";
-  if (mode.value === "server" || mode.value === "all") return "server";
-  return "unknown";
-}
-
-function staticFields(node: AnyNode): Map<string, AnyNode> | null {
-  if (node?.type !== "ObjectExpression") return null;
-  const fields = new Map<string, AnyNode>();
-  for (const property of node.properties) {
-    const key = ownPropertyName(property);
-    if (key === null || property.kind !== "init") return null;
-    fields.set(key, unwrap(property.value));
-  }
-  return fields;
 }
 
 function isMissingInstance(call: StoreCall, argument: AnyNode): boolean {

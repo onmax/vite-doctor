@@ -1,6 +1,7 @@
 import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { parseScriptSync } from "../../core/internal/script.js";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
@@ -53,6 +54,7 @@ type NuxtDoctorEvidence = {
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
   pages?: Array<{ path?: string; file?: string; name?: string }>;
+  serverPageFiles?: string[];
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
   componentDirs?: unknown[];
@@ -73,6 +75,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     serverInventory: undefined as Record<string, string[]> | undefined,
     serverHandlerMtimes: undefined as Record<string, number> | undefined,
     pages: [] as Array<{ path?: string; file?: string; name?: string }>,
+    serverPageFiles: undefined as string[] | undefined,
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
     componentDirs: [] as unknown[],
@@ -187,11 +190,15 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("pages:resolved", (pages: any[]) => {
-    evidence.pages = flattenPages(pages).map((page: any) => ({
+    const routes = flattenPages(pages);
+    evidence.pages = routes.map((page: any) => ({
       path: page.path,
       file: page.file,
       name: page.name,
     }));
+    evidence.serverPageFiles = routes.flatMap((page) =>
+      page.mode !== "client" && typeof page.file === "string" ? [page.file] : [],
+    );
   });
 
   nuxt.hook?.("prerender:routes", (ctx: any) => {
@@ -240,6 +247,10 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("builder:generateApp", async () => {
+    await writeManifest(nuxt, evidence);
+  });
+
+  nuxt.hook?.("app:templatesGenerated", async () => {
     await writeManifest(nuxt, evidence);
   });
 
@@ -402,6 +413,7 @@ export async function writeManifest(
       ...toArray(evidence?.importDirs),
     ]),
     pluginFiles: normalizePluginFiles(rootDir, toArray(nuxt.options.plugins)),
+    serverAppEntryFiles: serverAppEntryFiles(rootDir, nuxt.vfs, evidence?.serverPageFiles),
     appScanRoots: [appDir],
     sharedScanRoots: [
       resolve(rootDir, "shared/utils"),
@@ -472,6 +484,32 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
     entries.push(path && isAbsolute(path) ? { name, source: relative(rootDir, path) } : { name });
   }
   return entries;
+}
+
+function serverAppEntryFiles(
+  root: string,
+  templates: Record<string, string> | undefined,
+  pages: string[] | undefined,
+) {
+  const entries = new Set(pages?.map((file) => relative(root, resolve(root, file))));
+  for (const file of [
+    "plugins.server.mjs",
+    "app-component.mjs",
+    "root-component.mjs",
+    "error-component.mjs",
+  ]) {
+    const source = templates?.[`#build/${file}`];
+    if (typeof source !== "string") continue;
+    const { program, errors } = parseScriptSync(file, source, { sourceType: "module" });
+    if (errors.length) continue;
+    for (const statement of program.body) {
+      if (statement.type !== "ImportDeclaration" && statement.type !== "ExportNamedDeclaration")
+        continue;
+      const path = statement.source?.value;
+      if (path && isAbsolute(path)) entries.add(relative(root, path));
+    }
+  }
+  return entries.size ? [...entries].sort() : undefined;
 }
 
 function flattenPages(pages: any[]): any[] {

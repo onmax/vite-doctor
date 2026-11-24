@@ -6,6 +6,7 @@ export interface NuxtProjectInventory {
   scannedComposableFiles?: string[];
   importsDirs: string[];
   pluginFiles: string[];
+  serverAppEntryFiles?: string[];
   keyedComposables: NuxtKeyedComposable[];
   aliases: Record<string, string>;
   autoImportTransform?: {
@@ -43,6 +44,7 @@ export function createNuxtProjectInventory(
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
+    serverAppEntryFiles: manifest?.serverAppEntryFiles?.map((file) => resolve(root, file)),
     keyedComposables: keyedComposables(root, manifest?.keyedComposables),
     aliases: manifest?.aliases ?? {},
     autoImportTransform: manifest?.autoImportTransform,

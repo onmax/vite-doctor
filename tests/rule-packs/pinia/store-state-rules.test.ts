@@ -1,6 +1,14 @@
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { buildNuxt, loadNuxt } from "nuxt/kit";
+import { dirname, join, relative } from "pathe";
 import { describe, expect, test } from "vite-plus/test";
 import type { DoctorRule } from "../../../src/core/index.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
+import { runViteDoctor } from "../../../src/doctor.ts";
+import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import * as pinia from "../../../src/rule-packs/pinia/index.ts";
 
 function run(rule: DoctorRule, files: Record<string, string>) {
@@ -20,6 +28,10 @@ function runNuxt(rule: DoctorRule, files: Record<string, string>) {
   });
 }
 
+function serverEntryManifest(serverAppEntryFiles: string[], generatedAt = "2099-01-01T00:00Z") {
+  return JSON.stringify({ generatedAt, serverAppEntryFiles });
+}
+
 const counterSetup = `import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
@@ -32,6 +44,99 @@ export const useCounterStore = defineStore('counter', () => {
   return { count, doubleCount, increment }
 })
 `;
+
+const activatedPlugin = `import { useCounterStore } from '../../stores/counter'
+import { createPinia, setActivePinia } from 'pinia'
+setActivePinia(createPinia())
+export const counter = useCounterStore()
+export default defineNuxtPlugin(() => {})`;
+
+test.each([
+  {
+    options: "dir: { plugins: 'boot' }, ignore: ['**/boot/unused.ts']",
+    plugins: ["app/boot/unused.ts", "app/boot/start.ts"],
+    server: ["app/boot/start.ts"],
+  },
+  {
+    options: "dir: { plugins: '~/boot' }",
+    plugins: ["app/boot/start.ts", "app/boot/browser.client.ts"],
+    server: ["app/boot/start.ts"],
+  },
+  {
+    options: "plugins: ['./app/extra/start']",
+    plugins: ["app/extra/start.js", "app/extra/start.ts", "app/plugins/session.ts"],
+    server: ["app/extra/start.js", "app/plugins/session.ts"],
+  },
+  {
+    options: `plugins: [
+      { src: '~/plugins/override.client.ts', mode: 'server' },
+      { src: '~/plugins/override.client.ts', mode: 'client' },
+      { src: '~/extra/browser', mode: 'client' },
+      { src: './app/extra/browser.ts', mode: 'server' }
+    ]`,
+    plugins: ["app/plugins/override.client.ts", "app/extra/browser.ts"],
+    server: ["app/plugins/override.client.ts"],
+  },
+])(
+  "uses Nuxt's generated server plugin entry with $options",
+  async ({ options, plugins, server }) => {
+    const files: Record<string, string> = {
+      "nuxt.config.ts": `export default defineNuxtConfig({ ssr: true, pages: false, ${options} })`,
+      "stores/counter.ts": counterSetup,
+      ...Object.fromEntries(plugins.map((file) => [file, activatedPlugin])),
+    };
+    const root = await mkdtemp(join(tmpdir(), "doctor-pinia-nuxt-"));
+    const cwd = process.cwd();
+    let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
+    try {
+      symlinkSync(
+        fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+        join(root, "node_modules"),
+        "junction",
+      );
+      for (const [file, source] of Object.entries({
+        "package.json": JSON.stringify({
+          type: "module",
+          dependencies: { nuxt: "^4.5.0", pinia: "^3.0.0" },
+        }),
+        ...files,
+      })) {
+        const absolute = join(root, file);
+        mkdirSync(dirname(absolute), { recursive: true });
+        writeFileSync(absolute, source);
+      }
+      process.chdir(root);
+      nuxt = await loadNuxt({
+        cwd: root,
+        overrides: { _prepare: true, modules: [nuxtDoctorModule], telemetry: false },
+      });
+      await buildNuxt(nuxt);
+      const generated = nuxt.vfs["#build/plugins.server.mjs"];
+      expect(generated).toBeDefined();
+      for (const file of plugins)
+        expect(generated!.includes(JSON.stringify(join(root, file)))).toBe(server.includes(file));
+      await nuxt.close();
+      nuxt = undefined;
+      const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+      expect(
+        manifest.serverAppEntryFiles.filter((file: string) => plugins.includes(file)).sort(),
+      ).toEqual([...server].sort());
+      const result = await runViteDoctor({
+        root,
+        framework: "nuxt",
+        cache: false,
+        rules: pinia.noModuleScopeStore.meta.id,
+      });
+      expect(result.diagnostics.map((item) => relative(root, item.file!)).sort()).toEqual(
+        [...server].sort(),
+      );
+    } finally {
+      await nuxt?.close();
+      process.chdir(cwd);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 const counterOptions = `import { defineStore } from 'pinia'
 
@@ -150,6 +255,7 @@ export function guard() {
 
   test("reports a store called in an SFC's plain <script> under Nuxt SSR", async () => {
     const result = await runNuxt(rule, {
+      ".nuxt/doctor.manifest.json": serverEntryManifest(["app/pages/index.vue"]),
       "stores/counter.ts": counterSetup,
       "app/pages/index.vue": `<script lang="ts">
 import { useCounterStore } from '../../stores/counter'
@@ -167,6 +273,7 @@ const value = counter.count
 
   test.each([true, false])("respects Nuxt SSR setting (%s) after prior activation", async (ssr) => {
     const result = await runNuxt(rule, {
+      ".nuxt/doctor.manifest.json": serverEntryManifest(["app/plugins/counter.ts"]),
       "nuxt.config.ts": `export default defineNuxtConfig({ ssr: ${ssr} })`,
       "stores/counter.ts": counterSetup,
       "app/plugins/counter.ts": `import { useCounterStore } from '../../stores/counter'
@@ -178,23 +285,18 @@ export default defineNuxtPlugin(() => {})`,
     expect(result.diagnostics.map((item) => item.code)).toEqual(ssr ? ["PINIA0006"] : []);
   });
 
-  test("seeds SSR paths from the configured Nuxt directories", async () => {
-    const activatedStore = `import { useCounterStore } from '../../stores/counter'
-import { createPinia, setActivePinia } from 'pinia'
-setActivePinia(createPinia())
-export const counter = useCounterStore()`;
-    const result = await runNuxt(rule, {
-      "nuxt.config.ts": `export default defineNuxtConfig({ ssr: true, pages: false, dir: { plugins: 'boot' } })`,
-      "stores/counter.ts": counterSetup,
-      "app/pages/unused.vue": `<script lang="ts">${activatedStore}</script><template><div/></template>`,
-      "app/plugins/unused.ts": `${activatedStore}\nexport default defineNuxtPlugin(() => {})`,
-      "app/boot/start.ts": `${activatedStore}\nexport default defineNuxtPlugin(() => {})`,
-    });
-    expect(result.diagnostics.map((item) => item.file?.split("/").slice(-2).join("/"))).toEqual([
-      "boot/start.ts",
-    ]);
-    expect(result.diagnostics[0]!.why).toContain("every request shares the store");
-  });
+  test.each([undefined, serverEntryManifest(["app/boot/start.ts"], "2000-01-01T00:00Z")])(
+    "does not guess server entries without current evidence: %s",
+    async (manifest) => {
+      const result = await runNuxt(rule, {
+        "nuxt.config.ts": `export default defineNuxtConfig({ ssr: true, pages: false, dir: { plugins: 'boot' } })`,
+        "stores/counter.ts": counterSetup,
+        "app/boot/start.ts": activatedPlugin,
+        ...(manifest ? { ".nuxt/doctor.manifest.json": manifest } : {}),
+      });
+      expect(result.diagnostics).toEqual([]);
+    },
+  );
 
   test.each([true, false])(
     "checks client-only plugin startup with prior activation: %s",
@@ -236,97 +338,47 @@ export const counter = useCounterStore()`,
   );
 
   test.each([
-    [
-      "an explicit server registration",
-      "{ ssr: true, plugins: [{ src: '~/plugins/counter.client.ts', mode: 'server' }] }",
-      {},
-      true,
-    ],
-    [
-      "a server plugin importing it",
-      "{ ssr: true }",
-      { "app/plugins/consumer.server.ts": "import './counter.client'" },
-      true,
-    ],
-    [
-      "a universal plugin importing it through a barrel",
-      "{ ssr: true }",
-      {
-        "app/plugins/consumer.ts":
-          "import { counter } from '../barrel'; export default defineNuxtPlugin(() => { console.log(counter) })",
-        "app/barrel.ts": "export { counter } from './plugins/counter.client'",
-      },
-      true,
-    ],
-    [
-      "only a client plugin importing it",
-      "{ ssr: true }",
-      { "app/plugins/consumer.client.ts": "import './counter.client'" },
-      false,
-    ],
-    ...["client", "server"].map((mode): [string, string, Record<string, string>, boolean] => [
-      `a ${mode} plugin importing it through a barrel`,
-      "{ ssr: true }",
-      {
-        [`app/plugins/consumer.${mode}.ts`]: "import '../lib/counter'",
-        "app/lib/counter.ts": "export { counter } from '../plugins/counter.client'",
-      },
-      mode === "server",
-    ]),
-    [
-      "an explicit client registration",
-      "{ ssr: true, plugins: [{ src: '~/plugins/counter.client', mode: 'client' }] }",
-      {},
-      false,
-    ],
-    ...["server", "client"].map((mode): [string, string, Record<string, string>, boolean] => [
-      `duplicate registrations with ${mode} first`,
-      `{ ssr: true, plugins: [
-        { src: '~/extra/start.ts', mode: '${mode}' },
-        { src: '~/extra/start.ts', mode: '${mode === "server" ? "client" : "server"}' }
-      ] }`,
-      {
-        "app/extra/start.ts":
-          "import '../plugins/counter.client'; export default defineNuxtPlugin(() => {})",
-      },
-      mode === "server",
-    ]),
-    [
-      "duplicate registrations using different paths to the same file",
-      `{ ssr: true, plugins: [
-        { src: '~/extra/start', mode: 'client' },
-        { src: './app/extra/start.ts', mode: 'server' }
-      ] }`,
-      {
-        "app/extra/start.ts":
-          "import '../plugins/counter.client'; export default defineNuxtPlugin(() => {})",
-      },
-      false,
-    ],
-    ["an unknown plugins list", "{ ssr: true, plugins: configuredPlugins }", {}, false],
-    [
-      "a client-suffixed string registration",
-      "{ ssr: true, plugins: ['~/plugins/counter.client.ts'] }",
-      {},
-      false,
-    ],
-  ] satisfies [string, string, Record<string, string>, boolean][])(
-    "checks SSR execution with %s",
-    async (_, config, extraFiles, warns) => {
-      const result = await runNuxt(rule, {
-        "nuxt.config.ts": `export default defineNuxtConfig(${config})`,
-        "stores/counter.ts": counterSetup,
-        "app/plugins/counter.client.ts": `import { useCounterStore } from '../../stores/counter'
-import { createPinia, setActivePinia } from 'pinia'
-setActivePinia(createPinia())
-export const counter = useCounterStore()
-export default defineNuxtPlugin(() => {})`,
-        ...extraFiles,
-      });
-      expect(result.diagnostics.map((item) => item.code)).toEqual(warns ? ["PINIA0006"] : []);
-      if (warns) expect(result.diagnostics[0]!.why).toContain("every request shares the store");
+    {
+      name: "direct store module",
+      source: "",
+      entry: "app/plugins/counter.client.ts",
+      warns: true,
     },
-  );
+    {
+      name: "static import through a barrel",
+      source: "import '../lib/counter'",
+      entry: "app/plugins/consumer.ts",
+      warns: true,
+    },
+    {
+      name: "a client-only importer",
+      source: "import '../lib/counter'",
+      entry: undefined,
+      warns: false,
+    },
+    {
+      name: "a type-only import",
+      source: "import type { counter } from '../lib/counter'",
+      entry: "app/plugins/consumer.ts",
+      warns: false,
+    },
+    {
+      name: "a dynamic import",
+      source: "export const load = () => import('../lib/counter')",
+      entry: "app/plugins/consumer.ts",
+      warns: false,
+    },
+  ])("checks SSR execution with $name", async ({ source, entry, warns }) => {
+    const result = await runNuxt(rule, {
+      ".nuxt/doctor.manifest.json": serverEntryManifest(entry ? [entry] : []),
+      "stores/counter.ts": counterSetup,
+      "app/plugins/counter.client.ts": activatedPlugin,
+      "app/plugins/consumer.ts": source,
+      "app/lib/counter.ts": "export { counter } from '../plugins/counter.client'",
+    });
+    expect(result.diagnostics.map((item) => item.code)).toEqual(warns ? ["PINIA0006"] : []);
+    if (warns) expect(result.diagnostics[0]!.why).toContain("every request shares the store");
+  });
 
   test.each([
     ["<script setup>", component("const counter = useCounterStore()")],
