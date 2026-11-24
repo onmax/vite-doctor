@@ -276,15 +276,10 @@ export const noUnprefixedClientEnv = createRule({
     return {
       MemberExpression(node: AnyNode) {
         const name = importMetaEnvKey(node);
-        if (
-          !name ||
-          builtInEnvKeys.has(name) ||
-          vitestEnvKeys.has(name) ||
-          isAssignmentTarget(node)
-        )
-          return;
+        if (!name || builtInEnvKeys.has(name) || isAssignmentTarget(node)) return;
         const contract = clientEnvContract(ctx);
         if (!contract || contract.exposes(name)) return;
+        if (vitestEnvKeys.has(name) && owningProjectUsesVitest(ctx)) return;
         // Without host evidence VITE0009 reports secret-looking names as possibly exposed.
         if (contract.source === "config" && SECRET_NAME_RE.test(name)) return;
         const prefixes =
@@ -386,13 +381,39 @@ function clientEnvContract(ctx: RuleContext): ClientEnvContract | null {
   };
 }
 
-function projectViteConfig(ctx: RuleContext): string | undefined {
+function owningWorkspacePackage(ctx: RuleContext) {
   const { root, workspacePackages } = ctx.project;
   const path = relative(root, ctx.file.path);
-  if (path === ".." || path.startsWith("../")) return;
-  const owner = (workspacePackages ?? [])
+  return (workspacePackages ?? [])
     .filter(({ root }) => root !== "." && path.startsWith(`${root}/`))
     .sort((left, right) => right.root.length - left.root.length)[0];
+}
+
+function owningProjectUsesVitest(ctx: RuleContext): boolean {
+  const owner = owningWorkspacePackage(ctx);
+  const root = owner ? resolve(ctx.project.root, owner.root) : ctx.project.root;
+  const manifest = ctx.fs.readJson(resolve(root, "package.json"));
+  if (manifest && typeof manifest === "object") {
+    for (const field of [
+      "dependencies",
+      "devDependencies",
+      "optionalDependencies",
+      "peerDependencies",
+    ]) {
+      const deps = (manifest as Record<string, unknown>)[field];
+      if (deps && typeof deps === "object" && Object.hasOwn(deps, "vitest")) return true;
+    }
+  }
+  return VITE_CONFIG_FILES.some((name) =>
+    ctx.fs.stat(resolve(root, `vitest${name.slice("vite".length)}`))?.isFile(),
+  );
+}
+
+function projectViteConfig(ctx: RuleContext): string | undefined {
+  const { root } = ctx.project;
+  const path = relative(root, ctx.file.path);
+  if (path === ".." || path.startsWith("../")) return;
+  const owner = owningWorkspacePackage(ctx);
   if (owner && owner.framework !== "vite" && owner.framework !== "vue") return;
   const configRoot = owner ? resolve(root, owner.root) : root;
   return VITE_CONFIG_FILES.map((name) => resolve(configRoot, name)).find((file) =>

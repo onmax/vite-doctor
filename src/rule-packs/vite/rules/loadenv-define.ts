@@ -5,6 +5,7 @@ import { isViteConfigFile, propertyName, staticString, type AnyNode } from "./sh
 import {
   clientDefineObjects,
   importBinding,
+  objectProperties,
   propertyKey,
   resolveConst,
   staticConfig,
@@ -131,11 +132,10 @@ function readDefine(scope: ScriptScope, input: AnyNode): Map<string | symbol, An
 
 function retainsDefineValue(scope: ScriptScope, override: AnyNode, previous: "object" | "string") {
   const node = resolveConst(scope, override);
-  return (
-    isNullish(scope, node) ||
-    node?.type === "ArrayExpression" ||
-    (previous === "object" && node?.type === "ObjectExpression")
-  );
+  if (isNullish(scope, node) || node?.type === "ArrayExpression") return true;
+  if (previous !== "object" || node?.type !== "ObjectExpression") return false;
+  const properties = objectProperties(scope, node);
+  return properties !== null && !properties.has("toJSON");
 }
 
 function leakingValueKind(scope: ScriptScope, input: AnyNode): "object" | "string" | undefined {

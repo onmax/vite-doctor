@@ -66,12 +66,33 @@ describe("vite/env/no-unprefixed-client-env", () => {
     ).toEqual([]);
   });
 
-  test("keeps keys Vitest sets quiet in app code", async () => {
+  test("keeps keys Vitest sets quiet in an app that uses Vitest", async () => {
     expect(
       await run([noUnprefixedClientEnv], {
+        "package.json": JSON.stringify({ devDependencies: { vitest: "^4.0.0" } }),
         "vite.config.ts": config("{}"),
         "src/main.ts": `if (import.meta.env.VITEST) console.log('under test')
 if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.meta.env.VITEST_POOL_ID, import.meta.env.VITEST_MODE)`,
+      }),
+    ).toEqual([]);
+  });
+
+  test("checks TEST like any other env key in a plain Vite app", async () => {
+    expect(
+      await run([noUnprefixedClientEnv], {
+        ".env": "TEST=https://test.example.com",
+        "vite.config.ts": config("{}"),
+        "src/main.ts": "console.log(import.meta.env.TEST)",
+      }),
+    ).toEqual([expect.stringMatching(/^VITE0030: import\.meta\.env\.TEST is undefined/)]);
+  });
+
+  test("recognizes an owning Vitest config without a local dependency", async () => {
+    expect(
+      await run([noUnprefixedClientEnv], {
+        "vitest.config.mts": config("{}"),
+        "vite.config.ts": config("{}"),
+        "src/main.ts": "console.log(import.meta.env.TEST)",
       }),
     ).toEqual([]);
   });
@@ -123,6 +144,7 @@ if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.m
       framework: "vite",
       rules: [noUnprefixedClientEnv],
       files: {
+        "package.json": JSON.stringify({ devDependencies: { vitest: "^4.0.0" } }),
         "pnpm-workspace.yaml": 'packages:\n  - "apps/*"\n',
         "vite.config.ts": config("{ envPrefix: 'API_' }"),
         "apps/web/package.json": JSON.stringify({
@@ -131,14 +153,16 @@ if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.m
           devDependencies: { vite: "^8.0.0" },
         }),
         "apps/web/vite.config.ts": config("{ envPrefix: 'APP_' }"),
-        "apps/web/src/main.ts": "console.log(import.meta.env.API_URL, import.meta.env.APP_URL)",
+        "apps/web/src/main.ts":
+          "console.log(import.meta.env.API_URL, import.meta.env.APP_URL, import.meta.env.TEST)",
       },
     });
     expect(result.workspacePackages).toContainEqual(
       expect.objectContaining({ root: "apps/web", framework: "vue" }),
     );
-    expect(result.diagnostics).toEqual([
-      expect.objectContaining({ code: "VITE0030", why: expect.stringContaining("env.API_URL") }),
+    expect(result.diagnostics.map(({ code, why }) => `${code}: ${why}`).sort()).toEqual([
+      expect.stringMatching(/^VITE0030: import\.meta\.env\.API_URL is undefined/),
+      expect.stringMatching(/^VITE0030: import\.meta\.env\.TEST is undefined/),
     ]);
   });
 
@@ -354,6 +378,51 @@ export default {
     expect(diagnostics).toEqual(
       retains ? [expect.stringMatching(/^VITE0031: Vite define "__CONFIG__"/)] : [],
     );
+  });
+
+  test("does not infer whole-env exposure through custom serialization", async () => {
+    const override = {
+      PUBLIC_LABEL: "client",
+      toJSON() {
+        return { PUBLIC_LABEL: this.PUBLIC_LABEL };
+      },
+    };
+    const resolved = await resolveConfig(
+      {
+        configFile: false,
+        envFile: false,
+        define: { __CONFIG__: { DOCTOR_FIXTURE: "doctor-fixture-env-marker" } },
+        environments: { client: { define: { __CONFIG__: override } } },
+      },
+      "serve",
+    );
+    expect(resolved.environments.client.define?.__CONFIG__).toHaveProperty("DOCTOR_FIXTURE");
+    expect(JSON.stringify(resolved.environments.client.define?.__CONFIG__)).toBe(
+      '{"PUBLIC_LABEL":"client"}',
+    );
+    expect(
+      await run([noLoadEnvAllInDefine], {
+        "vite.config.ts": `export default {
+  define: { __CONFIG__: process.env },
+  environments: { client: { define: { __CONFIG__: {
+    PUBLIC_LABEL: 'client', ${override.toJSON.toString()}
+  } } } },
+}`,
+      }),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["an unknown spread", "{ ...override }"],
+    ["an unknown computed key", "{ [key]: serializer }"],
+  ])("does not infer whole-env exposure through %s", async (_, override) => {
+    const diagnostics = await run([noLoadEnvAllInDefine], {
+      "vite.config.ts": `export default {
+  define: { __CONFIG__: process.env },
+  environments: { client: { define: { __CONFIG__: ${override} } } },
+}`,
+    });
+    expect(diagnostics).toEqual([]);
   });
 
   test.each([
