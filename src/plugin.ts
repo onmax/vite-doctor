@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { isBuiltin } from "node:module";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { basename, dirname, isAbsolute, relative, resolve } from "pathe";
@@ -17,9 +18,12 @@ import {
   type DiagnosticState,
 } from "./plugin-delta.js";
 import type { SurfaceRunInput, SurfaceRunOutcome } from "./plugin-run.js";
-import type {
-  ViteBuildEnvironment,
-  ViteBuildEvidence,
+import { RuntimeDiagnosticReports } from "./plugin-runtime-diagnostics.js";
+import {
+  buildDiagnosticFingerprint,
+  buildModuleFile,
+  wantsBuildEvidence,
+  type ViteBuildEvidence,
 } from "./rule-packs/vite/rules/build-evidence.js";
 import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
 
@@ -62,14 +66,34 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
   let config: ResolvedConfig | undefined;
   let ran = false;
   let serveRun: ServeDoctorRun | undefined;
-  let built = new Map<string, ViteBuildEnvironment>();
+  let buildReports: Promise<void> = Promise.resolve();
+  let reported = new Set<string>();
+  let warnings = 0;
+  let privateMaps = new WeakSet<object>();
+  let stubResolutions = new WeakMap<object, Map<string, string>>();
+  const inspectBuild =
+    options.enabled !== false &&
+    shouldRun(options.run ?? "build", "build") &&
+    wantsBuildEvidence(options.rules);
+
+  function remember(outcome: SurfaceRunOutcome) {
+    for (const diagnostic of outcome.diagnostics) {
+      if (reported.has(diagnostic.id)) continue;
+      reported.add(diagnostic.id);
+      if (diagnostic.severity === "warn") warnings++;
+    }
+  }
 
   return {
     name: "vite-doctor",
     configResolved(resolved) {
       config = resolved;
       ran = false;
-      built = new Map();
+      buildReports = Promise.resolve();
+      reported = new Set();
+      warnings = 0;
+      privateMaps = new WeakSet();
+      stubResolutions = new WeakMap();
     },
     configureServer(server) {
       if (options.enabled === false || !shouldRun(options.run ?? "build", "serve")) return;
@@ -79,7 +103,8 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       serveRun = new ServeDoctorRun(server, options);
     },
     async buildStart() {
-      if (options.enabled === false || ran) return;
+      if (options.enabled === false) return;
+      if (ran) return buildReports;
       const resolved = config;
       if (!resolved || !shouldRun(options.run ?? "build", resolved.command)) return;
 
@@ -92,49 +117,102 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       }
       ran = true;
 
-      const { runSurfaceDoctor } = await import("./plugin-run.js");
-      const outcome = await runSurfaceDoctor(
-        surfaceRunInput(resolved, options),
-        surfaceExtensions(resolved, options),
-      );
-      if (outcome.shouldFail && (options.mode ?? "error") === "error") {
-        this.error(outcome.report || "Vite Doctor checks failed.");
-        return;
-      }
-      if (!outcome.report) return;
-      if (outcome.hasFindings) resolved.logger.warn(outcome.report);
-      else resolved.logger.info(outcome.report);
+      return (buildReports = (async () => {
+        const { runSurfaceDoctor } = await import("./plugin-run.js");
+        const outcome = await runSurfaceDoctor(
+          surfaceRunInput(resolved, options),
+          surfaceExtensions(resolved, options),
+        );
+        remember(outcome);
+        if (outcome.shouldFail && (options.mode ?? "error") === "error") {
+          this.error(outcome.report || "Vite Doctor checks failed.");
+          return;
+        }
+        if (!outcome.report) return;
+        if (outcome.hasFindings) resolved.logger.warn(outcome.report);
+        else resolved.logger.info(outcome.report);
+      })());
     },
-    async generateBundle(_output, bundle) {
-      if (options.enabled === false) return;
-      const resolved = this.environment?.getTopLevelConfig() ?? config;
-      if (resolved?.command !== "build" || !shouldRun(options.run ?? "build", "build")) return;
-      const environment = collectBuildEnvironment(
-        this,
-        bundle,
-        resolved.root,
-        this.environment?.name ?? (resolved.build.ssr ? "ssr" : "client"),
-        this.environment?.config.consumer,
-      );
-      built.set(environment.name, environment);
-      // Build Evidence Rules ask whether server code reached the browser, so a client bundle is
-      // the point where they have something to check. Earlier server environments are included.
-      // A client bundle that reads no browser stub gives them nothing to report.
-      if (environment.consumer !== "client" || !environment.browserStubReads.length) return;
-      const { runBuildEvidenceDoctor } = await import("./plugin-run.js");
-      const outcome = await runBuildEvidenceDoctor(
-        surfaceRunInput(resolved, options, {
-          root: resolved.root,
-          environments: [...built.values()],
-        }),
-        surfaceExtensions(resolved, options),
-      );
-      if (!outcome?.diagnostics.length) return;
-      if (outcome.shouldFail && (options.mode ?? "error") === "error") {
-        this.error(outcome.report);
-        return;
-      }
-      resolved.logger.warn(outcome.report);
+    resolveId: {
+      order: "pre",
+      async handler(source, importer, context) {
+        const env = this.environment;
+        if (
+          !inspectBuild ||
+          !this.meta.rolldownVersion ||
+          env?.config.consumer !== "client" ||
+          env.config.command !== "build" ||
+          !importer ||
+          !isBuiltin(source)
+        )
+          return;
+        const resolution = await this.resolve(source, importer, { ...context, skipSelf: true });
+        if (resolution && !resolution.external) {
+          let resolutions = stubResolutions.get(env);
+          if (!resolutions) stubResolutions.set(env, (resolutions = new Map()));
+          resolutions.set(`${importer}\0${source}`, resolution.id);
+        }
+        return resolution;
+      },
+    },
+    outputOptions: {
+      order: "post",
+      handler(output) {
+        if (
+          !inspectBuild ||
+          !this.meta.rolldownVersion ||
+          this.environment?.config.consumer !== "client" ||
+          output.sourcemap
+        )
+          return;
+        privateMaps.add(this.environment);
+        return { ...output, sourcemap: "hidden" };
+      },
+    },
+    generateBundle: {
+      order: "post",
+      async handler(output, bundle) {
+        if (!inspectBuild || !this.meta.rolldownVersion) return;
+        const env = this.environment;
+        if (env?.config.consumer !== "client") return;
+        const resolved = env.getTopLevelConfig();
+        const { collectBuildEnvironment } = await import("./plugin-build-evidence.js");
+        const environment = collectBuildEnvironment(
+          this,
+          output,
+          bundle,
+          resolved.root,
+          env.name,
+          privateMaps.delete(env) && output.sourcemap === "hidden",
+          stubResolutions.get(env),
+        );
+        if (!environment.browserStubReads.length) return;
+
+        return (buildReports = buildReports.then(async () => {
+          const evidence = { root: resolved.root, environments: [environment] };
+          const doctorRoot = surfaceRoot(resolved, options);
+          environment.browserStubReads = environment.browserStubReads.filter(({ id }) => {
+            const file = buildModuleFile(evidence, id);
+            return (
+              file &&
+              !reported.has(buildDiagnosticFingerprint(relative(doctorRoot, file), env.name))
+            );
+          });
+          if (!environment.browserStubReads.length) return;
+          const input = surfaceRunInput(resolved, options, evidence);
+          const max = input.options.maxWarnings;
+          if (max !== undefined) input.options.maxWarnings = max - warnings;
+          const { runBuildEvidenceDoctor } = await import("./plugin-run.js");
+          const outcome = await runBuildEvidenceDoctor(input, surfaceExtensions(resolved, options));
+          if (!outcome.diagnostics.length) return;
+          remember(outcome);
+          if (outcome.shouldFail && (options.mode ?? "error") === "error") {
+            this.error(outcome.report);
+            return;
+          }
+          resolved.logger.warn(outcome.report);
+        }));
+      },
     },
     closeBundle() {
       if (serveRun && this.environment?.getTopLevelConfig() === serveRun.server.config) {
@@ -154,6 +232,9 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
  * report. Only the Diagnostics that changed are logged. The dev server watcher is
  * shared by every Vite environment and fires even with HMR off, so a save reruns Doctor once,
  * where `hotUpdate` would fire per environment.
+ *
+ * Framework diagnostics that browser clients report over the HMR channel join every later run as
+ * Runtime Evidence, and a new one reruns its file, or the whole project when it has no file.
  */
 class ServeDoctorRun {
   private closed = false;
@@ -162,11 +243,16 @@ class ServeDoctorRun {
   private pending = emptyChanges();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly onFileEvent = (file: string) => this.fileChanged(file);
+  private readonly runtimeDiagnostics: RuntimeDiagnosticReports;
 
   constructor(
     readonly server: ViteDevServer,
     private readonly options: ViteDoctorSurfaceOptions,
-  ) {}
+  ) {
+    this.runtimeDiagnostics = new RuntimeDiagnosticReports(server, (report) =>
+      this.runtimeDiagnosticReported(report.location?.file),
+    );
+  }
 
   startAfterListening() {
     const { middlewareMode } = this.server.config.server;
@@ -178,6 +264,7 @@ class ServeDoctorRun {
         if (this.closed) return;
         this.server.watcher.add(packageInputs(surfaceRoot(this.server.config, this.options)));
         for (const event of WATCHED_EVENTS) this.server.watcher.on(event, this.onFileEvent);
+        this.runtimeDiagnostics.listen();
         void this.execute({ changed: [] }, true);
       });
     if (host && !host.listening) host.once("listening", start);
@@ -188,20 +275,39 @@ class ServeDoctorRun {
     this.closed = true;
     clearTimeout(this.timer);
     for (const event of WATCHED_EVENTS) this.server.watcher.off(event, this.onFileEvent);
+    this.runtimeDiagnostics.close();
     this.active?.stop();
   }
 
   private fileChanged(path: string) {
     const file = resolve(path);
-    const kind = hotUpdateKind(
+    const forgot = this.runtimeDiagnostics.forget(file);
+    const kind = this.hotUpdateKind(file);
+    if (!kind) {
+      if (forgot) this.schedule(undefined);
+      return;
+    }
+    this.pending.changed.add(file);
+    this.schedule(kind === "source" ? file : undefined);
+  }
+
+  private runtimeDiagnosticReported(file: string | undefined) {
+    this.pending.reported = true;
+    this.schedule(file && this.hotUpdateKind(file) === "source" ? file : undefined);
+  }
+
+  private hotUpdateKind(file: string) {
+    return hotUpdateKind(
       surfaceRoot(this.server.config, this.options),
       surfaceConfig(this.server.config, this.options),
       file,
     );
-    if (!kind) return;
-    if (kind === "inventory") this.pending.full = true;
-    else this.pending.files.add(file);
-    this.pending.changed.add(file);
+  }
+
+  /** Queues a rerun of `file`, or of the whole project without one. */
+  private schedule(file: string | undefined) {
+    if (file) this.pending.files.add(file);
+    else this.pending.full = true;
     // A rerun that has not reported yet would miss this save, so it restarts with it.
     const active = this.active;
     if (active && !active.initial && !active.stale) {
@@ -209,6 +315,7 @@ class ServeDoctorRun {
         for (const affected of active.affected) this.pending.files.add(affected);
       } else this.pending.full = true;
       for (const changed of active.changed) this.pending.changed.add(changed);
+      if (active.reported) this.pending.reported = true;
       active.stop();
     }
     clearTimeout(this.timer);
@@ -220,12 +327,12 @@ class ServeDoctorRun {
     // A main-thread run cannot be interrupted, so the next run waits for it instead of stacking.
     if (this.active) await this.active.done;
     if (this.closed || this.timer || this.active) return;
-    const { files, full, changed } = this.pending;
+    const { files, full, changed, reported } = this.pending;
     this.pending = emptyChanges();
     // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files.
     const affected =
       full || !this.state || this.options.changed || this.options.since ? undefined : files;
-    await this.execute({ affected, changed: [...changed] });
+    await this.execute({ affected, changed: [...changed], reported });
   }
 
   private async execute(batch: RunBatch, initial = false) {
@@ -234,6 +341,7 @@ class ServeDoctorRun {
     const input: SurfaceRunInput = batch.affected
       ? { ...base, options: { ...base.options, affectedFiles: [...batch.affected] } }
       : base;
+    input.frameworkDiagnostics = this.runtimeDiagnostics.list();
     const extensions = surfaceExtensions(config, this.options);
     const done = Promise.withResolvers<void>();
     const run: ActiveRun = {
@@ -282,6 +390,7 @@ class ServeDoctorRun {
     const log = formatDelta(diffStates(previous, next), next, {
       root,
       changed: batch.changed,
+      reported: batch.reported,
       mode: this.options.mode ?? "error",
       maxWarnings: this.options.maxWarnings,
     });
@@ -317,6 +426,8 @@ interface RunBatch {
   affected?: ReadonlySet<string>;
   /** Files whose change started the run. */
   changed: string[];
+  /** A framework diagnostic reported at runtime started the run. */
+  reported?: boolean;
 }
 
 interface ActiveRun extends RunBatch {
@@ -333,6 +444,7 @@ function emptyChanges() {
     /** A changed file feeds Project Inventory for every file, so the next run is a full run. */
     full: false,
     changed: new Set<string>(),
+    reported: false,
   };
 }
 
@@ -489,81 +601,6 @@ function viteRuntimeEvidence(config: ResolvedConfig) {
         }
       : undefined,
   };
-}
-
-interface BundledChunk {
-  type: "chunk";
-  fileName: string;
-  isEntry: boolean;
-  facadeModuleId: string | null;
-  moduleIds: readonly string[];
-  modules: Record<string, { code: string | null } | undefined>;
-}
-
-interface BundleModuleGraph {
-  getModuleInfo(id: string): {
-    importers: readonly string[];
-    dynamicImporters: readonly string[];
-    importedIds: readonly string[];
-    dynamicallyImportedIds: readonly string[];
-  } | null;
-}
-
-// Vite resolves Node built-ins and `browser: false` mappings in client builds to this module.
-const BROWSER_STUB_ID = "__vite-browser-external";
-// The binding a bundler gives the stub's exports in an importer's rendered code.
-const BROWSER_STUB_BINDING = /vite_?browser_?external/i;
-// Rolldown keeps the stub's binding declaration even when no code reads it, as in an
-// `import.meta.env.SSR` branch it removed. Only the reads left after it count.
-const BROWSER_STUB_DECLARATION =
-  /^var [\w$]+ = (?:\/\* @__PURE__ \*\/ )?(?:__toESM\()?require_[\w$]*vite_?browser_?external[\w$]*\(\)(?:, 1\))?;$/gim;
-
-/** Ids only: chunk code is read to see whether a stub is still referenced, never kept. */
-function collectBuildEnvironment(
-  graph: BundleModuleGraph,
-  bundle: Record<string, { type: string }>,
-  root: string,
-  name: string,
-  consumer: "client" | "server" | undefined,
-): ViteBuildEnvironment {
-  const id = (moduleId: string) => buildModuleId(root, moduleId);
-  const environment: ViteBuildEnvironment = {
-    name,
-    consumer,
-    chunks: [],
-    entries: [],
-    importers: {},
-    browserStubReads: [],
-  };
-  for (const output of Object.values(bundle)) {
-    if (output.type !== "chunk") continue;
-    const chunk = output as BundledChunk;
-    environment.chunks.push({
-      fileName: chunk.fileName,
-      isEntry: chunk.isEntry,
-      modules: chunk.moduleIds.map(id),
-    });
-    if (chunk.isEntry && chunk.facadeModuleId) environment.entries.push(id(chunk.facadeModuleId));
-    for (const moduleId of chunk.moduleIds) {
-      const info = graph.getModuleInfo(moduleId);
-      if (!info) continue;
-      environment.importers[id(moduleId)] = [...info.importers, ...info.dynamicImporters].map(id);
-      const imported = [...info.importedIds, ...info.dynamicallyImportedIds];
-      if (!imported.some((item) => item.startsWith(BROWSER_STUB_ID))) continue;
-      const code = (chunk.modules[moduleId]?.code ?? "")
-        // The first line of a rendered module can be a comment naming the module itself.
-        .replace(/^\/\/[^\n]*\n/, "")
-        .replace(BROWSER_STUB_DECLARATION, "");
-      if (BROWSER_STUB_BINDING.test(code)) environment.browserStubReads.push(id(moduleId));
-    }
-  }
-  return environment;
-}
-
-function buildModuleId(root: string, id: string): string {
-  if (id.startsWith("\0") || !isAbsolute(id)) return id;
-  const path = relative(root, id);
-  return path.startsWith("../") || isAbsolute(path) ? id : path;
 }
 
 function shouldRun(run: NonNullable<ViteDoctorSurfaceOptions["run"]>, command: "build" | "serve") {

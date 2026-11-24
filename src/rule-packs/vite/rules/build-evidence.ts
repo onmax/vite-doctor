@@ -1,4 +1,19 @@
 import { isAbsolute, resolve } from "pathe";
+import { nativeMatch, sha256 } from "../../../core/internal/utils.js";
+
+export const BUILD_EVIDENCE_RULE = "vite/build/no-node-builtin-in-client-chunk";
+
+export function wantsBuildEvidence(rules?: string): boolean {
+  const patterns = rules
+    ?.split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return !patterns?.length || patterns.some((pattern) => nativeMatch(BUILD_EVIDENCE_RULE, pattern));
+}
+
+export function buildDiagnosticFingerprint(path: string, environment: string): string {
+  return sha256(`${BUILD_EVIDENCE_RULE}:${path}:${environment}`);
+}
 
 /**
  * Build Evidence: what one `vite build` put in each output chunk, per Vite environment. The Vite
@@ -21,12 +36,13 @@ export interface ViteBuildEnvironment {
   entries: string[];
   /** Static and dynamic importers of each bundled module, from Vite's module graph. */
   importers: Record<string, string[]>;
-  /**
-   * Bundled modules whose rendered chunk code still reads Vite's empty browser stub, the module
-   * Vite substitutes in client builds for a Node built-in or a `browser: false` package mapping.
-   * Code that the bundler removed, such as an `import.meta.env.SSR` branch, does not count.
-   */
-  browserStubReads: string[];
+  /** Source import offsets tied to surviving reads in a final output chunk. */
+  browserStubReads: Array<{
+    id: string;
+    chunk: string;
+    specifier: string;
+    start: number;
+  }>;
 }
 
 /** Build Evidence for the Doctor Run, or undefined when the run has none or it is malformed. */
@@ -63,7 +79,15 @@ function isEnvironment(value: unknown): value is ViteBuildEnvironment {
     isStrings(value.entries) &&
     isRecord(value.importers) &&
     Object.values(value.importers).every(isStrings) &&
-    isStrings(value.browserStubReads)
+    Array.isArray(value.browserStubReads) &&
+    value.browserStubReads.every(
+      (read) =>
+        isRecord(read) &&
+        typeof read.id === "string" &&
+        typeof read.chunk === "string" &&
+        typeof read.specifier === "string" &&
+        Number.isSafeInteger(read.start),
+    )
   );
 }
 

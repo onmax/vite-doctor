@@ -1,4 +1,5 @@
 import {
+  FRAMEWORK_DIAGNOSTICS_EVIDENCE,
   createReport,
   diagnosticLocation,
   formatTextDiagnostic,
@@ -10,15 +11,18 @@ import type {
   DoctorExtensionInput,
   DoctorRunOptions,
   DoctorRunResult,
+  RuntimeFrameworkDiagnostic,
 } from "./core/index.js";
-import { nativeMatch } from "./core/internal/utils.js";
 import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
 import type { SurfaceDiagnostic, SurfaceEvidenceGap } from "./plugin-delta.js";
+import { BUILD_EVIDENCE_RULE } from "./rule-packs/vite/rules/build-evidence.js";
 
 /** Structured-cloneable Doctor Run input prepared by the Vite Plugin Surface. */
 export interface SurfaceRunInput {
   options: Omit<DoctorRunOptions, "extensions">;
   vite: { inventory: Record<string, unknown>; evidence: Record<string, unknown> };
+  /** Framework diagnostics the dev server's browser clients reported, contributed as Runtime Evidence. */
+  frameworkDiagnostics?: RuntimeFrameworkDiagnostic[];
 }
 
 export interface SurfaceRunOutcome {
@@ -38,7 +42,7 @@ export async function runSurfaceDoctor(
 ): Promise<SurfaceRunOutcome> {
   const result = await runViteDoctor({
     ...input.options,
-    extensions: [viteSurfaceExtension(input.vite), ...extensions],
+    extensions: [viteSurfaceExtension(input), ...extensions],
   });
   const report = createReport(result, input.options.format).trimEnd();
   const shouldFail =
@@ -60,28 +64,16 @@ export async function runSurfaceDoctor(
   };
 }
 
-/** Rules that read Build Evidence, so they run once a client bundle exists. */
-const BUILD_EVIDENCE_RULES = ["vite/build/no-node-builtin-in-client-chunk"];
-
 /**
- * Runs the Build Evidence Rules that the surface's `rules` filter allows, after a client bundle.
- * The run before the build already reported everything else. Config and presets still decide
- * whether each Rule is on. Returns undefined when the filter leaves no Rule to run.
+ * Runs only the Build Evidence Rule, after a client bundle. The run before the build already
+ * reported everything else. Config and presets still decide whether the Rule is on.
  */
 export async function runBuildEvidenceDoctor(
   input: SurfaceRunInput,
   extensions: DoctorExtensionInput[],
-): Promise<SurfaceRunOutcome | undefined> {
-  const wanted = input.options.rules
-    ?.split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  const rules = BUILD_EVIDENCE_RULES.filter(
-    (rule) => !wanted?.length || wanted.some((pattern) => nativeMatch(rule, pattern)),
-  );
-  if (!rules.length) return undefined;
+): Promise<SurfaceRunOutcome> {
   return runSurfaceDoctor(
-    { ...input, options: { ...input.options, rules: rules.join(",") } },
+    { ...input, options: { ...input.options, rules: BUILD_EVIDENCE_RULE } },
     extensions,
   );
 }
@@ -99,12 +91,17 @@ function surfaceDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic): Sur
   };
 }
 
-function viteSurfaceExtension(vite: SurfaceRunInput["vite"]): DoctorExtension {
+function viteSurfaceExtension({ vite, frameworkDiagnostics }: SurfaceRunInput): DoctorExtension {
   return {
     name: "vite-doctor/surface-vite",
     setup(api) {
       api.registerProjectInventoryContributor({ name: "vite", contribute: () => vite.inventory });
       api.registerRuntimeEvidenceContributor({ name: "vite", contribute: () => vite.evidence });
+      if (frameworkDiagnostics?.length)
+        api.registerRuntimeEvidenceContributor({
+          name: FRAMEWORK_DIAGNOSTICS_EVIDENCE,
+          contribute: () => ({ reports: frameworkDiagnostics }),
+        });
     },
   };
 }

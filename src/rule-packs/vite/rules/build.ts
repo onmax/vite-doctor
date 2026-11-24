@@ -6,22 +6,23 @@ import {
   type ImportGraph,
   type ImportGraphEdge,
 } from "../../../core/index.js";
-import { sha256 } from "../../../core/internal/utils.js";
 import { diagnostics } from "../../../diagnostics.js";
 import {
   buildModuleFile,
+  buildDiagnosticFingerprint,
+  BUILD_EVIDENCE_RULE,
   readBuildEvidence,
   type ViteBuildEnvironment,
   type ViteBuildEvidence,
 } from "./build-evidence.js";
 
-const RULE_ID = "vite/build/no-node-builtin-in-client-chunk";
+const RULE_ID = BUILD_EVIDENCE_RULE;
 
 interface ClientModule {
   file: string;
   id: string;
   environment: ViteBuildEnvironment;
-  chunks: string[];
+  reads: ViteBuildEnvironment["browserStubReads"];
 }
 
 export const noNodeBuiltinInClientChunk = createRule({
@@ -50,16 +51,31 @@ export const noNodeBuiltinInClientChunk = createRule({
         const graph = await ctx.inventory.importGraph();
         const path = (file: string) => relative(ctx.project.root, file);
         for (const module of modules) {
-          // Only the module's own source proves which Node built-in the stub replaced. A stub
-          // from a package's `browser: false` field, or a file outside the run, is not reported.
           const builtins = graph
             .importsOf(module.file)
-            .filter((edge) => !edge.typeOnly && isBuiltin(edge.specifier));
+            .filter(
+              (edge) =>
+                !edge.typeOnly &&
+                isBuiltin(edge.specifier) &&
+                module.reads.some(
+                  (read) => read.specifier === edge.specifier && read.start === edge.range?.start,
+                ),
+            );
           const first = builtins[0];
           if (!first) continue;
           const names = [...new Set(builtins.map((edge) => edge.specifier))];
           const list = names.map((name) => `'${name}'`).join(", ");
-          const chunks = module.chunks.join(", ");
+          const chunks = [
+            ...new Set(
+              module.reads
+                .filter((read) =>
+                  builtins.some(
+                    (edge) => edge.specifier === read.specifier && edge.range?.start === read.start,
+                  ),
+                )
+                .map((read) => read.chunk),
+            ),
+          ].join(", ");
           const chain = importChain(module.environment, module.id);
           const steps = chain?.map((id) => displayId(evidence, id, path)).join(" → ");
           const environment = module.environment.name;
@@ -88,7 +104,7 @@ export const noNodeBuiltinInClientChunk = createRule({
               file: module.file,
               range: first.range,
               related: chain ? chainLocations(evidence, graph, chain, path) : undefined,
-              fingerprint: sha256(`${RULE_ID}:${path(module.file)}:${environment}`),
+              fingerprint: buildDiagnosticFingerprint(path(module.file), environment),
               evidence: facts,
             },
           );
@@ -104,15 +120,19 @@ function clientStubReaders(evidence: ViteBuildEvidence): ClientModule[] {
   for (const environment of evidence.environments) {
     // A chunk without a resolved consumer could run anywhere, so it proves nothing.
     if (environment.consumer !== "client") continue;
-    for (const id of environment.browserStubReads) {
+    const readers = new Map<string, ClientModule>();
+    for (const read of environment.browserStubReads) {
+      const { id, chunk } = read;
       const file = buildModuleFile(evidence, id);
       // A query id is a transformed variant, such as a Vue SFC block or a framework stub.
       if (!file || id.includes("?")) continue;
-      const chunks = environment.chunks
-        .filter((chunk) => chunk.modules.includes(id))
-        .map((chunk) => chunk.fileName);
-      if (chunks.length) modules.push({ file, id, environment, chunks });
+      if (!environment.chunks.some((item) => item.fileName === chunk && item.modules.includes(id)))
+        continue;
+      let module = readers.get(id);
+      if (!module) readers.set(id, (module = { file, id, environment, reads: [] }));
+      module.reads.push(read);
     }
+    modules.push(...readers.values());
   }
   return modules;
 }
