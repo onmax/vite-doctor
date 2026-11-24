@@ -35,14 +35,6 @@ export interface AutoImportEdge {
 
 const edgesBySession = new WeakMap<ScanSession, Promise<readonly AutoImportEdge[]>>();
 const completedEdges = new WeakMap<ScanSession, readonly AutoImportEdge[]>();
-const clientParticipation = new WeakMap<
-  ScanSession,
-  (from: number, to: number) => boolean | undefined
->();
-
-export function sessionClientParticipation(session: ScanSession) {
-  return clientParticipation.get(session);
-}
 
 /** Auto-import edges collected for this run, or none when nothing asked for them. */
 export function sessionAutoImportEdges(session: ScanSession): readonly AutoImportEdge[] {
@@ -86,9 +78,6 @@ async function collect(
   const nitroQueue: FileFacts[] = [];
   const appFiles = new Set<number>();
   const appQueue: FileFacts[] = [];
-  const clientEntries = new Set<number>();
-  const serverEntries = new Set<number>();
-  const appDependencies = new Map<number, number[]>();
   const scanTargets = new Map<NuxtProjectInfo, Set<number | undefined>>();
   const projectOf = (fact: FileFacts) => session.handlesByPath.get(fact.path)?.project.nuxt;
   const enqueue = (file: number | undefined, nuxt: NuxtProjectInfo, server: boolean) => {
@@ -114,16 +103,11 @@ async function collect(
           ...(nuxt.manifest.pages ?? []),
           ...(nuxt.manifest.resolvedComponents ?? []),
           ...(nuxt.manifest.resolvedPlugins ?? []),
-          ...(nuxt.manifest.resolvedMiddleware ?? []).map((file) => ({ file, mode: "all" })),
+          ...(nuxt.manifest.resolvedMiddleware ?? []).map((file) => ({ file })),
         ];
         for (const file of nuxt.manifest.pluginFiles) enqueue(index.resolveFile(file), nuxt, false);
-        for (const { file, mode } of registrations) {
-          if (!file) continue;
-          const target = index.resolveFile(file);
-          enqueue(target, nuxt, false);
-          if (target !== undefined && appFiles.has(target))
-            (mode === "server" ? serverEntries : clientEntries).add(target);
-        }
+        for (const { file } of registrations)
+          if (file) enqueue(index.resolveFile(file), nuxt, false);
         scanTargets.set(
           nuxt,
           new Set(
@@ -135,19 +119,7 @@ async function collect(
       }
     }
     if (isServerFile(fact, nuxt)) enqueue(fact.fileId, nuxt, true);
-    else if (isAppEntry(fact, nuxt)) {
-      enqueue(fact.fileId, nuxt, false);
-      clientEntries.add(fact.fileId);
-    }
-  }
-
-  function follow(fact: FileFacts, to: number | undefined, nuxt: NuxtProjectInfo, server: boolean) {
-    enqueue(to, nuxt, server);
-    if (server || to === undefined || !appFiles.has(to) || projectOf(factsById.get(to)!) !== nuxt)
-      return;
-    const dependencies = appDependencies.get(fact.fileId);
-    if (dependencies) dependencies.push(to);
-    else appDependencies.set(fact.fileId, [to]);
+    else if (isAppEntry(fact, nuxt)) enqueue(fact.fileId, nuxt, false);
   }
 
   async function collectFile(fact: FileFacts, server: boolean, followDependencies: boolean) {
@@ -219,7 +191,7 @@ async function collect(
       const to = owned.get(name);
       if (to === undefined || to === fact.fileId || seen.has(name)) continue;
       seen.add(name);
-      if (followDependencies) follow(fact, to, nuxt, server);
+      if (followDependencies) enqueue(to, nuxt, server);
       const [start, end] = reference.identifier.range;
       edges.push({
         from: fact.fileId,
@@ -247,8 +219,7 @@ async function collect(
         const path = server
           ? sourcePath(item.source, Object.entries(nuxt.nitroAutoImports?.aliases ?? {}))
           : undefined;
-        follow(
-          fact,
+        enqueue(
           path ? index.resolveFile(path) : index.resolveImport(fact, item.source),
           nuxt,
           server,
@@ -257,24 +228,6 @@ async function collect(
       await collectFile(fact, server, true);
     }
   }
-
-  const clientFiles = new Set(clientEntries);
-  const clientQueue = [...clientEntries];
-  for (const file of clientQueue) {
-    for (const dependency of appDependencies.get(file) ?? []) {
-      if (clientFiles.has(dependency)) continue;
-      clientFiles.add(dependency);
-      clientQueue.push(dependency);
-    }
-  }
-  clientParticipation.set(session, (from, to) => {
-    if (
-      (serverEntries.has(from) && !clientFiles.has(from)) ||
-      (serverEntries.has(to) && !clientFiles.has(to))
-    )
-      return false;
-    return undefined;
-  });
 
   for (const fact of session.facts) {
     if (appFiles.has(fact.fileId) || serverFiles.has(fact.fileId)) continue;

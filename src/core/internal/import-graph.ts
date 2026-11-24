@@ -6,7 +6,6 @@ export function buildImportGraph(
   facts: readonly FileFacts[],
   resolveImport: (from: FileFacts, specifier: string) => number | undefined,
   autoImports: readonly ImportGraphEdge[] = [],
-  clientParticipation?: (from: number, to: number) => boolean | undefined,
 ): ImportGraph {
   const pathsById = new Map(facts.map((fact) => [fact.fileId, fact.path]));
   const edges: ImportGraphEdge[] = [];
@@ -46,12 +45,9 @@ export function buildImportGraph(
     for (const declaration of declarations) {
       const target = resolveImport(fact, declaration.specifier);
       const to = target === undefined ? undefined : pathsById.get(target);
-      const clientReachable =
-        target === undefined ? undefined : clientParticipation?.(fact.fileId, target);
       const edge: ImportGraphEdge = {
         from: fact.path,
         ...(to ? { to } : {}),
-        ...(clientReachable !== undefined && { clientReachable }),
         ...declaration,
       };
       edges.push(edge);

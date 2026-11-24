@@ -815,7 +815,7 @@ test.each([
   { mode: "server", explicit: true },
   { mode: "all", explicit: false },
 ] as const)(
-  "Nuxt HMR follows $mode plugin mode with explicit import: $explicit",
+  "Nuxt HMR stays conditional for $mode plugin registration with explicit import: $explicit",
   ({ mode, explicit }) =>
     withNitroManifest(
       {
@@ -829,20 +829,60 @@ test.each([
         expect(cycles.some((cycle) => cycle.message.includes("lib/helper.ts"))).toBe(true);
         expect(
           graph.edges.find((edge) => edge.to?.endsWith("/app/plugins/entry.ts"))?.clientReachable,
-        ).toBe(mode === "server" ? false : undefined);
+        ).toBeUndefined();
         const { diagnostics } = await runViteDoctor({
           root,
           framework: "nuxt",
           config: { extends: ["auto", "vite/strict"] },
           cache: false,
         });
-        expect(diagnostics.filter((item) => item.code === "VITE0029")).toHaveLength(
-          mode === "all" ? 1 : 0,
+        const hmr = diagnostics.filter((item) => item.code === "VITE0029");
+        expect(hmr).toHaveLength(1);
+        expect(hmr[0]?.message).toContain(
+          "does not establish that this whole loop runs in the browser",
         );
       },
       {
         appImports: { useLoop: "app/composables/useLoop.ts" },
         appPlugins: [{ file: "app/plugins/entry.ts", mode }],
+      },
+    ),
+);
+
+test.each([false, true])(
+  "Nuxt HMR keeps a router-options plugin loop conditional (explicit: %s)",
+  (explicit) =>
+    withNitroManifest(
+      {
+        "app/app.vue": "<template><NuxtPage /></template>",
+        "app/pages/index.vue": "<template><div /></template>",
+        "app/router.options.ts":
+          "import { scrollBehavior } from './plugins/entry.server'; export default { scrollBehavior }",
+        "app/plugins/entry.server.ts":
+          "import { getPosition } from '../helper'; export const scrollBehavior = () => getPosition(); export default () => {}",
+        "app/helper.ts": `${explicit ? "import { scrollBehavior } from './plugins/entry.server';" : ""} export const getPosition = () => ({ top: 0 }); export const reset = () => scrollBehavior(); if (import.meta.hot) import.meta.hot.accept()`,
+      },
+      async (root) => {
+        const { cycles } = await analyze(root);
+        expect(cycles.some((cycle) => cycle.message.includes("app/plugins/entry.server.ts"))).toBe(
+          true,
+        );
+        const { diagnostics } = await runViteDoctor({
+          root,
+          framework: "nuxt",
+          config: { extends: ["auto", "vite/strict"] },
+          cache: false,
+        });
+        const hmr = diagnostics.filter((item) => item.code === "VITE0029");
+        expect(hmr).toHaveLength(1);
+        expect(hmr[0]?.message).toContain("app/plugins/entry.server.ts");
+        expect(hmr[0]?.message).toContain(
+          "does not establish that this whole loop runs in the browser",
+        );
+      },
+      {
+        appImports: { scrollBehavior: "app/plugins/entry.server.ts" },
+        appPlugins: [{ file: "app/plugins/entry.server.ts", mode: "server" }],
       },
     ),
 );

@@ -25,7 +25,6 @@ import {
 import {
   collectAutoImportEdges,
   sessionAutoImportEdges,
-  sessionClientParticipation,
   type AutoImportEdge,
 } from "./auto-import-edges.js";
 import { projectNuxtInventories } from "./workspace-nuxt.js";
@@ -569,26 +568,20 @@ function sessionImportGraph(session: ScanSession, index?: GraphIndex): ImportGra
   if (!graph) {
     const resolver = index ?? createGraphIndex(session, session.ruleInputs.frame().fs);
     const paths = new Map(session.facts.map((fact) => [fact.fileId, fact.path]));
-    const clientParticipation = sessionClientParticipation(session);
     graph = buildImportGraph(
       session.root,
       session.facts,
       (from, specifier) => resolver.resolveImport(from, specifier),
-      sessionAutoImportEdges(session).map((edge) => {
-        const clientReachable =
-          edge.autoImportBundle === "nitro" ? false : clientParticipation?.(edge.from, edge.to);
-        return {
-          from: paths.get(edge.from)!,
-          to: paths.get(edge.to)!,
-          specifier: edge.name,
-          kind: "auto-import" as const,
-          autoImportBundle: edge.autoImportBundle,
-          ...(clientReachable !== undefined && { clientReachable }),
-          typeOnly: false,
-          range: edge.range,
-        };
-      }),
-      clientParticipation,
+      sessionAutoImportEdges(session).map((edge) => ({
+        from: paths.get(edge.from)!,
+        to: paths.get(edge.to)!,
+        specifier: edge.name,
+        kind: "auto-import" as const,
+        autoImportBundle: edge.autoImportBundle,
+        ...(edge.autoImportBundle === "nitro" && { clientReachable: false }),
+        typeOnly: false,
+        range: edge.range,
+      })),
     );
     importGraphs.set(session, graph);
   }
