@@ -3,7 +3,12 @@ import { gte, valid } from "semver";
 import { parseScriptScope } from "../../../../core/internal/script-scope.js";
 import type { DiagnosticEvidence, RuleContext } from "../../../../core/index.js";
 import { FUNCTION_TYPES, propertyName, unwrap } from "./nuxt-config-ast.js";
-import { conventionalPagesDirectory, isInsideDir, isScannedNuxtFile } from "./page-structure.js";
+import {
+  conventionalPagesDirectory,
+  isInsideDir,
+  isScannedNuxtFile,
+  preparedPagesSourceChanged,
+} from "./page-structure.js";
 import {
   type AnyNode,
   createRule,
@@ -126,12 +131,10 @@ function routeParams(
   const manifest = ctx.project.nuxt?.manifest;
   const file = resolve(ctx.project.root, ctx.file.path);
   const pages = manifest?.resolvedApp && conventionalPagesDirectory(ctx);
-  const preparedDir = manifest?.resolvedApp?.inputs?.pages?.directories[0]?.directory;
   if (
     manifest &&
     (manifest.resolvedApp
-      ? manifest.resolvedAppCurrent?.pages &&
-        (!pages || preparedDir === undefined || resolve(ctx.project.root, preparedDir) === pages)
+      ? manifest.resolvedAppCurrent?.pages && !preparedPagesSourceChanged(ctx, pages)
       : manifest.isCurrent && manifest.pages?.length)
   ) {
     if (manifest.resolvedApp && !manifest.resolvedApp.pagesResolved) return null;

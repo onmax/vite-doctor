@@ -672,7 +672,7 @@ test.each(["pages", "app/pages"])(
   },
 );
 
-test.each(["pages", "hooked", "screens", "markdown"])(
+test.each(["pages", "hooked", "screens", "markdown", "alias"])(
   "checks prepared %s without metadata scanning",
   async (directory) => {
     const root = mkdtempSync(join(tmpdir(), "doctor-prepared-page-structure-"));
@@ -696,10 +696,10 @@ test.each(["pages", "hooked", "screens", "markdown"])(
         "nuxt.config.ts",
         `export default {
           experimental: { scanPageMeta: false, typedPages: false },
-          ${pagesDir === "pages" ? "" : `dir: { pages: '${pagesDir}' },`}
+          ${directory === "alias" ? "alias: { pages: './screens' }," : pagesDir === "pages" ? "" : `dir: { pages: '${pagesDir}' },`}
           ${directory === "markdown" ? "pages: { pattern: ['**/*.vue', '**/*.md'] }," : ""}
           ${
-            directory === "pages"
+            directory === "pages" || directory === "alias"
               ? ""
               : `hooks: {
             'pages:extend'(pages) {
@@ -711,6 +711,13 @@ test.each(["pages", "hooked", "screens", "markdown"])(
         }`,
       );
       write("app/app.vue", template("<NuxtPage />"));
+      if (directory === "alias") {
+        write(
+          "app/pages/[old].vue",
+          template("<div>Old</div>", "definePageMeta({ keepalive: true })"),
+        );
+        write("app/pages/[old]/child.vue", template("<div>Unused child</div>"));
+      }
       if (directory === "screens") write(".nuxtignore", "app/screens/ignored.vue\n");
       write(page("teams"), template("<div>Teams</div>"));
       write(page("users"), template("<div>Users</div>"));
@@ -722,7 +729,7 @@ test.each(["pages", "hooked", "screens", "markdown"])(
           template("<div>Item</div>", "definePageMeta({ keepalive: true })"),
         );
       }
-      if (directory !== "pages") {
+      if (directory !== "pages" && directory !== "alias") {
         write(
           page("product/[id]"),
           template("<div>Product</div>", "definePageMeta({ keepalive: true })"),

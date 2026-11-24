@@ -419,6 +419,10 @@ export function conventionalPagesDirectory(ctx: RuleContext): string | undefined
   const [layer] = layers;
   if (!layer || layers.length !== 1 || layer.root !== ctx.project.root) return undefined;
   if (layer.srcDir !== layer.root && layer.srcDir !== join(layer.root, "app")) return undefined;
+  const preparedDir =
+    ctx.project.nuxt?.manifest?.resolvedApp?.inputs?.pages?.directories[0]?.directory;
+  if (preparedDir !== undefined && resolve(layer.root, preparedDir) !== join(layer.srcDir, "pages"))
+    return undefined;
   const appDir = join(layer.root, "app");
   const appEntries = ctx.fs.readDir(appDir);
   if (!appEntries && ctx.fs.exists(appDir)) return undefined;
@@ -462,6 +466,7 @@ export function conventionalPagesDirectory(ctx: RuleContext): string | undefined
           /^(?:extends|theme|modules|_modules|hooks|router|rootDir|srcDir|dir|pagesDir|ignore|ignorePrefix|extensions|future)$/.test(
             name,
           ) ||
+          (name === "alias" && mayAliasPages(property.value)) ||
           (name === "pages" && unwrap(property.value)?.value !== true)
         );
       })
@@ -471,6 +476,27 @@ export function conventionalPagesDirectory(ctx: RuleContext): string | undefined
     return undefined;
   }
   return join(srcDir, "pages");
+}
+
+function mayAliasPages(value: AnyNode): boolean {
+  const aliases = unwrap(value);
+  return (
+    aliases?.type !== "ObjectExpression" ||
+    aliases.properties.some((property: AnyNode) => {
+      const name = propertyName(property);
+      return property.type !== "Property" || property.computed || !name || name === "pages";
+    })
+  );
+}
+
+export function preparedPagesSourceChanged(ctx: RuleContext, conventionalDir: string | undefined) {
+  const preparedDir =
+    ctx.project.nuxt?.manifest?.resolvedApp?.inputs?.pages?.directories[0]?.directory;
+  return (
+    conventionalDir !== undefined &&
+    preparedDir !== undefined &&
+    resolve(ctx.project.root, preparedDir) !== conventionalDir
+  );
 }
 
 function currentManifest(ctx: RuleContext, layers: NuxtAppSource[], kind: NuxtAppInventoryKind) {
@@ -487,7 +513,11 @@ export interface PageRoute {
 }
 
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
-  const manifest = currentManifest(ctx, layers, "pages");
+  const prepared = ctx.project.nuxt?.manifest?.resolvedApp;
+  const conventionalDir = prepared && conventionalPagesDirectory(ctx);
+  const manifest = preparedPagesSourceChanged(ctx, conventionalDir)
+    ? undefined
+    : currentManifest(ctx, layers, "pages");
   const pages = manifest?.pages ?? [];
   if (manifest?.resolvedApp?.pagesResolved)
     return pages.flatMap((page): PageRoute[] =>
@@ -504,7 +534,8 @@ export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: r
   if (pages.length || layers.length !== 1 || unreadLayers(ctx, layers)) return undefined;
   const layer = layers[0]!;
   if (!scanIsReliable(ctx, layer, "pages")) return undefined;
-  const dir = join(layer.srcDir, "pages");
+  const dir = prepared ? conventionalDir : join(layer.srcDir, "pages");
+  if (!dir) return undefined;
   const files = sources.filter((file) => isInsideDir(file, dir) && isScannedNuxtFile(file));
   const stems = new Map(files.map((file) => [file.replace(/\.[^.]+$/, ""), file]));
   return files.map((file): PageRoute => {
