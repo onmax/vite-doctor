@@ -1,5 +1,10 @@
 import type { AnyNode } from "../rule-authoring.js";
-import { findFunctionVar, findStatementBinding, patternNames } from "./script-index.js";
+import {
+  findFunctionVar,
+  findStatementBinding,
+  patternNames,
+  scriptNodesOfType,
+} from "./script-index.js";
 
 // Request-value flow over a Doctor script AST (nodes carry `__doctorParent`): does an expression
 // hold a value that only exists for one request? Rule Packs supply what counts as a source, such as
@@ -159,13 +164,14 @@ function projectMember(
       steps++;
     } else if (object?.type === "MemberExpression") {
       const inner = projectMember(object, sources, remaining - steps);
-      if (!inner) return;
+      if (!inner || !inner.value) return inner;
       object = unwrapExpression(inner.value);
       steps += inner.steps;
     } else return;
   }
   if (object?.type !== "ObjectExpression") return;
   const write = setupMemberWrite(node, object, name, sources);
+  if (write === UNKNOWN_VALUE) return { value: null, steps };
   for (const property of object.properties.toReversed()) {
     if (property.type !== "Property") return;
     const key =
@@ -179,8 +185,6 @@ function projectMember(
   return { value: write, steps };
 }
 
-const setupWritesByProgram = new WeakMap<object, AnyNode[]>();
-
 function setupMemberWrite(
   reference: AnyNode,
   object: AnyNode,
@@ -192,32 +196,73 @@ function setupMemberWrite(
     if (FUNCTION_TYPES.has(program.type)) return null;
     program = program.__doctorParent;
   }
-  let writes = setupWritesByProgram.get(program);
-  if (!writes) {
-    writes = [];
-    for (const statement of program.body ?? []) {
-      if (statement.type !== "ExpressionStatement") continue;
-      const assignment = unwrapExpression(statement.expression);
-      if (
-        assignment?.type === "AssignmentExpression" &&
-        assignment.operator === "=" &&
-        unwrapExpression(assignment.left)?.type === "MemberExpression"
-      )
-        writes.push(assignment);
-    }
-    writes.reverse();
-    setupWritesByProgram.set(program, writes);
-  }
-  for (const write of writes) {
-    if (write.end > reference.start) continue;
-    const target = unwrapExpression(write.left);
-    if (staticMemberName(target) !== name) continue;
-    let base = unwrapExpression(target.object);
+  const isObject = (expression: AnyNode) => {
+    let base = unwrapExpression(expression);
     while (base?.type === "Identifier")
       base = unwrapExpression(provenConstBinding(base, sources.programBinding)?.init);
-    if (base === object) return write.right;
+    return base === object;
+  };
+  const affectsMember = (input: AnyNode): boolean => {
+    const target = unwrapExpression(input);
+    if (target?.type === "MemberExpression") {
+      if (!isObject(target.object)) return affectsMember(target.object);
+      const key = staticMemberName(target);
+      return key === undefined || key === name || key === "__proto__";
+    }
+    if (target?.type === "ArrayPattern") return target.elements.some(affectsMember);
+    if (target?.type === "ObjectPattern")
+      return target.properties.some((property: AnyNode) =>
+        affectsMember(property.value ?? property.argument),
+      );
+    if (target?.type === "AssignmentPattern") return affectsMember(target.left);
+    if (target?.type === "RestElement") return affectsMember(target.argument);
+    return false;
+  };
+
+  let latest: AnyNode = null;
+  let value: AnyNode = null;
+  for (const operation of scriptNodesOfType(
+    program,
+    "AssignmentExpression",
+    "UpdateExpression",
+    "UnaryExpression",
+    "ForInStatement",
+    "ForOfStatement",
+    "CallExpression",
+    "NewExpression",
+  )) {
+    if (operation.end > reference.start || operation.end <= (latest?.end ?? object.end)) continue;
+    if (operation.type === "CallExpression" || operation.type === "NewExpression") {
+      const callee = unwrapExpression(operation.callee);
+      if (
+        !operation.arguments.some((argument: AnyNode) => isObject(argument)) &&
+        !(callee?.type === "MemberExpression" && isObject(callee.object))
+      )
+        continue;
+    } else {
+      if (operation.type === "UnaryExpression" && operation.operator !== "delete") continue;
+      if (!affectsMember(operation.left ?? operation.argument)) continue;
+    }
+
+    latest = operation;
+    const statement = enclosingExpression(operation).__doctorParent;
+    const target = unwrapExpression(operation.left);
+    value =
+      operation.type === "AssignmentExpression" &&
+      operation.operator === "=" &&
+      statement?.type === "ExpressionStatement" &&
+      statement.__doctorParent === program &&
+      staticMemberName(target) === name &&
+      isObject(target.object)
+        ? operation.right
+        : UNKNOWN_VALUE;
   }
-  return null;
+  return value;
+}
+
+function enclosingExpression(node: AnyNode): AnyNode {
+  while (WRAPPERS.has(node.__doctorParent?.type)) node = node.__doctorParent;
+  return node;
 }
 
 function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, depth: number) {

@@ -193,6 +193,46 @@ test.each([
     "preferences.theme = preferences.cookie.value; preferences.theme = 'light'; const rendered = preferences.theme",
     0,
   ],
+  [
+    "an overwrite in the SSR branch",
+    "preferences.theme = preferences.cookie.value; if (import.meta.server) preferences.theme = 'light'; const rendered = preferences.theme",
+    0,
+  ],
+  [
+    "a mutation call through an alias",
+    "preferences.theme = preferences.cookie.value; const alias = preferences; Object.assign(alias, { theme: 'light' }); const rendered = preferences.theme",
+    0,
+  ],
+  [
+    "a computed overwrite with an unknown key",
+    "preferences.theme = preferences.cookie.value; preferences[String('theme')] = 'light'; const rendered = preferences.theme",
+    0,
+  ],
+  [
+    "an overwrite of the initializer",
+    "if (import.meta.server) preferences.cookie = null; const rendered = preferences.cookie?.value",
+    0,
+  ],
+  [
+    "a conditional write to an unused sibling",
+    "preferences.theme = preferences.cookie.value; if (import.meta.server) preferences.cookie = null; const rendered = preferences.theme",
+    1,
+  ],
+  [
+    "a definite write after a mutation call",
+    "const theme = useCookie('theme'); Object.assign(preferences, { theme: 'light' }); preferences.theme = theme.value; const rendered = preferences.theme",
+    1,
+  ],
+  [
+    "a deletion before the selected read",
+    "preferences.theme = preferences.cookie.value; delete preferences.theme; const rendered = preferences.theme",
+    0,
+  ],
+  [
+    "a mutation call after the selected read",
+    "preferences.theme = preferences.cookie.value; const rendered = preferences.theme; Object.assign(preferences, { theme: 'light' })",
+    1,
+  ],
 ])("traces a rendered object property through setup writes: %s", async (_, setup, count) => {
   const file = "app/pages/account.vue";
   const result = await run({
