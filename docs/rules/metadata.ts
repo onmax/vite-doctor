@@ -860,6 +860,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/fetch/handler-must-return": {
+    description: "Finds a useAsyncData or useLazyAsyncData handler that never returns a value.",
+    why: "A handler that resolves to undefined leaves undefined in the payload. While the browser hydrates, Nuxt reuses server data only when it is not undefined, so the handler runs again in the browser right after SSR, and in development Nuxt warns that the request may be duplicated (NUXT_E3006). Arrow functions with an expression body count as returning. Calls with server: false, immediate: false, a transform, pick, default, or getCachedData option, options Doctor cannot read, client-only files, and apps with ssr: false are not reported. Side effects inside the handler are a separate problem, reported by nuxt/async-data-handler-pure (NUXT0017).",
+    recommendedReplacement:
+      "Return the data the page renders. If the handler only runs side effects, return null, or move the side effects out of useAsyncData.",
+    examples: [
+      {
+        title: "Return the fetched data",
+        language: "ts",
+        invalid:
+          "const store = useCartStore()\nawait useAsyncData('cart', async () => {\n  store.items = await $fetch('/api/cart')\n})",
+        valid: "const { data: items } = await useAsyncData('cart', () => $fetch('/api/cart'))",
+      },
+    ],
+  },
   "nuxt/fetch/keyed-composable-registration-required": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",
@@ -1246,6 +1261,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/plugins/no-island-disabled-dependency": {
+    description:
+      "Finds a plugin whose dependsOn names a plugin that sets env: { islands: false }, in an app that renders server component islands.",
+    why: "When Nuxt renders an island it skips plugins with env: { islands: false }, but a plugin that depends on one still waits for it. The dependency never resolves, so the dependent plugin silently never runs in island renders, and whatever it provides is missing there. Doctor reports only object-syntax plugins with literal names, where each name is unique, and only when experimental.componentIslands is not turned off and the app has a server component, island component, or server page. Client-only plugins are not reported because islands render on the server.",
+    recommendedReplacement:
+      "Drop the dependency if the plugin can run without it, or set env: { islands: false } on the dependent plugin too.",
+    examples: [
+      {
+        title: "Opt the dependent plugin out of islands too",
+        language: "ts",
+        invalid:
+          "// app/plugins/auth.ts\nexport default defineNuxtPlugin({\n  name: 'auth',\n  env: { islands: false },\n  setup() {},\n})\n\n// app/plugins/api.ts\nexport default defineNuxtPlugin({\n  name: 'api',\n  dependsOn: ['auth'],\n  setup() {},\n})",
+        valid:
+          "// app/plugins/api.ts\nexport default defineNuxtPlugin({\n  name: 'api',\n  dependsOn: ['auth'],\n  env: { islands: false },\n  setup() {},\n})",
+      },
+    ],
+  },
   "nuxt/plugins/no-subdir-auto-registration-assumption": {
     description:
       "Flags subdir auto registration assumption in Nuxt plugins code before it leaks into runtime behavior.",
@@ -1459,6 +1491,23 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: "const apiBase = process.env.NUXT_PUBLIC_API_BASE",
         valid: "const apiBase = useRuntimeConfig().public.apiBase",
+      },
+    ],
+  },
+  "nuxt/runtime/no-private-runtime-config-in-client": {
+    description:
+      "Finds client code that reads a private runtimeConfig key from useRuntimeConfig().",
+    why: 'Nuxt sends only runtimeConfig.public and runtimeConfig.app to the browser, so any other top-level key is undefined there even though its type says string. In development Nuxt warns "Could not access `key`" (NUXT_E1003). Doctor checks components, pages, layouts, client plugins, and route middleware, and reads the private keys from the Doctor manifest. Reads under import.meta.server or process.server, after an early client return, in onServerPrefetch, and in .server components and plugins are not reported. Without the manifest Doctor records an evidence gap instead.',
+    recommendedReplacement:
+      "Move the key under runtimeConfig.public if it is safe to expose. Otherwise read it in a server route and fetch the result, or guard the read with import.meta.server.",
+    examples: [
+      {
+        title: "Keep private config on the server",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nconst config = useRuntimeConfig()\nconst { data } = await useFetch('https://api.example.com/items', {\n  headers: { Authorization: config.apiSecret },\n})\n</script>",
+        valid:
+          "<script setup lang=\"ts\">\nconst { data } = await useFetch('/api/items')\n</script>",
       },
     ],
   },

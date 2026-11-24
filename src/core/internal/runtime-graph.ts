@@ -689,8 +689,24 @@ function readExportedGranularCachedData(
   file: string,
   text: string,
 ): { enabled: boolean; source: "config" } | null | undefined {
+  const value = readExportedExperimentalOption(file, text, "granularCachedData");
+  if (!value) return value;
+  return value.type === "Literal" && typeof value.value === "boolean"
+    ? { enabled: value.value, source: "config" }
+    : null;
+}
+
+/**
+ * The value node of `experimental.<option>` in an exported Nuxt config: unset when the config
+ * leaves it to Nuxt's default, `null` when the config could set it in a way Doctor cannot read.
+ */
+export function readExportedExperimentalOption(
+  file: string,
+  text: string,
+  option: string,
+): AnyRuntimeNode | null | undefined {
   const program = parseScript(file, text) as { body?: AnyRuntimeNode[] } | null;
-  if (!program) return /\bgranularCachedData\b/.test(text) ? null : undefined;
+  if (!program) return new RegExp(`\\b${option}\\b`).test(text) ? null : undefined;
   const exported = program.body?.find((node) => node.type === "ExportDefaultDeclaration");
   if (!exported) return undefined;
   let config = unwrapExpression(exported.declaration);
@@ -698,27 +714,25 @@ function readExportedGranularCachedData(
     config = unwrapExpression(config.arguments?.[0]);
   }
   if (config?.type !== "ObjectExpression") return null;
-  // An override can set the flag for one environment only, which a single answer cannot express.
+  // An override can set the option for one environment only, which a single answer cannot express.
   for (const name of NUXT_ENVIRONMENT_OVERRIDES) {
     const override = objectProperty(config, name);
     if (override.state === "unknown") return null;
     if (override.state !== "resolved") continue;
     const value = unwrapExpression(override.value);
     if (value?.type !== "ObjectExpression") return null;
-    if (/granularCachedData|\.\.\./.test(text.slice(value.start, value.end))) return null;
+    const source = text.slice(value.start, value.end);
+    if (source.includes(option) || source.includes("...")) return null;
   }
   const experimental = objectProperty(config, "experimental");
   if (experimental.state === "absent") return undefined;
   if (experimental.state === "unknown") return null;
   const experimentalObject = unwrapExpression(experimental.value);
   if (experimentalObject?.type !== "ObjectExpression") return null;
-  const flag = objectProperty(experimentalObject, "granularCachedData");
+  const flag = objectProperty(experimentalObject, option);
   if (flag.state === "absent") return undefined;
   if (flag.state === "unknown") return null;
-  const value = unwrapExpression(flag.value);
-  return value?.type === "Literal" && typeof value.value === "boolean"
-    ? { enabled: value.value, source: "config" }
-    : null;
+  return unwrapExpression(flag.value) ?? null;
 }
 
 type AnyRuntimeNode = Record<string, any>;
