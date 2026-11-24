@@ -429,6 +429,14 @@ function viteRuntimeEvidence(config: ResolvedConfig) {
     buildSsr: Boolean(config.build?.ssr),
     ssrExternal: config.ssr?.external ?? [],
     ssrNoExternal: config.ssr?.noExternal ?? [],
+    importResolution: config.resolve?.extensions
+      ? {
+          root: config.root,
+          extensions: environments.length
+            ? environments.map((environment) => environment.resolve.extensions)
+            : [config.resolve.extensions],
+        }
+      : undefined,
     envExposure: hasResolvedConsumers
       ? {
           root: config.root,

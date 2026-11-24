@@ -39,6 +39,50 @@ test("a reused Plugin Surface diagnoses each resolved Vite build", async () => {
   });
 });
 
+test("Pinia cycles use Vite's resolved extension order", async () => {
+  await withProject(async (root) => {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0" } }),
+    );
+    await writeFile(
+      join(root, "x.ts"),
+      `
+import { defineStore } from 'pinia'
+import { useYStore } from './y'
+export const useXStore = defineStore('x', () => ({ name: useYStore().name }))
+`,
+    );
+    await writeFile(
+      join(root, "y.tsx"),
+      `
+import { defineStore } from 'pinia'
+import { useXStore } from './x'
+export const useYStore = defineStore('y', () => ({ name: useXStore().name }))
+`,
+    );
+    await writeFile(join(root, "y.jsx"), "export const useYStore = () => ({ name: 'helper' })");
+    const config = {
+      root,
+      configFile: false as const,
+      logLevel: "silent" as const,
+      plugins: [doctor({ rules: "pinia/stores/no-circular-setup-state-read", cache: false })],
+      build: { write: false, lib: { entry: join(root, "entry.ts"), formats: ["es" as const] } },
+    };
+    await build(config);
+    await expect(
+      build({ ...config, resolve: { extensions: [".tsx", ".jsx", ".ts"] } }),
+    ).rejects.toThrow(/PINIA0003/);
+    await build({
+      ...config,
+      environments: {
+        client: { resolve: { extensions: [".tsx", ".jsx", ".ts"] } },
+        ssr: { resolve: { extensions: [".jsx", ".tsx", ".ts"] } },
+      },
+    });
+  });
+});
+
 test("a shared Plugin Surface runs once across a Vite application's environments", async () => {
   await withProject(async (root) => {
     let runs = 0;

@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, resolve } from "pathe";
+import { basename, dirname, isAbsolute, relative, resolve } from "pathe";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { diagnostics } from "../diagnostics.js";
@@ -76,7 +76,7 @@ export const noCircularSetupStateRead = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast"],
+    consumesEvidence: ["ast", "runtime"],
     cost: "medium",
   },
   create(ctx) {
@@ -121,6 +121,7 @@ function storeEdges(ctx: RuleContext, stores: LocatedStore[]): StoreEdge[] {
 function storeResolver(ctx: RuleContext, stores: LocatedStore[]) {
   const byFile = new Map<string, LocatedStore[]>();
   const programs = new Map<string, StoreModule["program"]>();
+  const host = importResolutionEvidence(ctx.project.runtimeEvidence?.vite);
   const frameworks = new Map(
     ctx.project.workspacePackages?.map((item) => [
       resolve(ctx.project.root, item.root),
@@ -135,17 +136,55 @@ function storeResolver(ctx: RuleContext, stores: LocatedStore[]) {
     programs.set(file, store.module.program);
   }
 
+  function isFile(candidate: string) {
+    return byFile.has(candidate) || ctx.fs.stat(candidate)?.isFile();
+  }
+
+  function extensionFile(base: string, extensions: string[], resolved: boolean) {
+    if (resolved) return extensions.map((extension) => `${base}${extension}`).find(isFile);
+    const dir = dirname(base);
+    const filename = basename(base);
+    const prefix = `${filename}.`;
+    const candidates = ctx.fs
+      .readDir(dir)
+      ?.filter((entry) => entry.name.startsWith(prefix) && isFile(resolve(dir, entry.name)));
+    if (!candidates?.length) return undefined;
+    if (candidates.length > 1) return null;
+    const candidate = candidates[0]!.name;
+    return extensions.includes(candidate.slice(filename.length)) ? resolve(dir, candidate) : null;
+  }
+
+  function fileForBase(base: string, extensions: string[], resolved: boolean) {
+    if (isFile(base)) return base;
+    const ts = base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
+    if (ts !== base && isFile(ts)) return ts;
+    const file = extensionFile(base, extensions, resolved);
+    if (file !== undefined) return file;
+    return extensionFile(`${base}/index`, extensions, resolved);
+  }
+
   function moduleFile(from: string, source: string) {
     const framework = frameworks.get(packageRoot(ctx, from)) ?? ctx.project.framework;
-    const extensions = framework === "nuxt" ? NUXT_EXTENSIONS : VITE_EXTENSIONS;
-    const matches = new Set(
-      importBases(ctx, from, source).flatMap((base) => {
-        const file = importCandidates(base, extensions).find(
-          (candidate) => byFile.has(candidate) || ctx.fs.stat(candidate)?.isFile(),
-        );
-        return file ? [file] : [];
-      }),
-    );
+    const defaults = framework === "nuxt" ? NUXT_EXTENSIONS : VITE_EXTENSIONS;
+    const relativePath = host ? relative(host.root, from) : undefined;
+    const orders =
+      relativePath !== undefined &&
+      relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !isAbsolute(relativePath)
+        ? host?.extensions
+        : undefined;
+    const matches = new Set<string>();
+    for (const extensions of orders ?? [defaults]) {
+      let match: string | undefined;
+      for (const base of importBases(ctx, from, source)) {
+        const file = fileForBase(base, extensions, Boolean(orders));
+        if (file === null || (file && match && file !== match)) return undefined;
+        match ??= file;
+      }
+      if (!match) return undefined;
+      matches.add(match);
+    }
     return matches.size === 1 ? matches.values().next().value : undefined;
   }
 
@@ -303,14 +342,17 @@ function importBases(ctx: RuleContext, from: string, specifier: string): string[
   return bases;
 }
 
-function importCandidates(base: string, extensions: string[]): string[] {
-  const ts = base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
-  return [
-    base,
-    ...(ts === base ? [] : [ts]),
-    ...extensions.map((extension) => `${base}${extension}`),
-    ...extensions.map((extension) => `${base}/index${extension}`),
-  ];
+function importResolutionEvidence(runtime: unknown) {
+  if (!runtime || typeof runtime !== "object" || !("importResolution" in runtime)) return;
+  const evidence = runtime.importResolution;
+  if (!evidence || typeof evidence !== "object") return;
+  const { root, extensions } = evidence as Record<string, unknown>;
+  if (typeof root !== "string" || !Array.isArray(extensions) || !extensions.length) return;
+  if (
+    !extensions.every((list) => Array.isArray(list) && list.every((ext) => typeof ext === "string"))
+  )
+    return;
+  return { root, extensions: extensions as string[][] };
 }
 
 function nuxtForFile(ctx: RuleContext, file: string) {

@@ -356,15 +356,31 @@ export const useUserStore = defineStore('user', {
     },
   );
 
-  test("uses the host's extension order for a TSX and JSX collision", async () => {
+  test("leaves a TSX and JSX collision unresolved without host evidence", async () => {
     const files = {
       "stores/x.ts": x,
       "stores/y.tsx": "export const useYStore = () => ({ name: 'helper' })",
       "stores/y.jsx": y,
     };
     expect((await runNuxt(files, [])).diagnostics).toHaveLength(0);
-    expect((await run(files)).diagnostics).toHaveLength(1);
+    expect((await run(files)).diagnostics).toHaveLength(0);
   });
+
+  test.each([".jsx", ".custom.jsx"])(
+    "does not guess from Nuxt defaults with a configured %s helper",
+    async (extension) => {
+      const result = await runNuxt(
+        {
+          "nuxt.config.ts": `export default defineNuxtConfig({ vite: { resolve: { extensions: ['${extension}', '.tsx', '.ts'] } } })`,
+          "stores/x.ts": x,
+          "stores/y.tsx": y,
+          [`stores/y${extension}`]: "export const useYStore = () => ({ name: 'helper' })",
+        },
+        [],
+      );
+      expect(result.diagnostics).toHaveLength(0);
+    },
+  );
 
   test("resolves an extensionless Nuxt import to a CTS file before an index", async () => {
     const result = await runNuxt(
