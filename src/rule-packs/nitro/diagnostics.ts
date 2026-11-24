@@ -29,6 +29,7 @@ export const nitroDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0026", ruleId: "nitro/runtime/no-process-env-in-server" },
   { code: "NITRO0027", ruleId: "nitro/h3/prefer-nitro-h3" },
   { code: "NITRO0028", ruleId: "nitro/dependencies/declare-nitro" },
+  { code: "NITRO0035", ruleId: "nitro/state/no-request-data-in-module-state" },
 ]);
 
 export const diagnostics = nitroDiagnosticRegistry.diagnostics;

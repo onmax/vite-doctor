@@ -30,6 +30,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nitro/runtime/require-event-runtime-config-in-server": "Pass the event",
   "nitro/server/no-browser-api": "Browser APIs",
   "nitro/server/no-client-composables": "App composables",
+  "nitro/state/no-request-data-in-module-state": "Request data state",
   "nitro/structure/prefer-server-utils": "server/utils helpers",
 
   "nuxt-better-auth/require-standard-auth-handler-mount": "Better Auth handler",
@@ -106,6 +107,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/structure/no-composable-in-utils": "utils/ composables",
   "nuxt/structure/no-stateless-composable": "Plain use* helpers",
   "nuxt/ssr/no-module-scope-request-state": "Module request state",
+  "nuxt/ssr/no-request-data-in-module-state": "Request data state",
   "nuxt/state/no-diverging-usestate-init": "Diverging useState",
   "nuxt/state/no-nonserializable-usestate": "useState values",
   "nuxt/state/prefer-explicit-usestate-key-in-exported-composables": "useState keys",

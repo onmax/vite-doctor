@@ -347,6 +347,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/state/no-request-data-in-module-state": {
+    description:
+      "Report module-scope variables, objects, and Maps that Nitro server code fills with request data.",
+    why: "Nitro imports each server module once per process. A lazy route handler is imported on its first request and h3 keeps the resolved handler, so every later request calls into the same module. Only the event, and the event.context object h3 creates with it, belong to one request. A module-scope let, an object written under a fixed key, or a Map set under a constant key that a handler fills from the event, its query, body, headers, cookies, or session is shared by every concurrent request, so one user's value can end up in another user's response. Doctor reports writes from h3 request utilities and from the event a handler receives. It skips stores keyed per request, such as a Map keyed by the route parameter, values whose origin the file does not show, and files outside a Nitro server directory.",
+    recommendedReplacement:
+      "Keep per-request values in local variables, or on event.context when middleware hands them to the route. A module-scope cache is fine when its key covers everything the value depends on; for upstream responses use defineCachedFunction with a getKey that includes the user or tenant.",
+    examples: [
+      {
+        title: "Keep request data on the event",
+        language: "ts",
+        invalid:
+          "let currentUser: string | undefined\n\nexport default defineEventHandler((event) => {\n  currentUser = getCookie(event, 'user-id')\n  return getOrders(currentUser)\n})",
+        valid:
+          "export default defineEventHandler((event) => {\n  const userId = getCookie(event, 'user-id')\n  event.context.userId = userId\n  return getOrders(userId)\n})",
+      },
+    ],
+  },
   "nitro/structure/prefer-server-utils": {
     description:
       "Suggests server/utils for helpers that Nitro server routes, middleware, and plugins import from ad-hoc directories.",
@@ -1604,6 +1621,23 @@ export const ruleDocumentationMetadata = {
           "let currencyPromise: Promise<void> | null = null\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      currencyPromise ??= (async () => {\n        this.currencies = await $fetch('/api/currencies')\n      })()\n      await currencyPromise\n    },\n  },\n})",
         valid:
           "const currencyPromises = new WeakMap<NuxtApp, Promise<void>>()\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      const nuxtApp = useNuxtApp()\n      let promise = currencyPromises.get(nuxtApp)\n      if (!promise) {\n        promise = (async () => {\n          this.currencies = await $fetch('/api/currencies')\n        })()\n        currencyPromises.set(nuxtApp, promise)\n      }\n      await promise\n    },\n  },\n})",
+      },
+    ],
+  },
+  "nuxt/ssr/no-request-data-in-module-state": {
+    description:
+      "Report module-scope ref(), reactive(), and plain objects or arrays that server-rendered app code writes request data into.",
+    why: "On the server, Nuxt imports the app bundle once and creates a new Vue app and Nuxt app for every request, but module-scope values are not recreated. A ref, reactive object, or plain object declared at module scope, or in the plain <script> block of a component, is shared by every request. When setup, a composable, a plugin, or route middleware writes the route, request headers, cookies, or the request event into it during server rendering, concurrent requests overwrite each other and one user's data can render for another. Doctor skips state created inside setup or the composable, useState, writes in onMounted, behind import.meta.client, or in event handlers, client-only files, apps that turn SSR off, and helpers it cannot trace to Vue or Nuxt. Map, Set, and reassigned module variables are reported by nuxt/ssr/no-module-scope-request-state.",
+    recommendedReplacement:
+      "Create the state per request: use useState('key', () => initial), or call ref() or reactive() inside setup, the composable, or the plugin. If the value is only needed in the browser, write it in onMounted() or behind import.meta.client.",
+    examples: [
+      {
+        title: "Create request state with useState",
+        language: "ts",
+        invalid:
+          "const activeFilter = ref<string>()\n\nexport function useFilters() {\n  activeFilter.value = useRoute().query.filter as string\n  return activeFilter\n}",
+        valid:
+          "export function useFilters() {\n  const activeFilter = useState<string | undefined>('active-filter')\n  activeFilter.value = useRoute().query.filter as string\n  return activeFilter\n}",
       },
     ],
   },

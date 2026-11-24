@@ -98,6 +98,7 @@ export const nuxtDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0095", ruleId: "nuxt/fetch/no-ssr-refetch-of-shared-key" },
   { code: "NUXT0096", ruleId: "nuxt/imports/prefer-alias-over-relative-parent" },
   { code: "NUXT0097", ruleId: "nuxt/state/no-diverging-usestate-init" },
+  { code: "NUXT0105", ruleId: "nuxt/ssr/no-request-data-in-module-state" },
 ]);
 
 export const diagnostics = nuxtDiagnosticRegistry.diagnostics;

@@ -968,6 +968,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("DOC0001: circular dependencies", "/diagnostics/DOC0001");
   }
 
+  if (rule.id === "nuxt/ssr/no-request-data-in-module-state") {
+    add("Nuxt useState", "https://nuxt.com/docs/4.x/api/composables/use-state");
+  }
+
+  if (rule.id === "nitro/state/no-request-data-in-module-state") {
+    add("Nitro cached functions", "https://nitro.build/docs/cache");
+  }
+
   if (rule.id === "vue/props/no-unused-props") {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }
