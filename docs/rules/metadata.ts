@@ -1969,6 +1969,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/build/no-node-builtin-in-client-chunk": {
+    description:
+      "Reports project modules that import a Node built-in and end up in a chunk of a client environment of vite build, with the import chain from the client entry.",
+    why: "Vite can replace Node built-ins in a client environment with a browser stub instead of failing the build. On Rolldown (Vite 8+), Doctor uses Vite's resolution and final source maps to trace surviving static import bindings and split dynamic imports in JavaScript and TypeScript back to the exact Node import. It skips reads it cannot trace, including branches removed by tree shaking, and does not attribute a package's browser: false mapping to an unrelated Node import. The import chain comes from Vite's module graph; when it has no path from an entry, the Diagnostic says the evidence is partial. The CLI Surface has no Build Evidence.",
+    recommendedReplacement:
+      "Import the module only from server entries or server routes. Move the values the client needs into a module that imports no Node built-in, or load the server code behind an import.meta.env.SSR branch with a dynamic import() so the client build drops it.",
+    examples: [
+      {
+        title: "Keep server-only helpers out of client imports",
+        language: "ts",
+        invalid:
+          "// src/db.ts\nimport { readFileSync } from 'node:fs'\nexport const loadUsers = () => JSON.parse(readFileSync('users.json', 'utf8'))\n\n// src/main.ts (client entry)\nimport { loadUsers } from './db'\nrender(loadUsers())",
+        valid:
+          "// src/server.ts (server entry)\nimport { loadUsers } from './db'\nexport const users = loadUsers()\n\n// src/main.ts (client entry)\nconst users = await fetch('/api/users').then((response) => response.json())\nrender(users)",
+      },
+    ],
+  },
   "vite/config/no-url-pathname-as-fs-path": {
     description:
       "Reports new URL(..., import.meta.url).pathname used as a file path in Vite and Vitest config files and Node-side plugin code.",
