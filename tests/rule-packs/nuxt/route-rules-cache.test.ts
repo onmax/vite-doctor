@@ -142,6 +142,27 @@ test("reports a rendered context value separately from a stripped header", async
   expect(result.diagnostics[0]?.why).toContain("if this field holds per-visitor data");
 });
 
+test.each(["alias.theme = 'light'", "Object.assign(alias, { theme: 'light' })"])(
+  "does not trace a rendered cookie past a helper writing through a captured alias: %s",
+  async (write) => {
+    const file = "app/pages/account.vue";
+    const result = await run({
+      [file]: page(
+        `const preferences = { theme: useCookie('theme').value }
+function resetTheme() { ${write} }
+const alias = preferences
+resetTheme()
+const rendered = preferences.theme`,
+        "<div>{{ rendered }}</div>",
+      ),
+      ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+        "/account": { swr: 60 },
+      }),
+    });
+    expect(result.diagnostics).toHaveLength(0);
+  },
+);
+
 test.each(["const alias = alias", "const alias = other; const other = alias"])(
   "traces rendered cookies past an uncalled helper with a cyclic alias: %s",
   async (declaration) => {

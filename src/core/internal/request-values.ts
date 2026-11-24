@@ -163,7 +163,9 @@ function projectMember(
   let steps = 1;
   while (object?.type !== "ObjectExpression" && steps < remaining) {
     if (object?.type === "Identifier") {
-      object = unwrapExpression(provenConstBinding(object, sources.programBinding)?.init);
+      const binding = constIdentifierBinding(object, sources.programBinding);
+      if (!binding || binding.end > object.start) return;
+      object = unwrapExpression(binding.init);
       steps++;
     } else if (object?.type === "MemberExpression") {
       const inner = projectMember(object, sources, remaining - steps);
@@ -201,8 +203,13 @@ function setupMemberWrite(
   }
   const isObject = (expression: AnyNode) => {
     let base = unwrapExpression(expression);
-    while (base?.type === "Identifier")
-      base = unwrapExpression(provenConstBinding(base, sources.programBinding)?.init);
+    const seen = new Set<AnyNode>();
+    while (base?.type === "Identifier") {
+      const binding = constIdentifierBinding(base, sources.programBinding);
+      if (!binding || seen.has(binding)) return false;
+      seen.add(binding);
+      base = unwrapExpression(binding.init);
+    }
     return base === object;
   };
   const affectsMember = (input: AnyNode): boolean => {
@@ -351,12 +358,13 @@ function staticValue(
     if (left === UNKNOWN_VALUE || shortCircuits(node.operator, left)) return left;
     return staticValue(node.right, programBinding, depth + 1);
   }
-  const binding = provenConstBinding(node, programBinding);
-  if (binding) return staticValue(binding.init, programBinding, depth + 1);
+  const binding = constIdentifierBinding(node, programBinding);
+  if (binding && binding.end <= node.start)
+    return staticValue(binding.init, programBinding, depth + 1);
   return UNKNOWN_VALUE;
 }
 
-function provenConstBinding(
+function constIdentifierBinding(
   node: AnyNode,
   programBinding?: RequestValueSources["programBinding"],
 ): AnyNode {
@@ -366,8 +374,7 @@ function provenConstBinding(
     : resolveLexicalBinding(node);
   return binding?.type === "VariableDeclarator" &&
     binding.id.type === "Identifier" &&
-    binding.__doctorParent?.kind === "const" &&
-    binding.end <= node.start
+    binding.__doctorParent?.kind === "const"
     ? binding
     : null;
 }
