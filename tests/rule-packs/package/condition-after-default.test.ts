@@ -36,6 +36,12 @@ test("reports a subpath whose default comes before import, at the default key", 
     expect(text.slice(diagnostic!.range!.start, diagnostic!.range!.end)).toBe(
       '"default":"./dist/index.cjs"',
     );
+    expect(
+      diagnostic!.evidence?.map(({ kind, range }) => [kind, text.slice(range?.start, range?.end)]),
+    ).toEqual([
+      ["manifest", '"default":"./dist/index.cjs"'],
+      ["manifest", '"import":"./dist/index.mjs"'],
+    ]);
   });
 });
 
@@ -86,13 +92,45 @@ test("stays quiet when default can fall through or only types follow it", async 
       exports: {
         // An object without its own default resolves nothing when no condition matches.
         ".": { default: { import: "./dist/index.mjs" }, require: "./dist/index.cjs" },
-        // Arrays fall back through their entries.
-        "./a": { default: ["./dist/a.js"], import: "./dist/a.mjs" },
+        "./a": { default: [{ browser: "./dist/browser.js" }], import: "./dist/a.mjs" },
         // TypeScript reads "types" when "default" has no declaration next to it.
         "./b": { default: "./dist/b.js", types: "./dist/b.d.ts" },
       },
     }),
   ).toEqual([]);
+});
+
+test.each([[[]], [["./runtime.mjs"]], [[{ browser: "./browser.mjs" }, [null]]]])(
+  "reports a terminal array default: %j",
+  async (target) => {
+    expect(await shadowed({ exports: { default: target, import: "./esm.mjs" } })).toHaveLength(1);
+  },
+);
+
+test("finds conditions inside reachable array entries, including at the exports root", async () => {
+  const reached = { default: "./runtime.mjs", import: "./esm.mjs" };
+  const unreachable = { default: "./fallback.cjs", require: "./other.cjs" };
+  const diagnostics = await shadowed({ exports: [null, [reached], unreachable] });
+  expect(diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect.stringContaining('exports[1][0] comes before "import"'),
+  ]);
+});
+
+test("skips declaration branches but reports custom runtime conditions starting with types", async () => {
+  const declarations = { default: "./fallback.js", import: "./public.d.mts" };
+  const diagnostics = await shadowed({
+    exports: {
+      ".": { types: [declarations], "types@>=6": declarations, default: "./runtime.mjs" },
+      "./feature": {
+        default: "./runtime.mjs",
+        "types@>=6": declarations,
+        "typescript-browser": "./browser.mjs",
+      },
+    },
+  });
+  expect(diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect.stringContaining('exports["./feature"] comes before "typescript-browser"'),
+  ]);
 });
 
 test("stays quiet for private packages and invalid exports that mix subpaths and conditions", async () => {
