@@ -94,12 +94,17 @@ export function findStatementBinding(scope: AnyNode, name: string): AnyNode {
     for (const statement of scopeStatements(scope)) {
       const declaration = statement.declaration ?? statement;
       const declared: [string, AnyNode][] = [];
-      if (
+      if (declaration.type === "TSModuleDeclaration") {
+        if (!declaration.declare && hasNamespaceRuntime(declaration.body)) {
+          let id = declaration.id;
+          while (id?.type === "TSQualifiedName") id = id.left;
+          if (id?.type === "Identifier") declared.push([id.name, declaration]);
+        }
+      } else if (
         [
           "FunctionDeclaration",
           "ClassDeclaration",
           "TSEnumDeclaration",
-          "TSModuleDeclaration",
           "TSImportEqualsDeclaration",
         ].includes(declaration.type)
       ) {
@@ -116,6 +121,20 @@ export function findStatementBinding(scope: AnyNode, name: string): AnyNode {
     statementBindings.set(scope, bindings);
   }
   return bindings.get(name) ?? null;
+}
+
+function hasNamespaceRuntime(body: AnyNode): boolean {
+  if (body?.type === "TSModuleDeclaration") return hasNamespaceRuntime(body.body);
+  if (body?.type !== "TSModuleBlock") return false;
+  return body.body.some((statement: AnyNode) => {
+    if (statement.type === "ExportNamedDeclaration" && statement.exportKind === "type")
+      return false;
+    const declaration = statement.declaration ?? statement;
+    if (declaration.type === "TSModuleDeclaration") return hasNamespaceRuntime(declaration.body);
+    return (
+      declaration.type !== "TSInterfaceDeclaration" && declaration.type !== "TSTypeAliasDeclaration"
+    );
+  });
 }
 
 function scopeStatements(scope: AnyNode): AnyNode[] {

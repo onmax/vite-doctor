@@ -57,6 +57,48 @@ export default defineEventHandler((event) => {
 });
 
 const cookie = "getCookie(event, 'locale')";
+test.each([true, false])(
+  "tracks a captured scalar const (helper first: %s)",
+  async (helperFirst) => {
+    const file = "server/api/locale.get.ts";
+    const helper = `function copyLocale() {
+    const patch = { current: locale }
+    Object.assign(latest, patch)
+    return patch.current
+  }`;
+    const declaration = `const locale = ${cookie}`;
+    expect(
+      await run({
+        [file]: `const latest = {}
+export default defineEventHandler((event) => {
+  ${helperFirst ? helper : declaration}
+  ${helperFirst ? declaration : helper}
+  return copyLocale()
+})`,
+      }),
+    ).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+  },
+);
+
+test.each([
+  ["namespace Object { export interface Cache { locale: string } }", true],
+  ["namespace Object.Types { export type Cache = string }", true],
+  ["declare namespace Object { export function assign(...args: unknown[]): void }", true],
+  ["namespace Object { export function assign(...args: unknown[]) {} }", false],
+  ["namespace Object.Runtime { export const value = 'local' }", false],
+])("resolves Object.assign with %s", async (namespace, reports) => {
+  const file = "server/api/locale.get.ts";
+  expect(
+    await run({
+      [file]: `const latest = {}
+${namespace}
+export default defineEventHandler((event) => {
+  Object.assign(latest, { locale: ${cookie} })
+})`,
+    }),
+  ).toEqual(reports ? [{ code: "NITRO0035", file, line: 1 }] : []);
+});
+
 test.each([
   [
     "a static block",
