@@ -293,7 +293,7 @@ export const ruleDocumentationMetadata = {
   "nitro/storage/no-undeclared-mount": {
     description:
       "Report useStorage() and useKV() calls whose base no production storage mount covers, and record the mounts Nitro config declares as the nitroStorage Project Inventory fact.",
-    why: "unstorage sends a key to the longest mount whose base it starts with, and falls back to the root mount, which Nitro leaves as an in-memory driver. A base that only devStorage declares works in dev and prerender, then loses its data on every restart and between instances in production. Doctor reads storage and devStorage (Nitro 2 and Nuxt) and kv (Nitro 3) from the config, skips the bases Nitro reserves (assets, data, cache, and the dev-only root, src and build), and stays quiet when config it cannot read statically, a module or layer, or a runtime useStorage().mount() call may add mounts; those cases are recorded as an evidence gap.",
+    why: "unstorage sends a key to the longest matching mount, then falls back to the root mount, which defaults to an in-memory driver. A mount declared only in devStorage does not apply in production. Doctor checks Nitro 2 storage and bundledStorage, Nitro 3 kv (or its storage alias), and the built-in mounts for the detected version and preset. A parent base can list its mounted descendants, but a specific item key only uses a mount that covers that key. Doctor records an evidence gap and skips the check when unreadable config, a module or layer, or a runtime storage mount could change the production mount table.",
     recommendedReplacement:
       "Declare a production mount for the base under nitro.storage (Nitro 2 and Nuxt) or kv (Nitro 3), or move the keys to a base you already mount.",
     examples: [

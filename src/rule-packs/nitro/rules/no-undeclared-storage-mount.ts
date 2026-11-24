@@ -1,20 +1,46 @@
 import { relative } from "pathe";
 import type { RuleContext } from "../../../core/index.js";
-import { analyzeScript, scopeDialect } from "../../../core/internal/script-scope.js";
+import {
+  analyzeScript,
+  scopeDialect,
+  type ScriptScope,
+} from "../../../core/internal/script-scope.js";
 import { diagnostics } from "../diagnostics.js";
-import { resolvesToImport, unwrapExpression, walk } from "./nitro-handlers.js";
-import { nitroServerFile } from "./server-layout.js";
-import { createRule } from "./shared.js";
-import { isUndeclaredBase, nitroStorageInventory, normalizeBase } from "./storage-mounts.js";
+import { isDevRoute, isNitroRuntimeFile } from "./nitro-config.js";
+import {
+  constInitializer,
+  isStorageCall,
+  memberName,
+  unwrapExpression,
+  walk,
+} from "./nitro-handlers.js";
+import { literalValue } from "./server-layout.js";
+import { createRule, type AnyNode } from "./shared.js";
+import {
+  nitroStorageInventory,
+  normalizeBase,
+  storageCoverage,
+  type NitroStorageInventory,
+} from "./storage-mounts.js";
 
 const RULE_ID = "nitro/storage/no-undeclared-mount";
-const STORAGE_MODULES = new Set([
-  "nitropack/runtime",
-  "#imports",
-  "#internal/nitro",
-  "nitro/storage",
-  "nitro/kv",
+const ITEM_METHODS = new Set([
+  "has",
+  "hasItem",
+  "get",
+  "getItem",
+  "getItemRaw",
+  "set",
+  "setItem",
+  "setItemRaw",
+  "del",
+  "remove",
+  "removeItem",
+  "getMeta",
+  "setMeta",
+  "removeMeta",
 ]);
+const PREFIX_METHODS = new Set(["getKeys", "keys", "clear"]);
 const SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const TEST_FILE = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:spec|test)\.[cm]?[jt]sx?$/;
 
@@ -26,7 +52,7 @@ export const noUndeclaredStorageMount = createRule({
     severity: "warn",
     confidence: "heuristic-medium",
     fixable: "suggestion",
-    docsUrl: "https://nitro.build/guide/storage",
+    docsUrl: "https://nitro.build/docs/storage",
     execution: "workspace",
     cacheScope: "none",
     requires: { nitro: true, crossFile: true },
@@ -37,15 +63,20 @@ export const noUndeclaredStorageMount = createRule({
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        const inventory = await nitroStorageInventory(ctx);
+        const inventory = nitroStorageInventory(ctx);
         if (!inventory.complete) return;
         for (const file of await ctx.inventory.sourcePaths()) {
-          if (!SCRIPT.test(file) || /\.d\.[cm]?ts$/.test(file) || !nitroServerFile(ctx, file))
+          if (
+            !SCRIPT.test(file) ||
+            /\.d\.[cm]?ts$/.test(file) ||
+            !isNitroRuntimeFile(ctx, file) ||
+            isDevRoute(ctx, file)
+          )
             continue;
           if (TEST_FILE.test(relative(ctx.project.root, file))) continue;
           const text = ctx.fs.readText(file);
           if (!text || !/\buse(?:Storage|KV)\b/.test(text)) continue;
-          reportFile(ctx, file, text, (base) => isUndeclaredBase(inventory, base));
+          reportFile(ctx, file, text, inventory);
         }
       },
     };
@@ -56,31 +87,40 @@ function reportFile(
   ctx: RuleContext,
   file: string,
   text: string,
-  undeclared: (base: string) => boolean,
+  inventory: NitroStorageInventory,
 ) {
   const scope = analyzeScript(text, scopeDialect(file));
   if (!scope) return;
+  const uncovered = new Map<AnyNode, string>();
   walk(scope, scope.ast, (node) => {
     if (node.type !== "CallExpression") return;
     const callee = unwrapExpression(node.callee);
-    if (
-      !resolvesToImport(scope, callee, "useStorage", STORAGE_MODULES) &&
-      !resolvesToImport(scope, callee, "useKV", STORAGE_MODULES)
-    )
-      return;
-    const argument = node.arguments[0];
-    const base =
-      argument?.type === "Literal" && typeof argument.value === "string"
-        ? argument.value
-        : argument?.type === "TemplateLiteral" && argument.expressions.length === 0
-          ? argument.quasis[0]?.value?.cooked
-          : undefined;
-    if (!base || !normalizeBase(base) || !undeclared(base)) return;
+    const method = memberName(callee);
+    if (method && (ITEM_METHODS.has(method) || PREFIX_METHODS.has(method))) {
+      const receiver = unwrapExpression(callee.object);
+      const storage = unwrapExpression(constInitializer(scope, receiver)) ?? receiver;
+      const base = storageBase(scope, storage);
+      const key = literalValue(node.arguments[0]);
+      if (base && typeof key === "string" && normalizeBase(key)) {
+        const coverage = ITEM_METHODS.has(method)
+          ? storageCoverage(inventory, base, key)
+          : storageCoverage(inventory, `${base}:${key}`);
+        if (coverage === "unmounted") uncovered.set(storage, key);
+      }
+    }
+  });
+  walk(scope, scope.ast, (node) => {
+    const base = storageBase(scope, node);
+    if (!base || !normalizeBase(base)) return;
+    const key = uncovered.get(node);
+    if (key === undefined && storageCoverage(inventory, base) !== "unmounted") return;
+    const callee = unwrapExpression(node.callee);
     const range = ctx.helpers.rangeFromOffsets(file, text, node.range[0], node.range[1]);
     const mount = normalizeBase(base).split(":")[0];
+    const access = key === undefined ? "this base" : `the key '${key}' under this base`;
     ctx.report(
       diagnostics.NITRO0034({
-        why: `${callee.name}('${base}') reads a base that no storage or kv mount in the config covers. In a production build unstorage sends those keys to its root mount, an in-memory driver, so the values vanish on restart and are not shared between server instances. A devStorage mount only applies to dev and prerender.`,
+        why: `${callee.name}('${base}') uses ${access}, which no production mount covers. In a production build unstorage sends those keys to its root mount, an in-memory driver, so the values vanish on restart and are not shared between server instances. A devStorage mount only applies to dev and prerender.`,
         fix: `Declare a production mount for '${mount}' under nitro.storage (Nitro 2 and Nuxt) or kv (Nitro 3), or use a base you already mount. If a plugin mounts it at runtime with useStorage().mount(), keep that and suppress this diagnostic.`,
       }),
       {
@@ -101,4 +141,10 @@ function reportFile(
       },
     );
   });
+}
+
+function storageBase(scope: ScriptScope, node: AnyNode) {
+  if (!isStorageCall(scope, node)) return undefined;
+  const base = literalValue(node.arguments[0]);
+  return typeof base === "string" ? base : undefined;
 }

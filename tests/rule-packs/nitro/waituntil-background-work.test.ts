@@ -54,23 +54,29 @@ test("reports unawaited $fetch and storage writes on a Cloudflare preset", async
   ]);
 });
 
-test("reports event.fetch on a Nitro 3 Vercel preset", async () => {
+test("reports imported Nitro fetch APIs on a Nitro 3 Vercel preset", async () => {
   const diagnostics = await run(
     {
       "nitro.config.ts":
-        "export default defineConfig({ serverDir: './server', preset: 'vercel' })\n",
+        "export default defineConfig({ scanDirs: ['./server'], preset: 'vercel' })\n",
       "server/routes/track.ts": `import { defineHandler } from "nitro/h3"
-
-export default defineHandler((event) => {
-  event.fetch('/_track', { method: 'POST' })
+import { fetch as request, serverFetch } from 'nitro/app'
+const track = (event) => {
+  request('/_track', { method: 'POST' })
+  serverFetch('/_track', { method: 'POST' })
+  event.fetch('/_track')
   return 'ok'
-})
+}
+export default defineHandler(track)
 `,
     },
     "nitro",
     { nitro: "^3.0.0" },
   );
-  expect(diagnostics).toEqual([{ code: "NITRO0033", file: "server/routes/track.ts", line: 4 }]);
+  expect(diagnostics).toEqual([
+    { code: "NITRO0033", file: "server/routes/track.ts", line: 4 },
+    { code: "NITRO0033", file: "server/routes/track.ts", line: 5 },
+  ]);
 });
 
 test.each([
@@ -94,6 +100,37 @@ const floating = `export default defineEventHandler(async (event) => {
   return { ok: true }
 })
 `;
+
+test("checks production routes and retains Nitro 2 event.fetch", async () => {
+  const source = floating.replace("$fetch", "event.fetch");
+  expect(
+    await run({
+      ...cloudflareNuxt,
+      "server/api/demo.dev.ts": source,
+      "server/api/demo.prod.ts": source,
+    }),
+  ).toEqual([{ code: "NITRO0033", file: "server/api/demo.prod.ts", line: 2 }]);
+});
+
+test.each([
+  ["", { build: "nitro build", note: "echo NITRO_PRESET=cloudflare_module" }],
+  ["preset: 'cloudflare-module'", { build: "NITRO_PRESET=$TARGET nitro build" }],
+])("does not assume a preset with scripts %j %j", async (config, scripts) => {
+  expect(
+    await run(
+      {
+        "nitro.config.ts": `export default { ${config} }`,
+        "package.json": JSON.stringify({
+          name: "fixture",
+          dependencies: { nitropack: "^2.13.4" },
+          scripts,
+        }),
+        "routes/track.ts": floating,
+      },
+      "nitro",
+    ),
+  ).toEqual([]);
+});
 
 test.each([
   ["no preset", { "nuxt.config.ts": "export default defineNuxtConfig({})\n" }],

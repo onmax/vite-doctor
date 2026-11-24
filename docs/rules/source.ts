@@ -1082,7 +1082,7 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   }
 
   if (rule.id.startsWith("nitro/storage/")) {
-    add("Nitro KV storage", "https://nitro.build/guide/storage");
+    add("Nitro KV storage", "https://nitro.build/docs/storage");
   }
 
   if (rule.id === "nitro/handler/require-waituntil-for-background-work") {

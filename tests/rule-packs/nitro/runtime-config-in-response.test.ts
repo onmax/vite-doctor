@@ -25,6 +25,48 @@ test("ships in the Recommended Preset", () => {
 });
 
 test.each([
+  "export default () => useRuntimeConfig()",
+  "import { defineHandler as route } from 'nitro/h3'; const handle = () => useRuntimeConfig(); export default route(handle)",
+])("finds registered handlers under scanDirs: %s", async (source) => {
+  expect(
+    await run(
+      {
+        "nitro.config.ts": "export default { scanDirs: ['./custom'] }",
+        "custom/routes/config.ts": source,
+      },
+      "nitro",
+      { nitro: "^3.0.0" },
+    ),
+  ).toHaveLength(1);
+});
+
+test.each([
+  "config && config.public",
+  "JSON.stringify(config, ['public', 'siteUrl'])",
+  "new Response(Response.json(config))",
+  "({ debug: config, ...{ debug: false } })",
+  "({ debug: config, debug: false })",
+])("does not report discarded or filtered config: %s", async (response) => {
+  expect(
+    await run({
+      "server/api/config.ts": `export default defineEventHandler(() => {
+    const config = useRuntimeConfig()
+    return ${response}
+  })`,
+    }),
+  ).toEqual([]);
+});
+
+test("ignores unused handler factories", async () => {
+  expect(
+    await run({
+      "server/api/config.ts": `const debug = defineEventHandler(() => useRuntimeConfig())
+    export default defineEventHandler(() => 'ok')`,
+    }),
+  ).toEqual([]);
+});
+
+test.each([
   [
     "the useRuntimeConfig() call",
     "export default defineEventHandler((event) => {\n  return useRuntimeConfig(event)\n})\n",

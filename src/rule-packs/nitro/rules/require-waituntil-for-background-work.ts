@@ -1,7 +1,8 @@
 import type { RuleContext } from "../../../core/index.js";
 import { fileTextScope, type ScriptScope } from "../../../core/internal/script-scope.js";
-import { nitroDeployPreset, nitroMajor } from "./nitro-config.js";
+import { isDevRoute, isNitroHandlerFile, nitroDeployPreset, nitroMajor } from "./nitro-config.js";
 import {
+  isStorageCall,
   nitroHandlerFunctions,
   reportNode,
   resolvedVariable,
@@ -10,7 +11,6 @@ import {
   walk,
   walkOwnBody,
 } from "./nitro-handlers.js";
-import { nitroServerFile } from "./server-layout.js";
 import { type AnyNode, createRule } from "./shared.js";
 
 const RULE_ID = "nitro/handler/require-waituntil-for-background-work";
@@ -28,13 +28,7 @@ const WAITUNTIL_PRESETS: Record<2 | 3, ReadonlySet<string>> = {
   3: new Set(["cloudflare-module", "cloudflare-pages", "cloudflare-durable", "vercel"]),
 };
 const FETCH_MODULES = new Set(["ofetch", "#imports", "nitropack/runtime"]);
-const STORAGE_MODULES = new Set([
-  "nitropack/runtime",
-  "#imports",
-  "#internal/nitro",
-  "nitro/storage",
-  "nitro/kv",
-]);
+const NITRO_FETCH_MODULES = new Set(["nitro/app"]);
 const STORAGE_METHODS = new Set([
   "hasItem",
   "getItem",
@@ -64,15 +58,17 @@ export const requireWaitUntilForBackgroundWork = createRule({
     fixable: "suggestion",
     docsUrl: "https://nitro.build/deploy/providers/cloudflare",
     requires: { script: true, nitro: true },
-    prefilter: { names: ["$fetch", "fetch", "useStorage", "useKV", "ofetch"] },
+    prefilter: { names: ["$fetch", "fetch", "serverFetch", "useStorage", "useKV", "ofetch"] },
   },
   create(ctx) {
-    if (!isServerRuntimeFile(ctx) || !forwardsWaitUntil(ctx)) return;
+    if (!isServerRuntimeFile(ctx) || isDevRoute(ctx, ctx.file.path) || !forwardsWaitUntil(ctx))
+      return;
+    const major = nitroMajor(ctx);
     return {
       Program() {
         const scope = fileTextScope(ctx);
         if (!scope) return;
-        for (const { statement, callee } of floatingPromises(scope)) {
+        for (const { statement, callee } of floatingPromises(scope, major)) {
           reportNode(
             ctx,
             statement,
@@ -91,7 +87,7 @@ export const requireWaitUntilForBackgroundWork = createRule({
 function isServerRuntimeFile(ctx: RuleContext) {
   const path = ctx.file.relativePath.replace(/\\/g, "/");
   if (TEST_FILE.test(path) || /\.d\.[cm]?ts$/.test(path)) return false;
-  return Boolean(nitroServerFile(ctx, ctx.file.path)) && !/\.config\.[cm]?[jt]s$/.test(path);
+  return isNitroHandlerFile(ctx, ctx.file.path);
 }
 
 function forwardsWaitUntil(ctx: RuleContext) {
@@ -102,7 +98,7 @@ function forwardsWaitUntil(ctx: RuleContext) {
   return WAITUNTIL_PRESETS[2].has(preset) && WAITUNTIL_PRESETS[3].has(preset);
 }
 
-function floatingPromises(scope: ScriptScope) {
+function floatingPromises(scope: ScriptScope, major: number | undefined) {
   const found: Array<{ statement: AnyNode; callee: string }> = [];
   const storages = storageBindings(scope);
   for (const handler of nitroHandlerFunctions(scope)) {
@@ -110,7 +106,7 @@ function floatingPromises(scope: ScriptScope) {
     const event = handler.params[0]?.type === "Identifier" ? handler.params[0] : undefined;
     walkOwnBody(scope, handler, (node) => {
       if (node.type !== "ExpressionStatement") return;
-      const callee = promiseCallee(scope, node.expression, event, storages);
+      const callee = promiseCallee(scope, node.expression, event, storages, major);
       if (callee) found.push({ statement: node, callee });
     });
   }
@@ -135,8 +131,9 @@ function storageBindings(scope: ScriptScope) {
 function promiseCallee(
   scope: ScriptScope,
   expression: AnyNode,
-  event: AnyNode | undefined,
+  event: AnyNode,
   storages: Set<unknown>,
+  major: number | undefined,
 ): string | undefined {
   let node = unwrapExpression(expression);
   if (node?.type === "UnaryExpression" && node.operator === "void")
@@ -163,6 +160,13 @@ function promiseCallee(
     )
       return callee.name;
     if (callee.name === "fetch" && !resolvedVariable(scope, callee)) return "fetch";
+    if (
+      major === 3 &&
+      resolvedVariable(scope, callee) &&
+      (resolvesToImport(scope, callee, "fetch", NITRO_FETCH_MODULES) ||
+        resolvesToImport(scope, callee, "serverFetch", NITRO_FETCH_MODULES))
+    )
+      return callee.name;
     return undefined;
   }
   if (callee?.type !== "MemberExpression" || callee.computed) return undefined;
@@ -176,6 +180,7 @@ function promiseCallee(
   )
     return "$fetch.raw";
   if (
+    major === 2 &&
     (method === "fetch" || method === "$fetch") &&
     event &&
     object?.type === "Identifier" &&
@@ -189,14 +194,4 @@ function promiseCallee(
     if (variable && storages.has(variable)) return `${object.name}.${method}`;
   }
   return undefined;
-}
-
-function isStorageCall(scope: ScriptScope, node: AnyNode) {
-  const call = unwrapExpression(node);
-  if (call?.type !== "CallExpression") return false;
-  const callee = unwrapExpression(call.callee);
-  return (
-    resolvesToImport(scope, callee, "useStorage", STORAGE_MODULES) ||
-    resolvesToImport(scope, callee, "useKV", STORAGE_MODULES)
-  );
 }

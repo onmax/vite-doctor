@@ -1,6 +1,7 @@
 import type { RuleContext } from "../../../core/index.js";
 import type { ScriptScope } from "../../../core/internal/script-scope.js";
 import { type AnyNode, report } from "./shared.js";
+import { propertyKey } from "./server-layout.js";
 
 const FUNCTION_TYPES = new Set([
   "FunctionDeclaration",
@@ -14,21 +15,29 @@ const WRAPPERS = new Set([
   "TSTypeAssertion",
   "ChainExpression",
 ]);
-const HANDLER_FACTORIES = new Set([
+const HANDLER_FACTORIES = [
   "defineEventHandler",
   "eventHandler",
   "defineHandler",
   "defineCachedEventHandler",
   "defineCachedHandler",
-]);
+];
 const HANDLER_MODULES = new Set([
   "h3",
   "nitro/h3",
   "nitro",
+  "nitro/app",
   "nitro/cache",
   "nitropack/runtime",
   "#imports",
   "#internal/nitro",
+]);
+const STORAGE_MODULES = new Set([
+  "nitropack/runtime",
+  "#imports",
+  "#internal/nitro",
+  "nitro/storage",
+  "nitro/kv",
 ]);
 
 export function unwrapExpression(node: AnyNode): AnyNode {
@@ -78,36 +87,82 @@ export function resolvedVariable(scope: ScriptScope, identifier: AnyNode) {
   return scope.references.get(identifier)?.resolved ?? undefined;
 }
 
+export function memberName(member: AnyNode): string | undefined {
+  if (member?.type !== "MemberExpression") return undefined;
+  if (member.computed && member.property?.type !== "Literal") return undefined;
+  return propertyKey(member.property) ?? undefined;
+}
+
+export function isStorageCall(scope: ScriptScope, node: AnyNode) {
+  const call = unwrapExpression(node);
+  if (call?.type !== "CallExpression") return false;
+  const callee = unwrapExpression(call.callee);
+  return (
+    resolvesToImport(scope, callee, "useStorage", STORAGE_MODULES) ||
+    resolvesToImport(scope, callee, "useKV", STORAGE_MODULES)
+  );
+}
+
+export function constInitializer(scope: ScriptScope, identifier: AnyNode): AnyNode {
+  if (identifier?.type !== "Identifier") return undefined;
+  const defs = resolvedVariable(scope, identifier)?.defs;
+  const definition = defs?.length === 1 ? defs[0] : undefined;
+  if (
+    definition?.type === "Variable" &&
+    definition.parent?.kind === "const" &&
+    definition.node.id.type === "Identifier"
+  )
+    return definition.node.init;
+}
+
 /**
- * Functions the file registers as Nitro event handlers: the first argument of
- * defineEventHandler() and its aliases, or the `handler` of their object form.
+ * Follow a registered file's default export to its function or factory callback.
  */
 export function nitroHandlerFunctions(scope: ScriptScope): AnyNode[] {
-  const handlers: AnyNode[] = [];
-  walk(scope, scope.ast, (node) => {
+  const seen = new Set<AnyNode>();
+  const resolveHandler = (value: AnyNode): AnyNode => {
+    const node = unwrapExpression(value);
+    if (!node || seen.has(node)) return;
+    seen.add(node);
+    if (isFunction(node)) return node;
+    if (node.type === "Identifier") {
+      const defs = resolvedVariable(scope, node)?.defs;
+      if (defs?.length !== 1) return;
+      const definition = defs[0]!;
+      if (definition.type === "FunctionName") return definition.node;
+      return resolveHandler(constInitializer(scope, node));
+    }
     if (node.type !== "CallExpression") return;
     const callee = unwrapExpression(node.callee);
-    if (
-      callee?.type !== "Identifier" ||
-      !HANDLER_FACTORIES.has(callee.name) ||
-      !resolvesToImport(scope, callee, callee.name, HANDLER_MODULES)
-    )
+    if (!HANDLER_FACTORIES.some((name) => resolvesToImport(scope, callee, name, HANDLER_MODULES)))
       return;
     const argument = unwrapExpression(node.arguments[0]);
-    if (isFunction(argument)) handlers.push(argument);
-    else if (argument?.type === "ObjectExpression") {
-      const handler = argument.properties.find(
+    if (argument?.type === "ObjectExpression") {
+      const handler = argument.properties.findLast(
         (property: AnyNode) =>
           property.type === "Property" &&
           !property.computed &&
-          property.key?.type === "Identifier" &&
-          property.key.name === "handler",
+          propertyKey(property.key) === "handler",
       );
-      const value = unwrapExpression(handler?.value);
-      if (isFunction(value)) handlers.push(value);
+      return resolveHandler(handler?.value);
     }
-  });
-  return handlers;
+    return resolveHandler(argument);
+  };
+  for (const statement of scope.ast.body) {
+    const exported =
+      statement.type === "ExportDefaultDeclaration"
+        ? statement.declaration
+        : statement.type === "ExportNamedDeclaration" && !statement.source
+          ? statement.specifiers.find(
+              (specifier: AnyNode) => propertyKey(specifier.exported) === "default",
+            )?.local
+          : undefined;
+    if (exported) {
+      const handler = resolveHandler(exported);
+      return handler ? [handler] : [];
+    }
+  }
+  return [];
 }
 
 /** Visits every node under `node` in source order. */

@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { runProjectFixture } from "../../../src/core/testkit.ts";
 import { nitroRulePack, noUndeclaredStorageMount } from "../../../src/rule-packs/nitro/index.ts";
 import type { NitroStorageInventory } from "../../../src/rule-packs/nitro/rules/storage-mounts.ts";
 
@@ -7,12 +7,14 @@ async function run(
   files: Record<string, string>,
   framework: "nuxt" | "nitro" = "nuxt",
   dependencies?: Record<string, string>,
+  include?: string[],
 ) {
-  const result = await runRuleFixture({
-    rule: noUndeclaredStorageMount,
+  const result = await runProjectFixture({
+    rules: [noUndeclaredStorageMount],
     framework,
     dependencies,
     files,
+    config: include ? { include } : undefined,
   });
   return {
     diagnostics: result.diagnostics.map((diagnostic) => ({
@@ -171,7 +173,7 @@ export default defineEventHandler(async (event) => {
   const base = getRouterParam(event, 'base')
   return [
     await useStorage('data').getKeys(),
-    await useStorage('cache:nitro').getKeys(),
+    await useStorage('assets:nitro').getKeys(),
     await useStorage().getKeys(),
     await useStorage(base).getKeys(),
     useBrowserStorage('redis', 0),
@@ -180,4 +182,141 @@ export default defineEventHandler(async (event) => {
 `,
   });
   expect(diagnostics).toEqual([]);
+});
+
+const sessionsRoute = "export default () => useStorage('sessions').getKeys()";
+
+test.each([
+  { ".nitrorc": "storage.sessions.driver=memory" },
+  { "nitro.config.ts": "export default { extends: ['./layer'] }" },
+  {
+    "nitro.config.ts": "export default { plugins: ['./extras/storage'] }",
+    "extras/storage.ts": "export default () => useStorage()['mount']('sessions', driver)",
+  },
+])("marks opaque Nitro config and plugins incomplete: %j", async (files) => {
+  const result = await run(
+    {
+      ...Object.fromEntries(Object.entries(files).filter(([, contents]) => contents !== undefined)),
+      "routes/track.ts": sessionsRoute,
+    },
+    "nitro",
+    { nitropack: "^2.13.4" },
+  );
+  expect(result.inventory?.complete).toBe(false);
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  "{ hooks: { 'nitro:config': config => { config.storage = mounts } } }",
+  "{ nitro: { modules: ['./modules/storage'] } }",
+])("marks unresolved Nuxt contributors incomplete: %s", async (config) => {
+  const result = await run({
+    "nuxt.config.ts": `export default ${config}`,
+    "server/routes/track.ts": sessionsRoute,
+  });
+  expect(result.inventory?.complete).toBe(false);
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("marks auto-scanned Nitro 3 modules incomplete", async () => {
+  const result = await run(
+    {
+      "nitro.config.ts": "export default { serverDir: './server' }",
+      "server/routes/track.ts": sessionsRoute,
+      "modules/storage.ts": "export default nitro => { nitro.options.kv = mounts }",
+    },
+    "nitro",
+    { nitro: "^3.0.0" },
+  );
+  expect(result.inventory?.complete).toBe(false);
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("scans runtime mounts independently of include", async () => {
+  const result = await run(
+    {
+      "server/api/track.ts": sessionsRoute,
+      "server/plugins/storage.ts": "const store = useStorage(); store['mount']('sessions', driver)",
+    },
+    "nuxt",
+    undefined,
+    ["server/api/**"],
+  );
+  expect(result.inventory?.complete).toBe(false);
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("ignores comments and Vue mounts and skips only dev routes", async () => {
+  const result = await run(
+    {
+      "client.ts": "// useStorage().mount('sessions', driver)\ncreateApp({}).mount('#app')",
+      "routes/track.dev.ts": sessionsRoute,
+      "routes/track.prod.ts": sessionsRoute,
+      "utils/read.dev.ts": sessionsRoute,
+    },
+    "nitro",
+    { nitropack: "^2.13.4" },
+  );
+  expect(result.inventory?.complete).toBe(true);
+  expect(result.diagnostics.map(({ file }) => file).sort()).toEqual([
+    "routes/track.prod.ts",
+    "utils/read.dev.ts",
+  ]);
+});
+
+test("uses Nitro 2 production mounts, not kv or dev-only defaults", async () => {
+  const result = await run(
+    {
+      "nitro.config.ts":
+        "export default { preset: 'cloudflare-module', kv: { sessions: { driver: 'memory' } }, bundledStorage: ['snapshot'] }",
+      "routes/track.ts": `useStorage('sessions').getKeys()
+useStorage('root').getItem('file')
+useStorage('cache').getItem('response')
+useStorage('data').getItem('record')
+useStorage('snapshot').getItem('seed')`,
+    },
+    "nitro",
+    { nitropack: "^2.13.4" },
+  );
+  expect(result.diagnostics.map(({ line }) => line)).toEqual([1, 2, 3, 4]);
+});
+
+test("Nitro 3 does not mount data by default", async () => {
+  const result = await run(
+    {
+      "nitro.config.ts": "export default { scanDirs: ['./server'] }",
+      "server/routes/track.ts":
+        "import { useKV } from 'nitro/kv'; export default () => useKV('data').setItem('x', 1)",
+    },
+    "nitro",
+    { nitro: "^3.0.0" },
+  );
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("a child mount covers matching item keys and supports listing, not sibling keys", async () => {
+  const result = await run({
+    "nuxt.config.ts":
+      "export default { nitro: { storage: { 'sessions:archive': { driver: 'memory' } } } }",
+    "server/routes/track.ts": `useStorage('sessions').setItem('live:alice', 1)
+useStorage('sessions').getItem('archive/alice')
+useStorage('sessions').getKeys()
+const store = useStorage('sessions')
+store['getItem']('live:bob')`,
+  });
+  expect(result.diagnostics.map(({ line }) => line)).toEqual([1, 4]);
+});
+
+test("an explicit root mount covers otherwise undeclared bases", async () => {
+  const result = await run({
+    "nuxt.config.ts":
+      "export default { nitro: { storage: { '/': { driver: 'fs', base: './data' } } } }",
+    "server/routes/track.ts": sessionsRoute,
+  });
+  expect(result.inventory?.mounts).toContainEqual({
+    base: "",
+    source: "storage",
+    file: "nuxt.config.ts",
+  });
+  expect(result.diagnostics).toEqual([]);
 });

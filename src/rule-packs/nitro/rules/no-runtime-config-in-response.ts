@@ -1,6 +1,9 @@
 import type { RuleContext } from "../../../core/index.js";
 import { fileTextScope, type ScriptScope } from "../../../core/internal/script-scope.js";
+import { isNitroHandlerFile } from "./nitro-config.js";
 import {
+  constInitializer,
+  isFunction,
   nitroHandlerFunctions,
   reportNode,
   resolvedVariable,
@@ -9,7 +12,7 @@ import {
   walk,
   walkOwnBody,
 } from "./nitro-handlers.js";
-import { nitroServerFile } from "./server-layout.js";
+import { propertyKey } from "./server-layout.js";
 import { type AnyNode, createRule } from "./shared.js";
 
 const RULE_ID = "nitro/runtime/no-runtime-config-in-response";
@@ -59,7 +62,7 @@ export const noRuntimeConfigInResponse = createRule({
 function isServerRuntimeFile(ctx: RuleContext) {
   const path = ctx.file.relativePath.replace(/\\/g, "/");
   if (TEST_FILE.test(path) || /\.d\.[cm]?ts$/.test(path)) return false;
-  return Boolean(nitroServerFile(ctx, ctx.file.path)) && !/\.config\.[cm]?[jt]s$/.test(path);
+  return isNitroHandlerFile(ctx, ctx.file.path);
 }
 
 function leakedConfigs(scope: ScriptScope): AnyNode[] {
@@ -82,19 +85,39 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
         configs.add(variable);
     }
   });
+  const isWholeConfig = (node: AnyNode) =>
+    isConfigCall(node) ||
+    (node?.type === "Identifier" && configs.has(resolvedVariable(scope, node)));
   const leaks: AnyNode[] = [];
-  const leak = (value: AnyNode): void => {
+  const leak = (value: AnyNode, directResponse = false): void => {
     const node = stripAwait(value);
     if (!node) return;
-    if (isConfigCall(node)) return void leaks.push(node);
-    if (node.type === "Identifier") {
-      const variable = resolvedVariable(scope, node);
-      if (variable && configs.has(variable)) leaks.push(node);
-      return;
-    }
+    if (isWholeConfig(node)) return void leaks.push(node);
     if (node.type === "ObjectExpression") {
-      for (const property of node.properties)
-        leak(property.type === "SpreadElement" ? property.argument : property.value);
+      const overwritten = new Set<string>();
+      const expanding = new Set<AnyNode>();
+      const visitProperties = (object: AnyNode) => {
+        if (expanding.has(object)) return;
+        expanding.add(object);
+        for (const property of [...object.properties].reverse()) {
+          if (property.type === "SpreadElement") {
+            const argument = stripAwait(property.argument);
+            const objectLiteral = stripAwait(constInitializer(scope, argument)) ?? argument;
+            if (objectLiteral?.type === "ObjectExpression") visitProperties(objectLiteral);
+            else leak(argument);
+            continue;
+          }
+          const key = property.computed
+            ? property.key.type === "Literal"
+              ? propertyKey(property.key)
+              : null
+            : propertyKey(property.key);
+          if (key === null || !overwritten.has(key)) leak(property.value);
+          if (key !== null) overwritten.add(key);
+        }
+        expanding.delete(object);
+      };
+      visitProperties(node);
       return;
     }
     if (node.type === "ArrayExpression") {
@@ -103,45 +126,52 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
       return;
     }
     if (node.type === "ConditionalExpression") {
-      leak(node.consequent);
-      leak(node.alternate);
+      leak(node.consequent, directResponse);
+      leak(node.alternate, directResponse);
       return;
     }
     if (node.type === "LogicalExpression") {
-      leak(node.left);
-      leak(node.right);
+      if (node.operator !== "&&") leak(node.left, directResponse);
+      if (node.operator === "&&" || !isWholeConfig(stripAwait(node.left)))
+        leak(node.right, directResponse);
       return;
     }
-    if (node.type === "CallExpression" && isSerializer(scope, node)) leak(node.arguments[0]);
+    if (node.type === "CallExpression" && isSerializer(scope, node, directResponse))
+      leak(node.arguments[0]);
     // new Response(object) sends "[object Object]"; only a serialized config leaks through it.
     if (
       node.type === "NewExpression" &&
       isGlobal(scope, node.callee, "Response") &&
       stripAwait(node.arguments[0])?.type === "CallExpression" &&
-      isSerializer(scope, stripAwait(node.arguments[0]))
+      isSerializer(scope, stripAwait(node.arguments[0]), false)
     )
       leak(node.arguments[0]);
   };
   for (const handler of nitroHandlerFunctions(scope)) {
     if (handler.body?.type !== "BlockStatement") {
-      leak(handler.body);
+      leak(handler.body, true);
       continue;
     }
     walkOwnBody(scope, handler, (node) => {
-      if (node.type === "ReturnStatement") leak(node.argument);
+      if (node.type === "ReturnStatement") leak(node.argument, true);
     });
   }
   return leaks;
 }
 
 // JSON.stringify(config) and Response.json(config) serialize every key of the object.
-function isSerializer(scope: ScriptScope, call: AnyNode) {
+function isSerializer(scope: ScriptScope, call: AnyNode, directResponse: boolean) {
   const callee = unwrapExpression(call.callee);
   if (callee?.type !== "MemberExpression" || callee.computed) return false;
   const method = callee.property?.name;
+  const replacer = unwrapExpression(call.arguments[1]);
+  const replacement = unwrapExpression(constInitializer(scope, replacer)) ?? replacer;
   return (
-    (method === "stringify" && isGlobal(scope, callee.object, "JSON")) ||
-    (method === "json" && isGlobal(scope, callee.object, "Response"))
+    (method === "stringify" &&
+      isGlobal(scope, callee.object, "JSON") &&
+      replacement?.type !== "ArrayExpression" &&
+      !isFunction(replacement)) ||
+    (directResponse && method === "json" && isGlobal(scope, callee.object, "Response"))
   );
 }
 
