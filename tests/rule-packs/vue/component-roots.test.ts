@@ -106,6 +106,26 @@ test("VUE0051 is strict-only", () => {
   expect(vueRulePack.presets.strict).toContain(noMultiRootFallthrough.meta.id);
 });
 
+test.each(["", ' lang="jsx"'])(
+  "the default preset scans Vue attrs imports in JS%s",
+  async (lang) => {
+    const { rule, graph } = captureGraph();
+    const result = await runProjectFixture({
+      rules: [rule],
+      files: {
+        "src/Panel.vue": `<script setup${lang}>
+import { useAttrs as readAttrs } from 'vue'
+const attrs = readAttrs()
+function toggle(event) { return event.type }
+${lang ? "const render = (props) => <span>{props.label}</span>" : ""}
+</script>
+<template><header /><main v-bind="attrs" @click="toggle" /></template>`,
+      },
+    });
+    expect(graph().components.get(join(result.root, "src/Panel.vue"))?.facts.readsAttrs).toBe(true);
+  },
+);
+
 test("VUE0051 reports fallthrough attributes passed to a multi-root component", async () => {
   const result = await runRuleFixture({
     rule: noMultiRootFallthrough,

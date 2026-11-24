@@ -97,6 +97,7 @@ export function parseVueScriptsResult(
     const script = createVueScriptForParsing({ script: block }, source);
     if (!script.text.trim()) continue;
     const parsed = parseScriptResult(file, script.text.slice(0, block.loc.end.offset), lang, {
+      astType: "ts",
       range: true,
     });
     errors.push(...parsed.errors);

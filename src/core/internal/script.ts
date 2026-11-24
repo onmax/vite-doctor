@@ -37,7 +37,7 @@ export function parseScriptResult(
   file: string,
   source: string,
   lang = langFromFile(file),
-  options: Pick<ParserOptions, "range"> = {},
+  options: Pick<ParserOptions, "astType" | "range"> = {},
 ): { ast: Record<string, unknown> | null; errors: string[]; incomplete: boolean } {
   try {
     const result = parseScriptSync(file, source, { sourceType: "module", lang, ...options });
