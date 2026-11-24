@@ -62,6 +62,24 @@ describe("vite/env/no-unprefixed-client-env", () => {
   import.meta.env.SSR,
   import.meta.env.BASE_URL,
 )`,
+      }),
+    ).toEqual([]);
+  });
+
+  test("keeps keys Vitest sets quiet in app code", async () => {
+    expect(
+      await run([noUnprefixedClientEnv], {
+        "vite.config.ts": config("{}"),
+        "src/main.ts": `if (import.meta.env.VITEST) console.log('under test')
+if (import.meta.env.TEST) console.log(import.meta.env.VITEST_WORKER_ID, import.meta.env.VITEST_POOL_ID, import.meta.env.VITEST_MODE)`,
+      }),
+    ).toEqual([]);
+  });
+
+  test("leaves test files alone", async () => {
+    expect(
+      await run([noUnprefixedClientEnv], {
+        "vite.config.ts": config("{}"),
         "src/App.test.ts": "console.log(import.meta.env.API_URL)",
       }),
     ).toEqual([]);

@@ -239,6 +239,15 @@ export const noBroadEnvPrefix = createRule({
 });
 
 const builtInEnvKeys = new Set(["MODE", "BASE_URL", "PROD", "DEV", "SSR"]);
+// Vitest exposes process.env as import.meta.env and sets these, so app code reads them to detect a
+// test run and expects them to be undefined in the browser.
+const vitestEnvKeys = new Set([
+  "TEST",
+  "VITEST",
+  "VITEST_MODE",
+  "VITEST_POOL_ID",
+  "VITEST_WORKER_ID",
+]);
 
 function importMetaEnvKey(node: AnyNode): string | null {
   if (node?.type !== "MemberExpression") return null;
@@ -267,7 +276,13 @@ export const noUnprefixedClientEnv = createRule({
     return {
       MemberExpression(node: AnyNode) {
         const name = importMetaEnvKey(node);
-        if (!name || builtInEnvKeys.has(name) || isAssignmentTarget(node)) return;
+        if (
+          !name ||
+          builtInEnvKeys.has(name) ||
+          vitestEnvKeys.has(name) ||
+          isAssignmentTarget(node)
+        )
+          return;
         const contract = clientEnvContract(ctx);
         if (!contract || contract.exposes(name)) return;
         // Without host evidence VITE0009 reports secret-looking names as possibly exposed.
