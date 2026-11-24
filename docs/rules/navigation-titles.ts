@@ -172,6 +172,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/env/no-empty-env-prefix": "Empty env prefix",
   "vite/env/no-untyped-env": "Typed env",
   "vite/env/prefer-direct-import-meta-env-access": "import.meta.env",
+  "vite/hmr/no-circular-import-at-hmr-boundary": "HMR import cycles",
   "vite/hmr/require-dispose-for-side-effects": "HMR dispose",
   "vite/imports/no-barrel-files": "Barrel files",
   "vite/imports/require-static-glob-pattern": "Static glob patterns",

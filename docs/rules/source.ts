@@ -959,6 +959,12 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("eslint-plugin-vue max-props", "https://eslint.vuejs.org/rules/max-props.html");
   }
 
+  if (rule.id === "vite/hmr/no-circular-import-at-hmr-boundary") {
+    add("Vite HMR API", "https://vite.dev/guide/api-hmr.html");
+    add("Vue Router lazy loading", "https://router.vuejs.org/guide/advanced/lazy-loading.html");
+    add("DOC0001: circular dependencies", "/diagnostics/DOC0001");
+  }
+
   if (rule.id === "vue/props/no-unused-props") {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }
