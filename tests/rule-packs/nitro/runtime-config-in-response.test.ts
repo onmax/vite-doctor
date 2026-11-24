@@ -42,15 +42,20 @@ test.each([
 
 test.each([
   "config && config.public",
+  "flag ? config : {}",
+  "[config]",
+  "({ debug: { config } })",
+  "({ ...{ debug: config } })",
+  "({ stripe: config.stripe })",
+  "config.apiSecret",
   "JSON.stringify(config, ['public', 'siteUrl'])",
+  "JSON.stringify(config, (_, value) => value)",
+  "new Response(config)",
   "new Response(Response.json(config))",
-  "({ debug: config, ...{ debug: false } })",
   "({ debug: config, debug: false })",
-  "({ [200]: config, '200': false })",
-  "({ '200': config, ...{ 200: false } })",
-  "({ '200': config, [200n]: false })",
-  "({ debug: config, [`de\\u0062ug`]: false })",
-])("does not report discarded or filtered config: %s", async (response) => {
+  "({ debug: config, ...{ debug: false } })",
+  "({ debug: config, [key]: false })",
+])("stays quiet outside the whole-config shapes: %s", async (response) => {
   expect(
     await run({
       "server/api/config.ts": `export default defineEventHandler(() => {
@@ -62,50 +67,27 @@ test.each([
 });
 
 test.each([
-  "const keys = ['public', 'siteUrl']; return JSON.stringify(config, keys)",
-  "return JSON.stringify(config, (_, value) => ({ public: value.public }))",
-  "return JSON.stringify(config, (_, value) => value)",
-  "const keys = ['public']; keys.push(...Object.keys(config)); return JSON.stringify(config, keys)",
-  "return JSON.stringify(config, [...Object.keys(config)])",
-  "const override = { debug: false }; return { debug: config, ...override }",
-  "const override = { debug: false }; Reflect.deleteProperty(override, 'debug'); return { debug: config, ...override }",
-  "const override = { debug: false }; Reflect.deleteProperty(override, 'debug'); return { ...{ debug: config }, ...override }",
-  "const override = { debug: false }; return { debug: config, ...{ ...override } }",
-  "return { debug: config, [String('debug')]: false }",
-  "return { debug: config, [`${key}`]: false }",
-  "return { ...config, ...config.public }",
-])("does not report when the whole-config flow is unknown: %s", async (body) => {
+  "config",
+  "{ config }",
+  "{ ...config }",
+  "{ ...config, ...config.public }",
+  "{ debug: config, 200: 'ok' }",
+  "{ debug: config, ...config }",
+  "JSON.stringify(config)",
+  "JSON.stringify(config, null, 2)",
+  "new Response(JSON.stringify(config, undefined, 2))",
+  "{ ...override, debug: config }",
+  "{ debug: config, ...override, cfg: config }",
+])("reports the whole config returned as %s", async (response) => {
   expect(
     await run({
       "server/api/config.ts": `export default defineEventHandler(() => {
     const config = useRuntimeConfig()
-    ${body}
+    const override = { debug: false }
+    return ${response}
   })`,
     }),
-  ).toEqual([]);
-});
-
-test.each([
-  "return JSON.stringify(config)",
-  "return JSON.stringify(config, null, 2)",
-  "return new Response(JSON.stringify(config, undefined, 2))",
-  "return { ...{ debug: config } }",
-  "return { debug: config, 200: 'ok' }",
-  "return { debug: config, [200]: 'ok' }",
-  "return { debug: config, [`status`]: 'ok' }",
-  "return { debug: config, ...{ [200]: 'ok', [`status`]: true } }",
-  "const override = { debug: false }; return { ...override, debug: config }",
-  "const override = { debug: false }; return { debug: config, ...override, cfg: config }",
-  "const response = { previous: false ? { ...response } : null }; return { ...response, cfg: config }",
-])("reports proven whole-config flows: %s", async (body) => {
-  expect(
-    await run({
-      "server/api/config.ts": `export default defineEventHandler(() => {
-    const config = useRuntimeConfig()
-    ${body}
-  })`,
-    }),
-  ).toEqual([{ code: "NITRO0032", file: "server/api/config.ts", line: 3 }]);
+  ).toEqual([{ code: "NITRO0032", file: "server/api/config.ts", line: 4 }]);
 });
 
 test("ignores unused handler factories", async () => {
@@ -135,8 +117,8 @@ test.each([
     4,
   ],
   [
-    "the config nested in the response",
-    "export default defineEventHandler((event) => {\n  const config = useRuntimeConfig(event)\n  return { debug: { config } }\n})\n",
+    "the config as a response property",
+    "export default defineEventHandler((event) => {\n  const config = useRuntimeConfig(event)\n  return { debug: config }\n})\n",
     3,
   ],
   [

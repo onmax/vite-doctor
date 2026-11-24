@@ -86,98 +86,74 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
     isConfigCall(node) ||
     (node?.type === "Identifier" && configs.has(resolvedVariable(scope, node)));
   const leaks: AnyNode[] = [];
-  const leak = (value: AnyNode, directResponse = false): void => {
-    const node = stripAwait(value);
-    if (!node) return;
-    if (isWholeConfig(node)) return void leaks.push(node);
-    if (node.type === "ObjectExpression") {
-      const visitProperties = (object: AnyNode, overwritten: Set<string>): boolean => {
-        for (const property of [...object.properties].reverse()) {
-          if (property.type === "SpreadElement") {
-            const argument = stripAwait(property.argument);
-            if (argument?.type === "ObjectExpression") {
-              if (!visitProperties(argument, overwritten)) return false;
-            } else {
-              if (isWholeConfig(argument)) leaks.push(argument);
-              return false;
-            }
-            continue;
-          }
-          const key = responsePropertyKey(property);
-          if (key === null) return false;
-          if (!overwritten.has(key)) leak(property.value);
-          overwritten.add(key);
-        }
-        return true;
-      };
-      visitProperties(node, new Set());
-      return;
+  // Reports only the whole config, a spread of it, or a property set to it that nothing later in
+  // the literal can overwrite. Anything less direct stays quiet.
+  const leakFromObject = (object: AnyNode) => {
+    object.properties.forEach((property: AnyNode, index: number) => {
+      if (property.type === "SpreadElement") {
+        if (isWholeConfig(stripAwait(property.argument))) leaks.push(property.argument);
+        return;
+      }
+      if (!isWholeConfig(stripAwait(property.value))) return;
+      const key = staticKey(property);
+      const later = object.properties.slice(index + 1);
+      const kept = later.every(
+        (next: AnyNode) => next.type !== "SpreadElement" && (staticKey(next) ?? key) !== key,
+      );
+      if (key !== undefined && kept) leaks.push(property.value);
+    });
+  };
+  const leak = (value: AnyNode) => {
+    let node = stripAwait(value);
+    // new Response(object) sends "[object Object]"; only a stringified config leaks through it.
+    if (node?.type === "NewExpression" && isGlobal(scope, node.callee, "Response")) {
+      node = stripAwait(node.arguments[0]);
+      if (node?.type !== "CallExpression" || !isStringify(scope, node)) return;
     }
-    if (node.type === "ArrayExpression") {
-      for (const element of node.elements)
-        leak(element?.type === "SpreadElement" ? element.argument : element);
-      return;
-    }
-    if (node.type === "ConditionalExpression") {
-      leak(node.consequent, directResponse);
-      leak(node.alternate, directResponse);
-      return;
-    }
-    if (node.type === "LogicalExpression") {
-      if (node.operator !== "&&") leak(node.left, directResponse);
-      if (node.operator === "&&" || !isWholeConfig(stripAwait(node.left)))
-        leak(node.right, directResponse);
-      return;
-    }
-    if (node.type === "CallExpression" && isSerializer(scope, node, directResponse))
-      leak(node.arguments[0]);
-    // new Response(object) sends "[object Object]"; only a serialized config leaks through it.
     if (
-      node.type === "NewExpression" &&
-      isGlobal(scope, node.callee, "Response") &&
-      stripAwait(node.arguments[0])?.type === "CallExpression" &&
-      isSerializer(scope, stripAwait(node.arguments[0]), false)
+      node?.type === "CallExpression" &&
+      (isStringify(scope, node) || isGlobalMethod(scope, node, "Response", "json"))
     )
-      leak(node.arguments[0]);
+      node = stripAwait(node.arguments[0]);
+    if (isWholeConfig(node)) leaks.push(node);
+    else if (node?.type === "ObjectExpression") leakFromObject(node);
   };
   for (const handler of nitroHandlerFunctions(scope)) {
     if (handler.body?.type !== "BlockStatement") {
-      leak(handler.body, true);
+      leak(handler.body);
       continue;
     }
     walkOwnBody(scope, handler, (node) => {
-      if (node.type === "ReturnStatement") leak(node.argument, true);
+      if (node.type === "ReturnStatement") leak(node.argument);
     });
   }
   return leaks;
 }
 
-function responsePropertyKey(property: AnyNode): string | null {
-  const key = unwrapExpression(property.key);
-  if (key.type === "Identifier" && !property.computed) return key.name;
-  if (key.type === "Literal") {
-    const value = key.value;
-    if (value === null || ["string", "number", "bigint", "boolean"].includes(typeof value))
-      return String(value);
-  }
-  if (key.type === "TemplateLiteral" && key.expressions.length === 0)
-    return key.quasis[0].value.cooked ?? null;
-  return null;
+function staticKey(property: AnyNode): string | undefined {
+  if (property.computed) return undefined;
+  if (property.key.type === "Identifier") return property.key.name;
+  const value = property.key.type === "Literal" ? property.key.value : undefined;
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return undefined;
 }
 
-function isSerializer(scope: ScriptScope, call: AnyNode, directResponse: boolean) {
-  const callee = unwrapExpression(call.callee);
-  if (callee?.type !== "MemberExpression" || callee.computed) return false;
-  const method = callee.property?.name;
+function isStringify(scope: ScriptScope, call: AnyNode) {
   const replacer = unwrapExpression(call.arguments[1]);
   const unfiltered =
     !replacer ||
-    replacer.type === "Literal" ||
-    (replacer.type === "UnaryExpression" && replacer.operator === "void") ||
+    (replacer.type === "Literal" && replacer.value === null) ||
     isGlobal(scope, replacer, "undefined");
+  return unfiltered && isGlobalMethod(scope, call, "JSON", "stringify");
+}
+
+function isGlobalMethod(scope: ScriptScope, call: AnyNode, object: string, method: string) {
+  const callee = unwrapExpression(call.callee);
   return (
-    (method === "stringify" && isGlobal(scope, callee.object, "JSON") && unfiltered) ||
-    (directResponse && method === "json" && isGlobal(scope, callee.object, "Response"))
+    callee?.type === "MemberExpression" &&
+    !callee.computed &&
+    callee.property?.name === method &&
+    isGlobal(scope, callee.object, object)
   );
 }
 
