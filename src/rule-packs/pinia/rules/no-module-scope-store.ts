@@ -54,14 +54,25 @@ export const noModuleScopeStore = createRule({
       async onWorkspaceEnd() {
         const collection = await collectStores(ctx);
         if (!collection.stores.length) return;
-        const clientOnly = clientOnlyPlugins(ctx);
+        const execution = nuxtExecution(ctx);
         for (const call of await findStoreCalls(ctx, collection)) {
           if (call.context !== "module") continue;
           const argument = call.call.arguments[0];
           if (argument && !isMissingInstance(call, argument)) continue;
           const nuxt = nuxtForFile(ctx, call.file);
-          const ssr = nuxt && nuxt.ssr !== false && !(await clientOnly(nuxt, call.file));
-          if (!ssr && hasPriorActivation(ctx, call)) continue;
+          const active = hasPriorActivation(ctx, call);
+          const server =
+            nuxt && nuxt.ssr !== false && (await execution(nuxt, call.file)) === "server";
+          if (active && !server) continue;
+          const consequences = [];
+          if (!active)
+            consequences.push(
+              'If the module is imported before app.use(pinia), Pinia throws "getActivePinia()" was called but there was no active Pinia.',
+            );
+          if (server)
+            consequences.push(
+              "If this module runs during server-side rendering, every request shares the store it got.",
+            );
           const id = call.store.located.store.id;
           const callee = unwrap(call.call.callee);
           const name = call.text.slice(callee.range[0], callee.range[1]);
@@ -71,7 +82,7 @@ export const noModuleScopeStore = createRule({
           const range = storeRange(ctx, call.file, call.text, call.call);
           ctx.report(
             diagnostics.PINIA0006({
-              why: `${name}() for store "${id}" runs at module scope, when this module is first imported, outside any component setup or app context. ${ssr ? "If this module runs during server-side rendering, every request shares the store it got, or Pinia throws because no Pinia is active yet." : 'If the module is imported before app.use(pinia), Pinia throws "getActivePinia()" was called but there was no active Pinia.'}${byName}`,
+              why: `${name}() for store "${id}" runs at module scope, when this module is first imported, outside any component setup or app context. ${consequences.join(" ")}${byName}`,
               fix: `Move ${name}() into the function that uses the store, such as <script setup>, a composable, an action, a router guard, or a plugin or middleware callback.`,
             }),
             {
@@ -97,49 +108,68 @@ export const noModuleScopeStore = createRule({
   },
 });
 
-const CLIENT_PLUGIN = /\.client\.[cm]?[jt]sx?$/;
+const CLIENT_SUFFIX = /\.client(?:\.\w+)*$/;
 const SCRIPT_EXTENSION = /\.[cm]?[jt]sx?$/;
+type Execution = "client" | "server" | "unknown";
 
-function clientOnlyPlugins(ctx: RuleContext) {
-  const registrations = new Map<NuxtProjectInfo, Set<string> | null>();
-  return async (nuxt: NuxtProjectInfo, file: string) => {
-    const appDirs = [nuxt.appDir, ...nuxt.layers.map((layer) => layer.srcDir)];
-    const isScannedClientPlugin = (path: string) =>
-      CLIENT_PLUGIN.test(path) &&
-      appDirs.some((dir) => dir && !relative(join(dir, "plugins"), path).includes("/"));
-    if (!isScannedClientPlugin(file)) return false;
-    if (!registrations.has(nuxt)) registrations.set(nuxt, readNonClientPlugins(ctx, nuxt));
-    const nonClient = registrations.get(nuxt);
-    if (!nonClient) return false;
-
+function nuxtExecution(ctx: RuleContext) {
+  const entryPoints = new Map<NuxtProjectInfo, ReturnType<typeof nuxtEntryPoints>>();
+  return async (nuxt: NuxtProjectInfo, file: string): Promise<Execution> => {
+    let entryPoint = entryPoints.get(nuxt);
+    if (!entryPoint) {
+      entryPoint = nuxtEntryPoints(ctx, nuxt);
+      entryPoints.set(nuxt, entryPoint);
+    }
     const graph = await ctx.inventory.importGraph();
-    if (!graph.files.includes(file)) return false;
     const pending = [file];
     const visited = new Set(pending);
+    let client = false;
+    let unknown = false;
     for (const path of pending) {
-      if (
-        !isScannedClientPlugin(path) ||
-        nonClient.has(path) ||
-        nonClient.has(path.replace(SCRIPT_EXTENSION, ""))
-      )
-        return false;
+      const mode = entryPoint(path);
+      if (mode === "server") return "server";
+      if (mode === "client") client = true;
+      let hasImporter = false;
       for (const edge of graph.importersOf(path)) {
-        if (edge.typeOnly || edge.kind === "dynamic-import" || visited.has(edge.from)) continue;
+        if (edge.typeOnly || edge.kind === "dynamic-import") continue;
+        hasImporter = true;
+        if (visited.has(edge.from)) continue;
         visited.add(edge.from);
         pending.push(edge.from);
       }
+      if (mode === "unknown" || (!mode && !hasImporter)) unknown = true;
     }
-    return true;
+    return client && !unknown ? "client" : "unknown";
   };
 }
 
-function readNonClientPlugins(ctx: RuleContext, nuxt: NuxtProjectInfo): Set<string> | null {
+function nuxtEntryPoints(ctx: RuleContext, nuxt: NuxtProjectInfo) {
+  const registered = readPluginRegistrations(ctx, nuxt);
+  const appDirs = [nuxt.appDir, ...nuxt.layers.map((layer) => layer.srcDir ?? layer.root)];
+  const serverEntries = new Set(Object.values(nuxt.serverDirs).flat());
+  return (path: string): Execution | undefined => {
+    if (serverEntries.has(path)) return "server";
+    const registration =
+      registered?.get(path) ?? registered?.get(path.replace(SCRIPT_EXTENSION, ""));
+    if (registration) return registration;
+    for (const dir of appDirs) {
+      const local = relative(dir, path);
+      if (local === "app.vue" || local === "error.vue") return "server";
+      if (local.startsWith("pages/") && local.endsWith(".vue"))
+        return CLIENT_SUFFIX.test(local) ? "client" : "server";
+      if (SCRIPT_EXTENSION.test(local) && /^plugins\/(?:[^/]+|[^/]+\/index\.[^/]+)$/.test(local))
+        return registered ? (CLIENT_SUFFIX.test(local) ? "client" : "server") : "unknown";
+    }
+  };
+}
+
+function readPluginRegistrations(ctx: RuleContext, nuxt: NuxtProjectInfo) {
   const roots = new Map(nuxt.layers.map((layer) => [layer.root, layer.srcDir]));
   const appRoot = nuxt.appRoots
     .filter((root) => nuxt.appDir === root || nuxt.appDir.startsWith(`${root}/`))
     .sort((left, right) => right.length - left.length)[0];
   if (appRoot) roots.set(appRoot, nuxt.appDir);
-  const nonClient = new Set<string>();
+  const registrations = new Map<string, Execution>();
   for (const [root, srcDir = root] of roots) {
     for (const extension of ["ts", "js", "mjs", "mts", "cjs", "cts"]) {
       const file = join(root, `nuxt.config.${extension}`);
@@ -162,25 +192,38 @@ function readNonClientPlugins(ctx: RuleContext, nuxt: NuxtProjectInfo): Set<stri
         const options = staticFields(entry);
         const source = options ? options.get("src") : entry;
         if (typeof source?.value !== "string") return null;
-        const mode = options?.get("mode");
-        const ssr = options?.get("ssr");
-        if ((!ssr || ssr.value === false) && (!mode || mode.value === "client")) continue;
         const specifier: string = source.value;
+        const execution = pluginExecution(specifier, options);
+        const register = (path: string) => {
+          const existing = registrations.get(path);
+          registrations.set(path, existing && existing !== execution ? "unknown" : execution);
+        };
         const alias = /^(~~|@@|~|@)\//.exec(specifier)?.[0];
         if (alias) {
-          nonClient.add(resolve(alias.length === 2 ? srcDir : root, specifier.slice(alias.length)));
+          register(resolve(alias.length === 2 ? srcDir : root, specifier.slice(alias.length)));
         } else {
-          nonClient.add(resolve(root, specifier));
-          nonClient.add(resolve(srcDir, specifier));
+          register(resolve(root, specifier));
+          register(resolve(srcDir, specifier));
           for (const [name, path] of Object.entries(nuxt.manifest?.aliases ?? {})) {
             if (specifier.startsWith(`${name}/`))
-              nonClient.add(resolve(root, path, specifier.slice(name.length + 1)));
+              register(resolve(root, path, specifier.slice(name.length + 1)));
           }
         }
       }
     }
   }
-  return nonClient;
+  return registrations;
+}
+
+function pluginExecution(specifier: string, options: Map<string, AnyNode> | null): Execution {
+  const ssr = options?.get("ssr");
+  if (ssr?.value === true) return "server";
+  if (ssr && ssr.value !== false) return "unknown";
+  const mode = options?.get("mode");
+  if (!mode) return CLIENT_SUFFIX.test(specifier) ? "client" : "server";
+  if (mode.value === "client") return "client";
+  if (mode.value === "server" || mode.value === "all") return "server";
+  return "unknown";
 }
 
 function staticFields(node: AnyNode): Map<string, AnyNode> | null {

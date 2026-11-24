@@ -169,10 +169,11 @@ const value = counter.count
     const result = await runNuxt(rule, {
       "nuxt.config.ts": `export default defineNuxtConfig({ ssr: ${ssr} })`,
       "stores/counter.ts": counterSetup,
-      "app/counter.ts": `import { useCounterStore } from '../stores/counter'
+      "app/plugins/counter.ts": `import { useCounterStore } from '../../stores/counter'
 import { createPinia as make, setActivePinia as activate } from 'pinia'
 activate(make())
-export const counter = useCounterStore()`,
+export const counter = useCounterStore()
+export default defineNuxtPlugin(() => {})`,
     });
     expect(result.diagnostics.map((item) => item.code)).toEqual(ssr ? ["PINIA0006"] : []);
   });
@@ -197,18 +198,24 @@ export default defineNuxtPlugin(() => {})`,
     },
   );
 
-  test("does not infer client-only execution from an ordinary module's suffix", async () => {
-    const result = await runNuxt(rule, {
-      "nuxt.config.ts": "export default defineNuxtConfig({ ssr: true })",
-      "stores/counter.ts": counterSetup,
-      "app/counter.client.ts": `import { useCounterStore } from '../stores/counter'
+  test.each([true, false])(
+    "checks startup independently for an unknown entry: %s",
+    async (active) => {
+      const result = await runNuxt(rule, {
+        "nuxt.config.ts": "export default defineNuxtConfig({ ssr: true })",
+        "stores/counter.ts": counterSetup,
+        "app/counter.client.ts": `import { useCounterStore } from '../stores/counter'
 import { createPinia, setActivePinia } from 'pinia'
-setActivePinia(createPinia())
+${active ? "setActivePinia(createPinia())" : ""}
 export const counter = useCounterStore()`,
-    });
-    expect(result.diagnostics).toHaveLength(1);
-    expect(result.diagnostics[0]!.why).toContain("every request shares the store");
-  });
+      });
+      expect(result.diagnostics.map((item) => item.code)).toEqual(active ? [] : ["PINIA0006"]);
+      if (!active) {
+        expect(result.diagnostics[0]!.why).toContain("no active Pinia");
+        expect(result.diagnostics[0]!.why).not.toContain("every request shares the store");
+      }
+    },
+  );
 
   test.each([
     [
@@ -239,13 +246,28 @@ export const counter = useCounterStore()`,
       { "app/plugins/consumer.client.ts": "import './counter.client'" },
       false,
     ],
+    ...["client", "server"].map((mode): [string, string, Record<string, string>, boolean] => [
+      `a ${mode} plugin importing it through a barrel`,
+      "{ ssr: true }",
+      {
+        [`app/plugins/consumer.${mode}.ts`]: "import '../lib/counter'",
+        "app/lib/counter.ts": "export { counter } from '../plugins/counter.client'",
+      },
+      mode === "server",
+    ]),
     [
       "an explicit client registration",
       "{ ssr: true, plugins: [{ src: '~/plugins/counter.client', mode: 'client' }] }",
       {},
       false,
     ],
-    ["an unknown plugins list", "{ ssr: true, plugins: configuredPlugins }", {}, true],
+    ["an unknown plugins list", "{ ssr: true, plugins: configuredPlugins }", {}, false],
+    [
+      "a client-suffixed string registration",
+      "{ ssr: true, plugins: ['~/plugins/counter.client.ts'] }",
+      {},
+      false,
+    ],
   ] satisfies [string, string, Record<string, string>, boolean][])(
     "checks SSR execution with %s",
     async (_, config, extraFiles, warns) => {
