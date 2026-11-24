@@ -1,8 +1,14 @@
 import { dirname, relative, resolve } from "pathe";
-import { parseSync } from "oxc-parser";
 import { createRule, type RuleContext } from "../../../core/index.js";
-import { walkScriptLocal } from "../../../core/rule-authoring.js";
+import { analyzeScript } from "../../../core/internal/script-scope.js";
+import { VITE_CONFIG_FILES } from "../../../core/internal/vite-config-file.js";
 import { diagnostics } from "../../../diagnostics.js";
+import {
+  clientDefineObjects,
+  objectProperties,
+  resolveConst,
+  staticConfig,
+} from "./static-config.js";
 import {
   hasTypeDeclaration,
   isLikelySsrFile,
@@ -266,11 +272,17 @@ export const noUnprefixedClientEnv = createRule({
         if (!contract || contract.exposes(name)) return;
         // Without host evidence VITE0009 reports secret-looking names as possibly exposed.
         if (contract.source === "config" && SECRET_NAME_RE.test(name)) return;
-        const prefixes = contract.prefixes.map((prefix) => `"${prefix}"`).join(", ");
+        const prefixes =
+          contract.prefixes.map((prefix) => `"${prefix}"`).join(", ") || "none configured";
+        const serverOnly = `Read ${name} in server-only code.`;
+        const publicPrefix = contract.prefixes[0];
         ctx.report(
           diagnostics.VITE0030({
             why: `import.meta.env.${name} is undefined at runtime: Vite exposes only env variables whose names start with an envPrefix (${prefixes}) and keys set through define.`,
-            fix: `Rename the variable so it starts with ${contract.prefixes[0]} in both the .env file and the code, or read ${name} in server-only code. Add a prefix to envPrefix only if every variable it matches is public.`,
+            fix:
+              !publicPrefix || SECRET_NAME_RE.test(name)
+                ? serverOnly
+                : `If ${name} is public, rename it with the ${publicPrefix} prefix in both the .env file and the code. Otherwise, read it in server-only code.`,
           }),
           {
             ruleId: "vite/env/no-unprefixed-client-env",
@@ -291,9 +303,6 @@ interface ClientEnvContract {
   exposes(name: string): boolean;
 }
 
-const VITE_CONFIG_NAMES = ["ts", "mts", "cts", "js", "mjs", "cjs"].map(
-  (extension) => `vite.config.${extension}`,
-);
 // Frameworks that load env into import.meta.env themselves, or set envPrefix from plugin hooks
 // Doctor cannot read without the host config.
 const ENV_OWNING_PACKAGES = new Set([
@@ -342,7 +351,7 @@ function clientEnvContract(ctx: RuleContext): ClientEnvContract | null {
         exposure.prefixes.some((prefix) => name.startsWith(prefix)),
     };
   }
-  const configFile = nearestViteConfig(ctx, dirname(ctx.file.path));
+  const configFile = projectViteConfig(ctx);
   if (!configFile) return null;
   const key = `vite:client-env-contract:${configFile}`;
   let facts = ctx.cache.get<StaticEnvFacts | null>(key);
@@ -362,18 +371,18 @@ function clientEnvContract(ctx: RuleContext): ClientEnvContract | null {
   };
 }
 
-function nearestViteConfig(ctx: RuleContext, dir: string): string | undefined {
-  const root = ctx.project.root;
-  while (true) {
-    for (const name of VITE_CONFIG_NAMES) {
-      const file = resolve(dir, name);
-      if (ctx.fs.exists(file)) return file;
-    }
-    if (dir === root || relative(root, dir).startsWith("..")) return;
-    const parent = dirname(dir);
-    if (parent === dir) return;
-    dir = parent;
-  }
+function projectViteConfig(ctx: RuleContext): string | undefined {
+  const { root, workspacePackages } = ctx.project;
+  const path = relative(root, ctx.file.path);
+  if (path === ".." || path.startsWith("../")) return;
+  const owner = (workspacePackages ?? [])
+    .filter(({ root }) => root !== "." && path.startsWith(`${root}/`))
+    .sort((left, right) => right.root.length - left.root.length)[0];
+  if (owner && owner.framework !== "vite") return;
+  const configRoot = owner ? resolve(root, owner.root) : root;
+  return VITE_CONFIG_FILES.map((name) => resolve(configRoot, name)).find((file) =>
+    ctx.fs.stat(file)?.isFile(),
+  );
 }
 
 interface StaticEnvFacts {
@@ -396,52 +405,32 @@ function readStaticEnvFacts(ctx: RuleContext, configFile: string): StaticEnvFact
   }
   const text = ctx.fs.readText(configFile);
   if (text === undefined) return null;
-  const { program, errors } = parseSync(configFile, text, { sourceType: "module", astType: "ts" });
-  if (errors.some((error) => error.severity === "Error")) return null;
-  const prefixes: string[] = [];
-  const defineKeys: string[] = [];
-  let prefixProperties = 0;
-  let defineProperties = 0;
-  let unknown = false;
-  walkScriptLocal(program, (node: AnyNode) => {
-    if (unknown) return;
-    if (node.type === "CallExpression" && memberPath(node.callee)?.endsWith("mergeConfig"))
-      unknown = true;
+  const scope = analyzeScript(text, "ts");
+  if (!scope) return null;
+  const config = staticConfig(scope);
+  if (!config || config.has("root")) return null;
+  for (const node of scope.ast.body) {
     if (node.type === "ImportDeclaration" && String(node.source.value).startsWith(".")) {
       const local = readRelativeModule(ctx, configFile, String(node.source.value));
-      if (local === undefined || /\benvPrefix\b|import\.meta\.env\b/.test(local)) unknown = true;
+      if (local === undefined || /\benvPrefix\b|\bdefine\b|import\.meta\.env\b/.test(local))
+        return null;
     }
-    if (node.type !== "Property" || node.computed) return;
-    const key = propertyName(node.key);
-    if (key === "envPrefix") {
-      prefixProperties++;
-      const values = staticStrings(node.value);
-      if (!values) unknown = true;
-      else prefixes.push(...values);
+  }
+  const prefixes = config.has("envPrefix")
+    ? staticStrings(resolveConst(scope, config.get("envPrefix")))
+    : ["VITE_"];
+  const defines = clientDefineObjects(scope, config);
+  if (!prefixes || prefixes.includes("") || !defines) return null;
+  const defineKeys: string[] = [];
+  for (const define of defines) {
+    const entries = objectProperties(scope, define);
+    if (!entries) return null;
+    for (const name of entries.keys()) {
+      if (name === "import.meta.env" || name === "import.meta") return null;
+      if (name.startsWith("import.meta.env.")) defineKeys.push(name.slice(16));
     }
-    if (key === "define") {
-      defineProperties++;
-      if (node.value.type !== "ObjectExpression") return void (unknown = true);
-      for (const entry of node.value.properties) {
-        const name = entry.type === "Property" ? propertyName(entry.key) : null;
-        if (name === null || (entry.computed && staticString(entry.key) === null)) {
-          unknown = true;
-          continue;
-        }
-        if (name === "import.meta.env" || name === "import.meta") unknown = true;
-        else if (name.startsWith("import.meta.env.")) defineKeys.push(name.slice(16));
-      }
-    }
-  });
-  // A mention outside a plain property, such as `config.envPrefix = ...`, can change the result.
-  if (
-    unknown ||
-    prefixProperties !== (text.match(/\benvPrefix\b/g)?.length ?? 0) ||
-    defineProperties !== (text.match(/(?<![.\w$])define\b(?!\s*[(\w$])/g)?.length ?? 0)
-  )
-    return null;
-  if (prefixProperties === 0) return { prefixes: ["VITE_"], defineKeys };
-  return prefixes.length ? { prefixes: [...new Set(prefixes)], defineKeys } : null;
+  }
+  return { prefixes: [...new Set(prefixes)], defineKeys };
 }
 
 function readRelativeModule(ctx: RuleContext, from: string, specifier: string) {

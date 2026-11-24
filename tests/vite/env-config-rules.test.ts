@@ -70,6 +70,11 @@ describe("vite/env/no-unprefixed-client-env", () => {
     ["a dynamic envPrefix", config("{ envPrefix: process.env.PREFIX }")],
     ["a spread define", config("{ define: { ...defines } }")],
     ["a whole import.meta.env define", config("{ define: { 'import.meta.env': {} } }")],
+    ["a default re-export", "export { default } from './base.mjs'"],
+    [
+      "an exported object with property writes",
+      "const config = {}; config.define = { 'import.meta.env.API_URL': 'true' }; export default config",
+    ],
     [
       "a merged config",
       "import { mergeConfig } from 'vite'\nimport base from './base'\nexport default mergeConfig(base, {})",
@@ -81,6 +86,69 @@ describe("vite/env/no-unprefixed-client-env", () => {
         "src/main.ts": "console.log(import.meta.env.API_URL)",
       }),
     ).toEqual([]);
+  });
+
+  test("uses the project root and Vite's extension precedence", async () => {
+    expect(
+      await run([noUnprefixedClientEnv], {
+        "vite.config.js": config("{ envPrefix: 'APP_' }"),
+        "vite.config.ts": config("{}"),
+        "src/vite.config.ts": config("{}"),
+        "src/main.ts": "console.log(import.meta.env.APP_LABEL)",
+      }),
+    ).toEqual([]);
+  });
+
+  test("uses only client defines and does not let unused objects mask a read", async () => {
+    expect(
+      await run([noUnprefixedClientEnv], {
+        "vite.config.ts": `const unused = { define: { 'import.meta.env.UNUSED': 'true' } }
+export default { environments: {
+  ssr: { define: { 'import.meta.env.SERVER_ONLY': 'true' } },
+  client: { define: { 'import.meta.env.CLIENT': 'true' } },
+} }`,
+        "src/main.ts":
+          "console.log(import.meta.env.UNUSED, import.meta.env.SERVER_ONLY, import.meta.env.CLIENT)",
+      }),
+    ).toEqual([
+      expect.stringMatching(/env\.SERVER_ONLY is undefined/),
+      expect.stringMatching(/env\.UNUSED is undefined/),
+    ]);
+  });
+
+  test.each([
+    ["[]", "API_URL"],
+    ["'VITE_'", "DB_PASSWORD"],
+  ])("does not recommend a public rename for %s and %s", async (prefixes, name) => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnprefixedClientEnv],
+      files: {
+        "vite.config.ts": config(`{ envPrefix: ${prefixes} }`),
+        "src/main.ts": `console.log(import.meta.env.${name})`,
+      },
+      extensions: [
+        {
+          name: "fixture/exposure",
+          setup(api) {
+            api.registerRuntimeEvidenceContributor({
+              name: "vite",
+              contribute: ({ root }) => ({
+                envExposure: {
+                  root,
+                  prefixes: prefixes === "[]" ? [] : ["VITE_"],
+                  defineKeys: [],
+                  hasObjectDefine: false,
+                },
+              }),
+            });
+          },
+        },
+      ],
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.suggestion).toContain("server-only");
+    expect(result.diagnostics[0]?.suggestion).not.toMatch(/rename|undefined/i);
   });
 
   test("stays quiet without a Vite config, in Nuxt, and with env plugins", async () => {
@@ -181,6 +249,32 @@ export default vite.defineConfig(({ mode }) => ({
   });
 
   test.each([
+    "export default { environments: { ssr: { define: { __CONFIG__: process.env } } } }",
+    "const unused = { define: { __CONFIG__: process.env } }; export default {}",
+    "export default { define: { __CONFIG__: process.env, ...{ __CONFIG__: 'true' } } }",
+    "export default { define: { __CONFIG__: process.env }, environments: { client: { define: { __CONFIG__: 'true' } } } }",
+    "export default { define: { __CONFIG__: JSON.stringify(process.env, ['PUBLIC_URL']) } }",
+    "export default { define: { __CONFIG__: JSON.stringify(process.env, replacer) } }",
+  ])("does not report non-leaking or unresolved define values: %s", async (viteConfig) => {
+    expect(await run([noLoadEnvAllInDefine], { "vite.config.ts": viteConfig })).toEqual([]);
+  });
+
+  test.each([
+    "const define = { __CONFIG__: process.env }; export default { define }",
+    "export default { environments: { client: { define: { __CONFIG__: process.env } } } }",
+    "export default { define: { __CONFIG__: JSON.stringify(process.env, null, 2) } }",
+    "export default { define: { ...{ __CONFIG__: process.env } } }",
+    "export default { define: { __CONFIG__: process.env }, environments: { client: { define: { __CONFIG__: null } } } }",
+    "const env = process.env; export default { define: { __CONFIG__: env, __MODE__: JSON.stringify(env.NODE_ENV) } }",
+  ])("reports effective client defines: %s", async (viteConfig) => {
+    expect(
+      await run([noLoadEnvAllInDefine, noRuntimeObjectDefine], {
+        "vite.config.ts": viteConfig,
+      }),
+    ).toEqual([expect.stringMatching(/^VITE0031: Vite define "__CONFIG__"/)]);
+  });
+
+  test.each([
     [
       "one public value",
       "const env = loadEnv(mode, process.cwd(), '')",
@@ -261,11 +355,26 @@ export function local(): Plugin {
     ["function apply", "apply: (_, env) => env.command === 'build', configureServer() {}"],
     ["dynamic apply", "apply: command, configureServer() {}"],
     ["spread plugins", "...base, apply: 'build', configureServer() {}"],
+    ["computed overrides", "apply: 'build', [key]: 'serve', configureServer() {}"],
     ["ordinary object methods", "apply: 'build', toString() { return 'local' }"],
   ])("stays quiet for %s", async (_, body) => {
     expect(
       await run([noUnreachableHook], {
         "vite.config.ts": config(`{ plugins: [{ name: 'local', ${body} }] }`),
+      }),
+    ).toEqual([]);
+  });
+
+  test("does not report mutated factory results or unrelated objects", async () => {
+    expect(
+      await run([noUnreachableHook], {
+        "plugins/local.ts": `import type { Plugin } from 'vite'
+export function local(): Plugin {
+  const plugin: Plugin = { name: 'local', apply: 'build', configureServer() {} }
+  plugin.apply = 'serve'
+  return plugin
+}
+export const unrelated = { name: 'unrelated', apply: 'build', configureServer() {} }`,
       }),
     ).toEqual([]);
   });

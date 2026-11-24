@@ -211,7 +211,7 @@ export const noRuntimeObjectDefine = createRule({
           ctx.report(
             diagnostics.VITE0004({
               why: `Vite define "${entry.key}" uses a non-primitive replacement value.`,
-              fix: "Use stringified primitive define values, or import runtime configuration explicitly.",
+              fix: "Use stringified primitive define values only for explicitly public data, or import runtime configuration explicitly.",
             }),
             {
               ruleId: "vite/define/no-runtime-object-define",

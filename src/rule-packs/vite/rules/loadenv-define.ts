@@ -1,11 +1,17 @@
 import { createRule, type RuleContext } from "../../../core/index.js";
 import { fileTextScope, perFile, type ScriptScope } from "../../../core/internal/script-scope.js";
-import { walkScriptLocal } from "../../../core/rule-authoring.js";
 import { diagnostics } from "../../../diagnostics.js";
 import { isViteConfigFile, propertyName, staticString, type AnyNode } from "./shared.js";
+import {
+  clientDefineObjects,
+  importBinding,
+  propertyKey,
+  resolveConst,
+  staticConfig,
+  unwrap,
+  VITE_MODULES,
+} from "./static-config.js";
 
-// Vite+ and Vitest re-export Vite's loadEnv.
-const LOAD_ENV_MODULES = new Set(["vite", "vite-plus", "vitest/config"]);
 const PROCESS_MODULES = new Set(["process", "node:process"]);
 
 export const noLoadEnvAllInDefine = createRule({
@@ -36,12 +42,31 @@ export function wholeEnvDefineLeaks(ctx: RuleContext): Leak[] {
   return perFile(ctx, "vite:whole-env-define-leaks", () => {
     const scope = fileTextScope(ctx);
     if (!scope) return [];
-    const leaks: Leak[] = [];
-    walkScriptLocal(scope.ast, (node: AnyNode) => {
-      if (node.type === "Property" && !node.computed && propertyName(node.key) === "define")
-        leaks.push(...defineLeaks(scope, node.value));
-    });
-    return leaks;
+    const config = staticConfig(scope);
+    const defines = config && clientDefineObjects(scope, config);
+    if (!defines) return [];
+    const leaks = new Map<string | symbol, Leak>();
+    for (const [index, define] of defines.entries()) {
+      if (index > 0 && isNullish(scope, define)) continue;
+      if (wholeEnv(scope, define)) {
+        leaks.set(Symbol(), { node: define, entry: "The Vite define object" });
+      } else {
+        const entries = readDefine(scope, define);
+        if (!entries) {
+          leaks.clear();
+          continue;
+        }
+        for (const [key, value] of entries) {
+          if (key === unknownKeys) leaks.clear();
+          else if (index === 0 || !isNullish(scope, value)) leaks.delete(key);
+          if (typeof key === "symbol" && key !== unknownKeys)
+            leaks.set(key, { node: value, entry: "A spread in Vite define" });
+          else if (typeof key === "string" && leaksValue(scope, value))
+            leaks.set(key, { node: value, entry: `Vite define "${key}"` });
+        }
+      }
+    }
+    return [...leaks.values()];
   });
 }
 
@@ -53,7 +78,7 @@ export interface Leak {
 function report(ctx: RuleContext, leak: Leak) {
   ctx.report(
     diagnostics.VITE0031({
-      why: `${leak.entry} receives every variable loadEnv read with an empty prefix, or all of process.env, secrets included. Vite inlines define values into client code and, in dev, sends every define entry to the browser.`,
+      why: `${leak.entry} receives every variable loadEnv read with an empty prefix, or all of process.env, secrets included. Vite inlines define values into client code and, in dev, injects global define entries into the browser.`,
       fix: "Define only the public values the client needs, such as __API_URL__: JSON.stringify(env.API_URL), or load env with the default VITE_ prefix and read it through import.meta.env.",
     }),
     {
@@ -66,56 +91,87 @@ function report(ctx: RuleContext, leak: Leak) {
   );
 }
 
-function defineLeaks(scope: ScriptScope, define: AnyNode): Leak[] {
-  if (wholeEnv(scope, define)) return [{ node: define, entry: "The Vite define object" }];
-  define = unwrap(define);
-  if (define?.type !== "ObjectExpression") return [];
-  const leaks: Leak[] = [];
+const unknownKeys = Symbol("unknown keys");
+
+function readDefine(scope: ScriptScope, input: AnyNode): Map<string | symbol, AnyNode> | null {
+  const define = resolveConst(scope, input);
+  if (define?.type !== "ObjectExpression") return null;
+  const entries = new Map<string | symbol, AnyNode>();
+  const addUnknown = () => {
+    entries.clear();
+    entries.set(unknownKeys, undefined);
+  };
   for (const entry of define.properties) {
     if (entry.type === "SpreadElement") {
-      if (wholeEnv(scope, entry.argument))
-        leaks.push({ node: entry, entry: "A spread in Vite define" });
+      if (wholeEnv(scope, entry.argument)) {
+        addUnknown();
+        entries.set(Symbol(), entry);
+      } else {
+        const spread = readDefine(scope, entry.argument);
+        if (!spread) addUnknown();
+        else
+          for (const [key, value] of spread) {
+            if (key === unknownKeys) addUnknown();
+            else entries.set(key, value);
+          }
+      }
       continue;
     }
-    const key = entry.computed ? staticString(entry.key) : propertyName(entry.key);
-    if (key !== null && leaksValue(scope, entry.value))
-      leaks.push({ node: entry.value, entry: `Vite define "${key}"` });
+    const key = propertyKey(entry);
+    if (key === null) addUnknown();
+    else entries.set(key, entry.kind === "init" ? entry.value : entry);
   }
-  return leaks;
+  return entries;
 }
 
 function leaksValue(scope: ScriptScope, input: AnyNode): boolean {
-  const node = unwrap(input);
+  const node = resolveConst(scope, input);
   if (wholeEnv(scope, node)) return true;
   if (
     node?.type === "CallExpression" &&
     memberName(node.callee, "JSON", "stringify") &&
     isGlobal(scope, unwrap(node.callee).object)
   )
-    return wholeEnv(scope, node.arguments[0]);
+    return (
+      !node.arguments.some((argument: AnyNode) => argument.type === "SpreadElement") &&
+      nonFilteringReplacer(scope, node.arguments[1]) &&
+      wholeEnv(scope, node.arguments[0])
+    );
   return (
     node?.type === "ObjectExpression" &&
+    node === unwrap(input) &&
     node.properties.some(
       (entry: AnyNode) => entry.type === "SpreadElement" && wholeEnv(scope, entry.argument),
     )
   );
 }
 
+function nonFilteringReplacer(scope: ScriptScope, input: AnyNode): boolean {
+  if (!input) return true;
+  const node = resolveConst(scope, input);
+  return (
+    (node?.type === "Literal" && (node.value === null || typeof node.value !== "object")) ||
+    isNullish(scope, node)
+  );
+}
+
+function isNullish(scope: ScriptScope, input: AnyNode): boolean {
+  const node = resolveConst(scope, input);
+  return (
+    (node?.type === "Literal" && node.value === null) ||
+    (node?.type === "UnaryExpression" && node.operator === "void") ||
+    (node?.type === "Identifier" && node.name === "undefined" && isGlobal(scope, node))
+  );
+}
+
 /** Whether the value is every variable loadEnv read with an empty prefix, or process.env. */
-function wholeEnv(scope: ScriptScope, input: AnyNode, seen = new Set<AnyNode>()): boolean {
-  const node = unwrap(input);
-  if (!node || seen.has(node)) return false;
-  seen.add(node);
+function wholeEnv(scope: ScriptScope, input: AnyNode): boolean {
+  const node = resolveConst(scope, input, true);
+  if (!node) return false;
   if (node.type === "CallExpression") return isLoadEnv(scope, node.callee) && loadsAll(node);
   if (node.type === "MemberExpression" && memberName(node, undefined, "env"))
     return isProcess(scope, unwrap(node.object));
-  if (node.type !== "Identifier") return false;
-  const variable = scope.references.get(node)?.resolved;
-  const definition = variable?.defs.length === 1 ? (variable.defs[0] as AnyNode) : undefined;
-  if (definition?.type !== "Variable" || definition.node.id.type !== "Identifier") return false;
-  if (variable!.references.some((reference) => reference.isWrite() && !reference.init))
-    return false;
-  return wholeEnv(scope, definition.node.init, seen);
+  return false;
 }
 
 function loadsAll(call: AnyNode): boolean {
@@ -134,7 +190,8 @@ function isLoadEnv(scope: ScriptScope, input: AnyNode): boolean {
     const binding = importBinding(scope, callee);
     return (
       binding?.type === "ImportSpecifier" &&
-      LOAD_ENV_MODULES.has(binding.source) &&
+      !binding.typeOnly &&
+      VITE_MODULES.has(binding.source) &&
       binding.imported === "loadEnv"
     );
   }
@@ -142,7 +199,11 @@ function isLoadEnv(scope: ScriptScope, input: AnyNode): boolean {
     return false;
   const object = unwrap(callee.object);
   const binding = object?.type === "Identifier" ? importBinding(scope, object) : undefined;
-  return binding?.type === "ImportNamespaceSpecifier" && LOAD_ENV_MODULES.has(binding.source);
+  return (
+    binding?.type === "ImportNamespaceSpecifier" &&
+    !binding.typeOnly &&
+    VITE_MODULES.has(binding.source)
+  );
 }
 
 function isProcess(scope: ScriptScope, node: AnyNode): boolean {
@@ -151,6 +212,7 @@ function isProcess(scope: ScriptScope, node: AnyNode): boolean {
   const binding = importBinding(scope, node);
   return (
     PROCESS_MODULES.has(binding?.source ?? "") &&
+    !binding!.typeOnly &&
     (binding!.type === "ImportDefaultSpecifier" ||
       binding!.type === "ImportNamespaceSpecifier" ||
       binding!.imported === "default")
@@ -162,42 +224,10 @@ function isGlobal(scope: ScriptScope, node: AnyNode): boolean {
   return !!reference && !reference.resolved;
 }
 
-function importBinding(scope: ScriptScope, node: AnyNode) {
-  const definition = scope.references.get(node)?.resolved?.defs[0] as AnyNode;
-  if (definition?.type !== "ImportBinding") return;
-  const specifier = definition.node;
-  const declaration = definition.parent;
-  if (declaration?.importKind === "type" || specifier.importKind === "type") return;
-  return {
-    type: specifier.type as string,
-    source: String(declaration.source.value),
-    imported:
-      specifier.type === "ImportSpecifier"
-        ? (propertyName(specifier.imported) ?? undefined)
-        : undefined,
-  };
-}
-
 function memberName(input: AnyNode, object: string | undefined, property: string): boolean {
   const node = unwrap(input);
   if (node?.type !== "MemberExpression") return false;
   const key = node.computed ? staticString(node.property) : propertyName(node.property);
   if (key !== property) return false;
   return object === undefined || unwrap(node.object)?.name === object;
-}
-
-function unwrap(node: AnyNode): AnyNode {
-  while (
-    node &&
-    [
-      "TSAsExpression",
-      "TSTypeAssertion",
-      "TSSatisfiesExpression",
-      "TSNonNullExpression",
-      "ParenthesizedExpression",
-      "ChainExpression",
-    ].includes(node.type)
-  )
-    node = node.expression;
-  return node;
 }

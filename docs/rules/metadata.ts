@@ -1821,7 +1821,7 @@ export const ruleDocumentationMetadata = {
   "vite/define/no-loadenv-all-in-define": {
     description:
       "Reports Vite define entries that receive the whole result of loadEnv with an empty prefix, or the whole process.env.",
-    why: "loadEnv(mode, dir, '') returns every variable from the .env files and process.env, because every name starts with the empty prefix. Vite serializes object define values with JSON.stringify and inlines them wherever client code reads the key, and in dev it sends every define entry except import.meta.env.* keys to the browser through /@vite/env. Passing that object, a spread of it, JSON.stringify of it, or process.env itself to define therefore ships secrets such as database passwords to the browser. Doctor follows the loadEnv result through const bindings inside the Vite config file only. A prefix it cannot read, a copy built from the object, or a value passed through a function is not reported.",
+    why: "loadEnv(mode, dir, '') returns variables from the .env files and process.env without prefix filtering. Vite inlines client define values and injects global defines into the browser in dev. Passing the whole environment, spreading it, or serializing it without a filtering replacer can expose secrets. Doctor checks resolvable client defines in the Vite config; it ignores SSR-only entries, entries replaced before reaching the client, and JSON.stringify calls whose replacer may filter the object.",
     recommendedReplacement:
       "Define only the public values the client needs, such as __API_URL__: JSON.stringify(env.API_URL), or keep the default VITE_ prefix and read those variables through import.meta.env.",
     examples: [
@@ -1946,9 +1946,9 @@ export const ruleDocumentationMetadata = {
   "vite/env/no-unprefixed-client-env": {
     description:
       "Reports import.meta.env reads in client code of keys that miss every envPrefix and that no define entry sets, so Vite leaves them undefined.",
-    why: "Vite's loadEnv keeps only variables whose names start with an envPrefix (VITE_ by default), and import.meta.env holds those plus MODE, BASE_URL, PROD, DEV, SSR and import.meta.env.* define keys. Any other key, such as import.meta.env.API_URL, is undefined in the browser even when .env sets it, and typing it on ImportMetaEnv hides the bug. Doctor reads envPrefix and define from the nearest vite.config file, or uses the resolved config when the Vite Plugin Surface runs. It stays quiet when the config computes envPrefix or define, merges another config, imports a local module that mentions envPrefix or import.meta.env, or when the project depends on a framework or plugin that manages env, such as Nuxt, Astro or SvelteKit. Test, config, server and SSR entry files are skipped. Secret-looking names are left to vite/env/no-client-secret-pattern unless the host config proves they are not exposed.",
+    why: "Vite exposes env variables matching envPrefix (VITE_ by default), built-in keys, and import.meta.env.* client defines. Doctor uses resolved Vite evidence when available. Otherwise it reads the owning project's default vite.config file in Vite's lookup order and skips configurations it cannot resolve, including composed configs and known plugins or frameworks that manage env. Test, config, server and SSR entry files are skipped. Secret-looking names are left to vite/env/no-client-secret-pattern unless the host config proves they are not exposed.",
     recommendedReplacement:
-      "Rename the variable with the envPrefix, such as VITE_API_URL, in both the .env file and the code. Read server-only values in server code. Add a prefix to envPrefix only if every variable it matches is public.",
+      "If the value is public and a prefix is configured, rename it with that prefix in both the .env file and the code. Keep secret values in server-only code.",
     examples: [
       {
         title: "Use the env prefix Vite exposes",
@@ -2079,7 +2079,7 @@ export const ruleDocumentationMetadata = {
   "vite/plugin/no-unreachable-hook": {
     description:
       'Reports configureServer, configurePreviewServer, handleHotUpdate and hotUpdate hooks on Vite plugin objects whose apply is "build".',
-    why: 'Vite filters plugins by apply before any hook runs and keeps a plugin with apply: "build" only when the command is build. vite dev, vite preview and createServer all resolve config with the serve command, so those plugins never reach configureServer, configurePreviewServer, or the HMR hooks handleHotUpdate and hotUpdate, which only the dev and preview servers call. Doctor checks plugin objects in the project with a literal apply: "build". Plugins with apply functions, computed apply values or spread properties are skipped. It does not report build output hooks on apply: "serve" plugins, because Vite\'s experimental bundled dev mode and the dev closeBundle call can run them.',
+    why: 'Vite filters plugins by apply before calling these hooks. Dev, preview, and createServer use the serve command, so they exclude plugins whose apply is "build". Doctor checks objects it can trace to Vite config plugins or a factory with a Vite Plugin return type, and skips spreads, unresolved computed keys, and objects with unproven apply values. It does not report build output hooks on apply: "serve" plugins, because those can run in dev.',
     recommendedReplacement:
       'Remove apply: "build" or change it to apply: "serve" if the hook should run, or delete the hook.',
     examples: [
@@ -2087,9 +2087,9 @@ export const ruleDocumentationMetadata = {
         title: "Keep serve hooks on plugins that run in serve",
         language: "ts",
         invalid:
-          "export function headers(): Plugin {\n  return {\n    name: 'headers',\n    apply: 'build',\n    configureServer(server) {\n      server.middlewares.use(setHeaders)\n    },\n  }\n}",
+          "import type { Plugin } from 'vite'\n\nexport function headers(): Plugin {\n  return {\n    name: 'headers',\n    apply: 'build',\n    configureServer(server) {\n      server.middlewares.use(setHeaders)\n    },\n  }\n}",
         valid:
-          "export function headers(): Plugin {\n  return {\n    name: 'headers',\n    apply: 'serve',\n    configureServer(server) {\n      server.middlewares.use(setHeaders)\n    },\n  }\n}",
+          "import type { Plugin } from 'vite'\n\nexport function headers(): Plugin {\n  return {\n    name: 'headers',\n    apply: 'serve',\n    configureServer(server) {\n      server.middlewares.use(setHeaders)\n    },\n  }\n}",
       },
     ],
   },
