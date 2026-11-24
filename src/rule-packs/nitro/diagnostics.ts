@@ -32,6 +32,9 @@ export const nitroDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0029", ruleId: "nitro/cache/require-varies-for-header-read" },
   { code: "NITRO0030", ruleId: "nitro/middleware/no-implicit-response" },
   { code: "NITRO0031", ruleId: "nitro/routes/no-shadowed-file-handler" },
+  { code: "NITRO0032", ruleId: "nitro/runtime/no-runtime-config-in-response" },
+  { code: "NITRO0033", ruleId: "nitro/handler/require-waituntil-for-background-work" },
+  { code: "NITRO0034", ruleId: "nitro/storage/no-undeclared-mount" },
 ]);
 
 export const diagnostics = nitroDiagnosticRegistry.diagnostics;

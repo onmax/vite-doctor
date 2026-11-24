@@ -253,84 +253,7 @@ test.each([
   expect(result.diagnostics).toEqual([]);
 });
 
-test("the Nuxt manifest records full route paths and static redirects", async () => {
-  const root = mkdtempSync(join(tmpdir(), "doctor-nuxt-routes-manifest-"));
-  try {
-    mkdirSync(join(root, "app"), { recursive: true });
-    writeFileSync(join(root, "package.json"), "{}");
-    const hooks = new Map<string, Array<(...payload: any[]) => unknown>>();
-    const nuxt = {
-      _version: "4.5.2",
-      options: {
-        rootDir: root,
-        srcDir: join(root, "app"),
-        buildDir: ".nuxt",
-        modules: [],
-        experimental: { scanPageMeta: true },
-      },
-      hook(name: string, callback: (...payload: any[]) => unknown) {
-        hooks.set(name, [...(hooks.get(name) ?? []), callback]);
-      },
-      async callHook(name: string, ...payload: unknown[]) {
-        for (const hook of hooks.get(name) ?? []) await hook(...payload);
-      },
-    };
-    await nuxtDoctorModule({}, nuxt as any);
-    await nuxt.callHook("pages:routerOptions", {
-      files: [{ path: join(root, "app/router.options.ts") }],
-    });
-    const profile = join(root, "app/pages/settings/profile.vue");
-    const profileSource = `<script setup>definePageMeta({ redirect: { name: 'settings-account' } })</script>`;
-    mkdirSync(join(root, "app/pages/settings"), { recursive: true });
-    writeFileSync(profile, profileSource);
-    await nuxt.callHook("app:templatesGenerated", {
-      pages: [
-        {
-          path: "/settings",
-          file: join(root, "app/pages/settings.vue"),
-          children: [
-            {
-              path: "profile",
-              name: "settings-profile",
-              file: profile,
-              redirect: { name: "settings-account" },
-            },
-            {
-              path: "account",
-              name: "settings-account",
-              file: join(root, "app/pages/settings/account.vue"),
-              meta: { __nuxt_dynamic_meta_key: new Set(["redirect"]) },
-            },
-          ],
-        },
-      ],
-    });
-    await nuxt.callHook("close", nuxt);
-
-    const written = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
-    expect(written.routerOptionsFiles).toEqual([join(root, "app/router.options.ts")]);
-    expect(written.routes).toEqual([
-      { path: "/settings", file: join(root, "app/pages/settings.vue") },
-      {
-        path: "/settings/profile",
-        name: "settings-profile",
-        file: profile,
-        sourceHash: sha256(profileSource),
-        redirect: { name: "settings-account" },
-      },
-      {
-        path: "/settings/account",
-        name: "settings-account",
-        file: join(root, "app/pages/settings/account.vue"),
-        dynamic: ["redirect"],
-      },
-    ]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("Nuxt prepare captures resolved redirect cycles and invalidates edited pages", async () => {
+test("Nuxt refreshes redirect evidence after re-resolving a template-only page edit", async () => {
   const root = mkdtempSync(join(tmpdir(), "doctor-nuxt-redirect-prepare-"));
   const cwd = process.cwd();
   let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
@@ -340,14 +263,23 @@ test("Nuxt prepare captures resolved redirect cycles and invalidates edited page
       join(root, "node_modules"),
       "junction",
     );
-    mkdirSync(join(root, "app/pages"), { recursive: true });
+    mkdirSync(join(root, "app/pages/settings"), { recursive: true });
     writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { nuxt: "*" } }));
+    const routerOptions = join(root, "app/router.options.ts");
+    writeFileSync(routerOptions, "export default {}\n");
+    writeFileSync(join(root, "app/pages/settings.vue"), "<template><NuxtPage /></template>\n");
+    const profile = join(root, "app/pages/settings/profile.vue");
+    const profileSource = `<script setup>definePageMeta({ redirect: { name: 'settings-account' } })</script>\n`;
+    writeFileSync(profile, profileSource);
+    const account = join(root, "app/pages/settings/account.vue");
+    writeFileSync(account, `<script setup>definePageMeta({ redirect: () => '/' })</script>\n`);
     writeFileSync(join(root, "app/pages/a.vue"), nuxtPage("/b"));
     const nonAnchor = join(root, "app/pages/b.vue");
-    writeFileSync(nonAnchor, nuxtPage("/a"));
+    writeFileSync(nonAnchor, nuxtPage("/a") + "<template><main>Before</main></template>\n");
     process.chdir(root);
     nuxt = await loadNuxt({
       cwd: root,
+      dev: true,
       overrides: {
         _prepare: true,
         modules: [nuxtDoctorModule],
@@ -356,16 +288,67 @@ test("Nuxt prepare captures resolved redirect cycles and invalidates edited page
       },
     });
     await buildNuxt(nuxt);
-    await nuxt.close();
-    nuxt = undefined;
+    const manifestFile = join(root, ".nuxt/doctor.manifest.json");
+    const readManifest = () => JSON.parse(readFileSync(manifestFile, "utf8"));
+    const manifest = readManifest();
+    expect(manifest.routerOptionsFiles).toContain(routerOptions);
+    expect(manifest.routes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "/settings/profile",
+          name: "settings-profile",
+          file: profile,
+          sourceHash: sha256(profileSource),
+          redirect: { name: "settings-account" },
+        }),
+        expect.objectContaining({
+          path: "/settings/account",
+          name: "settings-account",
+          file: account,
+          dynamic: ["redirect"],
+        }),
+      ]),
+    );
 
-    const run = () => runViteDoctor({ root, framework: "nuxt", rules: RULE_ID, cache: false });
-    const prepared = await run();
-    expect(prepared.diagnostics.map(({ code, file }) => [code, relativeTo(root, file)])).toEqual([
-      ["VUE0053", "app/pages/a.vue"],
-    ]);
+    const diagnostics = async () => {
+      const result = await runViteDoctor({ root, framework: "nuxt", rules: RULE_ID, cache: false });
+      return result.diagnostics.map(({ code, file }) => [code, relativeTo(root, file)]);
+    };
+    const cycle = [["VUE0053", "app/pages/a.vue"]];
+    expect(await diagnostics()).toEqual(cycle);
+
+    let pageResolutions = 0;
+    let generatedChanges = 0;
+    nuxt.hook("pages:resolved", () => {
+      pageResolutions++;
+    });
+    nuxt.hook("app:templatesGenerated", () => {
+      generatedChanges++;
+    });
+    writeFileSync(nonAnchor, nuxtPage("/a") + "<template><main>After</main></template>\n");
+    expect(await diagnostics()).toEqual([]);
+    await nuxt.callHook("builder:generateApp", {});
+    expect(pageResolutions).toBe(0);
+    expect(await diagnostics()).toEqual([]);
+
+    await nuxt.callHook("builder:watch", "change", "pages/b.vue");
+    await nuxt.callHook("builder:generateApp", {});
+    expect(pageResolutions).toBe(1);
+    expect(generatedChanges).toBe(0);
+    expect(await diagnostics()).toEqual(cycle);
+
     writeFileSync(nonAnchor, nuxtPage("/home"));
-    expect((await run()).diagnostics).toEqual([]);
+    expect(await diagnostics()).toEqual([]);
+    await nuxt.callHook("builder:watch", "change", "pages/b.vue");
+    await nuxt.callHook("builder:generateApp", {});
+    expect(readManifest().routes).toContainEqual(
+      expect.objectContaining({
+        path: "/b",
+        redirect: "/home",
+        sourceHash: sha256(nuxtPage("/home")),
+      }),
+    );
+    expect(await diagnostics()).toEqual([]);
   } finally {
     await nuxt?.close();
     process.chdir(cwd);

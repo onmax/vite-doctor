@@ -197,6 +197,9 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0029", ruleId: "nitro/cache/require-varies-for-header-read" },
   { code: "NITRO0030", ruleId: "nitro/middleware/no-implicit-response" },
   { code: "NITRO0031", ruleId: "nitro/routes/no-shadowed-file-handler" },
+  { code: "NITRO0032", ruleId: "nitro/runtime/no-runtime-config-in-response" },
+  { code: "NITRO0033", ruleId: "nitro/handler/require-waituntil-for-background-work" },
+  { code: "NITRO0034", ruleId: "nitro/storage/no-undeclared-mount" },
   { code: "NUXT0001", ruleId: "docus/appconfig/no-unknown-key" },
   { code: "NUXT0002", ruleId: "docus/layers/no-empty-app-vue-shadow" },
   { code: "NUXT0003", ruleId: "nuxt-better-auth/require-standard-auth-handler-mount" },
@@ -294,6 +297,9 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0095", ruleId: "nuxt/fetch/no-ssr-refetch-of-shared-key" },
   { code: "NUXT0096", ruleId: "nuxt/imports/prefer-alias-over-relative-parent" },
   { code: "NUXT0097", ruleId: "nuxt/state/no-diverging-usestate-init" },
+  { code: "NUXT0102", ruleId: "nuxt/runtime/no-private-runtime-config-in-client" },
+  { code: "NUXT0103", ruleId: "nuxt/fetch/handler-must-return" },
+  { code: "NUXT0104", ruleId: "nuxt/plugins/no-island-disabled-dependency" },
   { code: "NUXT0107", ruleId: "nuxt/routing/no-global-middleware-redirect-loop" },
 ]);
 

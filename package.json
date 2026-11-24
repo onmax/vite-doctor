@@ -85,6 +85,7 @@
     "detect-agent": "catalog:prod",
     "eslint": "catalog:analysis",
     "eslint-plugin-vue": "catalog:analysis",
+    "ignore": "^7.0.14",
     "magic-string": "catalog:analysis",
     "mime": "catalog:prod",
     "nostics": "catalog:analysis",
@@ -94,6 +95,7 @@
     "picomatch": "catalog:prod",
     "semver": "catalog:prod",
     "std-env": "catalog:prod",
+    "tinyglobby": "^0.2.17",
     "typescript": "catalog:analysis",
     "vue-eslint-parser": "catalog:analysis",
     "yaml": "catalog:prod"

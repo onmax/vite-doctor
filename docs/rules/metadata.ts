@@ -273,6 +273,57 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/runtime/no-runtime-config-in-response": {
+    description:
+      "Report Nitro handlers that return the whole object useRuntimeConfig() gives them: the config itself or a const bound to it, an object literal ending in a spread of it, or an object literal with it as a property value, also when serialized with JSON.stringify() or Response.json().",
+    why: "useRuntimeConfig() returns every runtimeConfig key, including the private ones that stay on the server and that Nitro fills from NITRO_ and NUXT_ environment variables, such as API secrets and database URLs. Nuxt only sends runtimeConfig.public and app to the browser; a handler that returns the whole object sends the rest to any client that calls the route. Doctor only checks what the handler's own return statements send. It does not report single keys or groups such as config.stripe, values nested deeper than one object literal, or properties a later spread or key can overwrite.",
+    recommendedReplacement:
+      "Return only the fields the client needs, such as config.public.siteUrl, and keep values meant for the client under runtimeConfig.public.",
+    examples: [
+      {
+        title: "Return the public value the client needs",
+        language: "ts",
+        invalid:
+          "export default defineEventHandler((event) => {\n  const config = useRuntimeConfig(event)\n  return { ok: true, config }\n})",
+        valid:
+          "export default defineEventHandler((event) => {\n  const config = useRuntimeConfig(event)\n  return { ok: true, site: config.public.siteUrl }\n})",
+      },
+    ],
+  },
+  "nitro/handler/require-waituntil-for-background-work": {
+    description:
+      "Report $fetch(), fetch(), event.fetch() and storage calls that a Nitro handler starts as a bare statement, without awaiting, returning or passing them to event.waitUntil(), on deployment presets where Nitro forwards waitUntil to the platform.",
+    why: "Cloudflare Workers and Vercel Functions can stop running once the response is sent, so a request or storage write the handler did not wait for can be cut off without an error. Nitro forwards event.waitUntil() to the platform's waitUntil on the Cloudflare presets (Nitro 2 and 3) and on Vercel (Nitro 3 only). Doctor reports only when the config names one of those presets statically and stays quiet for other or unknown presets. This is not a generic no-floating-promises check: a floating promise is fine in a long-lived Node.js server, and the fix here is event.waitUntil(), which only exists because of the platform. Doctor only counts calls it knows return a promise, and only statements in the handler body itself.",
+    recommendedReplacement:
+      "Pass the promise to event.waitUntil() so the platform keeps the request alive until it settles, or await it when the response depends on it.",
+    examples: [
+      {
+        title: "Keep the webhook alive with event.waitUntil()",
+        language: "ts",
+        invalid:
+          "export default defineEventHandler(async (event) => {\n  const order = await readBody(event)\n  $fetch('https://hooks.example.com/order', { method: 'POST', body: order })\n  return { ok: true }\n})",
+        valid:
+          "export default defineEventHandler(async (event) => {\n  const order = await readBody(event)\n  event.waitUntil($fetch('https://hooks.example.com/order', { method: 'POST', body: order }))\n  return { ok: true }\n})",
+      },
+    ],
+  },
+  "nitro/storage/no-undeclared-mount": {
+    description:
+      "Report useStorage() and useKV() calls whose base no production storage mount covers, and record the mounts Nitro config declares as the nitroStorage Project Inventory fact.",
+    why: "unstorage sends a key to the longest matching mount, then falls back to the root mount, which defaults to an in-memory driver. A mount declared only in devStorage does not apply in production. Doctor checks Nitro 2 storage and bundledStorage, Nitro 3 kv (or its storage alias), and the built-in mounts for the detected version and preset. A parent base can list its mounted descendants, but a specific item key only uses a mount that covers that key. Doctor records an evidence gap and skips the check when unreadable config, a module or layer, or a runtime storage mount could change the production mount table.",
+    recommendedReplacement:
+      "Declare a production mount for the base under nitro.storage (Nitro 2 and Nuxt) or kv (Nitro 3), or move the keys to a base you already mount.",
+    examples: [
+      {
+        title: "Mount the base for production, not only dev",
+        language: "ts",
+        invalid:
+          "// nuxt.config.ts\nexport default defineNuxtConfig({\n  nitro: { devStorage: { sessions: { driver: 'fs', base: './.data/sessions' } } },\n})\n\n// server/api/session.get.ts\nexport default defineEventHandler(() => useStorage('sessions').getKeys())",
+        valid:
+          "// nuxt.config.ts\nexport default defineNuxtConfig({\n  nitro: { storage: { sessions: { driver: 'redis', url: process.env.REDIS_URL } } },\n})\n\n// server/api/session.get.ts\nexport default defineEventHandler(() => useStorage('sessions').getKeys())",
+      },
+    ],
+  },
   "nitro/runtime/require-event-runtime-config-in-server": {
     description: "Checks that Nitro 2 server code passes the request event to useRuntimeConfig().",
     why: "Nitro 2 resolves event-scoped runtime configuration through the handler event, so omitting it can lose request-specific overrides.",
@@ -911,6 +962,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/fetch/handler-must-return": {
+    description: "Finds a useAsyncData or useLazyAsyncData handler that never returns a value.",
+    why: "A handler that resolves to undefined leaves no data in the payload. During hydration, Nuxt skips the fetch if the payload contains data or an error; otherwise the handler can run again and Nuxt warns in development (NUXT_E3006). Arrow functions with an expression body count as returning, and handlers that always throw are not reported. Doctor skips client-only calls, apps with ssr: false, calls with server: false, immediate: false, enabled: false, a transform, pick, default, or getCachedData option, and options it cannot read. Side effects inside the handler are reported separately by nuxt/async-data-handler-pure (NUXT0017).",
+    recommendedReplacement:
+      "Return the data the page renders. If the handler only runs side effects, return null, or move the side effects out of useAsyncData.",
+    examples: [
+      {
+        title: "Return the fetched data",
+        language: "ts",
+        invalid:
+          "const store = useCartStore()\nawait useAsyncData('cart', async () => {\n  store.items = await $fetch('/api/cart')\n})",
+        valid: "const { data: items } = await useAsyncData('cart', () => $fetch('/api/cart'))",
+      },
+    ],
+  },
   "nuxt/fetch/keyed-composable-registration-required": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",
@@ -1297,6 +1363,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/plugins/no-island-disabled-dependency": {
+    description:
+      "Finds a plugin whose dependsOn names a plugin that sets env: { islands: false }, in an app that renders server component islands.",
+    why: "When Nuxt renders an island it skips plugins with env: { islands: false }, but a plugin that depends on one still waits for it. The dependency never resolves, so the dependent plugin silently never runs in island renders, and whatever it provides is missing there. Doctor reports only object-syntax plugins with unique literal names, and only when experimental.componentIslands is not turned off and the app has an island component or a top-level server page that Nuxt registers as an island. Doctor requires current registrations from nuxt prepare with vite-doctor/nuxt and records an evidence gap when it cannot verify them. Client-only plugins are not reported because islands render on the server.",
+    recommendedReplacement:
+      "Drop the dependency if the plugin can run without it, or set env: { islands: false } on the dependent plugin too.",
+    examples: [
+      {
+        title: "Opt the dependent plugin out of islands too",
+        language: "ts",
+        invalid:
+          "// app/plugins/auth.ts\nexport default defineNuxtPlugin({\n  name: 'auth',\n  env: { islands: false },\n  setup() {},\n})\n\n// app/plugins/api.ts\nexport default defineNuxtPlugin({\n  name: 'api',\n  dependsOn: ['auth'],\n  setup() {},\n})",
+        valid:
+          "// app/plugins/api.ts\nexport default defineNuxtPlugin({\n  name: 'api',\n  dependsOn: ['auth'],\n  env: { islands: false },\n  setup() {},\n})",
+      },
+    ],
+  },
   "nuxt/plugins/no-subdir-auto-registration-assumption": {
     description:
       "Flags subdir auto registration assumption in Nuxt plugins code before it leaks into runtime behavior.",
@@ -1527,6 +1610,23 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: "const apiBase = process.env.NUXT_PUBLIC_API_BASE",
         valid: "const apiBase = useRuntimeConfig().public.apiBase",
+      },
+    ],
+  },
+  "nuxt/runtime/no-private-runtime-config-in-client": {
+    description:
+      "Finds client code that reads a private runtimeConfig key from useRuntimeConfig().",
+    why: 'Nuxt sends only runtimeConfig.public and runtimeConfig.app to the browser, so any other top-level key is undefined there even though its type says string. In development Nuxt warns "Could not access `key`" (NUXT_E1003). Doctor checks components, pages, layouts, client plugins, and route middleware, using the private keys in the Doctor manifest. It skips server-only branches and plugins. It also skips server-registered components and conventional islands unless the import graph shows a raw file import that can bypass the registration. Component reports use heuristic-medium confidence because Doctor does not prove which parents render them. Without runtimeConfig evidence Doctor records an evidence gap instead.',
+    recommendedReplacement:
+      "Move the key under runtimeConfig.public if it is safe to expose. Otherwise read it in a server route and fetch the result, or guard the read with import.meta.server.",
+    examples: [
+      {
+        title: "Keep private config on the server",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nconst config = useRuntimeConfig()\nconst { data } = await useFetch('https://api.example.com/items', {\n  headers: { Authorization: config.apiSecret },\n})\n</script>",
+        valid:
+          "<script setup lang=\"ts\">\nconst { data } = await useFetch('/api/items')\n</script>",
       },
     ],
   },

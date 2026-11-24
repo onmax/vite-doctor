@@ -287,6 +287,10 @@ export interface NuxtProjectInfo {
     scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
+    resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
+    resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
+    hasServerPageIslands?: boolean;
+    componentIslands?: NuxtDoctorManifest["componentIslands"];
     keyedComposables: NuxtKeyedComposable[];
     aliases: Record<string, string>;
     autoImportTransform?: {
@@ -299,7 +303,7 @@ export interface NuxtProjectInfo {
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
-    pages?: Array<{ path?: string; file?: string; name?: string }>;
+    pages?: NuxtDoctorManifest["pages"];
     /** Route middleware Nuxt resolved, with absolute paths. Absent in manifests that predate it. */
     middleware?: NuxtResolvedMiddleware[];
     /** Page routes Nuxt resolved, with absolute files. Absent unless `scanPageMeta` is on. */
@@ -371,6 +375,24 @@ export interface NuxtKeyedComposable {
   source?: string;
 }
 
+export interface NuxtAppRegistrationDirectory {
+  path: string;
+  patterns: string[];
+  ignore?: string[];
+}
+
+export interface NuxtAppRegistrationSnapshot {
+  directories: Array<NuxtAppRegistrationDirectory & { entries: string[] }>;
+  files: string[];
+}
+
+export interface NuxtAppRegistrationIgnore {
+  patterns: string[];
+  layerRoots: string[];
+  options?: { ignorecase?: boolean; ignoreCase?: boolean; allowRelativePaths?: boolean };
+  fileHash: string | null;
+}
+
 export interface NuxtDoctorManifest {
   scannedComposableFiles?: string[];
   autoRegisteredLayers?: string[];
@@ -390,6 +412,14 @@ export interface NuxtDoctorManifest {
   };
   autoImports: unknown[];
   components: unknown[];
+  resolvedComponents?: Array<{ name: string; file: string; mode: "client" | "server" | "all" }>;
+  hasServerPageIslands?: boolean;
+  appRegistrationIgnore?: NuxtAppRegistrationIgnore;
+  appRegistration?: Record<
+    "components" | "pages" | "plugins",
+    NuxtAppRegistrationSnapshot | undefined
+  >;
+  componentIslands?: boolean | "auto";
   layers: Array<{
     root: string;
     nuxtConfigMtimeMs?: number | null;
@@ -413,7 +443,7 @@ export interface NuxtDoctorManifest {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
-  pages?: Array<{ path?: string; file?: string; name?: string }>;
+  pages?: Array<{ path?: string; file?: string; name?: string; mode?: "client" | "server" }>;
   middleware?: NuxtResolvedMiddleware[];
   routes?: NuxtResolvedRoute[];
   routerOptionsFiles?: string[];
@@ -431,6 +461,7 @@ export interface NuxtDoctorManifest {
   keyedComposables?: unknown[];
   importsDirs?: string[];
   pluginFiles?: string[];
+  resolvedPlugins?: Array<{ file: string; mode: "client" | "server" | "all" }>;
   appScanRoots?: string[];
   sharedScanRoots?: string[];
 }
@@ -797,7 +828,7 @@ export interface ImportGraph {
 export interface RuleInventory {
   /** Available to `workspace` and `manifest` Rules, which see the whole project. */
   componentUsage(): Promise<ComponentUsageGraph>;
-  /** Available to `workspace` and `manifest` Rules, which see the whole project. */
+  /** Also available to uncached file Rules that require cross-file context. */
   importGraph(): Promise<ImportGraph>;
   /** Authored files selected by the run, including HTML when requested separately. */
   sourcePaths(kind?: "html"): Promise<readonly string[]>;
