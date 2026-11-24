@@ -1,14 +1,13 @@
 import type { SFCDescriptor } from "@vue/compiler-sfc";
-import type {
-  ImportGraph,
-  RuleContext,
-  SourceRange,
-  TemplateAstNode,
-  TemplateParentNode,
-} from "../primitives.js";
-import { analyzeScript, type ScopeVariable, type ScriptScope } from "./script-scope.js";
+import type { Program } from "oxc-parser";
+import type { ImportGraph, RuleContext, SourceRange } from "../primitives.js";
+import {
+  analyzeScript,
+  analyzeScriptProgram,
+  type ScopeVariable,
+  type ScriptScope,
+} from "./script-scope.js";
 import { createVueScriptForParsing, parseSfcFile } from "./sfc.js";
-import { TemplateNodeType, templateDirectiveBindings } from "./template.js";
 
 /** Shared reactive state exported by a module, as other files import it. */
 export interface SharedStateBinding {
@@ -20,6 +19,8 @@ export interface SharedStateBinding {
   shape: "reactive" | "ref";
   /** `call`: importers write to what calling the export returns, as with Pinia's `useStore()`. */
   access?: "value" | "call";
+  /** Known collection initializers, indexed by path relative to the unwrapped state. */
+  collectionAt?: CollectionAt;
 }
 
 export interface SharedStateWrite {
@@ -32,12 +33,19 @@ export interface SharedStateWrite {
   target: string;
 }
 
+export interface LocalStateWrite extends SharedStateWrite {
+  enclosingFunction?: Node;
+}
+
 type Node = any;
 type ParentOf = (node: Node) => Node;
+type PropertyPath = readonly (string | null)[];
+type CollectionAt = (path: PropertyPath) => "array" | "map" | "set" | undefined;
+type IsGlobal = (id: Node) => boolean;
 
 /** How a reference reaches the state: through a namespace member, a call, or both. */
 interface Entry {
-  member?: string;
+  members: readonly string[];
   call: boolean;
 }
 
@@ -52,7 +60,8 @@ const ARRAY_MUTATORS = new Set([
   "fill",
   "copyWithin",
 ]);
-const COLLECTION_MUTATORS = new Set(["set", "add", "delete", "clear"]);
+const MAP_MUTATORS = new Set(["set", "delete", "clear"]);
+const SET_MUTATORS = new Set(["add", "delete", "clear"]);
 const WRAPPERS = new Set([
   "TSNonNullExpression",
   "TSAsExpression",
@@ -63,8 +72,8 @@ const WRAPPERS = new Set([
 const SCRIPT_RE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 
 /**
- * Every direct write to `binding` in the files that import it, following re-exports: assignments,
- * `++`/`--`, `delete`, mutating array, Map and Set methods, and `Object.assign`, in script and in
+ * Direct writes to `binding` in the files that import it, following unambiguous re-exports: assignments,
+ * `++`/`--`, `delete`, known collection mutations, and builtin `Object.assign`, in script and in
  * `<script setup>` templates (`v-model` included). Reads, calls into the state's own methods, and
  * writes through aliases such as `const s = store` are not writes. Sorted by file, then offset.
  */
@@ -75,12 +84,13 @@ export async function findSharedStateWrites(
 ): Promise<SharedStateWrite[]> {
   const writes = new Map<string, SharedStateWrite>();
   const visited = new Set<string>();
-  const pending: Array<{ file: string; exportName: string }> = [
-    { file: binding.file, exportName: binding.exportName },
+  const pending: Array<{ file: string; path: readonly string[]; history: ReadonlySet<string> }> = [
+    { file: binding.file, path: [binding.exportName], history: new Set([binding.file]) },
   ];
+  const sources = new Map<string, Promise<LoadedSource | undefined>>();
   while (pending.length) {
     const target = pending.pop()!;
-    const key = `${target.file}\0${target.exportName}`;
+    const key = JSON.stringify([target.file, target.path]);
     if (visited.has(key)) continue;
     visited.add(key);
     const byImporter = new Map<string, Set<string>>();
@@ -91,11 +101,16 @@ export async function findSharedStateWrites(
       specifiers.add(edge.specifier);
     }
     for (const [file, specifiers] of byImporter) {
-      const source = await loadSource(ctx, file);
+      let loading = sources.get(file);
+      if (!loading) sources.set(file, (loading = loadSource(ctx, file)));
+      const source = await loading;
       if (!source) continue;
-      const found = writesInFile(ctx, source, specifiers, target.exportName, binding);
+      const found = await writesInFile(ctx, source, specifiers, target.path, binding);
       for (const write of found.writes) writes.set(`${write.file}:${write.range.start}`, write);
-      for (const exportName of found.reExports) pending.push({ file, exportName });
+      if (!target.history.has(file)) {
+        const history = new Set([...target.history, file]);
+        for (const path of found.reExports) pending.push({ file, path, history });
+      }
     }
   }
   return [...writes.values()].sort((a, b) =>
@@ -114,24 +129,35 @@ export function findLocalStateWrites(
   scope: ScriptScope,
   variable: ScopeVariable,
   shape: SharedStateBinding["shape"],
-): SharedStateWrite[] {
+  collectionAt: CollectionAt,
+): LocalStateWrite[] {
   const parentOf = parentIndex(scope);
-  const writes: SharedStateWrite[] = [];
+  const isGlobal = (id: Node) => !scope.references.get(id)?.resolved?.defs.length;
+  const writes: LocalStateWrite[] = [];
   const add = (write: ClassifiedWrite | undefined) => {
-    if (write) writes.push(toWrite(ctx, file, text, text, 0, write, "script"));
+    if (!write) return;
+    let enclosing = parentOf(write.node);
+    while (enclosing && !/Function(?:Declaration|Expression)$/.test(enclosing.type)) {
+      if (enclosing.type === "PropertyDefinition" || enclosing.type === "ClassBody") return;
+      enclosing = parentOf(enclosing);
+    }
+    writes.push({
+      ...toWrite(ctx, file, text, text, 0, write, "script"),
+      enclosingFunction: enclosing,
+    });
   };
   for (const reference of variable.references) {
     if (reference.init) continue;
-    add(classifyWrite(reference.identifier, parentOf, shape, false));
+    add(classifyWrite(reference.identifier, parentOf, shape, false, collectionAt, isGlobal));
   }
   if (shape !== "reactive") return writes;
   for (const definition of variable.defs) {
-    const literal = unwrap((definition.node as Node)?.init)?.arguments?.[0];
+    const literal = unwrap(unwrap((definition.node as Node)?.init)?.arguments?.[0]);
     if (literal?.type !== "ObjectExpression") continue;
     for (const property of literal.properties) {
       if (property.type !== "Property" || property.value?.type !== "FunctionExpression") continue;
       for (const self of thisExpressions(property.value.body, scope.visitorKeys))
-        add(classifyWrite(self, parentOf, "reactive", false));
+        add(classifyWrite(self, parentOf, "reactive", false, collectionAt, isGlobal));
     }
   }
   return writes;
@@ -160,12 +186,46 @@ function unwrap(node: Node): Node {
   return node;
 }
 
+/** Only literal initializers and unshadowed collection constructors establish a receiver kind. */
+export function stateCollections(scope: ScriptScope, initialValue: Node): CollectionAt {
+  return (path) => {
+    let value = unwrap(initialValue);
+    for (const key of path) {
+      if (key === null) return undefined;
+      if (value?.type === "ArrayExpression" && /^(0|[1-9]\d*)$/.test(key)) {
+        if (value.elements.some((item: Node) => item?.type === "SpreadElement")) return undefined;
+        value = unwrap(value.elements[Number(key)]);
+        continue;
+      }
+      if (value?.type !== "ObjectExpression") return undefined;
+      let propertyValue: Node;
+      for (const property of value.properties) {
+        const name =
+          property.type === "Property" ? propertyName(property.key, property.computed) : null;
+        if (name === null || name === key)
+          propertyValue = name !== null && property.kind === "init" ? property.value : undefined;
+      }
+      value = unwrap(propertyValue);
+    }
+    if (value?.type === "ArrayExpression") return "array";
+    if (value?.type !== "NewExpression" || value.callee?.type !== "Identifier") return undefined;
+    if (scope.references.get(value.callee)?.resolved?.defs.length) return undefined;
+    switch (value.callee.name) {
+      case "Array":
+        return "array";
+      case "Map":
+        return "map";
+      case "Set":
+        return "set";
+    }
+  };
+}
+
 interface LoadedSource {
   file: string;
   text: string;
-  scope: ScriptScope;
-  /** With `<script setup>`, top-level bindings of both script blocks reach the template. */
-  templateSeesScript: boolean;
+  script?: ScriptScope;
+  setup?: ScriptScope;
   descriptor?: SFCDescriptor;
 }
 
@@ -174,170 +234,293 @@ async function loadSource(ctx: RuleContext, file: string): Promise<LoadedSource 
   if (text === undefined) return undefined;
   if (file.endsWith(".vue")) {
     const { descriptor } = await parseSfcFile(file, text);
-    const script = createVueScriptForParsing(descriptor, text);
-    const scope = analyzeScript(
-      script.text,
-      script.lang === "jsx" || script.lang === "tsx" ? "tsx" : "ts",
-    );
-    if (!scope) return undefined;
+    const parseBlock = (block: SFCDescriptor["script"]) => {
+      if (!block || block.src) return undefined;
+      const script = createVueScriptForParsing({ script: block }, text);
+      return (
+        analyzeScript(script.text, script.lang === "jsx" || script.lang === "tsx" ? "tsx" : "ts") ??
+        undefined
+      );
+    };
     return {
       file,
       text,
-      scope,
+      script: parseBlock(descriptor.script),
+      setup: parseBlock(descriptor.scriptSetup),
       descriptor,
-      templateSeesScript: !!descriptor.scriptSetup,
     };
   }
   if (!SCRIPT_RE.test(file)) return undefined;
   const scope = analyzeScript(text, /\.[jt]sx$/.test(file) ? "tsx" : "ts");
-  return scope ? { file, text, scope, templateSeesScript: false } : undefined;
+  return scope ? { file, text, script: scope } : undefined;
 }
 
-function writesInFile(
+async function writesInFile(
   ctx: RuleContext,
   source: LoadedSource,
   specifiers: ReadonlySet<string>,
-  exportName: string,
+  [exportName, ...members]: readonly string[],
   binding: SharedStateBinding,
-): { writes: SharedStateWrite[]; reExports: string[] } {
-  const { scope, text, file } = source;
-  const parentOf = parentIndex(scope);
+): Promise<{ writes: SharedStateWrite[]; reExports: string[][] }> {
+  const { script, setup, text, file } = source;
   const writes: SharedStateWrite[] = [];
-  const reExports: string[] = [];
+  const reExports: string[][] = [];
   const templateNames = new Map<string, Entry>();
   const call = binding.access === "call";
+  const scriptNames = moduleValueNames(script);
+  const setupNames = moduleValueNames(setup);
+  const collectionAt = binding.collectionAt ?? (() => undefined);
 
-  const visitRoots = (variable: ScopeVariable, entry: Entry, reachesTemplate: boolean) => {
-    if (reachesTemplate && isModuleVariable(variable)) templateNames.set(variable.name, entry);
-    for (const reference of variable.references) {
-      if (reference.init) continue;
-      const id = reference.identifier as Node;
-      const parent = parentOf(id);
-      if (
-        parent?.type === "ExportSpecifier" &&
-        parent.local === id &&
-        !entry.member &&
-        !entry.call
-      ) {
-        reExports.push(exportedName(parent.exported));
-        continue;
-      }
-      const root = rootFrom(id, entry, parentOf);
-      if (!root) continue;
-      const write = classifyWrite(root, parentOf, binding.shape, false);
-      if (write) writes.push(toWrite(ctx, file, text, text, 0, write, "script"));
-      if (!entry.call) continue;
-      // `const store = useStore()` makes `store` a root of its own.
-      const declarator = parentOf(root);
-      if (declarator?.type !== "VariableDeclarator" || declarator.init !== root) continue;
-      if (declarator.id?.type !== "Identifier") continue;
-      for (const derived of scope.scopeManager.getDeclaredVariables(declarator))
-        visitRoots(derived, { call: false }, reachesTemplate);
+  const visitReference = (id: Node, entry: Entry, scope: ScriptScope) => {
+    const parentOf = parentIndex(scope);
+    const parent = parentOf(id);
+    if (
+      parent?.type === "ExportSpecifier" &&
+      parent.local === id &&
+      parent.exportKind !== "type" &&
+      parentOf(parent)?.exportKind !== "type"
+    ) {
+      reExports.push([exportedName(parent.exported), ...entry.members]);
+      return;
     }
+    let outer = parent;
+    while (outer && WRAPPERS.has(outer.type)) outer = parentOf(outer);
+    if (outer?.type === "ExportDefaultDeclaration" && unwrap(outer.declaration) === id)
+      reExports.push(["default", ...entry.members]);
+    const root = rootFrom(id, entry, parentOf);
+    if (!root) return;
+    const isGlobal = (name: Node) =>
+      !scope.references.get(name)?.resolved?.defs.length &&
+      (scope !== setup || !scriptNames.has(name.name));
+    const write = classifyWrite(root, parentOf, binding.shape, false, collectionAt, isGlobal);
+    if (write) writes.push(toWrite(ctx, file, text, text, 0, write, "script"));
+    if (!entry.call) return;
+    const declarator = parentOf(root);
+    if (declarator?.type !== "VariableDeclarator" || declarator.init !== root) return;
+    if (declarator.id?.type !== "Identifier" || parentOf(declarator)?.kind !== "const") return;
+    for (const derived of scope.scopeManager.getDeclaredVariables(declarator))
+      visitRoots(derived, { members: [], call: false }, scope);
   };
 
-  for (const statement of scope.ast.body as Node[]) {
-    if (!specifiers.has(statement.source?.value)) continue;
-    if (statement.type === "ImportDeclaration" && statement.importKind !== "type") {
-      const reachesTemplate = source.templateSeesScript;
-      for (const specifier of statement.specifiers ?? []) {
-        if (specifier.importKind === "type") continue;
-        let entry: Entry | undefined;
-        if (specifier.type === "ImportNamespaceSpecifier") entry = { member: exportName, call };
-        else if (specifier.type === "ImportDefaultSpecifier")
-          entry = exportName === "default" ? { call } : undefined;
-        else if (exportedName(specifier.imported) === exportName) entry = { call };
-        if (!entry) continue;
-        for (const variable of scope.scopeManager.getDeclaredVariables(specifier))
-          visitRoots(variable, entry, reachesTemplate);
-      }
-    } else if (statement.type === "ExportNamedDeclaration" && statement.exportKind !== "type") {
-      for (const specifier of statement.specifiers ?? []) {
-        if (specifier.exportKind !== "type" && exportedName(specifier.local) === exportName)
-          reExports.push(exportedName(specifier.exported));
-      }
-    } else if (
-      statement.type === "ExportAllDeclaration" &&
-      statement.exportKind !== "type" &&
-      !statement.exported &&
-      exportName !== "default"
+  const visitRoots = (variable: ScopeVariable, entry: Entry, scope: ScriptScope) => {
+    if (
+      setup &&
+      isModuleVariable(variable) &&
+      (scope === setup || !setupNames.has(variable.name))
     ) {
-      reExports.push(exportName);
+      templateNames.set(variable.name, entry);
+      if (scope !== setup) {
+        for (const reference of setup.scopeManager.globalScope?.through ?? [])
+          if (reference.identifier.name === variable.name)
+            visitReference(reference.identifier, entry, setup);
+      }
+    }
+    for (const reference of variable.references)
+      if (!reference.init) visitReference(reference.identifier, entry, scope);
+  };
+
+  for (const scope of [script, setup]) {
+    if (!scope) continue;
+    const explicit = explicitExports(scope);
+    const stars = (scope.ast.body as Node[]).filter(isStarExport);
+    for (const statement of scope.ast.body as Node[]) {
+      if (!specifiers.has(statement.source?.value)) continue;
+      if (statement.type === "ImportDeclaration" && statement.importKind !== "type") {
+        for (const specifier of statement.specifiers ?? []) {
+          if (specifier.importKind === "type") continue;
+          let entry: Entry | undefined;
+          if (specifier.type === "ImportNamespaceSpecifier")
+            entry = { members: [exportName!, ...members], call };
+          else if (specifier.type === "ImportDefaultSpecifier")
+            entry = exportName === "default" ? { members, call } : undefined;
+          else if (exportedName(specifier.imported) === exportName) entry = { members, call };
+          if (!entry) continue;
+          for (const variable of scope.scopeManager.getDeclaredVariables(specifier))
+            visitRoots(variable, entry, scope);
+        }
+      } else if (statement.type === "ExportNamedDeclaration" && statement.exportKind !== "type") {
+        for (const specifier of statement.specifiers ?? []) {
+          if (specifier.exportKind !== "type" && exportedName(specifier.local) === exportName)
+            reExports.push([exportedName(specifier.exported), ...members]);
+        }
+      } else if (statement.type === "ExportAllDeclaration" && statement.exportKind !== "type") {
+        if (statement.exported)
+          reExports.push([exportedName(statement.exported), exportName!, ...members]);
+        else if (stars.length === 1 && exportName !== "default" && !explicit.has(exportName!))
+          reExports.push([exportName!, ...members]);
+      }
     }
   }
 
   if (templateNames.size && source.descriptor)
-    writes.push(...templateWrites(ctx, source, templateNames, binding.shape));
+    writes.push(
+      ...(await templateWrites(
+        ctx,
+        source,
+        templateNames,
+        binding.shape,
+        collectionAt,
+        new Set([...scriptNames, ...setupNames]),
+      )),
+    );
   return { writes, reExports };
 }
 
-function templateWrites(
+function moduleValueNames(scope: ScriptScope | undefined): Set<string> {
+  return new Set(
+    scope?.scopeManager.scopes.flatMap((lexical) =>
+      lexical.variables
+        .filter(
+          (variable) =>
+            isModuleVariable(variable) &&
+            variable.isValueVariable &&
+            variable.defs.some(
+              (definition) =>
+                definition.type !== "ImportBinding" ||
+                ((definition.parent as Node).importKind !== "type" &&
+                  (definition.node as Node).importKind !== "type"),
+            ),
+        )
+        .map((variable) => variable.name),
+    ),
+  );
+}
+
+function isStarExport(statement: Node): boolean {
+  return (
+    statement.type === "ExportAllDeclaration" &&
+    statement.exportKind !== "type" &&
+    !statement.exported
+  );
+}
+
+function explicitExports(scope: ScriptScope): Set<string> {
+  const names = new Set<string>();
+  for (const statement of scope.ast.body as Node[]) {
+    if (statement.exportKind === "type") continue;
+    if (statement.type === "ExportDefaultDeclaration") names.add("default");
+    if (statement.type === "ExportAllDeclaration" && statement.exported)
+      names.add(exportedName(statement.exported));
+    if (statement.type !== "ExportNamedDeclaration") continue;
+    for (const specifier of statement.specifiers ?? [])
+      if (specifier.exportKind !== "type") names.add(exportedName(specifier.exported));
+    const declaration = statement.declaration;
+    for (const node of declaration?.type === "VariableDeclaration"
+      ? declaration.declarations
+      : declaration
+        ? [declaration]
+        : [])
+      for (const variable of scope.scopeManager.getDeclaredVariables(node))
+        names.add(variable.name);
+    if (declaration?.id?.name) names.add(declaration.id.name);
+  }
+  return names;
+}
+
+async function templateWrites(
   ctx: RuleContext,
   source: LoadedSource,
   names: ReadonlyMap<string, Entry>,
   shape: SharedStateBinding["shape"],
-): SharedStateWrite[] {
+  collectionAt: CollectionAt,
+  scriptNames: ReadonlySet<string>,
+): Promise<SharedStateWrite[]> {
   const template = source.descriptor?.template;
   if (!template?.ast || (template.lang && template.lang !== "html")) return [];
+  const prefix = "<template>";
+  const text = `${prefix}${template.content}</template>`;
+  const offset = template.loc.start.offset - prefix.length;
+  const [{ parseForESLint }, tsParser] = await Promise.all([
+    import("vue-eslint-parser"),
+    import("@typescript-eslint/parser"),
+  ]);
+  let root: Node;
+  try {
+    root = parseForESLint(text, {
+      filePath: source.file,
+      parser: { "<template>": tsParser },
+      sourceType: "module",
+      ecmaVersion: "latest",
+    }).ast.templateBody;
+  } catch {
+    return [];
+  }
   const writes: SharedStateWrite[] = [];
-  const mention = new RegExp(
-    `(?<![\\w$.])(?:${[...names.keys()].map(escape).join("|")})(?![\\w$])`,
-  );
-
-  const visit = (node: TemplateAstNode, shadowed: ReadonlySet<string>) => {
-    if (node.type === TemplateNodeType.INTERPOLATION) {
-      check(node.content as Node, shadowed, false);
-      return;
-    }
-    if (node.type !== TemplateNodeType.ELEMENT) {
-      if (node.type === TemplateNodeType.ROOT)
-        for (const child of node.children) visit(child, shadowed);
-      return;
-    }
-    let inner = shadowed;
-    for (const prop of node.props) {
-      if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
-      if (prop.name !== "for" && prop.name !== "slot") continue;
-      inner = new Set([...inner, ...templateDirectiveBindings(prop)]);
-    }
-    for (const prop of node.props) {
-      if (prop.type !== TemplateNodeType.DIRECTIVE || prop.name === "for" || prop.name === "slot")
-        continue;
-      if (prop.exp) check(prop.exp as Node, inner, prop.name === "model");
-    }
-    for (const child of node.children) visit(child as TemplateParentNode, inner);
-  };
-
-  const check = (expression: Node, shadowed: ReadonlySet<string>, model: boolean) => {
-    const content: string = expression?.content ?? "";
-    if (expression?.isStatic || !mention.test(content)) return;
-    const index = expression.loc.source.indexOf(content);
-    const base = expression.loc.start.offset + Math.max(index, 0);
-    let text = `(${content})`;
-    let offset = base - 1;
-    let scope = analyzeScript(text, "ts");
-    if (!scope) {
-      text = content;
-      offset = base;
-      scope = analyzeScript(text, "ts");
-    }
-    if (!scope) return;
-    const parentOf = parentIndex(scope);
-    const modelTarget = model ? (scope.ast.body[0]?.expression as Node) : undefined;
-    for (const reference of scope.scopeManager.globalScope?.through ?? []) {
-      const id = reference.identifier as Node;
+  const parentOf = (node: Node) => node.parent;
+  const check = (ids: Node[], shadowed: ReadonlySet<string>, modelTarget?: Node) => {
+    const isGlobal = (id: Node) =>
+      ids.includes(id) && !shadowed.has(id.name) && !scriptNames.has(id.name);
+    for (const id of ids) {
       const entry = names.get(id.name);
       if (!entry || shadowed.has(id.name)) continue;
       const root = rootFrom(id, entry, parentOf);
       if (!root) continue;
-      const write = classifyWrite(root, parentOf, shape, true, modelTarget);
+      const write = classifyWrite(
+        root,
+        parentOf,
+        shape,
+        entry.members.length === 0,
+        collectionAt,
+        isGlobal,
+        modelTarget,
+      );
       if (write)
         writes.push(toWrite(ctx, source.file, source.text, text, offset, write, "template"));
     }
   };
 
-  visit(template.ast as TemplateAstNode, new Set());
+  const checkContainer = (node: Node, shadowed: ReadonlySet<string>, model = false) => {
+    if (node?.type !== "VExpressionContainer") return;
+    check(
+      node.references.map((reference: Node) => reference.id),
+      shadowed,
+      model ? node.expression : undefined,
+    );
+  };
+  const visit = (node: Node, shadowed: ReadonlySet<string>) => {
+    if (node.type !== "VElement") {
+      checkContainer(node, shadowed);
+      return;
+    }
+    if (
+      node.startTag.attributes.some((prop: Node) => prop.directive && prop.key.name.name === "pre")
+    )
+      return;
+    const loopScope = new Set(shadowed);
+    const childScope = new Set(shadowed);
+    for (const variable of node.variables) {
+      if (variable.kind === "v-for") loopScope.add(variable.id.name);
+      childScope.add(variable.id.name);
+    }
+    for (const prop of node.startTag.attributes) {
+      if (!prop.directive) continue;
+      const name = prop.key.name.name;
+      const propScope = name === "if" || name === "else-if" ? shadowed : loopScope;
+      checkContainer(prop.key.argument, propScope);
+      if (name === "for") {
+        const right = prop.value?.expression?.right;
+        if (right) check(templateExpressionReferences(right), shadowed);
+      } else if (name !== "slot") {
+        const eventScope = name === "on" ? new Set([...propScope, "$event"]) : propScope;
+        checkContainer(prop.value, eventScope, name === "model");
+      }
+    }
+    for (const child of node.children) visit(child, childScope);
+  };
+  if (root) visit(root, new Set());
   return writes;
+}
+
+function templateExpressionReferences(expression: Node): Node[] {
+  const program = {
+    type: "Program",
+    sourceType: "module",
+    range: expression.range,
+    body: [{ type: "ExpressionStatement", expression, range: expression.range }],
+  } as Program;
+  return (analyzeScriptProgram(program, "module").globalScope?.through ?? []).map(
+    (ref) => ref.identifier,
+  );
 }
 
 interface ClassifiedWrite {
@@ -355,6 +538,8 @@ function classifyWrite(
   parentOf: ParentOf,
   shape: SharedStateBinding["shape"],
   unwrapped: boolean,
+  collectionAt: CollectionAt,
+  isGlobal: IsGlobal,
   modelTarget?: Node,
 ): ClassifiedWrite | undefined {
   const segments: Array<string | null> = [];
@@ -379,8 +564,9 @@ function classifyWrite(
   const writable = depth >= (shape === "reactive" ? 1 : 0);
   if (modelTarget && node === modelTarget && writable)
     return { kind: "v-model", node, target: node };
-  if (parent?.type === "AssignmentExpression" && parent.left === node && writable)
-    return { kind: "assignment", node: parent, target: node };
+  const assignment = writable && assignmentOf(node, parentOf);
+  if (assignment)
+    return { kind: "assignment", node: parent === assignment ? assignment : node, target: node };
   if (parent?.type === "UpdateExpression" && parent.argument === node && writable)
     return { kind: "update", node: parent, target: node };
   if (
@@ -392,30 +578,57 @@ function classifyWrite(
     return { kind: "delete", node: parent, target: node };
   if (parent?.type === "CallExpression" && parent.callee === node && segments.length) {
     const method = segments.at(-1);
-    const receiverDepth = depth - 1;
-    if (receiverDepth < 0 || !method) return undefined;
-    // `store.add()` may be the store's own action; a nested `store.tags.add()` is a Set.
-    const minimum = COLLECTION_MUTATORS.has(method) && shape === "reactive" ? 1 : 0;
-    if ((ARRAY_MUTATORS.has(method) || COLLECTION_MUTATORS.has(method)) && receiverDepth >= minimum)
-      return { kind: "mutating-call", node: parent, target: node.object };
+    if (depth >= 1 && method) {
+      const collection = collectionAt(segments.slice(segments.length - depth, -1));
+      if (
+        (collection === "array" && ARRAY_MUTATORS.has(method)) ||
+        (collection === "map" && MAP_MUTATORS.has(method)) ||
+        (collection === "set" && SET_MUTATORS.has(method))
+      )
+        return { kind: "mutating-call", node: parent, target: unwrap(node).object };
+    }
   }
   if (
     parent?.type === "CallExpression" &&
     parent.arguments[0] === node &&
+    parent.arguments.length > 1 &&
     depth >= 0 &&
-    isObjectAssign(parent.callee)
+    isObjectAssign(parent.callee, isGlobal)
   )
     return { kind: "mutating-call", node: parent, target: node };
   return undefined;
 }
 
+function assignmentOf(node: Node, parentOf: ParentOf): Node {
+  let target = node;
+  for (let parent = parentOf(target); parent; parent = parentOf(target)) {
+    if (
+      parent.type === "AssignmentExpression" ||
+      parent.type === "ForInStatement" ||
+      parent.type === "ForOfStatement"
+    )
+      return parent.left === target ? parent : undefined;
+    if (
+      (parent.type === "AssignmentPattern" && parent.left === target) ||
+      (parent.type === "RestElement" && parent.argument === target) ||
+      (parent.type === "ArrayPattern" && parent.elements.includes(target)) ||
+      (parent.type === "Property" &&
+        parent.value === target &&
+        parentOf(parent)?.type === "ObjectPattern") ||
+      (parent.type === "ObjectPattern" && parent.properties.includes(target))
+    )
+      target = parent;
+    else return undefined;
+  }
+}
+
 /** The node a reference reaches the state through: the identifier, `ns.state`, or `useStore()`. */
 function rootFrom(id: Node, entry: Entry, parentOf: ParentOf): Node {
   let root = id;
-  if (entry.member) {
+  for (const member of entry.members) {
     const parent = parentOf(root);
     if (parent?.type !== "MemberExpression" || parent.object !== root) return undefined;
-    if (memberName(parent) !== entry.member) return undefined;
+    if (memberName(parent) !== member) return undefined;
     root = parent;
   }
   if (entry.call) {
@@ -470,19 +683,24 @@ function parentIndex(scope: ScriptScope): ParentOf {
   return index;
 }
 
-function isObjectAssign(callee: Node): boolean {
+function isObjectAssign(callee: Node, isGlobal: IsGlobal): boolean {
   return (
     callee?.type === "MemberExpression" &&
     callee.object?.type === "Identifier" &&
     callee.object.name === "Object" &&
+    isGlobal(callee.object) &&
     memberName(callee) === "assign"
   );
 }
 
 function memberName(node: Node): string | null {
-  const property = node.property;
-  if (!node.computed && property?.type === "Identifier") return property.name;
-  if (property?.type === "Literal" && typeof property.value === "string") return property.value;
+  return propertyName(node.property, node.computed);
+}
+
+function propertyName(property: Node, computed: boolean): string | null {
+  if (!computed && property?.type === "Identifier") return property.name;
+  if (property?.type === "Literal" && ["string", "number"].includes(typeof property.value))
+    return String(property.value);
   return null;
 }
 
@@ -492,8 +710,4 @@ function exportedName(node: Node): string {
 
 function isModuleVariable(variable: ScopeVariable): boolean {
   return variable.scope.type === "module" || variable.scope.type === "global";
-}
-
-function escape(name: string): string {
-  return name.replace(/[$]/g, "\\$");
 }

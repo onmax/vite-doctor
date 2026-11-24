@@ -1,9 +1,15 @@
 import { relative } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
-import { analyzeScript, type ScopeVariable } from "../../../../core/internal/script-scope.js";
+import {
+  analyzeScript,
+  type ScopeVariable,
+  type ScriptScope,
+} from "../../../../core/internal/script-scope.js";
 import {
   findLocalStateWrites,
   findSharedStateWrites,
+  stateCollections,
+  type LocalStateWrite,
   type SharedStateWrite,
 } from "../../../../core/internal/shared-state-writes.js";
 import { createRule, type AnyNode } from "./shared.js";
@@ -30,8 +36,7 @@ interface ExportedState {
 
 interface Mutator {
   label: string;
-  start: number;
-  end: number;
+  node: AnyNode;
 }
 
 export const noExternalSharedStateMutation = createRule({
@@ -63,8 +68,17 @@ export const noExternalSharedStateMutation = createRule({
           if (!scope) continue;
           const mutatorFunctions = exportedFunctions(scope.ast);
           for (const state of exportedStates(scope)) {
-            const local = findLocalStateWrites(ctx, file, text, scope, state.variable, state.shape);
-            const mutators = ownMutators(state, mutatorFunctions, local);
+            const collectionAt = stateCollections(scope, state.init.arguments[0]);
+            const local = findLocalStateWrites(
+              ctx,
+              file,
+              text,
+              scope,
+              state.variable,
+              state.shape,
+              collectionAt,
+            );
+            const mutators = ownMutators(scope, state, mutatorFunctions, local);
             if (!mutators.length) continue;
             const writes = new Map<string, SharedStateWrite>();
             for (const exportName of state.exportNames) {
@@ -72,6 +86,7 @@ export const noExternalSharedStateMutation = createRule({
                 file,
                 exportName,
                 shape: state.shape,
+                collectionAt,
               });
               for (const write of found) writes.set(`${write.file}:${write.range.start}`, write);
             }
@@ -153,24 +168,54 @@ function groupByFile(writes: SharedStateWrite[]): Map<string, SharedStateWrite[]
 
 /** Exported functions and state methods that write the state inside its own module. */
 function ownMutators(
+  scope: ScriptScope,
   state: ExportedState,
   functions: Mutator[],
-  local: SharedStateWrite[],
+  local: LocalStateWrite[],
 ): Mutator[] {
-  const writesIn = (start: number, end: number) =>
-    local.some((write) => write.range.start >= start && write.range.start < end);
-  const mutators = functions.filter((fn) => writesIn(fn.start, fn.end));
-  const literal = state.shape === "reactive" ? state.init.arguments?.[0] : undefined;
+  const writers = new Set(local.map((write) => write.enclosingFunction));
+  const mutators = functions.filter((fn) => writers.has(fn.node));
+  const literal = state.shape === "reactive" ? unwrap(state.init.arguments?.[0]) : undefined;
   if (literal?.type === "ObjectExpression") {
+    const members = new Map<string, AnyNode>();
     for (const property of literal.properties) {
-      if (property.type !== "Property" || property.value?.type !== "FunctionExpression") continue;
-      const key = property.key?.type === "Identifier" ? property.key.name : null;
-      const [start, end] = property.value.range;
-      if (key && writesIn(start, end))
-        mutators.push({ label: `${state.id.name}.${key}()`, start, end });
+      const key = property.type === "Property" ? actionKey(scope, property) : undefined;
+      if (key === undefined) members.clear();
+      else members.set(key, property);
+    }
+    for (const [key, property] of members) {
+      const node = unwrap(property.value);
+      if (property.kind !== "init" || !isFunction(node) || node.generator || !writers.has(node))
+        continue;
+      const exported = state.exportNames.find((name) => name !== "default");
+      const member =
+        /^[$\w]+$/u.test(key) && !/^\d/u.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
+      mutators.push({
+        label: exported === undefined ? `${key}() on the default export` : `${exported}${member}()`,
+        node,
+      });
     }
   }
-  return mutators;
+  return [...new Map(mutators.map((mutator) => [mutator.label, mutator])).values()];
+}
+
+function actionKey(scope: ScriptScope, property: AnyNode): string | undefined {
+  let key = unwrap(property.key);
+  if (key?.type === "Identifier") {
+    if (!property.computed) return key.name;
+    const definitions = scope.references.get(key)?.resolved?.defs;
+    const definition = definitions?.length === 1 ? definitions[0] : undefined;
+    if (
+      definition?.type !== "Variable" ||
+      definition.parent.kind !== "const" ||
+      definition.node.id.type !== "Identifier"
+    )
+      return undefined;
+    key = unwrap(definition.node.init);
+  }
+  if (key?.type === "Literal" && (typeof key.value === "string" || typeof key.value === "number"))
+    return String(key.value);
+  return undefined;
 }
 
 /** Module-scope `const` bindings initialized with Vue's `reactive()` or `ref()` and exported. */
@@ -242,8 +287,10 @@ function exportedFunctions(program: AnyNode): Mutator[] {
   const locals = new Map<string, AnyNode>();
   const exported: Array<{ local: string; name: string }> = [];
   const result: Mutator[] = [];
-  const add = (name: string, node: AnyNode) =>
-    result.push({ label: `${name}()`, start: node.range[0], end: node.range[1] });
+  const add = (name: string, node: AnyNode) => {
+    if (!node.generator)
+      result.push({ label: name === "default" ? "the default export" : `${name}()`, node });
+  };
   const collect = (declaration: AnyNode, isExported: boolean) => {
     if (declaration?.type === "FunctionDeclaration" && declaration.id) {
       locals.set(declaration.id.name, declaration);
@@ -260,15 +307,18 @@ function exportedFunctions(program: AnyNode): Mutator[] {
   };
   for (const statement of program.body as AnyNode[]) {
     if (statement.type === "ExportNamedDeclaration") {
+      if (statement.exportKind === "type") continue;
       collect(statement.declaration, true);
       if (!statement.source)
         for (const specifier of statement.specifiers ?? [])
-          if (specifier.local?.type === "Identifier")
+          if (specifier.exportKind !== "type" && specifier.local?.type === "Identifier")
             exported.push({ local: specifier.local.name, name: nameOf(specifier.exported) });
     } else if (statement.type === "ExportDefaultDeclaration") {
-      const declaration = statement.declaration;
-      if (isFunction(declaration)) add(declaration.id?.name ?? "default", declaration);
-      else if (declaration?.type === "Identifier")
+      const declaration = unwrap(statement.declaration);
+      if (isFunction(declaration)) {
+        add("default", declaration);
+        collect(declaration, false);
+      } else if (declaration?.type === "Identifier")
         exported.push({ local: declaration.name, name: "default" });
     } else {
       collect(statement, false);

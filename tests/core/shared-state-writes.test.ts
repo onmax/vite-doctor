@@ -48,6 +48,7 @@ test("call access finds writes to what importers get from calling the export", a
     exportName: "useCounter",
     shape: "reactive",
     access: "call",
+    collectionAt: (path) => (path.length === 1 && path[0] === "tags" ? "set" : undefined),
   });
   const result = await runRuleFixture({
     rule: capture.rule,
