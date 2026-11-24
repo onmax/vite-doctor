@@ -62,6 +62,22 @@ export interface EnvironmentResolution {
   extensions: string[];
 }
 
+export function importResolutionEvidence(runtime: unknown): EnvironmentResolution[] {
+  if (!runtime || typeof runtime !== "object" || !("importResolution" in runtime)) return [];
+  const evidence = runtime.importResolution;
+  if (!evidence || typeof evidence !== "object") return [];
+  const { root, environments } = evidence as Record<string, unknown>;
+  if (typeof root !== "string" || !environments || typeof environments !== "object") return [];
+  return Object.values(environments).flatMap((environment) => {
+    if (!environment || typeof environment !== "object") return [];
+    const { consumer, extensions } = environment as Record<string, unknown>;
+    if (consumer !== "client" && consumer !== "server") return [];
+    if (!Array.isArray(extensions) || !extensions.every((ext) => typeof ext === "string"))
+      return [];
+    return [{ root, runtime: setupRuntimes[consumer], extensions }];
+  });
+}
+
 const VITE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
 const NUXT_EXTENSIONS = [
   ".mjs",
@@ -76,6 +92,59 @@ const NUXT_EXTENSIONS = [
   ".json",
 ];
 const COMPANION_SUFFIX = /^\.(?:(?:test|spec)\.[cm]?[jt]sx?|d\.[cm]?ts)$/;
+
+function configCompanionExtensions(ctx: RuleContext, root: string, nuxt?: NuxtProjectInfo) {
+  const suffixes = new Set<string>();
+  const roots = nuxt ? [root, ...nuxt.layers.map((layer) => resolve(root, layer.root))] : [root];
+  for (const directory of new Set(roots)) {
+    for (const name of nuxt ? ["nuxt", "vite"] : ["vite"]) {
+      for (const extension of ["ts", "mts", "js", "mjs", "cts", "cjs"]) {
+        const file = resolve(directory, `${name}.config.${extension}`);
+        if (!ctx.fs.stat(file)?.isFile()) continue;
+        const text = ctx.fs.readText(file);
+        const body = text ? (parseScript(file, text)?.body as AnyNode[] | undefined) : undefined;
+        const exported = body?.find((node) => node.type === "ExportDefaultDeclaration");
+        let config = unwrap(exported?.declaration);
+        if (
+          config?.type === "CallExpression" &&
+          config.callee?.type === "Identifier" &&
+          config.callee.name === (name === "nuxt" ? "defineNuxtConfig" : "defineConfig")
+        )
+          config = unwrap(config.arguments[0]);
+        if (name === "nuxt" && configOption(config, "extends") !== undefined) return null;
+        const vite = name === "nuxt" ? configOption(config, "vite") : config;
+        if (vite === undefined && name === "nuxt") continue;
+        if (configOption(vite, "environments") !== undefined) return null;
+        const resolver = configOption(vite, "resolve");
+        if (resolver === undefined) continue;
+        const order = configOption(resolver, "extensions");
+        if (order === undefined) continue;
+        if (order?.type !== "ArrayExpression") return null;
+        for (const item of order.elements) {
+          const suffix = staticString(item);
+          if (suffix === undefined) return null;
+          suffixes.add(suffix);
+        }
+      }
+    }
+  }
+  return suffixes;
+}
+
+function configOption(node: AnyNode, name: string): AnyNode {
+  const object = unwrap(node);
+  if (object?.type !== "ObjectExpression") return null;
+  for (const property of [...object.properties].reverse()) {
+    if (property.type !== "Property") return null;
+    const key =
+      !property.computed && property.key?.type === "Identifier"
+        ? property.key.name
+        : staticString(property.key);
+    if (key === undefined) return null;
+    if (key === name) return unwrap(property.value);
+  }
+  return undefined;
+}
 
 const TRANSPARENT_WRAPPERS = new Set([
   "ParenthesizedExpression",
@@ -625,6 +694,8 @@ export function storeResolver<S extends StoreDefinition>(
 ) {
   const byFile = new Map<string, LocatedStore<S>[]>();
   const programs = new Map<string, StoreModule["program"]>();
+  const companionExtensions = new Map<string, Set<string> | null>();
+  const resolutions = host ? [host] : importResolutionEvidence(ctx.project.runtimeEvidence?.vite);
   const frameworks = new Map(
     ctx.project.workspacePackages?.map((item) => [
       resolve(ctx.project.root, item.root),
@@ -643,7 +714,7 @@ export function storeResolver<S extends StoreDefinition>(
     return byFile.has(candidate) || ctx.fs.stat(candidate)?.isFile();
   }
 
-  function extensionFile(base: string, extensions: string[], resolved: boolean) {
+  function extensionFile(base: string, extensions: string[], resolved: boolean, own: string) {
     if (resolved) return extensions.map((extension) => `${base}${extension}`).find(isFile);
     const dir = dirname(base);
     const filename = basename(base);
@@ -651,7 +722,12 @@ export function storeResolver<S extends StoreDefinition>(
     const candidates = ctx.fs.readDir(dir)?.filter((entry) => {
       if (!entry.name.startsWith(prefix)) return false;
       const suffix = entry.name.slice(filename.length);
-      return !COMPANION_SUFFIX.test(suffix) && isFile(resolve(dir, entry.name));
+      if (!isFile(resolve(dir, entry.name))) return false;
+      if (!COMPANION_SUFFIX.test(suffix)) return true;
+      if (!companionExtensions.has(own))
+        companionExtensions.set(own, configCompanionExtensions(ctx, own, nuxtForPackage(ctx, own)));
+      const configured = companionExtensions.get(own);
+      return configured === null || configured?.has(suffix);
     });
     if (!candidates?.length) return undefined;
     if (candidates.length > 1) return null;
@@ -659,29 +735,34 @@ export function storeResolver<S extends StoreDefinition>(
     return extensions.includes(candidate.slice(filename.length)) ? resolve(dir, candidate) : null;
   }
 
-  function fileForBase(base: string, extensions: string[], resolved: boolean) {
+  function fileForBase(base: string, extensions: string[], resolved: boolean, own: string) {
     if (isFile(base)) return base;
     const ts = base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
     if (ts !== base && isFile(ts)) return ts;
-    const file = extensionFile(base, extensions, resolved);
+    const file = extensionFile(base, extensions, resolved, own);
     if (file !== undefined) return file;
-    return extensionFile(`${base}/index`, extensions, resolved);
+    return extensionFile(`${base}/index`, extensions, resolved, own);
+  }
+
+  function ordersFor(file: string) {
+    return resolutions.filter((environment) => {
+      const path = relative(environment.root, file);
+      return path !== ".." && !path.startsWith("../") && !isAbsolute(path);
+    });
   }
 
   function moduleFile(from: string, source: string) {
-    const framework = frameworks.get(packageRoot(ctx, from)) ?? ctx.project.framework;
+    const own = packageRoot(ctx, from);
+    const framework = frameworks.get(own) ?? ctx.project.framework;
     const defaults = framework === "nuxt" ? NUXT_EXTENSIONS : VITE_EXTENSIONS;
-    const relativePath = host ? relative(host.root, from) : undefined;
-    const order =
-      relativePath !== undefined &&
-      relativePath !== ".." &&
-      !relativePath.startsWith("../") &&
-      !isAbsolute(relativePath)
-        ? host?.extensions
-        : undefined;
+    const orders = ordersFor(from);
     let match: string | undefined;
     for (const base of importBases(ctx, from, source)) {
-      const file = fileForBase(base, order ?? defaults, Boolean(order));
+      const files = orders.length
+        ? orders.map(({ extensions }) => fileForBase(base, extensions, true, own))
+        : [fileForBase(base, defaults, false, own)];
+      const [file] = files;
+      if (files.some((candidate) => candidate !== file)) return undefined;
       if (file === null || (file && match && file !== match)) return undefined;
       match ??= file;
     }
@@ -838,9 +919,10 @@ export function storeResolver<S extends StoreDefinition>(
         (isRelativeImport(entry.from) ? inventory.relative : inventory.shared).push([name, entry]);
       }
     }
-    let shared = packageIndexes.get(ownPackage);
+    const packageKey = ordersFor(file).length ? `${ownPackage}\0resolved` : ownPackage;
+    let shared = packageIndexes.get(packageKey);
     if (!shared)
-      packageIndexes.set(ownPackage, (shared = indexRegistrations(file, inventory.shared)));
+      packageIndexes.set(packageKey, (shared = indexRegistrations(file, inventory.shared)));
     const names = shared.get(store) ?? [];
     if (!inventory.relative.length) return names;
     const directory = dirname(file);

@@ -3,6 +3,7 @@ import { diagnostics } from "../diagnostics.js";
 import {
   collectStoreModules,
   findStoreUses,
+  importResolutionEvidence,
   nuxtForFile,
   setupRuntimes,
   storeResolver,
@@ -107,22 +108,6 @@ function storeEdges(
     }
   }
   return edges;
-}
-
-function importResolutionEvidence(runtime: unknown): EnvironmentResolution[] {
-  if (!runtime || typeof runtime !== "object" || !("importResolution" in runtime)) return [];
-  const evidence = runtime.importResolution;
-  if (!evidence || typeof evidence !== "object") return [];
-  const { root, environments } = evidence as Record<string, unknown>;
-  if (typeof root !== "string" || !environments || typeof environments !== "object") return [];
-  return Object.values(environments).flatMap((environment) => {
-    if (!environment || typeof environment !== "object") return [];
-    const { consumer, extensions } = environment as Record<string, unknown>;
-    if (consumer !== "client" && consumer !== "server") return [];
-    if (!Array.isArray(extensions) || !extensions.every((ext) => typeof ext === "string"))
-      return [];
-    return [{ root, runtime: setupRuntimes[consumer], extensions }];
-  });
 }
 
 /** Strongly connected groups of two or more stores; every read between them lies on a cycle. */

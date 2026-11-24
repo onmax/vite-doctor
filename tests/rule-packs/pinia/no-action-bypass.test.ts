@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import type { DoctorRule } from "../../../src/core/index.ts";
+import { defineDoctorExtension, type DoctorRule } from "../../../src/core/index.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
 import * as pinia from "../../../src/rule-packs/pinia/index.ts";
 
@@ -62,17 +62,50 @@ const nuxtWriter = (binding: string, imported = "") =>
 function runNuxt(
   files: Record<string, string>,
   autoImports: Array<{ name: string; from: string; as?: string }> | null,
-  { enabled = true, excluded = false, transformExcluded = false, fixtureRule = rule } = {},
+  {
+    enabled = true,
+    excluded = false,
+    transformExcluded = false,
+    fixtureRule = rule,
+    extensionOrders,
+  }: {
+    enabled?: boolean;
+    excluded?: boolean;
+    transformExcluded?: boolean;
+    fixtureRule?: DoctorRule;
+    extensionOrders?: string[][];
+  } = {},
 ) {
   return runProjectFixture({
     framework: "nuxt",
     dependencies: { pinia: "^3.0.0", "@pinia/nuxt": "^0.11.0" },
     rules: [fixtureRule],
+    extensions: extensionOrders && [
+      defineDoctorExtension({
+        name: "fixture-vite-resolution",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({
+            name: "vite",
+            contribute(project) {
+              return {
+                importResolution: {
+                  root: project.root,
+                  environments: extensionOrders.map((extensions) => ({
+                    consumer: "client",
+                    extensions,
+                  })),
+                },
+              };
+            },
+          });
+        },
+      }),
+    ],
     config: excluded ? { exclude: ["cart.ts"] } : undefined,
     files: {
       ...(autoImports && {
         ".nuxt/doctor.manifest.json": JSON.stringify({
-          generatedAt: new Date().toISOString(),
+          generatedAt: "2100-01-01T00:00:00.000Z",
           autoImportEnabled: enabled,
           autoImports,
           ...(transformExcluded && {
@@ -341,8 +374,9 @@ Object.assign(cart, { items: [] }, { total: 0 })`,
   ])("resolves the Nuxt registration to %s alongside %s", async (store, sibling) => {
     const result = await runNuxt(
       {
+        "nuxt.config.ts": "export default defineNuxtConfig({ modules: ['@pinia/nuxt'] })",
         [store]: setupCart,
-        [sibling]: "export {}",
+        [sibling]: "export const useCartStore = () => ({ items: [] })",
         "a.ts": nuxtWriter("useCartStore", "import { useCartStore } from '#imports'"),
         "b.ts": nuxtWriter("useCartStore"),
       },
@@ -353,20 +387,50 @@ Object.assign(cart, { items: [] }, { total: 0 })`,
     expect(result.diagnostics[0]?.related).toHaveLength(2);
   });
 
-  test.each([".tsx", ".custom.tsx"])(
-    "leaves a Nuxt registration unresolved alongside a runtime candidate with suffix %s",
-    async (suffix) => {
+  test.each([
+    ["cart", ".tsx"],
+    ["cart", ".custom.tsx"],
+    ["cart", ".test.ts"],
+    ["cart/index", ".spec.ts"],
+  ])(
+    "does not use the default Nuxt store when %s has a configured %s candidate",
+    async (path, suffix) => {
       const result = await runNuxt(
         {
           "nuxt.config.ts": `export default defineNuxtConfig({ vite: { resolve: { extensions: ['${suffix}', '.ts'] } } })`,
-          "stores/cart.ts": setupCart,
-          [`stores/cart${suffix}`]: "export const useCartStore = () => ({ items: [] })",
+          [`stores/${path}.ts`]: setupCart,
+          [`stores/${path}${suffix}`]: "export const useCartStore = () => ({ items: [] })",
           "a.ts": nuxtWriter("useCartStore", "import { useCartStore } from '#imports'"),
           "b.ts": nuxtWriter("useCartStore"),
         },
         [{ name: "useCartStore", from: "~/stores/cart" }],
       );
+      expect(result.project.nuxt?.autoImportsAuthoritative).toBe(true);
       expect(result.diagnostics).toEqual([]);
+    },
+  );
+
+  test.each([
+    { extensionOrders: undefined, count: 0 },
+    { extensionOrders: [[".ts", ".test.ts"]], count: 1 },
+    { extensionOrders: [[".test.ts", ".ts"]], count: 0 },
+    { extensionOrders: [[".ts"], [".test.ts", ".ts"]], count: 0 },
+  ])(
+    "uses Nuxt extension orders $extensionOrders or leaves a computed override unresolved",
+    async ({ extensionOrders, count }) => {
+      const result = await runNuxt(
+        {
+          "nuxt.config.ts": "export default defineNuxtConfig({ vite: customViteOptions })",
+          "stores/cart.ts": setupCart,
+          "stores/cart.test.ts": "export const useCartStore = () => ({ items: [] })",
+          "a.ts": nuxtWriter("useCartStore", "import { useCartStore } from '#imports'"),
+          "b.ts": nuxtWriter("useCartStore"),
+        },
+        [{ name: "useCartStore", from: "~/stores/cart" }],
+        { extensionOrders },
+      );
+      expect(result.project.nuxt?.autoImportsAuthoritative).toBe(true);
+      expect(result.diagnostics).toHaveLength(count);
     },
   );
 
