@@ -1,10 +1,17 @@
 import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
+  resolveRuntimeGraph,
 } from "../../core/internal/runtime-graph.js";
+import {
+  captureNitroAutoImportScan,
+  loadNitroScanner,
+  resolveNitroScanner,
+} from "../../core/internal/nitro-auto-import-scan.js";
 import {
   createIsIgnored,
   defineNuxtModule,
@@ -14,6 +21,7 @@ import {
 } from "nuxt/kit";
 import type { Nuxt, NuxtModule } from "nuxt/schema";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
+import { resolveAlias } from "pathe/utils";
 import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
 export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
@@ -48,6 +56,15 @@ type NuxtAutoImportContext = {
   getImports?: () => Promise<unknown[]> | unknown[];
 };
 
+type NitroAutoImportEvidence = Pick<
+  NuxtDoctorManifest,
+  | "nitroAutoImportEnabled"
+  | "nitroAutoImports"
+  | "nitroScanDirs"
+  | "nitroAutoImportScan"
+  | "nitroAutoImportTransform"
+>;
+
 type NuxtDoctorEvidence = {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
@@ -59,6 +76,7 @@ type NuxtDoctorEvidence = {
   importDirs?: unknown[];
   autoImportContext?: NuxtAutoImportContext;
   autoImportEntries?: unknown[];
+  nitroAutoImports?: NitroAutoImportEvidence;
   composableScan?: { dirs: string; entries: Promise<unknown[]> };
   moduleSources?: NuxtModuleSource[];
   extensions?: string[];
@@ -79,6 +97,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
     autoImportEntries: undefined as unknown[] | undefined,
+    nitroAutoImports: undefined as NitroAutoImportEvidence | undefined,
     composableScan: undefined as NuxtDoctorEvidence["composableScan"],
     moduleSources: undefined as NuxtModuleSource[] | undefined,
     extensions: undefined as string[] | undefined,
@@ -91,6 +110,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
+    evidence.nitroAutoImports = await captureNitroAutoImports(nitro, nuxt.options.rootDir);
     const captureHandlers = async () => {
       const environments = new Set([
         nitro.options.dev ? "dev" : "prod",
@@ -324,6 +344,7 @@ export async function writeManifest(
     buildDir,
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
+    ...evidence?.nitroAutoImports,
     scannedComposableFiles:
       scannedAutoImportEntries === undefined
         ? undefined
@@ -531,6 +552,50 @@ function autoImportIdentity(entry: {
   priority?: number;
 }) {
   return JSON.stringify([entry.name, entry.as, entry.from, entry.type === true, entry.priority]);
+}
+
+async function captureNitroAutoImports(nitro: any, root: string): Promise<NitroAutoImportEvidence> {
+  const imports = nitro.options.imports;
+  const enabled = Boolean(imports) && imports.autoImport !== false;
+  const evidence: NitroAutoImportEvidence = {
+    nitroAutoImportEnabled: enabled,
+    nitroScanDirs: toArray<string>(nitro.options.scanDirs).map((dir) => resolve(dir)),
+  };
+  if (!enabled || !nitro.unimport?.getImportMap) return evidence;
+
+  const map = await nitro.unimport.getImportMap();
+  evidence.nitroAutoImports = normalizeAutoImports([...map.values()]).map((entry) => ({
+    ...entry,
+    from: resolveAlias(entry.from, nitro.options.alias ?? {}),
+  }));
+  const nitroPackage = resolveRuntimeGraph(root, "nuxt").packages.nitro?.packageJsonPath;
+  const installed = resolveNitroScanner(nitroPackage);
+  if (installed && installed.version === nitro.unimport.version) {
+    evidence.nitroAutoImportScan = await captureNitroAutoImportScan(
+      await loadNitroScanner(installed.entry),
+      installed.version,
+      imports,
+      map,
+    );
+  }
+
+  const serialize = (value: string | RegExp | Array<string | RegExp> | undefined) =>
+    (Array.isArray(value) ? value : value === undefined ? [] : [value]).map((pattern) => {
+      if (typeof pattern !== "string") return { source: pattern.source, flags: pattern.flags };
+      const glob = pattern.replaceAll("\\", "/");
+      if (isAbsolute(glob) || glob.startsWith("**")) return { glob };
+      const base = normalize(process.cwd()).replace(/[-^$*+?.()|[\]{}]/g, "\\$&");
+      return { glob: posix.join(base, glob) };
+    });
+  const include = serialize(imports.include);
+  evidence.nitroAutoImportTransform = {
+    include: include.length
+      ? include
+      : serialize([/\.[jt]sx?$/, /\.vue$/, /\.vue\?vue/, /\.svelte$/]),
+    exclude: serialize(imports.exclude ?? [/[\\/]node_modules[\\/]/, /[\\/]\.git[\\/]/]),
+    commentsDisable: imports.commentsDisable ?? ["@unimport-disable", "@imports-disable"],
+  };
+  return evidence;
 }
 
 function serializeImportTransform(transform: any) {
