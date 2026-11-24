@@ -291,6 +291,23 @@ export default defineEventHandler((event) => {
   ).toEqual([1, 2].map((line) => ({ code: "NITRO0035", file, line })));
 });
 
+test("finds the same scalar fallback in inline, named, and spread copy sources", async () => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const inline = {}
+const named = {}
+const spread = {}
+export default defineEventHandler((event) => {
+  const patch = { current: getCookie(event, 'sort') ?? 'default' }
+  Object.assign(inline, { current: getCookie(event, 'sort') ?? 'default' })
+  Object.assign(named, patch)
+  Object.assign(spread, { ...patch })
+})`,
+    }),
+  ).toEqual([1, 2, 3].map((line) => ({ code: "NITRO0035", file, line })));
+});
+
 test.each([
   [
     "a property read before the copy",
@@ -393,10 +410,24 @@ test("keeps scalar copy evidence when a sibling nested value escapes", async () 
     await run({
       [file]: `const shared = {}
 export default defineEventHandler((event) => {
-  const patch = { current: { sort: getQuery(event).sort }, session: getCookie(event, 'session') }
+  const patch = { current: { sort: getQuery(event).sort }, session: getCookie(event, 'session') ?? 'public' }
   patch.current.sort = 'default'
   Object.assign(shared, { ...patch })
 })`,
     }),
   ).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+});
+
+test("does not treat a fallback that can return a mutable value as scalar", async () => {
+  expect(
+    await run({
+      "server/api/session.get.ts": `const shared = {}
+export default defineEventHandler((event) => {
+  const fallback = { sort: getQuery(event).sort }
+  const patch = { current: getCookie(event, 'sort') ?? fallback }
+  fallback.sort = 'default'
+  if (typeof patch.current === 'object') Object.assign(shared, { ...patch })
+})`,
+    }),
+  ).toEqual([]);
 });

@@ -248,6 +248,8 @@ function isScalarCopyValue(input: AnyNode, depth = 0): boolean {
   if (!value || depth > 5) return false;
   if (value.type === "Literal") return !value.regex;
   if (value.type === "TemplateLiteral") return true;
+  if (value.type === "LogicalExpression")
+    return isScalarCopyValue(value.left, depth + 1) && isScalarCopyValue(value.right, depth + 1);
   if (value.type === "CallExpression")
     return SCALAR_REQUEST_READERS.has(h3Name(unwrapExpression(value.callee)) ?? "");
   if (value.type !== "Identifier") return false;
