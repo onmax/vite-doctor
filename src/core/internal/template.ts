@@ -164,6 +164,32 @@ function parseExpression(expression: TemplateExpressionNode): ScriptAstNode | nu
   }
 }
 
+/** Inline event handlers may be a statement list instead of an expression. */
+export function parseTemplateHandler(expression: TemplateExpressionNode): ScriptAstNode | null {
+  if ((expression as { ast?: { type?: string } }).ast?.type !== "Program")
+    return parseTemplateExpression(expression);
+  const prefix = "($event) => {\n";
+  const { content, loc } = expression;
+  try {
+    const result = parseScriptSync("template-handler.ts", `${prefix}${content}\n}`, {
+      lang: "ts",
+      sourceType: "module",
+    });
+    if (result.errors.some((error) => error.severity === "Error")) return null;
+    const statement = result.program.body[0];
+    if (statement?.type !== "ExpressionStatement") return null;
+    const root = statement.expression as unknown as ScriptAstNode;
+    shiftAndLink(
+      root as unknown as Record<string, unknown>,
+      undefined,
+      loc.start.offset - prefix.length,
+    );
+    return root;
+  } catch {
+    return null;
+  }
+}
+
 function shiftAndLink(node: Record<string, unknown>, parent: unknown, base: number) {
   if (typeof node.start === "number") node.start += base;
   if (typeof node.end === "number") node.end += base;

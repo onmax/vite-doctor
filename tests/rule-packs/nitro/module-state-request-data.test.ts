@@ -25,6 +25,37 @@ async function run(
   }));
 }
 
+test("uses only reachable logical operands as copy evidence", async () => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const and = {}
+const or = {}
+const nullish = {}
+const inline = {}
+const spread = {}
+const live = {}
+const fallback = {}
+export default defineEventHandler((event) => {
+  const useCookieLocale = false
+  const localeOverride = 'en'
+  const skipped = { current: useCookieLocale && getCookie(event, 'locale') }
+  Object.assign(and, skipped)
+  Object.assign(or, { ...{ current: localeOverride || getCookie(event, 'locale') } })
+  const patch = { current: localeOverride ?? getCookie(event, 'locale') }
+  Object.assign(nullish, patch)
+  Object.assign(inline, { current: false && getCookie(event, 'locale') })
+  Object.assign(spread, { ...skipped })
+  const enabled = (useCookieLocale && event.context) || true
+  const livePatch = { current: enabled && getCookie(event, 'locale') }
+  Object.assign(live, livePatch)
+  const cookiePatch = { current: getCookie(event, 'locale') ?? 'en' }
+  Object.assign(fallback, { ...cookiePatch })
+})`,
+    }),
+  ).toEqual([6, 7].map((line) => ({ code: "NITRO0035", file, line })));
+});
+
 test.each([
   [
     "a module let assigned from the request query in a route",

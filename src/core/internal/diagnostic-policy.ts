@@ -196,6 +196,17 @@ export function applyDiagnosticPolicy(
   };
 }
 
+export function diagnosticOccurrenceKey(diagnostic: Diagnostic): string {
+  return [
+    diagnostic.ruleId,
+    diagnostic.code,
+    diagnostic.file,
+    diagnostic.range?.start ??
+      (diagnostic.code === "DOC0040" ? (diagnostic.fingerprint ?? "") : ""),
+    diagnostic.message,
+  ].join("\0");
+}
+
 // Duplicates are keyed by start offset because overlapping passes can report one finding with
 // different end offsets, such as a call and its callee. The first occurrence keeps the anchor
 // fingerprint so existing baselines and suppressions still match. This runs before scope and
@@ -203,13 +214,7 @@ export function applyDiagnosticPolicy(
 export function settleDiagnosticIdentity(diagnostics: Diagnostic[]): Diagnostic[] {
   const seen = new Set<string>();
   const unique = diagnostics.filter((diagnostic) => {
-    const key = [
-      diagnostic.ruleId,
-      diagnostic.code,
-      diagnostic.file,
-      diagnostic.range?.start ?? "",
-      diagnostic.message,
-    ].join("\0");
+    const key = diagnosticOccurrenceKey(diagnostic);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

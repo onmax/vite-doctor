@@ -1,9 +1,14 @@
 import { describe, expect, test } from "vite-plus/test";
 import { runProjectFixture, runRuleFixture } from "../../../src/core/testkit.ts";
-import { requireDefaultHandler } from "../../../src/rule-packs/nitro/rules/index.ts";
+import {
+  noImplicitMiddlewareResponse,
+  noShadowedFileHandler,
+  requireDefaultHandler,
+} from "../../../src/rule-packs/nitro/rules/index.ts";
 
 const helper = "export function getDb() {\n  return createDb()\n}\n";
 const handler = "export default defineEventHandler(() => 'ok')\n";
+const nitro3 = { nitro: "3.0.261103-rc" };
 
 async function codes(
   files: Record<string, string>,
@@ -20,6 +25,95 @@ async function codes(
 }
 
 describe("NITRO0019 route file without a default handler", () => {
+  test("uses the scanned Nitro 3 route name in diagnostics and remediation", async () => {
+    const result = await runRuleFixture({
+      rule: requireDefaultHandler,
+      framework: "nitro",
+      dependencies: nitro3,
+      files: {
+        "nitro.config.ts": "export default { serverDir: true, scanSuffixes: ['custom'] }",
+        "server/routes/page.custom.query.ts": helper,
+        "server/routes/lookup.query.query.ts": `${helper}${handler}`,
+        "server/routes/invalid.custom.query.ts": "export default 42",
+      },
+    });
+    expect(result.diagnostics).toHaveLength(3);
+    expect(result.diagnostics.map(({ code, why, suggestion }) => [code, why, suggestion])).toEqual(
+      expect.arrayContaining([
+        [
+          "NITRO0019",
+          expect.stringContaining("/page.custom route"),
+          expect.stringMatching(/serve \/page\.custom\.$/),
+        ],
+        [
+          "NITRO0019",
+          expect.stringContaining("/invalid.custom route"),
+          expect.stringMatching(/serve \/invalid\.custom\.$/),
+        ],
+        ["NITRO0020", expect.stringContaining("/lookup.query route"), expect.any(String)],
+      ]),
+    );
+  });
+
+  test.each([
+    ["nitro: configured, plugins: [nitro()], ...base", false],
+    ["nitro: configured, plugins: [nitro()], [key]: base.nitro", false],
+    ["...base, nitro: configured, plugins: [nitro()]", true],
+    ["nitro: configured, plugins: [nitro()], ['nitro']: { serverDir: true }", false],
+  ])("uses custom scan suffixes only when proven: %s", async (properties, custom) => {
+    const result = await runProjectFixture({
+      rules: [requireDefaultHandler, noImplicitMiddlewareResponse, noShadowedFileHandler],
+      framework: "nitro",
+      dependencies: nitro3,
+      files: {
+        "vite.config.ts": `
+          import { nitro } from 'nitro/vite';
+          const base = { nitro: { serverDir: true, scanSuffixes: [] } };
+          const key = 'nitro';
+          export default { ${properties.replace("configured", "{ serverDir: true, scanSuffixes: ['custom'] }")} };
+        `,
+        "server/routes/plain.ts": helper,
+        "server/routes/sitemap.xml.ts": helper,
+        "server/routes/missing.custom.ts": helper,
+        "server/routes/(group)/same.custom.ts": handler,
+        "server/routes/same.custom.ts": handler,
+        "server/middleware/locale.custom.ts": "export default event => event.context.locale = 'en'",
+      },
+    });
+    const expected = [
+      ["NITRO0019", expect.stringMatching(/plain\.ts$/)],
+      ["NITRO0019", expect.stringMatching(/sitemap\.xml\.ts$/)],
+    ];
+    if (custom)
+      expected.push(
+        ["NITRO0019", expect.stringMatching(/missing\.custom\.ts$/)],
+        ["NITRO0030", expect.stringMatching(/locale\.custom\.ts$/)],
+        ["NITRO0031", expect.stringMatching(/same\.custom\.ts$/)],
+      );
+    expect(result.diagnostics).toHaveLength(expected.length);
+    expect(result.diagnostics.map(({ code, file }) => [code, file])).toEqual(
+      expect.arrayContaining(expected),
+    );
+  });
+
+  test.each(["plain.ts", "plain.get.prod.ts", "sitemap.xml.ts"])(
+    "reports %s even when Nitro 3 configures custom scan suffixes",
+    async (file) => {
+      expect(
+        await codes(
+          {
+            "nitro.config.ts":
+              "export default defineConfig({ serverDir: true, scanSuffixes: ['custom'] })",
+            [`server/routes/${file}`]: helper,
+            "server/routes/ignored.unknown.ts": helper,
+          },
+          "nitro",
+          { nitro: "3.0.261103-rc" },
+        ),
+      ).toEqual(["NITRO0019"]);
+    },
+  );
+
   test.each(["server/api/_db.ts", "server/routes/feed/helpers.mjs", "server/api/(admin)/utils.js"])(
     "reports helper module %s in a Nuxt server route directory",
     async (file) => {

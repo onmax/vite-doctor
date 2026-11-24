@@ -430,6 +430,25 @@ export interface ProjectInfo {
   runtimeEvidence?: Record<string, unknown>;
 }
 
+/**
+ * A diagnostic a framework reported at runtime, such as a `nostics` report from the browser
+ * during dev. A Plugin Surface contributes them as `{ reports }` under the `frameworkDiagnostics`
+ * Runtime Evidence.
+ */
+export interface RuntimeFrameworkDiagnostic {
+  /** The framework's own Diagnostic Code, such as `NUXT_E3004`. */
+  code: string;
+  why: string;
+  fix?: string;
+  docs?: string;
+  /** Call sites exactly as the runtime reported them. */
+  sources: string[];
+  /** The source file, and the 1-based position when a source map proves it. */
+  location?: { file: string; line?: number; column?: number };
+  /** Why the location is missing or has no position. */
+  locationGap?: string;
+}
+
 export interface WorkspacePackage {
   /** Path relative to the Doctor Run root; `.` is the workspace root. */
   root: string;

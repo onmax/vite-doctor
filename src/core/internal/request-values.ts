@@ -26,12 +26,14 @@ const WRAPPERS = new Set([
   "ParenthesizedExpression",
 ]);
 const PROMISE_METHODS = new Set(["then", "catch", "finally"]);
+const UNKNOWN_VALUE = Symbol("unknown value");
+type StaticValue = string | number | boolean | bigint | null | typeof UNKNOWN_VALUE;
 
 export interface RequestValueSources {
   /** A node that is request data by itself, such as `useRoute()` or `getQuery(event)`. */
   isSource(node: AnyNode): boolean;
   /** The declarator binding `name` at program scope whose initializer the flow follows. */
-  programBinding?(program: AnyNode, name: string, reference: AnyNode): AnyNode;
+  programBinding?: (program: AnyNode, name: string, reference: AnyNode) => AnyNode;
   /**
    * Whether `reference`, which resolves to parameter `index` of `fn`, holds request data, such as
    * the `event` an h3 handler receives. Without it, parameters are not resolved.
@@ -77,6 +79,11 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
       return;
     }
     if (FUNCTION_TYPES.has(node.type) && !isInvoked(node) && !isPromiseCallback(node)) return;
+    if (node.type === "LogicalExpression") {
+      visit(node.left);
+      if (!found && !logicalRightIsSkipped(node, sources.programBinding)) visit(node.right);
+      return;
+    }
     for (const [key, child] of Object.entries(node) as [string, AnyNode][]) {
       if (key === "__doctorParent" || key === "parent" || key === "typeAnnotation") continue;
       if (Array.isArray(child)) child.forEach(visit);
@@ -119,12 +126,62 @@ export function resolvesToModuleBinding(node: AnyNode, name: string) {
 }
 
 export function resolveLexicalBinding(node: AnyNode): AnyNode {
+  return resolveBinding(node, (program, name) => findStatementBinding(program, name));
+}
+
+function resolveBinding(
+  node: AnyNode,
+  programBinding: NonNullable<RequestValueSources["programBinding"]>,
+): AnyNode {
   for (let current = node.__doctorParent; current; current = current.__doctorParent) {
-    if (current.type === "Program") return findStatementBinding(current, node.name);
+    if (current.type === "Program") return programBinding(current, node.name, node);
     const binding = nearerBinding(current, node.name);
     if (binding) return binding;
   }
   return null;
+}
+
+export function logicalRightIsSkipped(
+  node: AnyNode,
+  programBinding?: RequestValueSources["programBinding"],
+): boolean {
+  return shortCircuits(node.operator, staticValue(node.left, programBinding, 0));
+}
+
+function shortCircuits(operator: string, left: StaticValue): boolean {
+  if (left === UNKNOWN_VALUE) return false;
+  if (operator === "&&") return !left;
+  if (operator === "||") return Boolean(left);
+  return operator === "??" && left !== null;
+}
+
+function staticValue(
+  input: AnyNode,
+  programBinding: RequestValueSources["programBinding"],
+  depth: number,
+): StaticValue {
+  const node = unwrapExpression(input);
+  if (!node || depth > 5) return UNKNOWN_VALUE;
+  if (node.type === "Literal" && !node.regex) return node.value;
+  if (node.type === "TemplateLiteral" && !node.expressions.length)
+    return node.quasis[0].value.cooked;
+  if (node.type === "LogicalExpression") {
+    const left = staticValue(node.left, programBinding, depth + 1);
+    if (left === UNKNOWN_VALUE || shortCircuits(node.operator, left)) return left;
+    return staticValue(node.right, programBinding, depth + 1);
+  }
+  if (node.type === "Identifier") {
+    const binding = programBinding
+      ? resolveBinding(node, programBinding)
+      : resolveLexicalBinding(node);
+    if (
+      binding?.type === "VariableDeclarator" &&
+      binding.id.type === "Identifier" &&
+      binding.__doctorParent?.kind === "const"
+    )
+      return staticValue(binding.init, programBinding, depth + 1);
+  }
+  return UNKNOWN_VALUE;
 }
 
 function nearerBinding(scope: AnyNode, name: string): AnyNode {
