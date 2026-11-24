@@ -5,6 +5,7 @@ export function buildImportGraph(
   root: string,
   facts: readonly FileFacts[],
   resolveImport: (from: FileFacts, specifier: string) => number | undefined,
+  autoImports: readonly ImportGraphEdge[] = [],
 ): ImportGraph {
   const pathsById = new Map(facts.map((fact) => [fact.fileId, fact.path]));
   const edges: ImportGraphEdge[] = [];
@@ -49,6 +50,12 @@ export function buildImportGraph(
       push(importsByFile, fact.path, edge);
       if (to) push(importersByFile, to, edge);
     }
+  }
+
+  for (const edge of autoImports) {
+    edges.push(edge);
+    push(importsByFile, edge.from, edge);
+    if (edge.to) push(importersByFile, edge.to, edge);
   }
 
   const files = facts.map((fact) => fact.path);
