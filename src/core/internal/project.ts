@@ -165,6 +165,9 @@ async function detectNuxtInventory(
     facts,
   );
   const graph = resolveRuntimeGraph(workspaceRoot, "nuxt", join(appRoot, "package.json"));
+  const installedNitro = graph.packages.nitro;
+  if (nuxt.nitroAutoImports && installedNitro?.state === "resolved")
+    nuxt.nitroAutoImports.installedPackageJsonPath = installedNitro.packageJsonPath;
   const targeted = applyRuntimeTarget(
     graph,
     resolveNuxtCompatibility(appRoot, graph, facts.manifest, facts.configs, facts.manifestCurrent),
@@ -392,6 +395,20 @@ async function detectNuxt(
     autoImportsAuthoritative: manifest?.autoImportEnabled !== undefined && manifestCurrent,
     autoImports: new Map(autoImportEntries.map((entry) => [entry.as ?? entry.name, entry])),
     autoImportEntries,
+    runtimeAutoImportEntries: manifest?.runtimeAutoImports as AutoImportEntry[] | undefined,
+    nitroAutoImports: manifest
+      ? {
+          enabled: manifest.nitroAutoImportEnabled !== false,
+          authoritative: manifestCurrent && manifest.nitroAutoImports !== undefined,
+          entries: manifest.nitroAutoImports as AutoImportEntry[] | undefined,
+          scanDirs: manifest.nitroScanDirs?.map((dir) => resolve(root, dir)),
+          plugins: manifest.nitroPlugins?.map((file) => resolve(root, file)),
+          aliases: manifest.nitroAliases,
+          customResolver: manifest.nitroAutoImportCustomResolver,
+          scan: manifest.nitroAutoImportScan,
+          transform: manifest.nitroAutoImportTransform,
+        }
+      : undefined,
     components: new Map(
       (manifest?.components ?? []).map((component: any) => [component.name, component]),
     ),

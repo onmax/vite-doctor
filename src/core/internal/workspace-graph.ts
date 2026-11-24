@@ -16,19 +16,38 @@ import type { ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { pushDiagnostic, scopedReportLocations } from "./diagnostics.js";
 import { sourceFacts, walkAstFacts } from "./facts.js";
-import { buildImportGraph, computeSccs, isRuntimeImportEdge } from "./import-graph.js";
+import {
+  buildImportGraph,
+  computeSccs,
+  importBundleViews,
+  isRuntimeImportEdge,
+} from "./import-graph.js";
+import {
+  collectAutoImportEdges,
+  sessionAutoImportEdges,
+  type AutoImportEdge,
+} from "./auto-import-edges.js";
 import { projectNuxtInventories } from "./workspace-nuxt.js";
 
 export interface GraphIndex {
   resolveImport(from: FileFacts, specifier: string): number | undefined;
+  /** The source file of the run at `path`, an absolute path that may omit the extension. */
+  resolveFile(path: string): number | undefined;
   packageDeps(): PackageDependencyFacts;
 }
 
 const graphIndexes = new WeakMap<WorkspaceGraph, GraphIndex>();
 
-/** Reads package manifests and entry files through `fs`, so the graph's inputs are tracked. */
-export function buildWorkspaceGraph(session: ScanSession, fs: RuleFileSystem): WorkspaceGraph {
-  const index = createGraphIndex(session, fs);
+/**
+ * Reads package manifests and entry files through `fs`, so the graph's inputs are tracked. Only
+ * the `autoImports` passed in become edges, so the graph does not depend on what else collected.
+ */
+export function buildWorkspaceGraph(
+  session: ScanSession,
+  fs: RuleFileSystem,
+  index: GraphIndex = createGraphIndex(session, fs),
+  autoImports: readonly AutoImportEdge[] = [],
+): WorkspaceGraph {
   const files = new Map(session.facts.map((fact) => [fact.fileId, fact]));
   const fileIdsByPath = new Map(session.facts.map((fact) => [fact.path, fact.fileId]));
   const importEdges: GraphEdge[] = [];
@@ -81,6 +100,15 @@ export function buildWorkspaceGraph(session: ScanSession, fs: RuleFileSystem): W
       refsByExport.set(item.name, refs);
     }
   }
+  // An auto-import resolves to one file, so it is not a name reference to every export of it.
+  for (const edge of autoImports)
+    importEdges.push({
+      from: edge.from,
+      to: edge.to,
+      specifier: edge.name,
+      kind: "auto-import",
+      autoImportBundle: edge.autoImportBundle,
+    });
 
   for (const edge of [...importEdges, ...exportEdges]) {
     if (edge.to === undefined) continue;
@@ -110,7 +138,7 @@ export function buildWorkspaceGraph(session: ScanSession, fs: RuleFileSystem): W
     sccs: runtimeSccs(
       session.facts.map((fact) => fact.fileId),
       [
-        ...importEdges.filter((edge) => edge.kind === "import"),
+        ...importEdges.filter((edge) => edge.kind === "import" || edge.kind === "auto-import"),
         ...exportEdges.filter((edge) => edge.kind === "re-export"),
       ],
     ),
@@ -159,6 +187,11 @@ export function createGraphIndex(session: ScanSession, fs: RuleFileSystem): Grap
   };
 
   return {
+    resolveFile(path) {
+      const file = relative(session.root, path);
+      if (file.startsWith("../") || isAbsolute(file)) return undefined;
+      return firstMatch([file]);
+    },
     resolveImport(from, specifier) {
       if (!isLocalSpecifier(specifier)) return undefined;
       // Alias imports are scoped to the importing Nuxt package; relative ones are per directory.
@@ -495,6 +528,19 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph, index: Gr
 }
 
 function runtimeSccs(nodes: number[], edges: GraphEdge[]): number[][] {
+  const views = importBundleViews(edges);
+  if (views.length === 1) return computeRuntimeSccs(nodes, edges);
+  const seen = new Map<string, number[]>();
+  for (const { edges: view } of views) {
+    for (const group of computeRuntimeSccs(nodes, view)) {
+      const key = group.toSorted((left, right) => left - right).join(",");
+      seen.set(key, group);
+    }
+  }
+  return [...seen.values()];
+}
+
+function computeRuntimeSccs(nodes: number[], edges: readonly GraphEdge[]): number[][] {
   const successors = new Map<number, number[]>();
   for (const edge of edges) {
     if (edge.to === undefined || edge.from === edge.to) continue;
@@ -507,20 +553,35 @@ function runtimeSccs(nodes: number[], edges: GraphEdge[]): number[][] {
 
 const importGraphs = new WeakMap<ScanSession, ImportGraph>();
 
-/** The run's import graph, built once from File Facts. */
+/** The run's import graph, built once from File Facts and Nuxt auto-imports. */
 export async function importGraphInventory(session: ScanSession): Promise<ImportGraph> {
   const cached = importGraphs.get(session);
   if (cached) return cached;
   session.facts = await sourceFacts(session);
-  return sessionImportGraph(session);
+  const index = createGraphIndex(session, session.ruleInputs.frame().fs);
+  await collectAutoImportEdges(session, index);
+  return sessionImportGraph(session, index);
 }
 
 function sessionImportGraph(session: ScanSession, index?: GraphIndex): ImportGraph {
   let graph = importGraphs.get(session);
   if (!graph) {
     const resolver = index ?? createGraphIndex(session, session.ruleInputs.frame().fs);
-    graph = buildImportGraph(session.root, session.facts, (from, specifier) =>
-      resolver.resolveImport(from, specifier),
+    const paths = new Map(session.facts.map((fact) => [fact.fileId, fact.path]));
+    graph = buildImportGraph(
+      session.root,
+      session.facts,
+      (from, specifier) => resolver.resolveImport(from, specifier),
+      sessionAutoImportEdges(session).map((edge) => ({
+        from: paths.get(edge.from)!,
+        to: paths.get(edge.to)!,
+        specifier: edge.name,
+        kind: "auto-import" as const,
+        autoImportBundle: edge.autoImportBundle,
+        ...(edge.autoImportBundle === "nitro" && { clientReachable: false }),
+        typeOnly: false,
+        range: edge.range,
+      })),
     );
     importGraphs.set(session, graph);
   }
@@ -538,6 +599,14 @@ function reportImportCycle(session: ScanSession, cycle: ImportCycle, graph: Impo
     ? ` It is one loop in a group of ${cycle.files.length} files that import each other; ${others.length === 1 ? "the file off this loop is listed as a cycle member" : `the ${others.length} files off this loop are listed as cycle members`}.`
     : "";
   const locations = session.scopedReport ? cycleScopeLocations(cycle, graph) : undefined;
+  const members = new Set(cycle.files);
+  const nitro =
+    cycle.autoImportBundle === "nitro" &&
+    cycle.files.some((file) =>
+      graph
+        .importsOf(file)
+        .some((edge) => edge.autoImportBundle === "nitro" && edge.to && members.has(edge.to)),
+    );
   reportWorkspaceDiagnostic(session, {
     ruleId: "workspace/dead-code/circular-dependency",
     severity: "warn",
@@ -551,20 +620,23 @@ function reportImportCycle(session: ScanSession, cycle: ImportCycle, graph: Impo
       ...cycle.path.map((edge) => ({
         file: edge.from,
         ...(edge.range ? { range: edge.range } : {}),
-        message: `${edge.kind === "re-export" ? "re-exports" : "imports"} '${edge.specifier}' → ${path(edge.to!)}`,
+        message:
+          edge.kind === "auto-import"
+            ? `uses auto-imported \`${edge.specifier}\` → ${path(edge.to!)}`
+            : `${edge.kind === "re-export" ? "re-exports" : "imports"} '${edge.specifier}' → ${path(edge.to!)}`,
       })),
       ...others.map((file) => ({ file, message: "Cycle member" })),
     ],
     ...(locations?.length ? { [scopedReportLocations]: locations } : {}),
     // Keyed on the group rather than the loop, so reordering imports keeps baselined findings.
     fingerprint: sha256(
-      `workspace/dead-code/circular-dependency:${cycle.files.map(path).join("\n")}`,
+      `workspace/dead-code/circular-dependency:${cycle.files.map(path).join("\n")}${nitro ? ":nitro" : ""}`,
     ),
     confidence: "proven",
     evidence: [
       {
         kind: "graph",
-        summary: `Strongly connected group of ${cycle.files.length} files joined by static runtime imports or re-exports.`,
+        summary: `Strongly connected group of ${cycle.files.length} files joined by static runtime imports, re-exports, or Nuxt auto-imports.`,
       },
     ],
     analysisPhase: "graph",
@@ -583,6 +655,9 @@ function cycleScopeLocations(cycle: ImportCycle, graph: ImportGraph) {
         members.has(edge.to) &&
         edge.range &&
         isRuntimeImportEdge(edge) &&
+        (!cycle.autoImportBundle ||
+          !edge.autoImportBundle ||
+          cycle.autoImportBundle === edge.autoImportBundle) &&
         !onLoop.has(edge)
           ? [{ file, range: edge.range }]
           : [],
@@ -743,6 +818,9 @@ function reachableFiles(graph: WorkspaceGraph): Set<number> {
     if (fact.exports.some((item) => graph.reverseIndex.refsByExport.has(item.name)))
       queue.push(fact.fileId);
   }
+  // Like a named import, an auto-import keeps its source live, but only the file it resolves to.
+  for (const edge of graph.importEdges)
+    if (edge.kind === "auto-import" && edge.to !== undefined) queue.push(edge.to);
   for (let index = 0; index < queue.length; index++) {
     const id = queue[index]!;
     if (live.has(id)) continue;
