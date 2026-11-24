@@ -1610,7 +1610,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/state/no-diverging-usestate-init": {
     description:
       "Finds a useState() key that two or more call sites initialize with different functions.",
-    why: "useState(key, init) runs init only while the key has no value yet, so when several call sites pass their own initializer for one key, whichever runs first decides the starting value and every other initializer is silently ignored. Which one runs first depends on the route and render order, so the state can start differently on different pages. clearNuxtState(key, { reset: true }) also resets to the first initializer registered. Doctor compares string-literal keys across the project and reports when their initializers differ after ignoring whitespace. Call sites that pass only a key read the state and are not reported, nor are dynamic keys.",
+    why: "useState(key, init) runs init only while the key has no value. Once one initializer sets the value, the others are ignored, so route and render order can change the starting value. Doctor compares initializers for string-literal keys within each Nuxt app and its layers, ignoring formatting that does not change the parsed syntax. Read-only calls and dynamic keys are not reported.",
     recommendedReplacement:
       "Put the state in one composable, such as export const useCount = () => useState('count', () => 0), and call it everywhere instead of repeating useState(key, init). If the call sites mean different state, give each its own key rather than aligning the initializers.",
     examples: [

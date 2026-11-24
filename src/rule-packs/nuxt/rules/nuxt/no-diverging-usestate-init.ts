@@ -1,14 +1,24 @@
-import { createRule, type RuleContext, type SourceRange } from "../../../../core/index.js";
-import { parseScript } from "../../../../core/internal/script.js";
-import { parseSfcFile, parseVueScripts } from "../../../../core/internal/sfc.js";
-// oxlint-disable-next-line no-restricted-imports -- walks the project tree, so the Rule declares cacheScope "none".
-import { selectScanFiles } from "../../../../core/internal/source-inventory.js";
+import { dirname, isAbsolute, relative, resolve } from "pathe";
+import {
+  createRule,
+  type NuxtProjectInfo,
+  type RuleContext,
+  type SourceRange,
+} from "../../../../core/index.js";
+import {
+  analyzeScript,
+  scopeDialect,
+  type ScopeReference,
+} from "../../../../core/internal/script-scope.js";
+import { createVueScriptForParsing, parseSfcFile } from "../../../../core/internal/sfc.js";
+import { workspaceViewRoot } from "../../../../core/internal/workspace-nuxt.js";
 import { diagnostics } from "../../diagnostics.js";
 import { scriptNodesOfType } from "./script-index.js";
 import type { AnyNode } from "./shared.js";
 
 const RULE_ID = "nuxt/state/no-diverging-usestate-init";
-const NUXT_SOURCE_RE = /^(?:#imports|#app(?:\/.*)?|nuxt\/app|nuxt)$/;
+const NUXT_SOURCE_RE = /^(?:#app|nuxt\/app|nuxt)$/;
+const STATE_SOURCE_RE = /(?:^#app\/|(?:^|\/)nuxt\/dist\/app\/)composables\/state(?:\.[cm]?[jt]s)?$/;
 const SCRIPT_RE = /\.(?:[cm]?[jt]s|[jt]sx|vue)$/;
 const SNIPPET_LENGTH = 80;
 
@@ -41,8 +51,11 @@ export const noDivergingUseStateInit = createRule({
     return {
       async onWorkspaceEnd() {
         const groups = new Map<string, StateInit[]>();
-        for (const init of await collectStateInits(ctx))
-          groups.set(init.key, [...(groups.get(init.key) ?? []), init]);
+        for (const init of await collectStateInits(ctx)) {
+          const group = groups.get(init.key);
+          if (group) group.push(init);
+          else groups.set(init.key, [init]);
+        }
         for (const [key, inits] of groups) {
           if (new Set(inits.map((init) => init.normalized)).size < 2) continue;
           reportKey(ctx, key, inits);
@@ -55,14 +68,14 @@ export const noDivergingUseStateInit = createRule({
 function reportKey(ctx: RuleContext, key: string, inits: StateInit[]) {
   const [primary, ...others] = inits;
   if (!primary) return;
-  const quoted = `'${key}'`;
+  const quoted = /^[\w-]+$/.test(key) ? `'${key}'` : JSON.stringify(key);
   const location = (init: StateInit) =>
     `${init.displayPath}:${init.range.line}:${init.range.column}`;
   const variants = [...new Map(inits.map((init) => [init.normalized, init])).values()];
   ctx.report(
     diagnostics.NUXT0097({
-      why: `useState(${quoted}) is initialized with ${variants.length} different initializers: ${variants.map((init) => `${snippet(init.source)} at ${location(init)}`).join(", ")}. useState() runs its initializer only while key ${quoted} has no value, so whichever call site runs first decides the starting value, and every other initializer is silently ignored. Which one runs first depends on the route and render order, and clearNuxtState(${quoted}, { reset: true }) resets to the first initializer registered.`,
-      fix: `Initialize ${quoted} in one composable, such as export const ${composableName(key)} = () => useState(${quoted}, ${snippet(primary.source)}), and call it at every site instead of useState(${quoted}, ...). Don't just align the initializers in place: if the call sites mean different state, give each its own key.`,
+      why: `useState(${quoted}) is initialized with ${variants.length} different initializers: ${variants.map((init) => `${snippet(init.source)} at ${location(init)}`).join(", ")}. useState() only runs an initializer while key ${quoted} has no value. Once one initializer sets the value, the others are ignored, so route and render order can change the starting value.`,
+      fix: `Initialize ${quoted} in one composable and call it from every site that uses that state. If the sites mean different state, give each its own key instead.`,
       sources: inits.map(location),
     }),
     {
@@ -88,33 +101,56 @@ function reportKey(ctx: RuleContext, key: string, inits: StateInit[]) {
 }
 
 async function collectStateInits(ctx: RuleContext): Promise<StateInit[]> {
-  const entries = await selectScanFiles(ctx.project.root, {}, {}, ctx.project);
+  const { project } = ctx;
+  const nuxt = project.nuxt;
+  if (!nuxt) return [];
+  const appRoot = resolve(
+    project.root,
+    workspaceViewRoot(project) ??
+      (nuxt.manifestPath ? dirname(dirname(nuxt.manifestPath)) : (nuxt.layers[0]?.root ?? ".")),
+  );
+  const layerRoots = nuxt.layers.map((layer) => resolve(appRoot, layer.root));
+  const appRoots = [appRoot, ...layerRoots, ...(nuxt.manifest?.appScanRoots ?? [])].sort(
+    (left, right) => right.length - left.length,
+  );
+  const otherRoots = (project.workspaceNuxt ?? [])
+    .map(({ root }) => resolve(project.root, root))
+    .filter((root) => root !== appRoot && !layerRoots.includes(root));
   const inits: StateInit[] = [];
-  for (const entry of entries) {
-    if (entry.sourceKind === "module" || !SCRIPT_RE.test(entry.path)) continue;
-    if (/\.d\.[cm]?ts$/.test(entry.path) || ctx.helpers.isNuxtServerFile(entry.displayPath))
+  for (const file of await ctx.inventory.sourcePaths()) {
+    if (!SCRIPT_RE.test(file) || /\.d\.[cm]?ts$/.test(file)) continue;
+    const root = appRoots.find((root) => isInside(root, file));
+    if (!root || otherRoots.some((other) => isInside(root, other) && isInside(other, file)))
       continue;
-    const text = ctx.fs.readText(entry.path);
-    if (!text?.includes("useState")) continue;
-    const program = entry.path.endsWith(".vue")
-      ? parseVueScripts(entry.path, (await parseSfcFile(entry.path, text)).descriptor, text)
-      : parseScript(entry.path, text);
-    if (!program) continue;
-    const callees = useStateNames(program);
-    for (const call of scriptNodesOfType(program, "CallExpression")) {
-      if (call.callee?.type !== "Identifier" || !callees.has(call.callee.name)) continue;
+    if ([...layerRoots, appRoot].some((root) => ctx.helpers.isNuxtServerFile(relative(root, file))))
+      continue;
+    const text = ctx.fs.readText(file);
+    if (!text) continue;
+    const script = file.endsWith(".vue")
+      ? createVueScriptForParsing((await parseSfcFile(file, text)).descriptor, text)
+      : { text, lang: undefined };
+    const scope = analyzeScript(
+      script.text,
+      scopeDialect(file, script.lang === "tsx" || script.lang === "jsx"),
+    );
+    if (!scope) continue;
+    for (const call of scriptNodesOfType(scope.ast, "CallExpression")) {
+      if (
+        call.callee?.type !== "Identifier" ||
+        !isNuxtUseState(scope.references.get(call.callee), nuxt)
+      )
+        continue;
       const [keyNode, init] = call.arguments ?? [];
       const key = literalKey(keyNode);
       if (key === undefined || !init || init.type === "SpreadElement") continue;
       if (init.type === "Identifier" && init.name === "undefined") continue;
-      const source = text.slice(init.start, init.end);
       inits.push({
         key,
-        file: entry.path,
-        displayPath: entry.displayPath,
-        range: ctx.helpers.rangeFromOffsets(entry.path, text, call.start, call.end),
-        source,
-        normalized: normalize(source),
+        file,
+        displayPath: relative(project.root, file),
+        range: ctx.helpers.rangeFromOffsets(file, text, call.start, call.end),
+        source: text.slice(init.start, init.end),
+        normalized: initializerShape(init),
       });
     }
   }
@@ -128,30 +164,43 @@ async function collectStateInits(ctx: RuleContext): Promise<StateInit[]> {
   );
 }
 
-/** Local names that call Nuxt's useState: the auto-import unless shadowed, plus aliased imports. */
-function useStateNames(program: AnyNode): Set<string> {
-  const names = new Set(["useState"]);
-  for (const statement of program.body ?? []) {
-    if (statement.type === "ImportDeclaration") {
-      const nuxt = NUXT_SOURCE_RE.test(statement.source?.value);
-      for (const specifier of statement.specifiers ?? []) {
-        const imported = specifier.imported?.name ?? specifier.imported?.value;
-        if (nuxt && specifier.type === "ImportSpecifier" && imported === "useState")
-          names.add(specifier.local.name);
-        else if (specifier.local?.name === "useState") names.delete("useState");
-      }
-      continue;
-    }
-    const declaration =
-      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-    if (declaration?.type === "FunctionDeclaration" && declaration.id?.name === "useState")
-      names.delete("useState");
-    if (declaration?.type === "VariableDeclaration")
-      for (const declarator of declaration.declarations ?? [])
-        if (declarator.id?.type === "Identifier" && declarator.id.name === "useState")
-          names.delete("useState");
-  }
-  return names;
+function isInside(root: string, file: string): boolean {
+  const path = relative(root, file);
+  return path !== ".." && !path.startsWith("../") && !isAbsolute(path);
+}
+
+function isNuxtUseState(reference: ScopeReference | undefined, nuxt: NuxtProjectInfo): boolean {
+  if (!reference) return false;
+  if (!reference.resolved)
+    return nuxt.autoImportEnabled && isNuxtAutoImport(reference.identifier.name, nuxt);
+  return reference.resolved.defs.some((definition) => {
+    if (definition.type !== "ImportBinding") return false;
+    const { node, parent } = definition;
+    if (
+      node.type !== "ImportSpecifier" ||
+      node.importKind === "type" ||
+      parent.type !== "ImportDeclaration" ||
+      parent.importKind === "type"
+    )
+      return false;
+    const name = node.imported.type === "Identifier" ? node.imported.name : node.imported.value;
+    const source = parent.source.value;
+    return source === "#imports"
+      ? isNuxtAutoImport(name, nuxt)
+      : name === "useState" && (NUXT_SOURCE_RE.test(source) || STATE_SOURCE_RE.test(source));
+  });
+}
+
+function isNuxtAutoImport(name: string, nuxt: NuxtProjectInfo): boolean {
+  const entry = nuxt.autoImports.get(name);
+  if (!entry) return name === "useState" && !nuxt.autoImportsAuthoritative;
+  return (
+    entry.name === "useState" &&
+    !entry.type &&
+    (NUXT_SOURCE_RE.test(entry.from) ||
+      STATE_SOURCE_RE.test(entry.from) ||
+      (entry.from === "#imports" && entry.kind === "nuxt"))
+  );
 }
 
 function literalKey(node: AnyNode): string | undefined {
@@ -160,17 +209,14 @@ function literalKey(node: AnyNode): string | undefined {
     return node.quasis[0]?.value.cooked ?? undefined;
 }
 
-function normalize(source: string): string {
-  return source.replace(/\s+/g, " ").replace(/ (?=\W)|(?<=\W) /g, "");
-}
-
-function composableName(key: string): string {
-  const words = key.split(/[^A-Za-z0-9]+/).filter(Boolean);
-  const name = words.map((word) => word[0]!.toUpperCase() + word.slice(1)).join("");
-  return /^[A-Z]/.test(name) ? `use${name}` : "useSharedState";
+function initializerShape(node: AnyNode): string {
+  return JSON.stringify(node, function (key, value: unknown) {
+    if (key === "start" || key === "end" || key === "range" || key === "loc") return undefined;
+    if (key === "raw" && this.type === "Literal") return undefined;
+    return typeof value === "bigint" ? value.toString() : value;
+  });
 }
 
 function snippet(source: string): string {
-  const flat = source.replace(/\s+/g, " ");
-  return flat.length > SNIPPET_LENGTH ? `${flat.slice(0, SNIPPET_LENGTH - 1)}…` : flat;
+  return source.length > SNIPPET_LENGTH ? `${source.slice(0, SNIPPET_LENGTH - 1)}…` : source;
 }
