@@ -45,14 +45,13 @@ test("Pinia cycles use Vite's resolved extension order", async () => {
       join(root, "package.json"),
       JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0" } }),
     );
-    await writeFile(
-      join(root, "x.ts"),
-      `
+    const xStore = (condition: string) => `
 import { defineStore } from 'pinia'
-import { useYStore } from './y'
-export const useXStore = defineStore('x', () => ({ name: useYStore().name }))
-`,
-    );
+import { useYStore } from './barrel'
+export const useXStore = defineStore('x', () => ({ name: ${condition} ? useYStore().name : 'fallback' }))
+`;
+    await writeFile(join(root, "x.ts"), xStore("!import.meta.env.SSR"));
+    await writeFile(join(root, "barrel.ts"), "export { useYStore } from './y'");
     await writeFile(
       join(root, "y.tsx"),
       `
@@ -73,12 +72,34 @@ export const useYStore = defineStore('y', () => ({ name: useXStore().name }))
     await expect(
       build({ ...config, resolve: { extensions: [".tsx", ".jsx", ".ts"] } }),
     ).rejects.toThrow(/PINIA0003/);
+    const storeFirst = { resolve: { extensions: [".tsx", ".jsx", ".ts"] } };
+    const helperFirst = { resolve: { extensions: [".jsx", ".tsx", ".ts"] } };
+    await expect(
+      build({ ...config, environments: { client: storeFirst, ssr: helperFirst } }),
+    ).rejects.toThrow(/PINIA0003/);
+    await build({ ...config, environments: { client: helperFirst, ssr: storeFirst } });
+    await writeFile(join(root, "x.ts"), xStore("import.meta.env.SSR"));
+    await expect(
+      build({ ...config, environments: { client: helperFirst, ssr: storeFirst } }),
+    ).rejects.toThrow(/PINIA0003/);
+
+    await writeFile(join(root, "x.ts"), xStore("!import.meta.env.SSR"));
+    await writeFile(
+      join(root, "y.tsx"),
+      `
+import { defineStore } from 'pinia'
+import { useXStore } from './reverse'
+export const useYStore = defineStore('y', () => ({ name: useXStore().name }))
+`,
+    );
+    await writeFile(join(root, "reverse.jsx"), "export { useXStore } from './x'");
+    await writeFile(
+      join(root, "reverse.tsx"),
+      "export const useXStore = () => ({ name: 'helper' })",
+    );
     await build({
       ...config,
-      environments: {
-        client: { resolve: { extensions: [".tsx", ".jsx", ".ts"] } },
-        ssr: { resolve: { extensions: [".jsx", ".tsx", ".ts"] } },
-      },
+      environments: { client: storeFirst, secondClient: { ...helperFirst, consumer: "client" } },
     });
   });
 });

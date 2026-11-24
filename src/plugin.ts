@@ -413,7 +413,8 @@ function viteInventory(config: ResolvedConfig) {
 
 function viteRuntimeEvidence(config: ResolvedConfig) {
   const prefixes = config.envPrefix ?? "VITE_";
-  const environments = Object.values(config.environments ?? {});
+  const namedEnvironments = Object.entries(config.environments ?? {});
+  const environments = namedEnvironments.map(([, environment]) => environment);
   const hasResolvedConsumers = environments.every(
     ({ consumer }) => consumer === "client" || consumer === "server",
   );
@@ -429,14 +430,15 @@ function viteRuntimeEvidence(config: ResolvedConfig) {
     buildSsr: Boolean(config.build?.ssr),
     ssrExternal: config.ssr?.external ?? [],
     ssrNoExternal: config.ssr?.noExternal ?? [],
-    importResolution: config.resolve?.extensions
-      ? {
-          root: config.root,
-          extensions: environments.length
-            ? environments.map((environment) => environment.resolve.extensions)
-            : [config.resolve.extensions],
-        }
-      : undefined,
+    importResolution: {
+      root: config.root,
+      environments: Object.fromEntries(
+        namedEnvironments.map(([name, { consumer, resolve }]) => [
+          name,
+          { consumer, extensions: resolve.extensions },
+        ]),
+      ),
+    },
     envExposure: hasResolvedConsumers
       ? {
           root: config.root,

@@ -17,6 +17,12 @@ interface LocatedStore {
   module: StoreModule;
 }
 
+interface EnvironmentResolution {
+  root: string;
+  runtime: number;
+  extensions: string[];
+}
+
 interface StoreEdge {
   from: LocatedStore;
   to: LocatedStore;
@@ -90,14 +96,15 @@ export const noCircularSetupStateRead = createRule({
             }),
           ),
         );
-        const edges = storeEdges(ctx, stores);
+        const environments = importResolutionEvidence(ctx.project.runtimeEvidence?.vite);
         const seen = new Set<string>();
-        for (const runtime of setupRuntimes) {
-          for (const cycle of cycles(
-            stores,
-            edges.filter((edge) => edge.use.runtimes & runtime),
-          )) {
-            reportCycle(ctx, cycle, runtime, seen);
+        for (const runtime of Object.values(setupRuntimes)) {
+          const resolutions = environments.length
+            ? environments.filter((environment) => environment.runtime === runtime)
+            : [undefined];
+          for (const resolution of resolutions) {
+            const edges = storeEdges(ctx, stores, runtime, resolution);
+            for (const cycle of cycles(stores, edges)) reportCycle(ctx, cycle, runtime, seen);
           }
         }
       },
@@ -105,11 +112,17 @@ export const noCircularSetupStateRead = createRule({
   },
 });
 
-function storeEdges(ctx: RuleContext, stores: LocatedStore[]): StoreEdge[] {
+function storeEdges(
+  ctx: RuleContext,
+  stores: LocatedStore[],
+  runtime: number,
+  resolution: EnvironmentResolution | undefined,
+): StoreEdge[] {
   const edges: StoreEdge[] = [];
-  const resolveUse = storeResolver(ctx, stores);
+  const resolveUse = storeResolver(ctx, stores, resolution);
   for (const from of stores) {
     for (const use of from.store.uses) {
+      if (!(use.runtimes & runtime)) continue;
       const target = resolveUse(from, use);
       if (!target || target.store === from || !target.store.store.setup) continue;
       edges.push({ from, to: target.store, use, byName: target.byName });
@@ -118,10 +131,13 @@ function storeEdges(ctx: RuleContext, stores: LocatedStore[]): StoreEdge[] {
   return edges;
 }
 
-function storeResolver(ctx: RuleContext, stores: LocatedStore[]) {
+function storeResolver(
+  ctx: RuleContext,
+  stores: LocatedStore[],
+  host: EnvironmentResolution | undefined,
+) {
   const byFile = new Map<string, LocatedStore[]>();
   const programs = new Map<string, StoreModule["program"]>();
-  const host = importResolutionEvidence(ctx.project.runtimeEvidence?.vite);
   const frameworks = new Map(
     ctx.project.workspacePackages?.map((item) => [
       resolve(ctx.project.root, item.root),
@@ -167,25 +183,20 @@ function storeResolver(ctx: RuleContext, stores: LocatedStore[]) {
     const framework = frameworks.get(packageRoot(ctx, from)) ?? ctx.project.framework;
     const defaults = framework === "nuxt" ? NUXT_EXTENSIONS : VITE_EXTENSIONS;
     const relativePath = host ? relative(host.root, from) : undefined;
-    const orders =
+    const order =
       relativePath !== undefined &&
       relativePath !== ".." &&
       !relativePath.startsWith("../") &&
       !isAbsolute(relativePath)
         ? host?.extensions
         : undefined;
-    const matches = new Set<string>();
-    for (const extensions of orders ?? [defaults]) {
-      let match: string | undefined;
-      for (const base of importBases(ctx, from, source)) {
-        const file = fileForBase(base, extensions, Boolean(orders));
-        if (file === null || (file && match && file !== match)) return undefined;
-        match ??= file;
-      }
-      if (!match) return undefined;
-      matches.add(match);
+    let match: string | undefined;
+    for (const base of importBases(ctx, from, source)) {
+      const file = fileForBase(base, order ?? defaults, Boolean(order));
+      if (file === null || (file && match && file !== match)) return undefined;
+      match ??= file;
     }
-    return matches.size === 1 ? matches.values().next().value : undefined;
+    return match;
   }
 
   function program(file: string) {
@@ -342,17 +353,20 @@ function importBases(ctx: RuleContext, from: string, specifier: string): string[
   return bases;
 }
 
-function importResolutionEvidence(runtime: unknown) {
-  if (!runtime || typeof runtime !== "object" || !("importResolution" in runtime)) return;
+function importResolutionEvidence(runtime: unknown): EnvironmentResolution[] {
+  if (!runtime || typeof runtime !== "object" || !("importResolution" in runtime)) return [];
   const evidence = runtime.importResolution;
-  if (!evidence || typeof evidence !== "object") return;
-  const { root, extensions } = evidence as Record<string, unknown>;
-  if (typeof root !== "string" || !Array.isArray(extensions) || !extensions.length) return;
-  if (
-    !extensions.every((list) => Array.isArray(list) && list.every((ext) => typeof ext === "string"))
-  )
-    return;
-  return { root, extensions: extensions as string[][] };
+  if (!evidence || typeof evidence !== "object") return [];
+  const { root, environments } = evidence as Record<string, unknown>;
+  if (typeof root !== "string" || !environments || typeof environments !== "object") return [];
+  return Object.values(environments).flatMap((environment) => {
+    if (!environment || typeof environment !== "object") return [];
+    const { consumer, extensions } = environment as Record<string, unknown>;
+    if (consumer !== "client" && consumer !== "server") return [];
+    if (!Array.isArray(extensions) || !extensions.every((ext) => typeof ext === "string"))
+      return [];
+    return [{ root, runtime: setupRuntimes[consumer], extensions }];
+  });
 }
 
 function nuxtForFile(ctx: RuleContext, file: string) {
@@ -426,7 +440,11 @@ function reportCycle(ctx: RuleContext, cycle: StoreEdge[], runtime: number, seen
   );
   const [primary, ...others] = sites;
   if (!primary) return;
-  const key = JSON.stringify(sites.map((site) => site.location));
+  const storeKey = ({ module, store }: LocatedStore) => `${module.file}:${store.binding?.start}`;
+  const key = JSON.stringify([
+    [...new Set(cycle.map(({ from }) => storeKey(from)))].sort(),
+    sites.map(({ location, edge }) => [location, storeKey(edge.to)]),
+  ]);
   if (seen.has(key)) return;
   seen.add(key);
   const ids = [...new Set(cycle.map((edge) => `"${edge.from.store.id}"`))];
