@@ -112,6 +112,66 @@ test("VUE0048 follows default forwarding and a namespace re-export", async () =>
   expect(result.diagnostics[0]?.related).toHaveLength(2);
 });
 
+test("VUE0048 follows distinct export slots through cyclic barrels", async () => {
+  const result = await run({
+    "src/store.ts": store,
+    "src/index.ts": `export { store } from './store';
+export { forwarded as publicStore } from './forward';
+export * as self from './index'`,
+    "src/forward.ts": `export { store as forwarded } from './index'`,
+    "src/a.ts": `import { publicStore } from './index'; publicStore.count++`,
+    "src/b.ts": `import { self } from './index'; self.publicStore.count++`,
+  });
+  expect(result.diagnostics[0]?.related?.map(({ file }) => relativeTo(result.root, file))).toEqual([
+    "src/a.ts",
+    "src/b.ts",
+  ]);
+});
+
+test("VUE0048 follows imports hoisted from script setup into ordinary script", async () => {
+  const component = `<script>
+export function bump() { counter.count++ }
+function ignore(counter) { counter.count++ }
+</script>
+<script setup>import { store as counter } from './store'</script>`;
+  const result = await run({
+    "src/store.ts": store,
+    "src/a.ts": writer,
+    "src/Hoisted.vue": component,
+  });
+  expect(
+    result.diagnostics[0]?.related
+      ?.filter(({ file }) => file.endsWith(".vue"))
+      .map(({ range }) => [range?.line, component.slice(range?.start, range?.end)]),
+  ).toEqual([[2, "counter.count++"]]);
+});
+
+test("VUE0048 distinguishes hoisted imports from setup-local and type-only Object bindings", async () => {
+  const result = await run({
+    "src/store.ts": store,
+    "src/object.ts": `export const Object = { assign: () => ({}) }`,
+    "src/Imported.vue": `<script lang="ts">
+import { store } from './store'
+export function reset() { Object.assign(store, {}) }
+</script>
+<script setup lang="ts">import { Object } from './object'</script>`,
+    "src/Local.vue": `<script lang="ts">
+import { store } from './store'
+export function reset() { Object.assign(store, {}) }
+</script>
+<script setup lang="ts">const Object = { assign: () => ({}) }</script>`,
+    "src/TypeOnly.vue": `<script lang="ts">
+import { store } from './store'
+export function reset() { Object.assign(store, {}) }
+</script>
+<script setup lang="ts">import { type Object } from './object'</script>`,
+  });
+  expect(result.diagnostics[0]?.related?.map(({ file }) => relativeTo(result.root, file))).toEqual([
+    "src/Local.vue",
+    "src/TypeOnly.vue",
+  ]);
+});
+
 test("VUE0048 respects setup shadowing and the implicit event parameter", async () => {
   const result = await run({
     "src/store.ts": store,

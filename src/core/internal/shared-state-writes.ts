@@ -84,8 +84,13 @@ export async function findSharedStateWrites(
 ): Promise<SharedStateWrite[]> {
   const writes = new Map<string, SharedStateWrite>();
   const visited = new Set<string>();
+  const exportSlot = (file: string, name: string) => JSON.stringify([file, name]);
   const pending: Array<{ file: string; path: readonly string[]; history: ReadonlySet<string> }> = [
-    { file: binding.file, path: [binding.exportName], history: new Set([binding.file]) },
+    {
+      file: binding.file,
+      path: [binding.exportName],
+      history: new Set([exportSlot(binding.file, binding.exportName)]),
+    },
   ];
   const sources = new Map<string, Promise<LoadedSource | undefined>>();
   while (pending.length) {
@@ -95,7 +100,7 @@ export async function findSharedStateWrites(
     visited.add(key);
     const byImporter = new Map<string, Set<string>>();
     for (const edge of graph.importersOf(target.file)) {
-      if (edge.typeOnly || edge.kind === "dynamic-import" || edge.from === binding.file) continue;
+      if (edge.typeOnly || edge.kind === "dynamic-import") continue;
       let specifiers = byImporter.get(edge.from);
       if (!specifiers) byImporter.set(edge.from, (specifiers = new Set()));
       specifiers.add(edge.specifier);
@@ -106,10 +111,12 @@ export async function findSharedStateWrites(
       const source = await loading;
       if (!source) continue;
       const found = await writesInFile(ctx, source, specifiers, target.path, binding);
-      for (const write of found.writes) writes.set(`${write.file}:${write.range.start}`, write);
-      if (!target.history.has(file)) {
-        const history = new Set([...target.history, file]);
-        for (const path of found.reExports) pending.push({ file, path, history });
+      if (file !== binding.file)
+        for (const write of found.writes) writes.set(`${write.file}:${write.range.start}`, write);
+      for (const path of found.reExports) {
+        const slot = exportSlot(file, path[0]!);
+        if (!target.history.has(slot))
+          pending.push({ file, path, history: new Set([...target.history, slot]) });
       }
     }
   }
@@ -269,6 +276,12 @@ async function writesInFile(
   const call = binding.access === "call";
   const scriptNames = moduleValueNames(script);
   const setupNames = moduleValueNames(setup);
+  const hoistedSetupNames = new Set<string>();
+  for (const statement of (setup?.ast.body ?? []) as Node[]) {
+    if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
+    for (const specifier of statement.specifiers ?? [])
+      if (specifier.importKind !== "type") hoistedSetupNames.add(specifier.local.name);
+  }
   const collectionAt = binding.collectionAt ?? (() => undefined);
 
   const visitReference = (id: Node, entry: Entry, scope: ScriptScope) => {
@@ -291,7 +304,7 @@ async function writesInFile(
     if (!root) return;
     const isGlobal = (name: Node) =>
       !scope.references.get(name)?.resolved?.defs.length &&
-      (scope !== setup || !scriptNames.has(name.name));
+      !(scope === setup ? scriptNames : hoistedSetupNames).has(name.name);
     const write = classifyWrite(root, parentOf, binding.shape, false, collectionAt, isGlobal);
     if (write) writes.push(toWrite(ctx, file, text, text, 0, write, "script"));
     if (!entry.call) return;
@@ -303,20 +316,22 @@ async function writesInFile(
   };
 
   const visitRoots = (variable: ScopeVariable, entry: Entry, scope: ScriptScope) => {
-    if (
-      setup &&
-      isModuleVariable(variable) &&
-      (scope === setup || !setupNames.has(variable.name))
-    ) {
-      templateNames.set(variable.name, entry);
-      if (scope !== setup) {
-        for (const reference of setup.scopeManager.globalScope?.through ?? [])
-          if (reference.identifier.name === variable.name)
-            visitReference(reference.identifier, entry, setup);
+    if (setup && isModuleVariable(variable)) {
+      if (scope === setup || !setupNames.has(variable.name)) {
+        templateNames.set(variable.name, entry);
+        if (scope !== setup) visitUnresolvedRoots(setup, variable.name, entry);
       }
+      if (script && scope === setup && hoistedSetupNames.has(variable.name))
+        visitUnresolvedRoots(script, variable.name, entry);
     }
     for (const reference of variable.references)
       if (!reference.init) visitReference(reference.identifier, entry, scope);
+  };
+
+  const visitUnresolvedRoots = (scope: ScriptScope, name: string, entry: Entry) => {
+    for (const reference of scope.scopeManager.globalScope?.through ?? [])
+      if (reference.isValueReference && reference.identifier.name === name)
+        visitReference(reference.identifier, entry, scope);
   };
 
   for (const scope of [script, setup]) {
