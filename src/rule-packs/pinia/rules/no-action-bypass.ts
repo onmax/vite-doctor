@@ -1,11 +1,14 @@
 import { relative } from "pathe";
 import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
+import { isTransformedAppFile } from "../../../core/internal/auto-import-edges.js";
 import { analyzeScript, type ScriptScope } from "../../../core/internal/script-scope.js";
 import { createVueScriptForParsing, parseSfcFile } from "../../../core/internal/sfc.js";
 import {
   findLocalStateWrites,
   findSharedStateWrites,
   findThisWrites,
+  ownPropertyName,
+  rebindsThis,
   stateCollections,
   type PropertyPath,
   type SharedStateWrite,
@@ -14,6 +17,8 @@ import { diagnostics } from "../diagnostics.js";
 import {
   collectStoreModules,
   findStoreDefinitions,
+  nuxtForFile,
+  resolvedCalleeImport,
   storeResolver,
   type LocatedStore,
   type StoreModule,
@@ -38,7 +43,7 @@ const STATE_FACTORIES = new Map<string, "ref" | "reactive">([
   ["reactive", "reactive"],
   ["shallowReactive", "reactive"],
 ]);
-const VUE_SOURCES = new Set(["vue", "@vue/reactivity", "#imports"]);
+const VUE_SOURCES = new Set(["vue", "@vue/reactivity"]);
 
 interface StoreState {
   /** The node Diagnostics point at: the state key or the setup variable. */
@@ -90,68 +95,99 @@ export const noActionBypass = createRule({
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        const modules = await collectStoreModules(ctx);
+        const modules = await collectStoreModules(ctx, await ctx.inventory.sourcePaths());
         const located = modules.flatMap((module) =>
           findStoreDefinitions(module.program, module.text).map((store) => ({ store, module })),
         );
         if (!located.length) return;
         const resolve = storeResolver(ctx, located);
+        const registeredStores = new Map<string, Map<LocatedStore, string[]>>();
+        function registeredNames(file: string, store: LocatedStore): string[] | undefined {
+          const nuxt = nuxtForFile(ctx, file);
+          if (!nuxt?.autoImportsAuthoritative) return undefined;
+          let byStore = registeredStores.get(file);
+          if (!byStore) {
+            registeredStores.set(file, (byStore = new Map()));
+            for (const [name, entry] of nuxt.autoImports) {
+              if (entry.type) continue;
+              const target = resolve(file, { kind: "import", source: "#imports", name });
+              if (!target) continue;
+              const names = byStore.get(target.store) ?? [];
+              names.push(name);
+              byStore.set(target.store, names);
+            }
+          }
+          return byStore.get(store) ?? [];
+        }
         const storeCalls = new Map<string, Array<[number, number]>>();
         const stores: AnalyzedStore[] = [];
         for (const module of modules) {
           const scope = await analyzeModule(module);
           if (!scope) continue;
-          const calls = defineStoreCalls(scope);
+          const calls = defineStoreCalls(ctx, module.file, scope);
           storeCalls.set(
             module.file,
-            [...calls.values()].map((call) => call.range),
+            calls.map((call) => call.range),
           );
+          const byId = new Map(calls.map((call) => [storeIdOffset(call), call]));
           for (const store of located) {
             if (store.module !== module) continue;
-            const call = calls.get(store.store.idStart);
+            const call = byId.get(store.store.idStart);
             const analyzed = call && analyzeStore(ctx, store, scope, call);
             if (analyzed) stores.push(analyzed);
           }
         }
         const graph = await ctx.inventory.importGraph();
         for (const store of stores) {
-          const byName = new Set<string>();
           const writes = new Map<string, SharedStateWrite>();
-          for (const exportName of store.exportNames) {
+          for (const [index, exportName] of store.exportNames.entries()) {
             const found = await findSharedStateWrites(ctx, graph, {
               file: store.located.module.file,
               exportName,
               shape: "reactive",
               access: "call",
               collectionAt: store.collectionAt,
-              autoImport:
-                exportName === "default"
-                  ? undefined
-                  : (file) => {
-                      const target = resolve(file, { kind: "auto-import", name: exportName });
-                      if (target?.store !== store.located) return false;
-                      if (target.byName) byName.add(file);
-                      return true;
-                    },
+              autoImports:
+                index === 0
+                  ? {
+                      names(file) {
+                        return (
+                          registeredNames(file, store.located) ??
+                          store.exportNames.filter((name) => name !== "default")
+                        );
+                      },
+                      resolve(file, name, kind) {
+                        if (kind === "implicit" && !implicitImportsEnabled(ctx, file))
+                          return undefined;
+                        const registered = registeredNames(file, store.located);
+                        if (registered) return registered.includes(name) ? "resolved" : undefined;
+                        if (kind === "explicit") return undefined;
+                        const target = resolve(file, { kind: "auto-import", name });
+                        if (target?.store !== store.located) return undefined;
+                        return target.byName ? "by-name" : "resolved";
+                      },
+                    }
+                  : undefined,
             });
             for (const write of found) {
               const inStore = storeCalls
                 .get(write.file)
                 ?.some(([start, end]) => write.range.start >= start && write.range.start < end);
-              if (!inStore) writes.set(`${write.file}:${write.range.start}`, write);
+              const key = `${write.file}:${write.range.start}`;
+              if (!inStore && (!write.byName || !writes.has(key))) writes.set(key, write);
             }
           }
           for (const [property, state] of store.state) {
             if (!state.actions.size) continue;
             const byFile = new Map<string, SharedStateWrite[]>();
             for (const write of writes.values()) {
-              if (write.path[0] !== property) continue;
+              if (!writesProperty(write, property)) continue;
               const list = byFile.get(write.file) ?? [];
               list.push(write);
               byFile.set(write.file, list);
             }
             if (byFile.size < 2) continue;
-            report(ctx, store, property, state, byFile, byName);
+            report(ctx, store, property, state, byFile);
           }
         }
       },
@@ -167,20 +203,58 @@ async function analyzeModule(module: StoreModule): Promise<ScriptScope | null> {
   return analyzeScript(script.text, script.lang === "jsx" || script.lang === "tsx" ? "tsx" : "ts");
 }
 
-/** `defineStore()`-shaped calls, keyed by the offset of their static id. */
-function defineStoreCalls(scope: ScriptScope): Map<number, AnyNode> {
-  const calls = new Map<number, AnyNode>();
+function defineStoreCalls(ctx: RuleContext, file: string, scope: ScriptScope): AnyNode[] {
+  const calls: AnyNode[] = [];
+  const nuxt = nuxtForFile(ctx, file);
+  const implicit = implicitImportsEnabled(ctx, file);
   walk(scope, scope.ast, (node) => {
     if (node.type !== "CallExpression") return;
-    const first = unwrap(node.arguments[0]);
-    if (first?.type === "ObjectExpression") {
-      const id = first.properties.find(
-        (property: AnyNode) => property.type === "Property" && keyName(property) === "id",
-      );
-      if (id) calls.set(id.value.range[0], node);
-    } else if (first) calls.set(first.range[0], node);
+    const callee = unwrap(node.callee);
+    const binding = calleeBinding(callee, scope, nuxt, implicit);
+    if (binding?.from === "pinia" && binding.name === "defineStore") calls.push(node);
+    else if (
+      !binding &&
+      implicit &&
+      !nuxt?.autoImportsAuthoritative &&
+      !nuxt?.autoImports.has("defineStore") &&
+      callee?.type === "Identifier" &&
+      callee.name === "defineStore" &&
+      scope.references.get(callee)?.resolved === null
+    )
+      calls.push(node);
   });
   return calls;
+}
+
+function storeIdOffset(call: AnyNode): number | undefined {
+  const first = unwrap(call.arguments[0]);
+  return first?.type === "ObjectExpression"
+    ? propertyValue(first, "id")?.range[0]
+    : first?.range[0];
+}
+
+function implicitImportsEnabled(ctx: RuleContext, file: string): boolean {
+  const nuxt = nuxtForFile(ctx, file);
+  return (
+    !nuxt ||
+    (nuxt.autoImportEnabled && isTransformedAppFile(file, relative(ctx.project.root, file), nuxt))
+  );
+}
+
+function calleeBinding(
+  callee: AnyNode,
+  scope: ScriptScope,
+  nuxt: ReturnType<typeof nuxtForFile>,
+  implicit: boolean,
+) {
+  return resolvedCalleeImport(
+    callee,
+    (identifier) => {
+      const reference = scope.references.get(identifier);
+      return implicit || reference?.resolved ? reference : undefined;
+    },
+    nuxt,
+  );
 }
 
 function analyzeStore(
@@ -213,19 +287,23 @@ function analyzeOptionStore(
 ): Pick<AnalyzedStore, "state" | "collectionAt"> | undefined {
   const literal = returnedObject(propertyValue(options, "state"));
   if (!literal) return undefined;
-  const collectionAt = stateCollections(scope, literal);
+  const properties = effectiveProperties(literal);
+  const collectionAt: CollectionAt = ([key, ...path]) => {
+    const property = key == null ? undefined : properties.get(key);
+    return property?.kind === "init" ? stateCollections(scope, property.value)(path) : undefined;
+  };
   const state = new Map<string, StoreState>();
-  for (const property of literal.properties) {
-    const name = property.type === "Property" ? keyName(property) : undefined;
-    if (name !== undefined) state.set(name, { declaration: property.key, actions: new Set() });
+  for (const [name, property] of properties) {
+    if (property.kind === "init")
+      state.set(name, { declaration: property.key, actions: new Set() });
   }
-  const actions = unwrap(propertyValue(options, "actions"));
-  for (const property of actions?.type === "ObjectExpression" ? actions.properties : []) {
-    const name = property.type === "Property" ? keyName(property) : undefined;
+  for (const [name, property] of effectiveProperties(propertyValue(options, "actions"))) {
     const fn = unwrap(property.value);
-    if (name === undefined || fn?.type !== "FunctionExpression") continue;
+    if (property.kind !== "init" || fn?.type !== "FunctionExpression") continue;
     const written = [
-      ...findThisWrites(ctx, file, text, scope, fn, collectionAt).map((write) => write.path[0]),
+      ...findThisWrites(ctx, file, text, scope, fn, collectionAt).flatMap<
+        string | null | undefined
+      >((write) => write.assignedKeys ?? [write.path[0]]),
       ...thisPatchKeys(scope, fn),
     ];
     for (const key of written) if (typeof key === "string") state.get(key)?.actions.add(name);
@@ -250,9 +328,8 @@ function analyzeSetupStore(
   const collections = new Map<string, CollectionAt>();
   const actions: Array<{ name: string; range: [number, number] }> = [];
   const variables: Array<{ name: string; variable: AnyNode; shape: "ref" | "reactive" }> = [];
-  for (const property of returned.properties) {
-    const name = property.type === "Property" ? keyName(property) : undefined;
-    if (name === undefined) continue;
+  for (const [name, property] of effectiveProperties(returned)) {
+    if (property.kind !== "init") continue;
     const value = unwrap(property.value);
     if (FUNCTIONS.has(value?.type)) {
       actions.push({ name, range: value.range });
@@ -271,7 +348,7 @@ function analyzeSetupStore(
       actions.push({ name, range: init.range });
       continue;
     }
-    const shape = stateFactory(scope, init);
+    const shape = stateFactory(ctx, file, scope, init);
     if (!shape || definition.parent?.kind !== "const") continue;
     state.set(name, { declaration: definition.name, actions: new Set() });
     collections.set(name, stateCollections(scope, init.arguments[0]));
@@ -302,32 +379,41 @@ function analyzeSetupStore(
 }
 
 /** `ref()` or `reactive()` from Vue, imported or auto-imported. */
-function stateFactory(scope: ScriptScope, init: AnyNode): "ref" | "reactive" | undefined {
-  if (init?.type !== "CallExpression" || init.callee?.type !== "Identifier") return undefined;
-  const variable = scope.references.get(init.callee)?.resolved;
-  if (!variable) return STATE_FACTORIES.get(init.callee.name);
-  const definition: AnyNode = variable.defs.length === 1 ? variable.defs[0] : undefined;
+function stateFactory(
+  ctx: RuleContext,
+  file: string,
+  scope: ScriptScope,
+  init: AnyNode,
+): "ref" | "reactive" | undefined {
+  if (init?.type !== "CallExpression") return undefined;
+  const callee = unwrap(init.callee);
+  const nuxt = nuxtForFile(ctx, file);
+  const implicit = implicitImportsEnabled(ctx, file);
+  const binding = calleeBinding(callee, scope, nuxt, implicit);
+  if (binding) return VUE_SOURCES.has(binding.from) ? STATE_FACTORIES.get(binding.name) : undefined;
   if (
-    definition?.type !== "ImportBinding" ||
-    definition.node.type !== "ImportSpecifier" ||
-    !VUE_SOURCES.has(definition.parent.source.value)
+    implicit &&
+    !nuxt?.autoImportsAuthoritative &&
+    callee?.type === "Identifier" &&
+    scope.references.get(callee)?.resolved === null &&
+    !nuxt?.autoImports.has(callee.name)
   )
-    return undefined;
-  return STATE_FACTORIES.get(exportedName(definition.node.imported));
+    return STATE_FACTORIES.get(callee.name);
+  return undefined;
 }
 
 /** Keys of object literals passed to `this.$patch()` inside an option-store action. */
 function thisPatchKeys(scope: ScriptScope, fn: AnyNode): string[] {
   const keys: string[] = [];
   walk(scope, fn.body, (node) => {
-    if (node.type === "FunctionExpression" || node.type === "FunctionDeclaration") return false;
+    if (rebindsThis(node)) return false;
     const callee = node.type === "CallExpression" ? unwrap(node.callee) : undefined;
     if (callee?.type !== "MemberExpression" || callee.object?.type !== "ThisExpression") return;
     if (memberName(callee) !== "$patch") return;
     const patch = unwrap(node.arguments[0]);
     for (const property of patch?.type === "ObjectExpression" ? patch.properties : []) {
-      const name = property.type === "Property" ? keyName(property) : undefined;
-      if (name !== undefined) keys.push(name);
+      const name = ownPropertyName(property);
+      if (name !== null) keys.push(name);
     }
   });
   return keys;
@@ -364,7 +450,6 @@ function report(
   property: string,
   state: StoreState,
   byFile: Map<string, SharedStateWrite[]>,
-  byName: Set<string>,
 ) {
   const { file, text } = store.located.module;
   const id = store.located.store.id;
@@ -380,7 +465,9 @@ function report(
   const actions = [...state.actions].map((name) => `${name}()`);
   const actionList =
     actions.length === 1 ? actions[0]! : `${actions.slice(0, -1).join(", ")} or ${actions.at(-1)}`;
-  const matched = [...byFile.keys()].filter((target) => byName.has(target));
+  const matched = [...byFile]
+    .filter(([, list]) => list.some((write) => write.byName))
+    .map(([target]) => target);
   const partial = matched.length
     ? ` Doctor found no import of the store in ${matched.map(path).join(", ")}, so it matched the call to the only store exported under that name, as an auto-import from @pinia/nuxt or unplugin-auto-import would resolve it; check that no other store is auto-imported under that name.`
     : "";
@@ -453,16 +540,33 @@ function returnedObject(value: AnyNode): AnyNode {
 }
 
 function propertyValue(object: AnyNode, name: string): AnyNode {
-  return object.properties.find(
-    (property: AnyNode) => property.type === "Property" && keyName(property) === name,
-  )?.value;
+  const property = effectiveProperties(object).get(name);
+  return property?.kind === "init" ? property.value : undefined;
 }
 
-function keyName(property: AnyNode): string | undefined {
-  const key = property.key;
-  if (!property.computed && key?.type === "Identifier") return key.name;
-  if (key?.type === "Literal" && typeof key.value === "string") return key.value;
-  return undefined;
+function effectiveProperties(node: AnyNode): Map<string, AnyNode> {
+  const properties = new Map<string, AnyNode>();
+  function collect(value: AnyNode) {
+    const object = unwrap(value);
+    if (object?.type !== "ObjectExpression") {
+      properties.clear();
+      return;
+    }
+    for (const property of object.properties) {
+      if (property.type === "SpreadElement") collect(property.argument);
+      else {
+        const name = ownPropertyName(property);
+        if (name !== null) properties.set(name, property);
+        else if (property.computed) properties.clear();
+      }
+    }
+  }
+  collect(node);
+  return properties;
+}
+
+function writesProperty(write: SharedStateWrite, property: string): boolean {
+  return write.path[0] === property || write.assignedKeys?.includes(property) === true;
 }
 
 function memberName(node: AnyNode): string | undefined {

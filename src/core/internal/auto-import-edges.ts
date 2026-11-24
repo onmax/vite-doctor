@@ -49,7 +49,7 @@ export async function collectAutoImportEdges(
       unproven.add(nuxt);
       continue;
     }
-    if (!isTransformedAppFile(fact, nuxt)) continue;
+    if (!isTransformedAppFile(fact.path, fact.relativePath, nuxt)) continue;
     let owned = ownedByInventory.get(nuxt);
     if (!owned) ownedByInventory.set(nuxt, (owned = projectOwnedAutoImports(nuxt, resolveFile)));
     const text = handle.text;
@@ -138,12 +138,16 @@ async function scriptSource(
 }
 
 // Nitro auto-imports server code from its own scan, which Nuxt's app auto-imports do not describe.
-function isTransformedAppFile(fact: FileFacts, nuxt: NuxtProjectInfo): boolean {
-  if (/(^|\/)server\//.test(fact.relativePath)) return false;
-  const transform = nuxt.manifest?.autoImportTransform;
+export function isTransformedAppFile(
+  file: string,
+  relativePath: string,
+  nuxt: NuxtProjectInfo,
+): boolean {
+  if (/(^|\/)server\//.test(relativePath)) return false;
+  const transform = nuxt.manifest?.isCurrent ? nuxt.manifest.autoImportTransform : undefined;
   if (!transform) return true;
-  if (transform.include.some((pattern) => matchesPattern(fact.path, pattern))) return true;
-  return !transform.exclude.some((pattern) => matchesPattern(fact.path, pattern));
+  if (transform.include.some((pattern) => matchesPattern(file, pattern))) return true;
+  return !transform.exclude.some((pattern) => matchesPattern(file, pattern));
 }
 
 function matchesPattern(file: string, pattern: { source: string; flags: string }): boolean {

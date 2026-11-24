@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, resolve } from "pathe";
+import { dirname, isAbsolute, relative, resolve } from "pathe";
 import type { NuxtProjectInfo, RuleContext } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseScriptScope, type ScopeReference } from "../../../core/internal/script-scope.js";
@@ -108,17 +108,24 @@ export function findStoreUses(
 }
 
 /** Scanned script and SFC files that mention `defineStore`, parsed. */
-export async function collectStoreModules(ctx: RuleContext): Promise<StoreModule[]> {
-  const files = await selectScanFiles(ctx.project.root, {}, {}, ctx.project);
+export async function collectStoreModules(
+  ctx: RuleContext,
+  sourcePaths?: readonly string[],
+): Promise<StoreModule[]> {
+  const files =
+    sourcePaths ??
+    (await selectScanFiles(ctx.project.root, {}, {}, ctx.project))
+      .filter((entry) => entry.sourceKind !== "module")
+      .map((entry) => entry.path);
   const modules: StoreModule[] = [];
-  for (const entry of files) {
-    if (entry.sourceKind === "module" || /\.mdc?$/.test(entry.path)) continue;
-    const text = ctx.fs.readText(entry.path);
+  for (const file of files) {
+    if (/\.mdc?$/.test(file)) continue;
+    const text = ctx.fs.readText(file);
     if (!text?.includes("defineStore")) continue;
-    const program = entry.path.endsWith(".vue")
-      ? parseVueScripts(entry.path, (await parseSfcFile(entry.path, text)).descriptor, text)
-      : parseScript(entry.path, text);
-    modules.push({ file: entry.path, displayPath: entry.displayPath, text, program });
+    const program = file.endsWith(".vue")
+      ? parseVueScripts(file, (await parseSfcFile(file, text)).descriptor, text)
+      : parseScript(file, text);
+    modules.push({ file, displayPath: relative(ctx.project.root, file), text, program });
   }
   return modules;
 }
@@ -210,11 +217,19 @@ function calleeImport(
   references: Map<number, ScopeReference>,
   nuxt?: NuxtProjectInfo,
 ): { from: string; name: string } | undefined {
+  return resolvedCalleeImport(node, (identifier) => references.get(identifier.start), nuxt);
+}
+
+export function resolvedCalleeImport(
+  node: AnyNode,
+  referenceOf: (identifier: AnyNode) => ScopeReference | undefined,
+  nuxt?: NuxtProjectInfo,
+): { from: string; name: string } | undefined {
   const callee = unwrap(node);
   const member = callee?.type === "MemberExpression";
   const identifier = member ? unwrap(callee.object) : callee;
   if (identifier?.type !== "Identifier") return undefined;
-  const reference = references.get(identifier.start);
+  const reference = referenceOf(identifier);
   if (!reference?.isValueReference) return undefined;
   if (!reference.resolved && !member && nuxt?.autoImportEnabled)
     return nuxtValueImport(nuxt, identifier.name);

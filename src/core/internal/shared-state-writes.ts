@@ -22,10 +22,17 @@ export interface SharedStateBinding {
   /** Known collection initializers, indexed by path relative to the unwrapped state. */
   collectionAt?: CollectionAt;
   /**
-   * Whether `file` resolves its unimported, undeclared references to `exportName` to this binding,
-   * as Nuxt and `unplugin-auto-import` do. Without it, only written imports reach the binding.
+   * Public names that may reach this binding, and the evidence for each reference kind.
+   * An explicit `#imports` specifier is independent of Nuxt's implicit transform.
    */
-  autoImport?: (file: string) => boolean;
+  autoImports?: {
+    names: (file: string) => Iterable<string>;
+    resolve: (
+      file: string,
+      name: string,
+      kind: "implicit" | "explicit",
+    ) => "resolved" | "by-name" | undefined;
+  };
 }
 
 export interface SharedStateWrite {
@@ -38,6 +45,9 @@ export interface SharedStateWrite {
   target: string;
   /** The written property path relative to the unwrapped state; `null` marks a computed key. */
   path: PropertyPath;
+  /** Known source keys of a root Object.assign write, kept together at one location. */
+  assignedKeys?: readonly string[];
+  byName?: boolean;
 }
 
 export interface LocalStateWrite extends SharedStateWrite {
@@ -121,23 +131,40 @@ export async function findSharedStateWrites(
       }
     }
   }
-  if (binding.autoImport) {
+  const autoImports = binding.autoImports;
+  if (autoImports) {
     for (const file of graph.files) {
-      if (file === binding.file || !ctx.fs.readText(file)?.includes(binding.exportName)) continue;
+      if (file === binding.file) continue;
+      const candidates = [...autoImports.names(file)];
+      if (!candidates.length) continue;
+      const text = ctx.fs.readText(file);
+      const names = candidates.filter((name) => text?.includes(name));
+      if (!names.length) continue;
       let loading = sources.get(file);
       if (!loading) sources.set(file, (loading = loadSource(ctx, file)));
       const source = await loading;
-      if (!source || !usesAutoImport(source, binding.exportName) || !binding.autoImport(file))
-        continue;
-      const found = await writesInFile(
-        ctx,
-        source,
-        new Set([NUXT_IMPORTS]),
-        [binding.exportName],
-        binding,
-        true,
-      );
-      for (const write of found.writes) writes.set(`${write.file}:${write.range.start}`, write);
+      if (!source) continue;
+      for (const name of names) {
+        const implicit =
+          usesAutoImport(source, name, "implicit") && autoImports.resolve(file, name, "implicit");
+        const explicit =
+          usesAutoImport(source, name, "explicit") && autoImports.resolve(file, name, "explicit");
+        if (!implicit && !explicit) continue;
+        const found = await writesInFile(
+          ctx,
+          source,
+          new Set(explicit ? [NUXT_IMPORTS] : []),
+          [name],
+          binding,
+          Boolean(implicit),
+        );
+        for (const write of found.writes) {
+          const key = `${write.file}:${write.range.start}`;
+          if (implicit === "by-name") {
+            if (!writes.has(key)) writes.set(key, { ...write, byName: true });
+          } else writes.set(key, write);
+        }
+      }
     }
   }
   return [...writes.values()].sort((a, b) =>
@@ -146,21 +173,29 @@ export async function findSharedStateWrites(
 }
 
 /** Whether `source` reaches `name` with no import or declaration, or imports it from `#imports`. */
-function usesAutoImport(source: LoadedSource, name: string): boolean {
-  return [source.script, source.setup].some(
-    (scope) =>
-      scope?.scopeManager.globalScope?.through.some(
-        (reference) => reference.identifier.name === name && reference.isValueReference,
-      ) ||
-      (scope?.ast.body as Node[] | undefined)?.some(
-        (statement) =>
-          statement.type === "ImportDeclaration" &&
-          statement.source.value === NUXT_IMPORTS &&
-          statement.specifiers.some(
-            (specifier: Node) =>
-              specifier.type === "ImportSpecifier" && exportedName(specifier.imported) === name,
-          ),
-      ),
+function usesAutoImport(
+  source: LoadedSource,
+  name: string,
+  kind: "implicit" | "explicit",
+): boolean {
+  return [source.script, source.setup].some((scope) =>
+    kind === "implicit"
+      ? scope?.scopeManager.globalScope?.through.some(
+          (reference) => reference.identifier.name === name && reference.isValueReference,
+        )
+      : (scope?.ast.body as Node[] | undefined)?.some(
+          (statement) =>
+            statement.type === "ImportDeclaration" &&
+            statement.importKind !== "type" &&
+            statement.source.value === NUXT_IMPORTS &&
+            statement.specifiers.some(
+              (specifier: Node) =>
+                specifier.importKind !== "type" &&
+                (specifier.type === "ImportNamespaceSpecifier" ||
+                  (specifier.type === "ImportSpecifier" &&
+                    exportedName(specifier.imported) === name)),
+            ),
+        ),
   );
 }
 
@@ -233,7 +268,7 @@ function thisExpressions(body: Node, keys: ScriptScope["visitorKeys"]): Node[] {
   while (stack.length) {
     const node = stack.pop();
     if (node.type === "ThisExpression") found.push(node);
-    if (node.type === "FunctionExpression" || node.type === "FunctionDeclaration") continue;
+    if (rebindsThis(node)) continue;
     for (const key of keys[node.type] ?? []) {
       const value = node[key];
       for (const child of Array.isArray(value) ? value : [value])
@@ -241,6 +276,14 @@ function thisExpressions(body: Node, keys: ScriptScope["visitorKeys"]): Node[] {
     }
   }
   return found;
+}
+
+export function rebindsThis(node: Node): boolean {
+  return (
+    node.type === "FunctionExpression" ||
+    node.type === "FunctionDeclaration" ||
+    node.type === "ClassBody"
+  );
 }
 
 /** The expression inside TypeScript wrappers such as `as` and `satisfies`. */
@@ -521,9 +564,13 @@ async function templateWrites(
   }
   const writes: SharedStateWrite[] = [];
   const parentOf = (node: Node) => node.parent;
-  const check = (ids: Node[], shadowed: ReadonlySet<string>, modelTarget?: Node) => {
-    const isGlobal = (id: Node) =>
-      ids.includes(id) && !shadowed.has(id.name) && !scriptNames.has(id.name);
+  const check = (ids: Node[], expression: Node, shadowed: ReadonlySet<string>, model: boolean) => {
+    let globals: Set<Node> | undefined;
+    const isGlobal = (id: Node) => {
+      if (shadowed.has(id.name) || scriptNames.has(id.name)) return false;
+      globals ??= templateGlobals(expression);
+      return globals.has(id);
+    };
     for (const id of ids) {
       const entry = names.get(id.name);
       if (!entry || shadowed.has(id.name)) continue;
@@ -536,7 +583,7 @@ async function templateWrites(
         entry.members.length === 0,
         collectionAt,
         isGlobal,
-        modelTarget,
+        model ? expression : undefined,
       );
       if (write)
         writes.push(toWrite(ctx, source.file, source.text, text, offset, write, "template"));
@@ -547,8 +594,9 @@ async function templateWrites(
     if (node?.type !== "VExpressionContainer") return;
     check(
       node.references.map((reference: Node) => reference.id),
+      node.expression,
       shadowed,
-      model ? node.expression : undefined,
+      model,
     );
   };
   const visit = (node: Node, shadowed: ReadonlySet<string>) => {
@@ -573,7 +621,7 @@ async function templateWrites(
       checkContainer(prop.key.argument, propScope);
       if (name === "for") {
         const right = prop.value?.expression?.right;
-        if (right) check(templateExpressionReferences(right), shadowed);
+        if (right) check(templateExpressionReferences(right), right, shadowed, false);
       } else if (name !== "slot") {
         const eventScope = name === "on" ? new Set([...propScope, "$event"]) : propScope;
         checkContainer(prop.value, eventScope, name === "model");
@@ -583,6 +631,28 @@ async function templateWrites(
   };
   if (root) visit(root, new Set());
   return writes;
+}
+
+function templateGlobals(expression: Node): Set<Node> {
+  if (!expression || (expression.type.startsWith("V") && expression.type !== "VOnExpression"))
+    return new Set();
+  const program: Node = {
+    type: "Program",
+    range: expression.range,
+    sourceType: "module",
+    body:
+      expression.type === "VOnExpression"
+        ? expression.body
+        : [{ type: "ExpressionStatement", range: expression.range, expression }],
+  };
+  const scope = analyzeScriptProgram(program, "module");
+  return new Set(
+    scope.scopes.flatMap((scope) =>
+      scope.references
+        .filter((reference) => !reference.resolved?.defs.length)
+        .map((reference) => reference.identifier),
+    ),
+  );
 }
 
 function templateExpressionReferences(expression: Node): Node[] {
@@ -602,6 +672,7 @@ interface ClassifiedWrite {
   node: Node;
   target: Node;
   path: PropertyPath;
+  assignedKeys?: readonly string[];
 }
 
 /**
@@ -681,7 +752,15 @@ function classifyWrite(
     depth >= 0 &&
     isObjectAssign(parent.callee, isGlobal)
   )
-    return { kind: "mutating-call", node: parent, target: node, path };
+    return {
+      kind: "mutating-call",
+      node: parent,
+      target: node,
+      path,
+      assignedKeys: path.length
+        ? undefined
+        : [...new Set((parent.arguments as Node[]).slice(1).flatMap(objectLiteralKeys))],
+    };
   return undefined;
 }
 
@@ -743,6 +822,7 @@ function toWrite(
     in: location,
     target: parsed.slice(targetStart, targetEnd),
     path: write.path,
+    ...(write.assignedKeys?.length && { assignedKeys: write.assignedKeys }),
   };
 }
 
@@ -789,6 +869,30 @@ function propertyName(property: Node, computed: boolean): string | null {
   if (property?.type === "Literal" && ["string", "number"].includes(typeof property.value))
     return String(property.value);
   return null;
+}
+
+function objectLiteralKeys(node: Node): string[] {
+  const object = unwrap(node);
+  if (object?.type !== "ObjectExpression") return [];
+  return object.properties.flatMap((property: Node) => {
+    if (property.type === "SpreadElement") return objectLiteralKeys(property.argument);
+    const name = ownPropertyName(property);
+    return name === null ? [] : [name];
+  });
+}
+
+export function ownPropertyName(property: Node): string | null {
+  if (property.type !== "Property") return null;
+  const name = propertyName(property.key, property.computed);
+  if (
+    name === "__proto__" &&
+    !property.computed &&
+    !property.method &&
+    !property.shorthand &&
+    property.kind === "init"
+  )
+    return null;
+  return name;
 }
 
 function exportedName(node: Node): string {
