@@ -111,6 +111,29 @@ await Promise.resolve();`),
   ).toEqual([]);
 });
 
+test.each([
+  `watchPostEffect(() => todos.value.push('seed'));`,
+  `function seed() { todos.value.push('seed') }; watchPostEffect(seed);`,
+  `watchEffect(() => todos.value.push('seed'), { flush: 'post' });`,
+  `const count = ref(0); watch(count, () => todos.value.push('seed'), { flush: 'post' }); count.value++;`,
+])("VUE0049 reports a post-flush watcher in async setup: %s", async (watcher) => {
+  const diagnostics = await run(
+    component(`const todos = shallowRef([]); ${watcher}\nawait Promise.resolve();`),
+  );
+  expect(diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([RULE_ID]);
+});
+
+test.each([
+  `watch(ref(0), () => todos.value.push('seed'), { flush: 'post', immediate: true });`,
+  `const count = ref(0); watch(count, () => todos.value.push('seed')); count.value++;`,
+  `Promise.resolve().then(() => watchPostEffect(() => todos.value.push('seed')));`,
+])("VUE0049 stays quiet for callbacks that can seed an async setup: %s", async (watcher) => {
+  const diagnostics = await run(
+    component(`const todos = shallowRef([]); ${watcher}\nawait Promise.resolve();`),
+  );
+  expect(diagnostics).toEqual([]);
+});
+
 test("VUE0049 still reports a mounted hook in async setup", async () => {
   expect(
     await run(

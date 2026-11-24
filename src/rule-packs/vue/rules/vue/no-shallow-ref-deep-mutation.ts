@@ -104,16 +104,10 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
   if (!script) return [];
   const descriptor = ctx.file.sfc?.descriptor as SFCDescriptor | undefined;
   const setup = descriptor?.scriptSetup;
-  const setupMaySuspend =
-    !!setup &&
-    script
-      .nodes("AwaitExpression")
-      .some(
-        (node) =>
-          !script.owner(node) &&
-          node.range[0] >= setup.loc.start.offset &&
-          node.range[1] <= setup.loc.end.offset,
-      );
+  const asyncSetup =
+    setup && script.nodes("AwaitExpression").some((node) => inTopLevelSetup(script, node, setup))
+      ? setup
+      : undefined;
   const result: DeepMutation[] = [];
   try {
     for (const call of script.nodes("CallExpression")) {
@@ -144,7 +138,7 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
       if (mayTrigger || !mutations.length) continue;
       const name = declarator.id.name;
       const templateScope = !declarationOwner && !!setup;
-      const timing = { declarationOwner, setupMaySuspend: templateScope && setupMaySuspend };
+      const timing = { declarationOwner, asyncSetup: templateScope ? asyncSetup : undefined };
       const writes = templateScope ? templateWrites(ctx, name) : [];
       if (writes.some((write) => !write.path.length)) continue;
       if (!readReactively && !(templateScope && renderTemplateReads(ctx).has(name))) continue;
@@ -350,7 +344,19 @@ function insideReactiveReader(script: IndexedScript, id: AnyNode): boolean {
 
 interface SetupTiming {
   declarationOwner: AnyNode;
-  setupMaySuspend: boolean;
+  asyncSetup: NonNullable<SFCDescriptor["scriptSetup"]> | undefined;
+}
+
+function inTopLevelSetup(
+  script: IndexedScript,
+  node: AnyNode,
+  setup: NonNullable<SFCDescriptor["scriptSetup"]>,
+): boolean {
+  return (
+    !script.owner(node) &&
+    node.range[0] >= setup.loc.start.offset &&
+    node.range[1] <= setup.loc.end.offset
+  );
 }
 
 /** Whether the mutation runs after setup returned, when something may already have read the ref. */
@@ -373,10 +379,10 @@ function runsLater(
   timing: SetupTiming,
   seen: Set<AnyNode>,
 ): boolean {
-  if (!timing.setupMaySuspend && fn.async && awaitsBefore(script, fn, at)) return true;
+  if (!timing.asyncSetup && fn.async && awaitsBefore(script, fn, at)) return true;
   const [parent, child] = valueParent(script, fn);
   if (parent?.type === "CallExpression" && parent.arguments.includes(child))
-    return callsLater(script, parent, child, timing.setupMaySuspend);
+    return callsLater(script, parent, child, timing.asyncSetup);
   const binding = functionBinding(script, fn, parent);
   if (!binding || seen.has(fn)) return false;
   seen.add(fn);
@@ -387,7 +393,7 @@ function runsLater(
       if (use?.type === "CallExpression" && use.callee === used) {
         if (!laterPath(script, use, timing, seen)) return false;
       } else if (use?.type === "CallExpression" && use.arguments.includes(used)) {
-        if (!callsLater(script, use, used, timing.setupMaySuspend)) return false;
+        if (!callsLater(script, use, used, timing.asyncSetup)) return false;
       } else if (!isHandlerUse(script, use, used)) return false;
     }
     return true;
@@ -428,26 +434,30 @@ function callsLater(
   script: IndexedScript,
   call: AnyNode,
   argument: AnyNode,
-  setupMaySuspend: boolean,
+  asyncSetup: SetupTiming["asyncSetup"],
 ): boolean {
   if (vueApiCall(script, call.callee, POST_RENDER_HOOKS)) return call.arguments[0] === argument;
-  if (setupMaySuspend) return false;
   const watcher = vueApiCall(script, call.callee, SCHEDULED_VUE_CALLBACKS);
   if (watcher === "watch") {
     if (call.arguments[1] !== argument) return false;
-    if (call.arguments.length < 3) return true;
+    if (call.arguments.length < 3) return !asyncSetup;
     const options = watchOptions(call.arguments[2]);
-    return (
-      !!options &&
-      (!options.has("immediate") || options.get("immediate")?.value === false) &&
-      (!options.has("flush") || ["pre", "post"].includes(options.get("flush")?.value))
-    );
+    if (!options || (options.has("immediate") && options.get("immediate")?.value !== false))
+      return false;
+    const flush = options.get("flush")?.value;
+    if (asyncSetup) return flush === "post" && inTopLevelSetup(script, call, asyncSetup);
+    return !options.has("flush") || flush === "pre" || flush === "post";
   }
-  if (watcher === "watchEffect")
-    return (
-      call.arguments[0] === argument &&
-      watchOptions(call.arguments[1])?.get("flush")?.value === "post"
-    );
+  if (watcher === "watchPostEffect" || watcher === "watchEffect") {
+    if (call.arguments[0] !== argument) return false;
+    if (
+      watcher === "watchEffect" &&
+      watchOptions(call.arguments[1])?.get("flush")?.value !== "post"
+    )
+      return false;
+    return !asyncSetup || inTopLevelSetup(script, call, asyncSetup);
+  }
+  if (asyncSetup) return false;
   if (watcher) return call.arguments[0] === argument;
   const callee = unwrapTs(call.callee);
   if (callee?.type === "Identifier")
