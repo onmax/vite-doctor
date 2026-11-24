@@ -80,10 +80,10 @@ export const noUnreturnedSetupState = createRule({
           const exposedValues = returnedRefValues(store.scope, returned.properties.values());
           for (const candidate of candidates) {
             const writes =
-              candidate.shape === "ref" && exposedValues.has(candidate.declaration)
-                ? candidate.writes.filter(
-                    (write) => !write.path.length && write.kind !== "mutating-call",
-                  )
+              candidate.shape === "ref" &&
+              !candidate.rawRefValue &&
+              exposedValues.has(candidate.declaration)
+                ? candidate.writes.filter(replacesRefValue)
                 : candidate.writes;
             if (writes.length) report(ctx, store, { ...candidate, writes });
           }
@@ -97,7 +97,12 @@ interface Candidate {
   name: string;
   declaration: AnyNode;
   shape: "ref" | "reactive";
+  rawRefValue: boolean;
   writes: LocalStateWrite[];
+}
+
+function replacesRefValue(write: LocalStateWrite): boolean {
+  return !write.path.length && write.kind !== "mutating-call";
 }
 
 function returnedRefValues(scope: CollectedStore["scope"], properties: Iterable<AnyNode>) {
@@ -148,20 +153,24 @@ function unreturnedCandidates(
         .filter((reference) => !reference.init)
         .map((reference) => reference.identifier);
       if (!references.every((node) => containedUse(ctx, store, node, parents))) continue;
-      const writes = findLocalStateWrites(
-        ctx,
-        file,
-        text,
-        scope,
-        variable,
-        shape,
-        stateCollections(scope, init.arguments[0]),
-      ).filter((write) => write.enclosingFunction && write.enclosingFunction !== setup);
+      const value = unwrap(init.arguments[0]);
+      const markedRaw = shape === "ref" && vueApiCall(ctx, file, scope, value) === "markRaw";
+      const payload = markedRaw ? unwrap(value.arguments[0]) : value;
+      const collectionAt = stateCollections(scope, payload);
+      const rawInitializer =
+        shape === "ref" &&
+        (markedRaw || vueApiCall(ctx, file, scope, init) === "shallowRef") &&
+        (payload?.type === "ObjectExpression" || collectionAt([]) !== undefined);
+      const allWrites = findLocalStateWrites(ctx, file, text, scope, variable, shape, collectionAt);
+      const writes = allWrites.filter(
+        (write) => write.enclosingFunction && write.enclosingFunction !== setup,
+      );
       if (!writes.length) continue;
       candidates.push({
         name: declarator.id.name,
         declaration: declarator.id,
         shape,
+        rawRefValue: rawInitializer && !allWrites.some(replacesRefValue),
         writes,
       });
     }

@@ -1,5 +1,5 @@
-import { relative } from "pathe";
-import { createRule, type RuleContext } from "../../../core/index.js";
+import { join, relative } from "pathe";
+import { createRule, type NuxtProjectInfo, type RuleContext } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { isPiniaSource, nuxtForFile } from "./shared.js";
 import {
@@ -57,7 +57,7 @@ export const noModuleScopeStore = createRule({
           const argument = call.call.arguments[0];
           if (argument && !isMissingInstance(call, argument)) continue;
           const nuxt = nuxtForFile(ctx, call.file);
-          const ssr = Boolean(nuxt) && nuxt?.ssr !== false;
+          const ssr = nuxt && nuxt.ssr !== false && !isClientOnlyPlugin(nuxt, call.file);
           if (!ssr && hasPriorActivation(ctx, call)) continue;
           const id = call.store.located.store.id;
           const callee = unwrap(call.call.callee);
@@ -93,6 +93,12 @@ export const noModuleScopeStore = createRule({
     };
   },
 });
+
+function isClientOnlyPlugin(nuxt: NuxtProjectInfo, file: string): boolean {
+  return [nuxt.appDir, ...nuxt.layers.map((layer) => layer.srcDir)].some((dir) =>
+    Boolean(dir && /^[^/]+\.client\.[cm]?[jt]sx?$/.test(relative(join(dir, "plugins"), file))),
+  );
+}
 
 function isMissingInstance(call: StoreCall, argument: AnyNode): boolean {
   const node = unwrap(argument);

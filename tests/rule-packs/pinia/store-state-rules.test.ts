@@ -177,6 +177,39 @@ export const counter = useCounterStore()`,
     expect(result.diagnostics.map((item) => item.code)).toEqual(ssr ? ["PINIA0006"] : []);
   });
 
+  test.each([true, false])(
+    "checks client-only plugin startup with prior activation: %s",
+    async (active) => {
+      const result = await runNuxt(rule, {
+        "nuxt.config.ts": "export default defineNuxtConfig({ ssr: true })",
+        "stores/counter.ts": counterSetup,
+        "app/plugins/counter.client.ts": `import { useCounterStore } from '../../stores/counter'
+import { createPinia, setActivePinia } from 'pinia'
+${active ? "setActivePinia(createPinia())" : ""}
+export const counter = useCounterStore()
+export default defineNuxtPlugin(() => {})`,
+      });
+      expect(result.diagnostics.map((item) => item.code)).toEqual(active ? [] : ["PINIA0006"]);
+      if (!active) {
+        expect(result.diagnostics[0]!.why).toContain("no active Pinia");
+        expect(result.diagnostics[0]!.why).not.toContain("every request shares the store");
+      }
+    },
+  );
+
+  test("does not infer client-only execution from an ordinary module's suffix", async () => {
+    const result = await runNuxt(rule, {
+      "nuxt.config.ts": "export default defineNuxtConfig({ ssr: true })",
+      "stores/counter.ts": counterSetup,
+      "app/counter.client.ts": `import { useCounterStore } from '../stores/counter'
+import { createPinia, setActivePinia } from 'pinia'
+setActivePinia(createPinia())
+export const counter = useCounterStore()`,
+    });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]!.why).toContain("every request shares the store");
+  });
+
   test.each([
     ["<script setup>", component("const counter = useCounterStore()")],
     [
@@ -240,7 +273,7 @@ export const counter = useCounterStore()
 describe("pinia/stores/no-unreturned-setup-state", () => {
   const rule = pinia.noUnreturnedSetupState;
   const store = (body: string, returned: string) => `import { defineStore } from 'pinia'
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, markRaw as raw, reactive, ref, shallowRef as shallow, watch } from 'vue'
 
 export const useSearchStore = defineStore('search', () => {
 ${body}
@@ -318,6 +351,33 @@ ${body}
       ),
     });
     expect(result.diagnostics.map((item) => item.code)).toEqual(codes);
+  });
+
+  test.each([
+    ["shallow({ count: 0 })", "count++", ["PINIA0007"]],
+    ["ref(raw({ count: 0 }))", "count++", ["PINIA0007"]],
+    ["ref(raw([]))", "push(1)", ["PINIA0007"]],
+    ["shallow(new Map())", "set('count', 1)", ["PINIA0007"]],
+    ["shallow(reactive({ count: 0 }))", "count++", []],
+    ["ref(raw(reactive({ count: 0 })))", "count++", []],
+  ])("distinguishes raw and reactive ref values: %s", async (init, write, codes) => {
+    const result = await run(rule, {
+      "stores/search.ts": store(
+        `  const model = ${init}`,
+        `{ model: model.value, increment() { model.value.${write} } }`,
+      ),
+    });
+    expect(result.diagnostics.map((item) => item.code)).toEqual(codes);
+  });
+
+  test("does not assume a raw initializer remains the returned value", async () => {
+    const result = await run(rule, {
+      "stores/search.ts": store(
+        "  const model = shallow({ count: 0 })\n  model.value = reactive({ count: 1 })",
+        "{ model: model.value, increment() { model.value.count++ } }",
+      ),
+    });
+    expect(result.diagnostics).toHaveLength(0);
   });
 
   test("records an evidence gap when the return object has an unknown spread", async () => {
