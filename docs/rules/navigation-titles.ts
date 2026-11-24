@@ -164,6 +164,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/assets/no-public-src-import": "Public asset imports",
   "vite/assets/no-src-absolute-public-url": "Source public URLs",
   "vite/config/no-url-pathname-as-fs-path": "URL pathname paths",
+  "vite/define/no-loadenv-all-in-define": "Whole env in define",
   "vite/define/no-runtime-object-define": "Object defines",
   "vite/define/no-secret-define": "Secrets in define",
   "vite/define/no-untyped-define": "Typed define",
@@ -171,6 +172,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vite/env/no-broad-env-prefix": "Broad env prefixes",
   "vite/env/no-client-secret-pattern": "Client secret env",
   "vite/env/no-empty-env-prefix": "Empty env prefix",
+  "vite/env/no-unprefixed-client-env": "Unprefixed env",
   "vite/env/no-untyped-env": "Typed env",
   "vite/env/prefer-direct-import-meta-env-access": "import.meta.env",
   "vite/hmr/require-dispose-for-side-effects": "HMR dispose",
@@ -184,6 +186,7 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "vite/plugin/no-lossy-set-cookie-bridge": "Set-Cookie bridges",
 
+  "vite/plugin/no-unreachable-hook": "Unreachable hooks",
   "vite/plugin/prefer-transform-filter": "Transform filters",
   "vite/plugin/require-name": "Plugin names",
   "vite/server/no-broad-fs-allow": "server.fs.allow",

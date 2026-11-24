@@ -33,6 +33,10 @@ export const viteDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0027", ruleId: "vite/config/no-url-pathname-as-fs-path" },
 
   { code: "VITE0028", ruleId: "vite/plugin/no-fragment-in-virtual-id" },
+
+  { code: "VITE0030", ruleId: "vite/env/no-unprefixed-client-env" },
+  { code: "VITE0031", ruleId: "vite/define/no-loadenv-all-in-define" },
+  { code: "VITE0032", ruleId: "vite/plugin/no-unreachable-hook" },
 ]);
 
 export const diagnostics = viteDiagnosticRegistry.diagnostics;

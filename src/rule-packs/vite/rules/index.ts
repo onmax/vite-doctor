@@ -8,6 +8,7 @@ export {
   noBroadEnvPrefix,
   noClientSecretPattern,
   noEmptyEnvPrefix,
+  noUnprefixedClientEnv,
   noUntypedEnv,
   preferDirectImportMetaEnvAccess,
 } from "./env.js";
@@ -26,6 +27,10 @@ export { noLossySetCookieBridge } from "./response-bridge.js";
 export { noUrlPathnameAsFsPath } from "./config-paths.js";
 
 export { noFragmentInVirtualId } from "./virtual-ids.js";
+
+export { noLoadEnvAllInDefine } from "./loadenv-define.js";
+
+export { noUnreachableHook } from "./plugin-apply.js";
 export {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -43,6 +48,7 @@ import {
   noBroadEnvPrefix,
   noClientSecretPattern,
   noEmptyEnvPrefix,
+  noUnprefixedClientEnv,
   noUntypedEnv,
   preferDirectImportMetaEnvAccess,
 } from "./env.js";
@@ -61,6 +67,10 @@ import { noLossySetCookieBridge } from "./response-bridge.js";
 import { noUrlPathnameAsFsPath } from "./config-paths.js";
 
 import { noFragmentInVirtualId } from "./virtual-ids.js";
+
+import { noLoadEnvAllInDefine } from "./loadenv-define.js";
+
+import { noUnreachableHook } from "./plugin-apply.js";
 import {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -100,6 +110,10 @@ const rules = [
   noUrlPathnameAsFsPath,
 
   noFragmentInVirtualId,
+
+  noUnprefixedClientEnv,
+  noLoadEnvAllInDefine,
+  noUnreachableHook,
 ];
 
 const recommended = [
@@ -126,6 +140,10 @@ const recommended = [
   noUrlPathnameAsFsPath,
 
   noFragmentInVirtualId,
+
+  noUnprefixedClientEnv,
+  noLoadEnvAllInDefine,
+  noUnreachableHook,
 ].map((rule) => rule.meta.id);
 
 const viteRulePack = defineRulePack({

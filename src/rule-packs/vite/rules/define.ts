@@ -13,6 +13,7 @@ import {
   memberPath,
   type AnyNode,
 } from "./shared.js";
+import { wholeEnvDefineLeaks } from "./loadenv-define.js";
 
 // Modules whose `defineConfig` and `mergeConfig` wrap a Vite config; Vite+ re-exports Vite's.
 const VITE_CONFIG_MODULES = ["vite", "vite-plus", "vitest/config"];
@@ -189,7 +190,12 @@ export const noRuntimeObjectDefine = createRule({
     return {
       Program(node) {
         const { bindingKeys } = readAliasInitializers(ctx.file.text);
+        // VITE0031 owns whole-env values; stringifying them, as this fix suggests, still leaks.
+        const wholeEnv = new Set(
+          wholeEnvDefineLeaks(ctx).map(({ node }) => `${node.range[0]}:${node.range[1]}`),
+        );
         for (const entry of readDefineEntriesFromCurrentFile(ctx, node)) {
+          if (wholeEnv.has(`${entry.valueNode.start}:${entry.valueNode.end}`)) continue;
           function primitive(value: AnyNode): boolean {
             if (value.type === "ConditionalExpression")
               return primitive(value.consequent) && primitive(value.alternate);

@@ -345,10 +345,9 @@ console.log(logo)`,
     });
 
     expect(result.diagnostics.map(({ ruleId, why }) => `${ruleId}: ${why}`).sort()).toEqual([
-      'vite/env/no-broad-env-prefix: Vite envPrefix "" is broad enough to expose unrelated variables.',
       'vite/env/no-broad-env-prefix: Vite envPrefix "APP_" is broad enough to expose unrelated variables.',
       "vite/env/no-client-secret-pattern: import.meta.env.APP_SECRET looks like a secret and may be exposed to the browser.",
-      'vite/env/no-empty-env-prefix: Vite envPrefix: "" exposes every environment variable to client code.',
+      'vite/env/no-empty-env-prefix: Vite throws while resolving a config whose envPrefix contains "", so vite dev and vite build stop before loading any env variable.',
       'vite/server/no-broad-fs-allow: Vite server.fs.allow entry "/" is broader than a project path.',
       'vite/server/no-broad-fs-allow: Vite server.fs.allow entry "/Users/maxi" is broader than a project path.',
       "vite/server/no-disabled-fs-strict: Vite dev server filesystem strict mode is disabled.",
