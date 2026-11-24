@@ -1,10 +1,6 @@
 import { resolve } from "pathe";
 import type { FileFacts, ImportCycle, ImportGraph, ImportGraphEdge } from "../primitives.js";
 
-// Breadth-first searches from every member of a huge cycle group would cost
-// members x edges, so the search for the shortest loop stops trying start files after this many.
-const MAX_CYCLE_START_FILES = 200;
-
 export function buildImportGraph(
   root: string,
   facts: readonly FileFacts[],
@@ -15,42 +11,43 @@ export function buildImportGraph(
   const importsByFile = new Map<string, ImportGraphEdge[]>();
   const importersByFile = new Map<string, ImportGraphEdge[]>();
 
-  const add = (fact: FileFacts, edge: Omit<ImportGraphEdge, "from" | "to">) => {
-    const target = resolveImport(fact, edge.specifier);
-    const to = target === undefined ? undefined : pathsById.get(target);
-    const full: ImportGraphEdge = { from: fact.path, ...(to ? { to } : {}), ...edge };
-    edges.push(full);
-    push(importsByFile, fact.path, full);
-    if (to) push(importersByFile, to, full);
-  };
-
   for (const fact of facts) {
+    const declarations: Omit<ImportGraphEdge, "from" | "to">[] = [];
     for (const item of fact.imports) {
-      add(fact, {
+      declarations.push({
         specifier: item.source,
         kind: "import",
         typeOnly: item.kind === "type",
         range: item.range,
       });
     }
-    // `export { a, b } from` yields one ExportFact per name; it is still one dependency.
-    const reExports = new Set<string>();
-    for (const item of fact.exports) {
-      if (!item.source) continue;
-      const typeOnly = item.kind === "type";
-      const key = `${typeOnly}\0${item.source}`;
-      if (reExports.has(key)) continue;
-      reExports.add(key);
-      add(fact, { specifier: item.source, kind: "re-export", typeOnly, range: item.range });
+    for (const item of fact.reExports) {
+      declarations.push({
+        specifier: item.source,
+        kind: "re-export",
+        typeOnly: item.typeOnly,
+        range: item.range,
+      });
     }
     for (const item of fact.dynamicImports) {
       if (item.source === null) continue;
-      add(fact, {
+      declarations.push({
         specifier: item.source,
         kind: "dynamic-import",
         typeOnly: false,
         range: item.range,
       });
+    }
+    declarations.sort(
+      (left, right) => (left.range?.start ?? Infinity) - (right.range?.start ?? Infinity),
+    );
+    for (const declaration of declarations) {
+      const target = resolveImport(fact, declaration.specifier);
+      const to = target === undefined ? undefined : pathsById.get(target);
+      const edge: ImportGraphEdge = { from: fact.path, ...(to ? { to } : {}), ...declaration };
+      edges.push(edge);
+      push(importsByFile, fact.path, edge);
+      if (to) push(importersByFile, to, edge);
     }
   }
 
@@ -97,10 +94,20 @@ function shortestLoop(
 ): ImportGraphEdge[] {
   const inGroup = new Set(members);
   let best: ImportGraphEdge[] | undefined;
-  for (const start of members.slice(0, MAX_CYCLE_START_FILES)) {
+  const isRing = members.every((file) => {
+    let next: string | undefined;
+    for (const edge of successors.get(file) ?? []) {
+      const target = edge.to!;
+      if (!inGroup.has(target)) continue;
+      if (next !== undefined && next !== target) return false;
+      next = target;
+    }
+    return next !== undefined;
+  });
+  for (const start of members) {
     const loop = shortestLoopThrough(start, inGroup, successors, best?.length);
     if (loop && (!best || loop.length < best.length)) best = loop;
-    if (best?.length === 2) break;
+    if (isRing || best?.length === 2) break;
   }
   return best ?? [];
 }
@@ -123,10 +130,10 @@ function shortestLoopThrough(
           const loop = [edge];
           for (let at = file; at !== start;) {
             const previous = via.get(at)!;
-            loop.unshift(previous);
+            loop.push(previous);
             at = previous.from;
           }
-          return loop;
+          return loop.reverse();
         }
         if (via.has(target)) continue;
         via.set(target, edge);

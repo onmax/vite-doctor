@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "pathe";
@@ -8,7 +9,7 @@ import { runRuleFixture } from "../../src/testkit.ts";
 
 const cycleRule = "workspace/dead-code/circular-dependency";
 
-async function cycles(files: Record<string, string>) {
+async function cycles(files: Record<string, string>, edits?: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), "doctor-cycle-edges-"));
   try {
     writeFileSync(join(root, "package.json"), '{"type":"module"}');
@@ -16,11 +17,27 @@ async function cycles(files: Record<string, string>) {
       mkdirSync(dirname(join(root, file)), { recursive: true });
       writeFileSync(join(root, file), text);
     }
+    if (edits) {
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
+      git("init");
+      git("add", ".");
+      git(
+        "-c",
+        "user.name=Doctor",
+        "-c",
+        "user.email=doctor@example.test",
+        "commit",
+        "-m",
+        "fixture",
+      );
+      for (const [file, text] of Object.entries(edits)) writeFileSync(join(root, file), text);
+    }
     const result = await runViteDoctor({
       root,
       framework: "vite",
       analyses: "graph",
       cache: false,
+      ...(edits && { since: "HEAD" }),
     });
     return result.diagnostics
       .filter((item) => item.ruleId === cycleRule)
@@ -163,10 +180,13 @@ test("Rules read files, edges, importers, and cycles from ctx.inventory.importGr
       .map((edge) => [rel(edge.to), edge.specifier, edge.kind, edge.typeOnly, edge.range?.line]),
   ).toEqual([
     ["src/a.ts", "./a", "import", true, 1],
-    [undefined, "missing-package", "import", false, 4],
     ["src/b.ts", "./b", "re-export", false, 2],
     ["src/c.ts", "./c", "dynamic-import", false, 3],
+    [undefined, "missing-package", "import", false, 4],
   ]);
+  expect(
+    imports.edges.filter((edge) => rel(edge.from) === "src/d.ts").map((edge) => edge.range?.line),
+  ).toEqual([1, 2, 3, 4]);
   expect(imports.importsOf(join(root, "src/d.ts"))).toEqual(imports.importsOf("src/d.ts"));
   expect(imports.importersOf("src/a.ts").map((edge) => rel(edge.from))).toEqual([
     "src/c.ts",
@@ -184,6 +204,103 @@ test("Rules read files, edges, importers, and cycles from ctx.inventory.importGr
       path: ["src/a.ts -> src/b.ts", "src/b.ts -> src/c.ts", "src/c.ts -> src/a.ts"],
     },
   ]);
+});
+
+test("each source-bearing re-export declaration has its own edge", async () => {
+  const { rule, graph } = captureImportGraph();
+  const source = [
+    'export { x } from "./b";',
+    'export { y } from "./b";',
+    'export {} from "./b";',
+    'export type { T } from "./b";',
+    'export * as other from "./b";',
+  ];
+  await runRuleFixture({
+    rule,
+    files: {
+      "src/a.ts": source.join("\n"),
+      "src/b.ts": "export const x = 1, y = 2; export type T = string;",
+    },
+  });
+  expect(
+    graph()
+      .importsOf("src/a.ts")
+      .map((edge) => [
+        edge.kind,
+        edge.specifier,
+        edge.typeOnly,
+        source.join("\n").slice(edge.range?.start, edge.range?.end),
+      ]),
+  ).toEqual(source.map((statement, index) => ["re-export", "./b", index === 3, statement]));
+});
+
+test("a changed module specifier in a multiline re-export qualifies the cycle", async () => {
+  const files = {
+    "src/a.ts": 'export { x }\n  from "./c";\n',
+    "src/b.ts": 'import "./a";\nexport const x = 1;\n',
+    "src/c.ts": "export const x = 1;\n",
+  };
+  const edits = { "src/a.ts": 'export { x }\n  from "./b";\n' };
+  expect(await cycles({ ...files, ...edits })).toHaveLength(1);
+  expect(await cycles(files, edits)).toHaveLength(1);
+});
+
+test("an empty re-export can close a runtime cycle", async () => {
+  expect(
+    await cycles({
+      "src/a.ts": 'export {} from "./b";\n',
+      "src/b.ts": 'import "./a";\n',
+    }),
+  ).toHaveLength(1);
+});
+
+test("parallel declarations preserve both edges and use the earliest one in the loop", async () => {
+  const { rule, graph } = captureImportGraph();
+  await runRuleFixture({
+    rule,
+    files: {
+      "src/a.ts": 'import "./b";\nexport {} from "./b";',
+      "src/b.ts": 'import "./a";',
+    },
+  });
+  const imports = graph();
+  const declarations = imports.importsOf("src/a.ts");
+  expect(declarations.map((edge) => edge.kind)).toEqual(["import", "re-export"]);
+  expect(imports.cycles[0]?.path).toHaveLength(2);
+  expect(imports.cycles[0]?.path[0]).toBe(declarations[0]);
+});
+
+test("a change to a runtime edge off the loop qualifies the cycle, but an unrelated edit does not", async () => {
+  const files = {
+    "src/a.ts": 'import "./b";\n',
+    "src/b.ts": 'import "./a";\nimport "./c";\n',
+    "src/c.ts": "export const c = 1;\n",
+  };
+  const edits = { "src/c.ts": 'import "./b";\nexport const c = 1;\n' };
+  const [diagnostic] = await cycles(files, edits);
+  expect(diagnostic?.message).toContain("src/a.ts → src/b.ts → src/a.ts");
+  expect(
+    await cycles(
+      { ...files, ...edits },
+      {
+        "src/c.ts": 'import "./b";\nexport const c = 2;\n',
+      },
+    ),
+  ).toEqual([]);
+});
+
+test("the shortest loop can start late in a large group", async () => {
+  const module = (index: number) => `n${String(index).padStart(3, "0")}`;
+  const files = Object.fromEntries(
+    Array.from({ length: 202 }, (_, index) => [
+      `src/${module(index)}.js`,
+      `import "./${module((index + 1) % 202)}";\n${index === 201 ? 'import "./n200";\n' : ""}`,
+    ]),
+  );
+  const [diagnostic] = await cycles(files);
+  expect(diagnostic?.message).toMatch(
+    /^Circular import: src\/n200\.js → src\/n201\.js → src\/n200\.js\./,
+  );
 });
 
 test("file Rules cannot read the import graph", async () => {

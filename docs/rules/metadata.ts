@@ -1607,6 +1607,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/state/no-diverging-usestate-init": {
+    description:
+      "Finds a useState() key that two or more call sites initialize with different functions.",
+    why: "useState(key, init) runs init only while the key has no value. Once one initializer sets the value, the others are ignored, so route and render order can change the starting value. Doctor compares initializers for string-literal keys within each Nuxt app and its layers, ignoring formatting that does not change the parsed syntax. Read-only calls and dynamic keys are not reported.",
+    recommendedReplacement:
+      "Put the state in one composable, such as export const useCount = () => useState('count', () => 0), and call it everywhere instead of repeating useState(key, init). If the call sites mean different state, give each its own key rather than aligning the initializers.",
+    examples: [
+      {
+        title: "Initialize the state in one composable",
+        language: "ts",
+        invalid:
+          "// app/pages/index.vue\nconst count = useState('count', () => 0)\n\n// app/components/Counter.vue\nconst count = useState('count', () => 10)",
+        valid:
+          "// app/composables/useCount.ts\nexport const useCount = () => useState('count', () => 0)\n\n// app/pages/index.vue, app/components/Counter.vue\nconst count = useCount()",
+      },
+    ],
+  },
   "nuxt/state/no-nonserializable-usestate": {
     description: "Report unsupported live values stored in Nuxt payload state.",
     why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",
@@ -1940,7 +1957,7 @@ export const ruleDocumentationMetadata = {
   "vite/hmr/no-circular-import-at-hmr-boundary": {
     description:
       "Reports import cycles in Vite's HMR importer graph that pass through an HMR boundary: a Vue SFC or a module that calls import.meta.hot.accept() for its own updates.",
-    why: "When an edit reaches an HMR boundary, the Vite dev server checks whether the boundary's importers lead back into the chain the update came through. If they do, it sends the update with isWithinCircularImport, and the browser re-imports the boundary. That re-import can re-evaluate modules of the cycle, and if it throws, for example because a module reads a binding of the cycle before it is initialized, the Vite client logs that the module failed to apply HMR as it's within a circular import and reloads the whole page. So the cycle can turn an edit into a full reload; when the re-import succeeds, HMR still applies. Vite records every resolvable import as an importer, including import() calls with a literal path, so Doctor builds the same graph: static imports, re-exports, and dynamic imports, without type-only imports, which TypeScript erases. A lazy route component therefore still closes the loop when the component imports the router. Doctor treats every .vue file as a boundary because @vitejs/plugin-vue makes SFCs accept their own updates in dev, unless vite.config or nuxt.config sets server.hmr to false; when that value is not a literal, Doctor keeps the plugin's default and says so in the evidence. It treats modules that call import.meta.hot.accept() or import.meta.hot.accept(callback) as boundaries, read from the AST, so comments and strings do not count. accept('./dep', callback) accepts updates of the dependency rather than the module itself, and acceptExports accepts only the listed exports, so Doctor leaves both out rather than guess whether they stop an update inside the cycle. It reports one Diagnostic per group of files, at the import that enters the boundary, with every edge of the loop as related locations. DOC0001, under --analyses graph, reports static evaluation cycles as an architecture problem; this Strict-only Rule reports the HMR cycles that reach a boundary, with the Vite dev consequence, and the two can name the same group.",
+    why: "When an edit reaches an HMR boundary, the Vite dev server checks whether the boundary's importers lead back into the chain the update came through. If they do, it sends the update with isWithinCircularImport, and the browser re-imports the boundary. That re-import can re-evaluate modules of the cycle, and if it throws, for example because a module reads a binding of the cycle before it is initialized, the Vite client logs that the module failed to apply HMR as it's within a circular import and reloads the whole page. So the cycle can turn an edit into a full reload; when the re-import succeeds, HMR still applies. Vite records every resolvable import as an importer, including import() calls with a literal path, so Doctor builds the same graph: static imports, re-exports, and dynamic imports, without type-only imports, which TypeScript erases. A lazy route component therefore still closes the loop when the component imports the router. Doctor treats every .vue file as a boundary because @vitejs/plugin-vue makes SFCs accept their own updates in dev, unless resolved Vite dev evidence or a supported static object export from the default Vite config sets server.hmr to false. Doctor does not execute host config on the CLI. When the setting is unknown, such as in a conditional export or Nuxt config, Doctor keeps the plugin's default and says so in the evidence. It treats modules that call import.meta.hot.accept() or import.meta.hot.accept(callback) as boundaries, read from the AST, so comments and strings do not count. accept('./dep', callback) accepts updates of the dependency rather than the module itself, and acceptExports accepts only the listed exports, so Doctor leaves both out rather than guess whether they stop an update inside the cycle. It reports one Diagnostic per group of files, at the import that enters the boundary, with every edge of the loop as related locations. DOC0001, under --analyses graph, reports static evaluation cycles as an architecture problem; this Strict-only Rule reports the HMR cycles that reach a boundary, with the Vite dev consequence, and the two can name the same group.",
     recommendedReplacement:
       "Remove the boundary's import back into the cycle. Move the constants or helpers the component needs from the router or store into a module that imports neither side, or read them at runtime instead of importing the module, such as useRouter() in a component instead of the router instance. Lazy-loading the component with import() does not break the HMR cycle, because Vite records dynamic imports as importers. Do not add import.meta.hot.decline() or suppress the Diagnostic; that keeps the cycle.",
     examples: [
@@ -3115,6 +3132,23 @@ export const ruleDocumentationMetadata = {
         invalid:
           "<script setup lang=\"ts\">\nconst width = ref(window.innerWidth)\nwindow.addEventListener('resize', () => { width.value = window.innerWidth })\n</script>",
         valid: '<script setup lang="ts">\nconst { width } = useWindowSize()\n</script>',
+      },
+    ],
+  },
+  "vue/state/no-external-shared-state-mutation": {
+    description:
+      "Finds shared state that a module exports with Vue's `reactive()` or `ref()` and changes directly in a public function or state method, but that two or more other files still write directly. Doctor detects assignments (including destructuring), `++`/`--`, `delete`, builtin `Object.assign`, and mutating methods on arrays, Maps, or Sets identified from the initializer. It also detects these writes and `v-model` in `<script setup>` templates. It follows static imports and named, default, namespace, and single-star forwarding, but does not guess which export wins in a barrel with multiple star exports. It reports at the declaration and links each detected external write. Reads, writes inside the owning module, writes through an alias such as `const s = store`, Pinia stores, props, and `defineModel` are not reported. Strict Preset only.",
+    why: "Vue's state management guide shows a module that exports reactive state and recommends defining the actions that mutate it in the same module, so every change can be found and traced from one place. When the module already provides those actions and components still write the state directly, the changes are scattered across files and skip whatever the actions enforce, such as validation or derived bookkeeping.",
+    recommendedReplacement:
+      "Call the module's existing actions from the components, or add an action for a change the module does not cover yet, such as a reset. Keep the state in the module; do not copy it into each component or move ownership into one component.",
+    examples: [
+      {
+        title: "Change shared state through the store's actions",
+        language: "vue",
+        invalid:
+          '<!-- store.ts -->\n<script lang="ts">\nexport const store = reactive({ count: 0 })\nexport function increment() {\n  store.count++\n}\n</script>\n\n<!-- Counter.vue and ResetButton.vue -->\n<script setup lang="ts">\nimport { store } from \'./store\'\n</script>\n\n<template>\n  <button @click="store.count++">{{ store.count }}</button>\n  <button @click="store.count = 0">Reset</button>\n</template>',
+        valid:
+          '<!-- store.ts -->\n<script lang="ts">\nexport const store = reactive({ count: 0 })\nexport function increment() {\n  store.count++\n}\nexport function reset() {\n  store.count = 0\n}\n</script>\n\n<!-- Counter.vue and ResetButton.vue -->\n<script setup lang="ts">\nimport { increment, reset, store } from \'./store\'\n</script>\n\n<template>\n  <button @click="increment()">{{ store.count }}</button>\n  <button @click="reset()">Reset</button>\n</template>',
       },
     ],
   },

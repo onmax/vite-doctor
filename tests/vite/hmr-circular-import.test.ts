@@ -23,11 +23,25 @@ const app = {
   "src/Page.vue": page,
 };
 
-async function run(files: Record<string, string>) {
+async function run(files: Record<string, string>, resolvedHmr?: boolean) {
   const result = await runProjectFixture({
     framework: "vue",
     rules: [noCircularImportAtHmrBoundary],
     files,
+    extensions:
+      resolvedHmr === undefined
+        ? []
+        : [
+            {
+              name: "fixture/vite-dev-config",
+              setup(api) {
+                api.registerRuntimeEvidenceContributor({
+                  name: "vite",
+                  contribute: ({ root }) => ({ clientHmr: { root, enabled: resolvedHmr } }),
+                });
+              },
+            },
+          ],
   });
   return result.diagnostics
     .filter((item) => item.ruleId === ruleId)
@@ -140,6 +154,69 @@ test("Vue SFCs are not boundaries when the Vite config sets server.hmr to false"
 test("says it assumes client HMR when the Vite config does not decide it", async () => {
   const diagnostics = await run(app);
   expect(diagnostics[0]!.evidence?.[0]).toContain("server.hmr");
+});
+
+test.each<[string, Record<string, string>]>([
+  [
+    "build-only setting",
+    {
+      "vite.config.ts":
+        "export default ({ command }) => command === 'serve' ? {} : { server: { hmr: false } };",
+    },
+  ],
+  [
+    "unused object",
+    { "vite.config.ts": "const buildOnly = { server: { hmr: false } }; export default {};" },
+  ],
+  [
+    "later spread",
+    {
+      "vite.config.ts":
+        "const overrides = { hmr: true }; export default { server: { hmr: false, ...overrides } };",
+    },
+  ],
+  [
+    "computed key",
+    {
+      "vite.config.ts":
+        "const key = 'hmr'; export default { server: { hmr: false, [key]: true } };",
+    },
+  ],
+  [
+    "shadowed config",
+    {
+      "vite.config.js": "export default {};",
+      "vite.config.ts": "export default { server: { hmr: false } };",
+    },
+  ],
+  ["Nuxt config", { "nuxt.config.ts": "export default { vite: { server: { hmr: false } } };" }],
+])("still reports the Vue boundary: %s", async (_label, configs) => {
+  const diagnostics = await run({ ...app, ...configs });
+  expect(diagnostics).toMatchObject([{ code: "VITE0029" }]);
+  expect(diagnostics[0]!.evidence?.[0]).toContain("assumes client HMR is on");
+});
+
+test("reads a static object wrapped in Vite's defineConfig", async () => {
+  expect(
+    await run({
+      ...app,
+      "vite.config.ts":
+        'import { defineConfig as config } from "vite"; export default config({ server: { hmr: false } });',
+    }),
+  ).toEqual([]);
+});
+
+test("prefers resolved Vite dev evidence over the default config file", async () => {
+  expect(await run(app, false)).toEqual([]);
+  const diagnostics = await run(
+    {
+      ...app,
+      "vite.config.ts": "export default { server: { hmr: false } };",
+    },
+    true,
+  );
+  expect(diagnostics).toMatchObject([{ code: "VITE0029" }]);
+  expect(diagnostics[0]!.evidence?.[0]).toContain("Resolved Vite dev config");
 });
 
 test("a cycle between plain modules with no HMR boundary is left to DOC0001", async () => {

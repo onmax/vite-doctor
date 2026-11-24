@@ -972,6 +972,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }
 
+  if (rule.id === "vue/state/no-external-shared-state-mutation") {
+    add(
+      "Vue simple state management with the Reactivity API",
+      "https://vuejs.org/guide/scaling-up/state-management.html#simple-state-management-with-reactivity-api",
+    );
+    add("Pinia", "https://pinia.vuejs.org/");
+  }
+
   if (rule.id === "vue/attrs/require-explicit-emits") {
     add(
       "Vue declaring emitted events",
@@ -1037,6 +1045,11 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
 
   if (rule.id.includes("usefetch") || rule.id.includes("use-fetch")) {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");
+  }
+
+  if (rule.id === "nuxt/state/no-diverging-usestate-init") {
+    add("Nuxt clearNuxtState", "https://nuxt.com/docs/4.x/api/utils/clear-nuxt-state");
+    add("Nuxt state management", "https://nuxt.com/docs/4.x/getting-started/state-management");
   }
 
   if (rule.id === "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly") {

@@ -10,6 +10,7 @@ test.each([
   ["missing facts", (facts: Record<string, unknown>) => ({ fileHash: facts.fileHash })],
   ["invalid imports", (facts: Record<string, unknown>) => ({ ...facts, imports: [null] })],
   ["invalid export", (facts: Record<string, unknown>) => ({ ...facts, exports: [null] })],
+  ["missing re-exports", (facts: Record<string, unknown>) => ({ ...facts, reExports: undefined })],
   [
     "invalid import source",
     (facts: Record<string, unknown>) => ({
@@ -91,7 +92,7 @@ test.each([
 test.each([
   [
     "app.ts",
-    "import { value } from './other'; export { value }; import('./lazy'); console.log(value);",
+    "import { value } from './other'; export { value }; export {} from './other'; import('./lazy'); console.log(value);",
   ],
   [
     "Component.vue",
