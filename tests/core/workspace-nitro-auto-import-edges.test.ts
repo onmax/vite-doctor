@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { dirname, join, relative } from "pathe";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import {
   createRule,
   defineDoctorExtension,
@@ -296,6 +296,7 @@ async function withNitroManifest(
     beforeInit?: (root: string) => void;
     afterInit?: (root: string) => void;
     scannerVersion?: string;
+    relativeTransformPaths?: boolean;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "doctor-nitro-auto-import-manifest-"));
@@ -378,14 +379,21 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
       async callHook() {},
     } as any);
     const nitroHooks = new Map<string, () => Promise<void>>();
-    await hooks.get("nitro:init")!({
-      options: { imports, scanDirs, alias: { "#server": join(root, "server") }, handlers: [] },
-      unimport,
-      scannedHandlers: [],
-      hooks: {
-        hook: (name: string, callback: () => Promise<void>) => nitroHooks.set(name, callback),
-      },
-    });
+    const cwd = options.relativeTransformPaths
+      ? vi.spyOn(process, "cwd").mockReturnValue(root)
+      : undefined;
+    try {
+      await hooks.get("nitro:init")!({
+        options: { imports, scanDirs, alias: { "#server": join(root, "server") }, handlers: [] },
+        unimport,
+        scannedHandlers: [],
+        hooks: {
+          hook: (name: string, callback: () => Promise<void>) => nitroHooks.set(name, callback),
+        },
+      });
+    } finally {
+      cwd?.mockRestore();
+    }
     await check(root, nitroHooks.get("compiled")!);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -464,6 +472,7 @@ test("a cycle can cross the layer serverDir and an extra Nitro scanDir", () =>
 
 test.each([
   { name: "exclude", imports: { exclude: /\/utils\/b\.ts$/ }, source: useB },
+  { name: "relative exclude", imports: { exclude: "server/utils/b.ts" }, source: useB },
   { name: "include", imports: { include: "**/utils/a.ts" }, source: useB },
   { name: "default opt-out", imports: {}, source: `/*! @unimport-disable */\n${useB}` },
   {
@@ -479,7 +488,7 @@ test.each([
       expect(autoImportEdges).toEqual(["server/utils/a.ts -useB-> server/utils/b.ts"]);
       expect(cycles).toEqual([]);
     },
-    { imports },
+    { imports, relativeTransformPaths: true },
   ),
 );
 

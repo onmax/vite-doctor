@@ -1,5 +1,6 @@
 import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   autoRegisteredNuxtLayers,
@@ -581,10 +582,10 @@ async function captureNitroAutoImports(nitro: any, root: string): Promise<NitroA
   const serialize = (value: string | RegExp | Array<string | RegExp> | undefined) =>
     (Array.isArray(value) ? value : value === undefined ? [] : [value]).map((pattern) => {
       if (typeof pattern !== "string") return { source: pattern.source, flags: pattern.flags };
-      const glob = normalize(pattern);
+      const glob = pattern.replaceAll("\\", "/");
       if (isAbsolute(glob) || glob.startsWith("**")) return { glob };
       const base = normalize(process.cwd()).replace(/[-^$*+?.()|[\]{}]/g, "\\$&");
-      return { glob: join(base, glob) };
+      return { glob: posix.join(base, glob) };
     });
   const include = serialize(imports.include);
   evidence.nitroAutoImportTransform = {
