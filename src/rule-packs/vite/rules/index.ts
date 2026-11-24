@@ -26,6 +26,8 @@ export { noLossySetCookieBridge } from "./response-bridge.js";
 export { noUrlPathnameAsFsPath } from "./config-paths.js";
 
 export { noFragmentInVirtualId } from "./virtual-ids.js";
+
+export { noCircularImportAtHmrBoundary } from "./hmr-cycles.js";
 export {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -61,6 +63,8 @@ import { noLossySetCookieBridge } from "./response-bridge.js";
 import { noUrlPathnameAsFsPath } from "./config-paths.js";
 
 import { noFragmentInVirtualId } from "./virtual-ids.js";
+
+import { noCircularImportAtHmrBoundary } from "./hmr-cycles.js";
 import {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -100,6 +104,8 @@ const rules = [
   noUrlPathnameAsFsPath,
 
   noFragmentInVirtualId,
+
+  noCircularImportAtHmrBoundary,
 ];
 
 const recommended = [
