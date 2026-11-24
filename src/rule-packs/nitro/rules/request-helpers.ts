@@ -1,4 +1,8 @@
-import { moduleNames, resolvesToModuleBinding } from "../../../core/internal/request-values.js";
+import {
+  requestImportName,
+  staticMemberName,
+  staticRequestString,
+} from "../../../core/internal/request-values.js";
 import { fileTextScope } from "../../../core/internal/script-scope.js";
 import {
   type AnyNode,
@@ -394,36 +398,69 @@ function normalizePath(path: string) {
 
 /** The h3 export `callee` names, through an import or Nitro's auto-import, or null. */
 export function h3Name(callee: AnyNode): string | null {
-  if (callee?.type !== "Identifier" || !resolvesToModuleBinding(callee, callee.name)) return null;
-  let program = callee;
-  while (program.__doctorParent) program = program.__doctorParent;
-  for (const statement of program.body ?? []) {
-    if (statement.type !== "ImportDeclaration") continue;
-    for (const specifier of statement.specifiers ?? []) {
-      if (specifier.local?.name !== callee.name) continue;
-      if (statement.importKind === "type" || specifier.importKind === "type") return null;
-      if (specifier.type !== "ImportSpecifier" || !H3_SOURCES.test(String(statement.source.value)))
-        return null;
-      return String(specifier.imported?.name ?? specifier.imported?.value);
-    }
-  }
-  return moduleNames(callee).has(callee.name) ? null : callee.name;
+  const imported = requestImportName(callee, (source) => H3_SOURCES.test(source));
+  return imported === undefined ? callee.name : imported;
 }
 
-/**
- * Whether `member` reads the visitor's side of an h3 event: `event.headers`,
- * `event.node.req.headers`, or `event.context` other than the matched route.
- */
-export function isEventRequestRead(member: AnyNode) {
-  if (member?.type !== "MemberExpression" || member.computed) return false;
-  const next = member.__doctorParent;
-  const nextField =
-    next?.type === "MemberExpression" && next.object === member && !next.computed
-      ? next.property?.name
-      : undefined;
-  const field = member.property?.name;
-  if (field === "headers") return true;
-  if (field === "context") return !ROUTE_CONTEXT.has(nextField);
-  if (field === "node") return nextField === "req";
-  return false;
+export interface EventRequestRead {
+  kind: "headers" | "event";
+  headers?: string[];
+}
+
+export function eventReaderDependency(name: string, args: AnyNode[]): EventRequestRead {
+  if (name === "getCookie" || name === "parseCookies")
+    return { kind: "headers", headers: ["cookie"] };
+  if (name === "getHeader" || name === "getRequestHeader") {
+    const header = staticRequestString(args[1]);
+    return { kind: "headers", headers: header ? [header] : undefined };
+  }
+  if (name === "getHeaders" || name === "getRequestHeaders") return { kind: "headers" };
+  return { kind: "event" };
+}
+
+function nextMember(node: AnyNode) {
+  const parent = node?.__doctorParent;
+  return parent?.type === "MemberExpression" && parent.object === node ? parent : undefined;
+}
+
+/** Visitor data read from an h3 event; does not include the raw request's URL or method. */
+export function eventMemberDependency(member: AnyNode): EventRequestRead | null {
+  const field = staticMemberName(member);
+  const next = nextMember(member);
+  if (field === "context" && !ROUTE_CONTEXT.has(staticMemberName(next) ?? ""))
+    return { kind: "event" };
+  const rawHeaders = nextMember(next);
+  const headers =
+    field === "headers"
+      ? member
+      : field === "node" &&
+          staticMemberName(next) === "req" &&
+          staticMemberName(rawHeaders) === "headers"
+        ? rawHeaders
+        : undefined;
+  if (!headers) return null;
+  const access = nextMember(headers);
+  const property = staticMemberName(access);
+  const call = access?.__doctorParent;
+  const header =
+    field === "headers"
+      ? (property === "get" || property === "has") &&
+        call?.type === "CallExpression" &&
+        call.callee === access
+        ? staticRequestString(call.arguments[0])
+        : undefined
+      : property;
+  return { kind: "headers", headers: header ? [header] : undefined };
+}
+
+export function variesOnHeaders(varies: unknown, headers?: string[]) {
+  return Boolean(
+    headers?.length &&
+    Array.isArray(varies) &&
+    headers.every((header) =>
+      varies.some(
+        (entry) => typeof entry === "string" && entry.toLowerCase() === header.toLowerCase(),
+      ),
+    ),
+  );
 }

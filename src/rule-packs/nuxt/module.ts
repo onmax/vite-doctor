@@ -49,7 +49,9 @@ type NuxtAutoImportContext = {
 };
 
 type NuxtDoctorEvidence = {
-  nitroOptions?: { routeRules?: Record<string, unknown> };
+  nitroOptions?: { routeRules?: Record<string, unknown>; dev?: boolean; preset?: string };
+  routeRulePageMtimes?: NuxtDoctorManifest["routeRulePageMtimes"];
+  routeRulePageInventory?: NuxtDoctorManifest["routeRulePageInventory"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
@@ -71,6 +73,8 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
 
   const evidence = {
     nitroOptions: undefined as NuxtDoctorEvidence["nitroOptions"],
+    routeRulePageMtimes: undefined as NuxtDoctorEvidence["routeRulePageMtimes"],
+    routeRulePageInventory: undefined as NuxtDoctorEvidence["routeRulePageInventory"],
     resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
     serverInventory: undefined as Record<string, string[]> | undefined,
     serverHandlerMtimes: undefined as Record<string, number> | undefined,
@@ -94,6 +98,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
     evidence.nitroOptions = nitro.options;
+    if (!evidence.routeRulePageMtimes) capturePageInputs(nuxt, evidence);
     const captureHandlers = async () => {
       const environments = new Set([
         nitro.options.dev ? "dev" : "prod",
@@ -195,6 +200,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
       file: page.file,
       name: page.name,
     }));
+    capturePageInputs(nuxt, evidence);
   });
 
   nuxt.hook?.("prerender:routes", (ctx: any) => {
@@ -381,6 +387,9 @@ export async function writeManifest(
     resolvedRouteRules: evidence?.nitroOptions?.routeRules
       ? JSON.parse(JSON.stringify(evidence.nitroOptions.routeRules))
       : undefined,
+    routeRulePageMtimes: evidence?.routeRulePageMtimes,
+    routeRulePageInventory: evidence?.routeRulePageInventory,
+    nitroPreset: !evidence?.nitroOptions?.dev ? evidence?.nitroOptions?.preset : undefined,
     ssr: nuxt.options.ssr !== false,
     serverHandlers: toArray(nuxt.options.serverHandlers).map((handler: any) => ({
       route: handler.route,
@@ -484,6 +493,23 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
 
 function flattenPages(pages: any[]): any[] {
   return toArray(pages).flatMap((page: any) => [page, ...flattenPages(page.children)]);
+}
+
+function capturePageInputs(nuxt: Nuxt, evidence: NuxtDoctorEvidence) {
+  const root = nuxt.options.rootDir;
+  evidence.routeRulePageMtimes = Object.fromEntries(
+    (evidence.pages ?? []).flatMap(({ file }) => {
+      if (!file) return [];
+      const path = resolve(root, file);
+      return [[relative(root, path), statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? null]];
+    }),
+  );
+  const pageDirectories = nuxt.options._layers
+    ? getLayerDirectories(nuxt).map(({ appPages }) => appPages)
+    : [];
+  evidence.routeRulePageInventory = Object.fromEntries(
+    pageDirectories.map((directory) => [relative(root, directory), nuxtServerInventory(directory)]),
+  );
 }
 
 function toArray<T = unknown>(value: T[] | Record<string, T> | undefined | null): T[] {

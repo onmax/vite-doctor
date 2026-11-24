@@ -1,14 +1,24 @@
 import type { RuleContext } from "../../../../core/index.js";
-import { holdsRequestValue, unwrapExpression } from "../../../../core/internal/request-values.js";
 import {
-  type NitroRouteRules,
+  holdsRequestValue,
+  staticMemberName,
+  staticRequestString,
+  unwrapExpression,
+} from "../../../../core/internal/request-values.js";
+import {
+  hasRouteRulesEvidence,
+  pageIsrState,
   pageRouteRules,
   recordRouteRulesGap,
   type SharedCacheKind,
   sharedCacheKinds,
 } from "../../../../core/internal/route-rules.js";
 import { findStatementBinding } from "../../../../core/internal/script-index.js";
-import { isEventRequestRead } from "../../../nitro/rules/request-helpers.js";
+import {
+  eventMemberDependency,
+  eventReaderDependency,
+  variesOnHeaders,
+} from "../../../nitro/rules/request-helpers.js";
 import { importedName } from "./module-scope-state.js";
 import {
   type AnyNode,
@@ -49,6 +59,7 @@ interface RequestRead {
   node: AnyNode;
   kind: ReadKind;
   label: string;
+  headers?: string[];
 }
 
 export const noRequestStateInCachedPage = createRule({
@@ -81,17 +92,25 @@ export const noRequestStateInCachedPage = createRule({
         const fact = pageRouteRules(ctx.project, ctx.file.path);
         if (fact.state === "absent") return;
         if (fact.state === "unknown") {
-          if (nuxtPagePath(ctx) !== null && Object.keys(ctx.project.nuxt?.routeRules ?? {}).length)
+          if (nuxtPagePath(ctx) !== null && hasRouteRulesEvidence(ctx.project))
             recordRouteRulesGap(ctx.project, ctx.file.relativePath, fact.reason);
           return;
         }
-        for (const { route, patterns, rules } of fact.routes) {
-          const kinds = cacheKinds(rules);
-          const read = reads.find((candidate) =>
-            candidate.kind !== "query" ? kinds.length : kinds.includes("prerender"),
-          );
+        for (const entry of fact.routes) {
+          const { route, patterns, rules } = entry;
+          if (rules.ssr === false || rules.redirect || rules.proxy) continue;
+          const isr = pageIsrState(entry, ctx.project);
+          const kinds = sharedCacheKinds(rules);
+          if (isr === "on") kinds.unshift("isr");
+          if (isr === "unknown" && reads.some((read) => read.kind !== "query"))
+            recordRouteRulesGap(
+              ctx.project,
+              ctx.file.relativePath,
+              `ISR coverage for ${route} is unproven for the production Nitro preset`,
+            );
+          const read = reads.find((candidate) => kinds.some((kind) => applies(candidate, kind)));
           if (!read) continue;
-          const kind = read.kind === "query" ? "prerender" : kinds[0]!;
+          const kind = kinds.find((kind) => applies(read, kind))!;
           ctx.report(diagnostics.NUXT0106({ why: why(read, kind, route), fix: fix(read) }), {
             ruleId: RULE_ID,
             severity: ctx.severity,
@@ -107,6 +126,12 @@ export const noRequestStateInCachedPage = createRule({
             ],
           });
           return;
+
+          function applies(read: RequestRead, kind: SharedCacheKind) {
+            if (read.kind === "query") return kind === "prerender";
+            if (kind !== "cache" && kind !== "swr") return true;
+            return !variesOnHeaders(rules.cache ? rules.cache.varies : undefined, read.headers);
+          }
         }
       },
     };
@@ -123,26 +148,47 @@ function requestReads(ctx: RuleContext, program: AnyNode): RequestRead[] {
       const callee = unwrapExpression(node.callee);
       const composable = importedName(ctx, callee, (source) => NUXT_SOURCES.test(source));
       const label = composable ? HEADER_COMPOSABLES.get(composable) : undefined;
-      if (label) read = { kind: "headers", label: `${composable}() reads ${label}` };
-      else if (composable === "useCookie") {
+      if (label) {
+        const argument = unwrapExpression(node.arguments?.[0]);
+        const names =
+          composable === "useRequestHeader"
+            ? [staticRequestString(argument)]
+            : argument?.type === "ArrayExpression"
+              ? argument.elements.map(staticRequestString)
+              : undefined;
+        if (names?.length !== 0)
+          read = {
+            kind: "headers",
+            label: `${composable}() reads ${label}`,
+            headers: names?.every((name: string | undefined) => name) ? names : undefined,
+          };
+      } else if (composable === "useCookie") {
         // useCookie also reads document.cookie in the browser, so only a rendered value matters.
-        const name = renderedBinding(ctx, node);
+        const name = renderedBinding(ctx, program, node);
         if (name)
           read = {
             kind: "headers",
+            headers: ["cookie"],
             label: `useCookie() reads a cookie that the template renders as ${name}`,
           };
       } else {
         const reader = importedName(ctx, callee, (source) => H3_SOURCES.test(source));
         if (reader && H3_READERS.has(reader) && node.arguments?.[0])
           if (holdsRequestValue(node.arguments[0], event))
-            read = { kind: "event", label: `${reader}() reads the request event` };
+            read = {
+              ...eventReaderDependency(reader, node.arguments),
+              label: `${reader}() reads the request event`,
+            };
       }
-    } else if (node.type === "MemberExpression" && !node.computed) {
-      const field = node.property?.name;
-      if (isEventRequestRead(node) && holdsRequestValue(node.object, event))
-        read = { kind: "event", label: `useRequestEvent() is read for its ${field}` };
-      else if (QUERY_FIELDS.has(field) && holdsRequestValue(node.object, url))
+    } else if (node.type === "MemberExpression") {
+      const field = staticMemberName(node);
+      const dependency = eventMemberDependency(node);
+      if (dependency && holdsRequestValue(node.object, event))
+        read = {
+          ...dependency,
+          label: `useRequestEvent() is read for its ${dependency.kind === "headers" ? "headers" : "context"}`,
+        };
+      else if (field && QUERY_FIELDS.has(field) && holdsRequestValue(node.object, url))
         read = { kind: "query", label: `useRequestURL().${field} reads the query string` };
     }
     if (read && runsDuringServerRender(ctx, node)) reads.push({ node, ...read });
@@ -150,14 +196,22 @@ function requestReads(ctx: RuleContext, program: AnyNode): RequestRead[] {
   return reads.sort((a, b) => a.node.start - b.node.start);
 }
 
-function renderedBinding(ctx: RuleContext, call: AnyNode) {
-  let node = call;
-  while (node.__doctorParent && unwrapExpression(node.__doctorParent) === call)
-    node = node.__doctorParent;
-  const declarator = node.__doctorParent;
-  if (declarator?.type !== "VariableDeclarator" || declarator.init !== node) return null;
-  const name = declarator.id?.type === "Identifier" ? declarator.id.name : null;
-  return name && isRenderedTemplateName(ctx, name) ? name : null;
+function renderedBinding(ctx: RuleContext, program: AnyNode, call: AnyNode) {
+  for (const statement of program.body ?? []) {
+    if (statement.type !== "VariableDeclaration") continue;
+    for (const { id, init } of statement.declarations) {
+      if (id?.type !== "Identifier" || !isRenderedTemplateName(ctx, id.name)) continue;
+      if (
+        holdsRequestValue(init, {
+          isSource: (node) => node === call,
+          programBinding: findStatementBinding,
+          maxDepth: 8,
+        })
+      )
+        return id.name;
+    }
+  }
+  return null;
 }
 
 function sources(ctx: RuleContext, composable: string) {
@@ -177,23 +231,11 @@ function runsDuringServerRender(ctx: RuleContext, node: AnyNode) {
   );
 }
 
-/**
- * Shared caches that render this route without the request's headers or cookies. A cache that
- * varies on request headers keeps those headers, so Doctor stays quiet for it.
- */
-function cacheKinds(rules: NitroRouteRules): SharedCacheKind[] {
-  if (rules.ssr === false) return [];
-  const varies = rules.cache ? rules.cache.varies : undefined;
-  return sharedCacheKinds(rules).filter(
-    (kind) => !((kind === "cache" || kind === "swr") && Array.isArray(varies) && varies.length > 0),
-  );
-}
-
 function why(read: RequestRead, kind: SharedCacheKind, route: string) {
   const served = {
     cache: `Nitro caches the server-rendered response for ${route} (route rule \`cache\`) and serves it to every visitor until it expires.`,
     swr: `Nitro caches the server-rendered response for ${route} (route rule \`swr\`) and serves it to every visitor while it revalidates in the background.`,
-    isr: `The route rule \`isr\` makes presets that implement it (Vercel, Netlify, Zeabur) cache one rendered response for ${route} and serve it to every visitor.`,
+    isr: `The production Nitro preset uses the route rule \`isr\` to cache the rendered response for ${route}.`,
     prerender: `The route rule \`prerender\` renders ${route} once at build time, and the server serves that HTML for every request without rendering it again.`,
   }[kind];
   const consequence =

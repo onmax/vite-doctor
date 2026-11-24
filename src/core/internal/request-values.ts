@@ -46,6 +46,47 @@ export function holdsRequestValue(value: AnyNode, sources: RequestValueSources):
   return flows(value, sources, 0);
 }
 
+/** The imported export, null for a rejected binding, or undefined for an unbound identifier. */
+export function requestImportName(
+  callee: AnyNode,
+  acceptsSource: (source: string) => boolean,
+): string | null | undefined {
+  const namespace = callee?.type === "MemberExpression";
+  const binding = namespace ? unwrapExpression(callee.object) : callee;
+  if (binding?.type !== "Identifier" || !resolvesToModuleBinding(binding, binding.name))
+    return null;
+  let program = binding;
+  while (program.__doctorParent) program = program.__doctorParent;
+  for (const statement of program.body ?? []) {
+    if (statement.type !== "ImportDeclaration") continue;
+    for (const specifier of statement.specifiers ?? []) {
+      if (specifier.local?.name !== binding.name) continue;
+      if (statement.importKind === "type" || specifier.importKind === "type") return null;
+      if (!acceptsSource(String(statement.source.value))) return null;
+      if (namespace && specifier.type === "ImportNamespaceSpecifier")
+        return staticMemberName(callee) ?? null;
+      if (!namespace && specifier.type === "ImportSpecifier")
+        return String(specifier.imported?.name ?? specifier.imported?.value);
+      return null;
+    }
+  }
+  return namespace || moduleNames(binding).has(binding.name) ? null : undefined;
+}
+
+export function staticMemberName(node: AnyNode): string | undefined {
+  if (node?.type !== "MemberExpression") return undefined;
+  if (!node.computed) return node.property?.name;
+  return staticRequestString(node.property);
+}
+
+export function staticRequestString(node: AnyNode): string | undefined {
+  node = unwrapExpression(node);
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
+    return node.quasis[0]?.value.cooked ?? undefined;
+  return undefined;
+}
+
 function flows(value: AnyNode, sources: RequestValueSources, depth: number): boolean {
   let found = false;
   const visit = (node: AnyNode) => {

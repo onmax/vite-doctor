@@ -16,7 +16,7 @@ const autoImports = [
   { name: "onMounted", from: "vue" },
 ];
 
-function manifest(pages: Array<{ path: string; file: string }>, routeRules: object) {
+function manifest(pages: Array<{ path: string; file: string }>, routeRules: object, evidence = {}) {
   return JSON.stringify({
     generatedAt: "2100-01-01T00:00:00.000Z",
     appDir: "app",
@@ -25,6 +25,8 @@ function manifest(pages: Array<{ path: string; file: string }>, routeRules: obje
     pages,
     routeRules,
     resolvedRouteRules: routeRules,
+    routeRulePageMtimes: {},
+    ...evidence,
   });
 }
 
@@ -57,9 +59,9 @@ test.each([
     "swr",
   ],
   [
-    "a cookie on a dynamic page under an isr wildcard",
-    "/blog/:slug()",
-    { "/blog/**": { isr: 60 } },
+    "a cookie on an ISR page targeting Vercel",
+    "/blog/featured",
+    { "/blog/featured": { isr: 60 } },
     "const session = useCookie('session')",
     "isr",
     '<a v-if="session">Sign out</a>',
@@ -86,10 +88,12 @@ test.each([
     "prerender",
   ],
 ])("reports %s", async (_name, route, routeRules, script, kind, template?: string) => {
-  const file = `app/pages${route === "/blog/:slug()" ? "/blog/[slug]" : route}.vue`;
+  const file = `app/pages${route}.vue`;
   const result = await run({
     [file]: page(script, template),
-    ".nuxt/doctor.manifest.json": manifest([{ path: route, file }], routeRules),
+    ".nuxt/doctor.manifest.json": manifest([{ path: route, file }], routeRules, {
+      nitroPreset: "vercel",
+    }),
   });
 
   expect(result.diagnostics).toHaveLength(1);
@@ -114,6 +118,11 @@ test.each([
     "the cache varies on request headers",
     { "/account": { cache: { maxAge: 60, varies: ["cookie"] } } },
     "useRequestHeaders(['cookie'])",
+  ],
+  [
+    "the cache varies on the header read from event.headers",
+    { "/account": { cache: { varies: ["X-Theme"] } } },
+    "useRequestEvent()?.headers.get('x-theme')",
   ],
   [
     "the read runs after mount",
@@ -189,6 +198,87 @@ test("is in the recommended preset", () => {
   expect(nuxtRulePack.presets.recommended).toContain(RULE_ID);
 });
 
+test.each([
+  [{ isr: 60 }, "node-server"],
+  [{ swr: 60, redirect: { to: "/login" } }, undefined],
+  [{ swr: 60, proxy: { to: "/proxy" } }, undefined],
+])("does not report an inactive page cache: %j", async (rules, nitroPreset) => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: page("useRequestHeaders(['cookie'])"),
+    ".nuxt/doctor.manifest.json": manifest(
+      [{ path: "/account", file }],
+      { "/account": rules },
+      { nitroPreset },
+    ),
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("an unknown production preset leaves ISR coverage unresolved", async () => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: page("useRequestHeaders(['cookie'])"),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { isr: 60 },
+    }),
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.gaps[0]?.message).toContain("ISR coverage");
+});
+
+test.each([
+  ["/blog/:slug()", "/blog/featured"],
+  ["/blog/:id(\\d+)", "/blog/_"],
+])("does not claim cache coverage from a sample URL for %s", async (path, pattern) => {
+  const file = "app/pages/blog/[slug].vue";
+  const result = await run({
+    [file]: page("useRequestHeaders(['cookie'])"),
+    ".nuxt/doctor.manifest.json": manifest([{ path, file }], { [pattern]: { swr: 60 } }),
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.gaps).toHaveLength(1);
+});
+
+test("page inputs that changed invalidate route evidence across files", async () => {
+  const file = "app/pages/account.vue";
+  const other = "app/pages/other.vue";
+  const result = await run({
+    [file]: page("useRequestHeaders(['cookie'])"),
+    [other]: page("defineRouteRules({ cache: false })"),
+    ".nuxt/doctor.manifest.json": manifest(
+      [
+        { path: "/account", file },
+        { path: "/other", file: other },
+      ],
+      { "/account": { swr: 60 } },
+      { routeRulePageMtimes: { [other]: 0 } },
+    ),
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.gaps).toHaveLength(1);
+});
+
+test.each([
+  ["useRequestHeaders(['cookie'])", ""],
+  [
+    "const theme = useCookie('theme'); const dark = theme.value === 'dark'",
+    "<div>{{ dark }}</div>",
+  ],
+  ["import * as nuxt from '#app'; nuxt.useRequestHeader('cookie')", ""],
+  ["import * as h3 from 'h3'; h3.getCookie(useRequestEvent(), 'theme')", ""],
+  ["useRequestEvent().context.tenant", ""],
+])("reports an uncovered request dependency: %s", async (script, template) => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: page(script, template),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { cache: { varies: ["accept-language"] } },
+    }),
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
 async function handler(files: Record<string, string>) {
   const result = await runRuleFixture({
     rule: noPersonalizedCachedHandler,
@@ -208,15 +298,76 @@ async function handler(files: Record<string, string>) {
   };
 }
 
-function serverManifest(route: string, file: string, routeRules: object) {
+function serverManifest(route: string, file: string, routeRules: object, evidence = {}) {
   return JSON.stringify({
     generatedAt: "2100-01-01T00:00:00.000Z",
     appDir: "app",
     resolvedServerHandlers: [{ route, file, method: "get" }],
     routeRules,
     resolvedRouteRules: routeRules,
+    routeRulePageMtimes: {},
+    ...evidence,
   });
 }
+
+test.each([
+  [
+    "import * as h3 from 'h3'; export default cachedEventHandler(event => h3.getCookie(event, 'theme'))",
+    1,
+  ],
+  [
+    "import * as h3 from 'elsewhere'; export default cachedEventHandler(event => h3.getCookie(event, 'theme'))",
+    0,
+  ],
+  [
+    "import * as h3 from 'h3'; export default cachedEventHandler((event, h3) => h3.getCookie(event, 'theme'))",
+    0,
+  ],
+  ["export default cachedEventHandler(event => event.node.req.url)", 0],
+  ["export default cachedEventHandler(event => event.node.req.headers.cookie)", 1],
+])("recognizes only proven handler request reads: %s", async (source, count) => {
+  expect((await handler({ "server/api/theme.get.ts": source })).diagnostics).toHaveLength(count);
+});
+
+test.each(["getCookie(event, 'theme')", "event.context.tenant"])(
+  "does not exempt %s when the route only varies on language",
+  async (read) => {
+    const file = "server/api/theme.get.ts";
+    const result = await handler({
+      [file]: `export default defineEventHandler(event => ${read})`,
+      ".nuxt/doctor.manifest.json": serverManifest("/api/theme", file, {
+        "/api/theme": { cache: { varies: ["accept-language"] } },
+      }),
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  },
+);
+
+test("a custom handler cache key does not preserve a cookie header", async () => {
+  const result = await handler({
+    "server/api/theme.get.ts":
+      "export default cachedEventHandler(event => getCookie(event, 'theme'), { getKey: () => 'theme' })",
+  });
+  expect(result.diagnostics).toHaveLength(1);
+});
+
+test("new page inputs invalidate handler coverage even when no rules were recorded", async () => {
+  const file = "server/api/theme.get.ts";
+  const result = await handler({
+    [file]: "export default defineEventHandler(event => getCookie(event, 'theme'))",
+    "app/pages/new.vue": page("defineRouteRules({ swr: 60 })"),
+    ".nuxt/doctor.manifest.json": serverManifest(
+      "/api/theme",
+      file,
+      {},
+      {
+        routeRulePageInventory: { "app/pages": [] },
+      },
+    ),
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.gaps[0]?.message).toContain("Nuxt page inputs changed");
+});
 
 test("NUXT0062 reports a cachedEventHandler that reads cookies through parseCookies", async () => {
   const result = await handler({
@@ -269,7 +420,7 @@ test.each([
   ["no rule caches the route", { "/api/public/**": { swr: 60 } }],
 ])("NUXT0062 stays quiet for a route-rule handler when %s", async (_name, routeRules) => {
   const result = await handler({
-    "server/api/me.get.ts": "export default defineEventHandler(event => getUserSession(event))",
+    "server/api/me.get.ts": "export default defineEventHandler(event => getCookie(event, 'theme'))",
     ".nuxt/doctor.manifest.json": serverManifest("/api/me", "server/api/me.get.ts", routeRules),
   });
 

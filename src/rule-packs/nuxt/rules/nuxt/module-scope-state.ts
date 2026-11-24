@@ -1,9 +1,5 @@
 import type { RuleContext } from "../../../../core/index.js";
-import {
-  moduleNames,
-  resolvesToModuleBinding,
-  unwrapExpression,
-} from "../../../../core/internal/request-values.js";
+import { requestImportName, unwrapExpression } from "../../../../core/internal/request-values.js";
 import { nearestFunctionOrProgram, type AnyNode } from "./shared.js";
 
 export interface SourceRange {
@@ -85,20 +81,8 @@ export function importedName(
   callee: AnyNode,
   fromSource: (source: string) => boolean,
 ): string | null {
-  if (callee?.type !== "Identifier" || !resolvesToModuleBinding(callee, callee.name)) return null;
-  let program = callee;
-  while (program.__doctorParent) program = program.__doctorParent;
-  for (const statement of program.body ?? []) {
-    if (statement.type !== "ImportDeclaration") continue;
-    for (const specifier of statement.specifiers ?? []) {
-      if (specifier.local?.name !== callee.name) continue;
-      if (statement.importKind === "type" || specifier.importKind === "type") return null;
-      if (specifier.type !== "ImportSpecifier" || !fromSource(String(statement.source.value)))
-        return null;
-      return String(specifier.imported?.name ?? specifier.imported?.value);
-    }
-  }
-  if (moduleNames(callee).has(callee.name)) return null;
+  const imported = requestImportName(callee, fromSource);
+  if (imported !== undefined) return imported;
   const nuxt = ctx.project.nuxt;
   if (!nuxt?.autoImportEnabled) return null;
   const entry = nuxt.autoImports.get(callee.name);

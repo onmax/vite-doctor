@@ -1,5 +1,6 @@
 import { relative, resolve } from "pathe";
-import { isNuxtManifestCurrent } from "./runtime-graph.js";
+import { statSync } from "node:fs";
+import { isNuxtManifestCurrent, nuxtServerInventory } from "./runtime-graph.js";
 import type { NuxtDoctorManifest, NuxtKeyedComposable, NuxtModuleSource } from "../primitives.js";
 
 export interface NuxtProjectInventory {
@@ -19,6 +20,8 @@ export interface NuxtProjectInventory {
   serverHandlers: NuxtDoctorManifest["serverHandlers"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   resolvedRouteRules?: Record<string, unknown>;
+  routeRulePagesCurrent?: boolean;
+  nitroPreset?: string;
   pages: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes: string[];
   buildManifest?: {
@@ -64,6 +67,10 @@ export function createNuxtProjectInventory(
       file: resolve(root, handler.file),
     })),
     resolvedRouteRules: manifest?.resolvedRouteRules,
+    routeRulePagesCurrent: manifest?.resolvedRouteRules
+      ? routeRulePagesCurrent(root, manifest)
+      : undefined,
+    nitroPreset: manifest?.nitroPreset,
     pages: manifest?.pages ?? [],
     prerenderRoutes: manifest?.prerenderRoutes ?? [],
     buildManifest: manifest?.buildManifest,
@@ -74,6 +81,23 @@ export function createNuxtProjectInventory(
       serverRoutes: manifest?.serverHandlers?.length ?? 0,
     },
   };
+}
+
+function routeRulePagesCurrent(root: string, manifest: NuxtDoctorManifest) {
+  if (!manifest.routeRulePageMtimes) return false;
+  try {
+    return (
+      Object.entries(manifest.routeRulePageMtimes).every(
+        ([file, mtime]) => mtime !== null && statSync(resolve(root, file)).mtimeMs === mtime,
+      ) &&
+      Object.entries(manifest.routeRulePageInventory ?? {}).every(
+        ([directory, files]) =>
+          JSON.stringify(nuxtServerInventory(resolve(root, directory))) === JSON.stringify(files),
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 const IDENTIFIER_RE = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*$/u;

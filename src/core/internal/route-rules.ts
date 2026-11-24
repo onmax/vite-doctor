@@ -21,7 +21,7 @@ export interface NitroRouteRules {
 export interface RouteRulesForRoute {
   /** The route as the framework resolved it, such as `/blog/:slug()`. */
   route: string;
-  /** The rule keys that apply to every request on the route, least specific first. */
+  /** The matching rule keys, least specific first. */
   patterns: string[];
   /** The merged rules for those keys. */
   rules: NitroRouteRules;
@@ -50,6 +50,7 @@ export function pageRouteRules(project: RouteRulesProject, file: string): RouteR
   const manifest = project.nuxt?.manifest;
   if (!manifest?.hasManifest || !manifest.isCurrent || !manifest.pages?.length)
     return { state: "unknown", reason: "no current Doctor manifest records the resolved pages" };
+  if (manifest.routeRulePagesCurrent === false) return stalePageRules();
   const target = samePath(project.root, file);
   const routes = manifest.pages
     .filter((page) => page.file && page.path && samePath(project.root, page.file) === target)
@@ -62,13 +63,12 @@ export function pageRouteRules(project: RouteRulesProject, file: string): RouteR
     // Nuxt resolves nested pages relative to their parent, which the manifest does not record.
     if (!route.startsWith("/"))
       return { state: "unknown", reason: `the page route ${route} is nested under a parent page` };
-    const path = samplePagePath(route);
-    if (path === null)
+    if (/[:*\\]/.test(route))
       return {
         state: "unknown",
-        reason: `the page route ${route} matches a varying number of path segments`,
+        reason: `the cache coverage of dynamic page route ${route} is unproven`,
       };
-    resolved.push({ route, ...match(matcher, path) });
+    resolved.push({ route, ...match(matcher, route) });
   }
   return { state: "resolved", routes: resolved };
 }
@@ -85,6 +85,7 @@ export function handlerRouteRules(project: RouteRulesProject, file: string): Rou
       state: "unknown",
       reason: "no current Doctor manifest records the server handlers Nitro resolved",
     };
+  if (manifest.routeRulePagesCurrent === false) return stalePageRules();
   const target = samePath(project.root, file);
   const routes = manifest.resolvedServerHandlers
     .filter(
@@ -124,13 +125,30 @@ export function recordRouteRulesGap(
   ];
 }
 
+export function hasRouteRulesEvidence(project: RouteRulesProject) {
+  const nuxt = project.nuxt;
+  return (
+    nuxt?.manifest?.routeRulePagesCurrent === false ||
+    Object.keys(nuxt?.manifest?.resolvedRouteRules ?? {}).length > 0 ||
+    Object.keys(nuxt?.routeRules ?? {}).length > 0
+  );
+}
+
 /** The ways the merged rules serve one response to more than one request. */
 export function sharedCacheKinds(rules: NitroRouteRules): SharedCacheKind[] {
   const kinds: SharedCacheKind[] = [];
   if (rules.cache) kinds.push(rules.cache.swr ? "swr" : "cache");
-  if (rules.isr) kinds.push("isr");
   if (rules.prerender === true) kinds.push("prerender");
   return kinds;
+}
+
+export function pageIsrState(route: RouteRulesForRoute, project: RouteRulesProject) {
+  const preset = project.nuxt?.manifest?.nitroPreset;
+  if (!route.rules.isr || preset === "node-server" || preset === "node-cluster") return "off";
+  // Vercel generates ISR entries from individual rules, not from the runtime radix3 merge.
+  const exact = routeRulesMatcher(project)?.rules.get(route.route);
+  if (preset === "vercel" && exact?.isr) return "on";
+  return "unknown";
 }
 
 function match(matcher: Matcher, path: string): Omit<RouteRulesForRoute, "route"> {
@@ -172,27 +190,12 @@ function normalizeRouteRules(input: NitroRouteRules): NitroRouteRules {
   return rules;
 }
 
-/**
- * A concrete path that stands for every URL the page route serves, or null when the route can
- * match a varying number of segments. Each param becomes `_`, as Nitro does for handler routes.
- */
-function samplePagePath(route: string): string | null {
-  const segments = route.split("/").map((segment) => {
-    let fixed = true;
-    const sample = segment.replace(
-      /:\w+(\(((?:[^()]|\([^()]*\))*)\))?([?*+])?/g,
-      (_param, _group, pattern: string | undefined, modifier: string | undefined) => {
-        if (modifier || (pattern && /\/|\.[*+]/.test(pattern))) fixed = false;
-        return "_";
-      },
-    );
-    return fixed ? sample : null;
-  });
-  return segments.includes(null) ? null : segments.join("/") || "/";
-}
-
 function samePath(root: string, file: string) {
   return resolve(root, file).replace(/\\/g, "/");
+}
+
+function stalePageRules(): RouteRulesFact {
+  return { state: "unknown", reason: "Nuxt page inputs changed or were not recorded" };
 }
 
 function unknownRules(): RouteRulesFact {
