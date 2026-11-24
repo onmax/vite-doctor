@@ -16,6 +16,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "PINIA0001", ruleId: "pinia/stores/unique-store-id" },
   { code: "PINIA0002", ruleId: "pinia/stores/store-name-matches-id" },
   { code: "PINIA0003", ruleId: "pinia/stores/no-circular-setup-state-read" },
+  { code: "PINIA0004", ruleId: "pinia/state/no-action-bypass" },
   { code: "SHAD0001", ruleId: "shadcn/no-restyle" },
   { code: "SHAD0002", ruleId: "shadcn/no-raw-colors" },
   { code: "SHAD0003", ruleId: "shadcn/no-arbitrary-values" },
@@ -151,6 +152,10 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0028", ruleId: "vite/plugin/no-fragment-in-virtual-id" },
 
   { code: "VITE0029", ruleId: "vite/hmr/no-circular-import-at-hmr-boundary" },
+
+  { code: "VITE0030", ruleId: "vite/env/no-unprefixed-client-env" },
+  { code: "VITE0031", ruleId: "vite/define/no-loadenv-all-in-define" },
+  { code: "VITE0032", ruleId: "vite/plugin/no-unreachable-hook" },
 
   { code: "VITE0033", ruleId: "vite/build/no-node-builtin-in-client-chunk" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
