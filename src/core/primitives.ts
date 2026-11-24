@@ -707,6 +707,10 @@ export interface ComponentFacts {
   }>;
   /** Names declared in a static Options API or defineOptions components registry. */
   localComponents?: string[];
+  /** Whether Doctor knows the local runtime lookup keys. */
+  localComponentLookupKnown: boolean;
+  /** A name explicitly supplied to Vue's runtime component lookup. */
+  runtimeComponentName?: string;
   /** Props `<script setup>` declares, or `undefined` when they cannot be read statically. */
   props?: ComponentPropFact[];
   /** The name `const props = defineProps()` binds. */

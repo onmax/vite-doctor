@@ -1,4 +1,3 @@
-import { parse } from "@vue/compiler-sfc";
 import { isAbsolute, resolve } from "pathe";
 import type {
   ComponentNode,
@@ -7,11 +6,11 @@ import type {
   ComponentUsageGraph,
   FileFacts,
   ImportFact,
+  NuxtProjectInfo,
 } from "../primitives.js";
 import { pascalCase, tagCandidates } from "./component-facts.js";
 import { sourceFacts } from "./facts.js";
 import type { ScanSession } from "./scan-session.js";
-import { TemplateNodeType } from "./template.js";
 import { createGraphIndex, type GraphIndex } from "./workspace-graph.js";
 
 const graphs = new WeakMap<ScanSession, Promise<ComponentUsageGraph>>();
@@ -83,17 +82,13 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       const clientOnly = inClientOnlySlot(render.wrappers);
       const binding: ComponentNode["facts"]["imports"][number] | undefined =
         node.facts.imports.find((item) => item.local === render.binding);
-      const runtimeName = render.name && pascalCase(render.name);
-      const registered = runtimeName
-        ? [runtimeName, runtimeName.replace(/^Lazy(?=[A-Z])/, "")]
-            .map((name) => registry?.get(name))
-            .find((entry) => entry?.global)
-        : undefined;
       const entry: { file: string; mode?: ComponentUsageEdge["nuxtMode"] } | undefined =
         binding?.source === "#components"
           ? (registry?.get(binding.imported) ??
             registry?.get(binding.imported.replace(/^Lazy(?=[A-Z])/, "")))
-          : registered;
+          : render.name === undefined
+            ? undefined
+            : resolveRuntimeComponent(node.facts, registry, render.name);
       const target: string | undefined = entry?.file
         ? resolve(session.root, entry.file)
         : binding && resolveSfc(fact, binding.source, binding.imported);
@@ -106,12 +101,7 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
         });
         if (callee !== node && !callee.indirectImporters.includes(fact.path))
           callee.indirectImporters.push(fact.path);
-      } else if (
-        !clientOnly &&
-        (render.name === undefined || registered || (render.name && !isNativeTag(render.name)))
-      ) {
-        node.hasUnresolvedDynamicRender = true;
-      }
+      } else if (!clientOnly && render.name === undefined) node.hasUnresolvedDynamicRender = true;
     }
     for (const usage of node.facts.usages) {
       const edge: ComponentUsageEdge = { from: fact.path, usage };
@@ -158,11 +148,29 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
   return { components, unresolved };
 }
 
-function isNativeTag(tag: string): boolean {
-  if (!/^[a-z][\w-]*$/.test(tag)) return false;
-  const [element] =
-    parse(`<template><${tag} /></template>`).descriptor.template?.ast?.children ?? [];
-  return element?.type === TemplateNodeType.ELEMENT && element.tagType === 0;
+function resolveRuntimeComponent(
+  facts: ComponentNode["facts"],
+  registry: NuxtProjectInfo["components"] | undefined,
+  name: string,
+) {
+  const candidates = tagCandidates(name);
+  if (
+    !facts.localComponentLookupKnown ||
+    candidates.some(
+      (candidate) =>
+        candidate === facts.runtimeComponentName || facts.localComponents?.includes(candidate),
+    )
+  )
+    return undefined;
+  for (const candidate of candidates) {
+    const exact = registry?.get(candidate);
+    const base = candidate.startsWith("Lazy") ? registry?.get(candidate.slice(4)) : undefined;
+    const global = exact?.global && exact.name === candidate ? exact : undefined;
+    const lazy = base?.global && `Lazy${base.name}` === candidate ? base : undefined;
+    if (global && lazy) return undefined;
+    if (global || lazy) return global ?? lazy;
+  }
+  return undefined;
 }
 
 function resolveImportedSfc(

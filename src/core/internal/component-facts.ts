@@ -66,6 +66,7 @@ export function createComponentFactsCollector(
   const facts: ComponentFacts = {
     inlineRouteRulesMayDisableSsr: false,
     dynamicRenders: [],
+    localComponentLookupKnown: false,
     models: [],
     imports: [],
     ownLogic: false,
@@ -212,6 +213,24 @@ function readScriptDeclarations(
   };
   const inherit = option("inheritAttrs");
   const components = option("components");
+  const name = option("name");
+  if (
+    name !== "absent" &&
+    name !== "unknown" &&
+    name.value?.type === "Literal" &&
+    typeof name.value.value === "string"
+  )
+    facts.runtimeComponentName = name.value.value;
+  const delegated = option("mixins") !== "absent" || option("extends") !== "absent";
+  facts.localComponentLookupKnown =
+    !delegated &&
+    (name === "absent" || facts.runtimeComponentName !== undefined) &&
+    (components === "absent" ||
+      (components !== "unknown" &&
+        components.value?.type === "ObjectExpression" &&
+        components.value.properties.every(
+          (property: AnyNode) => propertyKey(property) !== undefined,
+        )));
   if (
     components !== "absent" &&
     components !== "unknown" &&
@@ -229,7 +248,6 @@ function readScriptDeclarations(
           typeof inherit.value.value === "boolean"
         ? inherit.value.value
         : undefined;
-  const delegated = option("mixins") !== "absent" || option("extends") !== "absent";
   if (delegated) {
     facts.props = undefined;
     facts.emits = undefined;

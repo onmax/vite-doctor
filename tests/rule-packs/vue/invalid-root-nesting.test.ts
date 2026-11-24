@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { buildNuxt, loadNuxt } from "nuxt/kit";
@@ -325,6 +325,38 @@ test("VUE0052 follows prepared Nuxt global registrations, not template auto-impo
       component(`<component :is="'LazyPanel'" /><component :is="'section'" />`),
     );
     expect(located(await scan())).toEqual([["VUE0052", "app/components/Panel.global.vue", 5]]);
+    write("app/pages/about.vue", component('<component is="my-widget" />'));
+    expect(located(await scan())).toEqual([]);
+    write(
+      "app/pages/about.vue",
+      `<script>
+const SafePanel = { render: () => 'local' }
+export default { components: { Panel: SafePanel } }
+</script>
+${component('<component is="panel" />')}`,
+    );
+    expect(located(await scan())).toEqual([]);
+    write(
+      "app/pages/about.vue",
+      `<script>
+const components = { Panel: { render: () => 'local' } }
+export default { components }
+</script>
+${component('<component is="Panel" />')}`,
+    );
+    expect(located(await scan())).toEqual([]);
+    renameSync(
+      join(root, "app/components/Section.vue"),
+      join(root, "app/components/Section.global.vue"),
+    );
+    write(
+      "app/pages/index.vue",
+      caller(["Panel", "Section"], "<ClientOnly><Panel /><Section /></ClientOnly>", "../components")
+        .replace("/Panel.vue", "/Panel.global.vue")
+        .replace("/Section.vue", "/Section.global.vue"),
+    );
+    write("app/pages/about.vue", component('<component is="section" />'));
+    expect(located(await scan())).toEqual([["VUE0052", "app/components/Section.global.vue", 5]]);
   } finally {
     process.chdir(cwd);
     rmSync(root, { recursive: true, force: true });

@@ -113,7 +113,9 @@ function componentFacts(value: unknown): boolean {
         optionalString(render.binding) &&
         optionalString(render.name),
     ) &&
-    (value.localComponents === undefined || strings(value.localComponents))
+    (value.localComponents === undefined || strings(value.localComponents)) &&
+    typeof value.localComponentLookupKnown === "boolean" &&
+    optionalString(value.runtimeComponentName)
   );
 }
 
