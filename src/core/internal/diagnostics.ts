@@ -98,6 +98,27 @@ export async function applyPolicyFilters(session: ScanSession): Promise<void> {
   session.suppressedDiagnostics = result.suppressedDiagnostics;
   if (result.staleBaseline) reportStaleBaseline(session, result.staleBaseline);
   if (result.baseline) reportResolvedBaselineEntries(session, result.baseline);
+  session.diagnostics = preferModuleStateDiagnostics(session.diagnostics);
+}
+
+const moduleStateReplacements = new Map([
+  ["NUXT0105", "NUXT0084"],
+  ["NITRO0023", "NITRO0035"],
+]);
+
+function preferModuleStateDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
+  const location = ({ file, range }: Diagnostic, code: string) =>
+    JSON.stringify([code, file, range?.start, range?.end]);
+  const preferred = new Set(
+    diagnostics
+      .filter(({ code, range }) => range && (code === "NUXT0084" || code === "NITRO0035"))
+      .map((diagnostic) => location(diagnostic, diagnostic.code)),
+  );
+  if (!preferred.size) return diagnostics;
+  return diagnostics.filter((diagnostic) => {
+    const replacement = moduleStateReplacements.get(diagnostic.code);
+    return !replacement || !preferred.has(location(diagnostic, replacement));
+  });
 }
 
 function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): void {

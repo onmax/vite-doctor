@@ -15,8 +15,8 @@ export function createHelpers(): DoctorHelpers {
     isInSetupLikeContext() {
       return false;
     },
-    isClientOnlyExecutionContext(node, source) {
-      return isClientOnlyExecutionContext(node, source);
+    isClientOnlyExecutionContext(node, source, runsImmediately) {
+      return isClientOnlyExecutionContext(node, source, undefined, runsImmediately);
     },
     isTypeOnlyContext(node) {
       return isTypeOnlyContext(node);
@@ -102,6 +102,7 @@ function isClientOnlyExecutionContext(
   node: unknown,
   source: string,
   seenCallChain = new Set<string>(),
+  runsImmediately?: (callback: unknown) => boolean,
 ): boolean {
   const parents = getDoctorParents(node);
   if (parents.some((parent) => isClientGuardAncestor(parent, node, source))) return true;
@@ -125,7 +126,7 @@ function isClientOnlyExecutionContext(
 
   return functionAncestors.some((functionAncestor) => {
     if (isClientOnlyCallback(functionAncestor, source)) return true;
-    if (isDeferredCallback(functionAncestor)) return true;
+    if (isDeferredCallback(functionAncestor) && !runsImmediately?.(functionAncestor)) return true;
     if (isComputedSetter(functionAncestor)) return true;
     if (isClientOnlyObjectCallback(functionAncestor)) return true;
     const propertyName = getObjectPropertyKeyName(functionAncestor);

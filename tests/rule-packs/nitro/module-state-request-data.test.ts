@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
+import type { DoctorConfig } from "../../../src/core/index.ts";
 import {
   nitroRulePack,
   noModuleScopeResponseCache,
@@ -10,8 +11,9 @@ async function run(
   files: Record<string, string>,
   framework: "nuxt" | "nitro" = "nuxt",
   rules = [noRequestDataInModuleState],
+  config?: DoctorConfig,
 ) {
-  const result = await runProjectFixture({ framework, files, rules });
+  const result = await runProjectFixture({ framework, files, rules, config });
   return result.diagnostics.map((diagnostic) => ({
     code: diagnostic.code,
     file: diagnostic.file?.replace(/^.*\/(?:vue-doctor|vite-doctor-fixture)-[^/]+\//, ""),
@@ -170,19 +172,46 @@ export default defineEventHandler((event) => {
 
 test("reports a hand-rolled cache once next to NITRO0023", async () => {
   const file = "server/api/me.get.ts";
-  const diagnostics = await run(
-    {
-      [file]: `let cached: { user: unknown, expiresAt: number } | null = null
+  const files = {
+    [file]: `let cached: { user: unknown, expiresAt: number } | null = null
 export default defineEventHandler(async (event) => {
   if (cached && cached.expiresAt > Date.now()) return cached.user
   cached = { user: await $fetch('/users/me', { headers: getRequestHeaders(event) }), expiresAt: Date.now() + 60_000 }
   return cached.user
 })`,
-    },
-    "nuxt",
-    [noRequestDataInModuleState, noModuleScopeResponseCache],
+  };
+  const both = [noRequestDataInModuleState, noModuleScopeResponseCache];
+  const fallback = [{ code: "NITRO0023", file, line: 1 }];
+  expect(await run(files, "nuxt", both)).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+  expect(await run(files, "nuxt", [noModuleScopeResponseCache])).toEqual(fallback);
+  const off = { [noRequestDataInModuleState.meta.id]: "off" } as const;
+  expect(await run(files, "nuxt", both, { rules: off })).toEqual(fallback);
+  expect(await run(files, "nuxt", both, { overrides: [{ files: [file], rules: off }] })).toEqual(
+    fallback,
   );
-  expect(diagnostics).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+});
+
+test("reports only fixed-key writes, including const aliases and direct event storage", async () => {
+  const file = "server/api/rooms/[id].post.ts";
+  expect(
+    await run({
+      [file]: `const fixed = new Map()
+const direct = new Map()
+const rooms = {}
+const indexed = {}
+const assigned = {}
+const key = 'current'
+export default defineEventHandler(async (event) => {
+  const id = getRouterParam(event, 'id')
+  fixed.set(key, event.context)
+  direct.set('current', event)
+  Object.assign(rooms, { [id]: await readBody(event), [getQuery(event).q]: 42 })
+  const alias = key
+  indexed[alias] = event.context
+  Object.assign(assigned, { [id]: 0, [alias]: event })
+})`,
+    }),
+  ).toEqual([1, 2, 4, 5].map((line) => ({ code: "NITRO0035", file, line })));
 });
 
 test("ships in the Recommended Preset", () => {

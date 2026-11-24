@@ -5,7 +5,6 @@ import {
   report,
   walkScriptLocal,
 } from "./shared.js";
-import { requestStateBindings } from "./no-request-data-in-module-state.js";
 import { isNitroRuntimeFile } from "./server-layout.js";
 
 const RULE_ID = "nitro/cache/no-module-scope-response-cache";
@@ -76,12 +75,8 @@ export const noModuleScopeResponseCache = createRule({
           binding.expires ||=
             access.expires || comparesWithClock(owner, (item) => cachedEntryOf(item, [node]));
         });
-        let requestState: Set<AnyNode> | undefined;
         for (const binding of bindings.values()) {
           if (!binding.reads || !binding.writes || !binding.expires) continue;
-          // NITRO0035 reports a cache that holds request data, in every preset.
-          requestState ??= new Set(requestStateBindings(program).map((item) => item.declarator));
-          if (requestState.has(binding.declarator)) continue;
           report(
             ctx,
             binding.declarator.id,

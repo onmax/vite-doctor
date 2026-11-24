@@ -1612,7 +1612,7 @@ export const ruleDocumentationMetadata = {
       "Report module-scope variables, Maps, and Sets that request-time app code fills with request data.",
     why: "On the server, Nuxt imports each app module once and reuses it for every SSR request. A module-scope let, Map, or Set that a store action, composable, plugin, or component setup writes during a request is shared by all concurrent requests: one user's fetched data, store instance, or in-flight promise becomes visible to the next request. An in-flight promise that closes over `this` in a Pinia action fills the first request's store, while later requests await it and keep their own store empty.",
     recommendedReplacement:
-      "Keep per-request state in useState() or the Pinia store state. For values that cannot live in payload state, such as in-flight promises, key them by the Nuxt app with a WeakMap so each SSR request gets its own entry. Constant lookup tables and caches of pure values, such as Intl formatters, can stay at module scope.",
+      "Keep private data in request-local variables or server-only request context. Use useState() or Pinia only for serializable values safe to send to the browser in the hydration payload. For non-sensitive, non-serializable values such as in-flight promises, key them by the Nuxt app with a WeakMap so each SSR request gets its own entry. Constant lookup tables and caches of pure values, such as Intl formatters, can stay at module scope.",
     examples: [
       {
         title: "Key in-flight requests by the Nuxt app",
@@ -1629,7 +1629,7 @@ export const ruleDocumentationMetadata = {
       "Report module-scope ref(), reactive(), and plain objects or arrays that server-rendered app code writes request data into.",
     why: "On the server, Nuxt imports the app bundle once and creates a new Vue app and Nuxt app for every request, but module-scope values are not recreated. A ref, reactive object, or plain object declared at module scope, or in the plain <script> block of a component, is shared by every request. When setup, a composable, a plugin, or route middleware writes the route, request headers, cookies, or the request event into it during server rendering, concurrent requests overwrite each other and one user's data can render for another. Doctor skips state created inside setup or the composable, useState, writes in onMounted, behind import.meta.client, or in event handlers, client-only files, apps that turn SSR off, and helpers it cannot trace to Vue or Nuxt. Map, Set, and reassigned module variables are reported by nuxt/ssr/no-module-scope-request-state.",
     recommendedReplacement:
-      "Create the state per request: use useState('key', () => initial), or call ref() or reactive() inside setup, the composable, or the plugin. If the value is only needed in the browser, write it in onMounted() or behind import.meta.client.",
+      "Create state per request in local variables or with setup-local ref() or reactive(). Keep credentials and request objects in server-only request context. Nuxt writes useState() to nuxtApp.payload.state, so use it only for serializable values intended for the browser and safe to send in the hydration payload.",
     examples: [
       {
         title: "Create request state with useState",

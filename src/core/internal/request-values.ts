@@ -31,7 +31,7 @@ export interface RequestValueSources {
   /** A node that is request data by itself, such as `useRoute()` or `getQuery(event)`. */
   isSource(node: AnyNode): boolean;
   /** The declarator binding `name` at program scope whose initializer the flow follows. */
-  programBinding?(program: AnyNode, name: string): AnyNode;
+  programBinding?(program: AnyNode, name: string, reference: AnyNode): AnyNode;
   /**
    * Whether `reference`, which resolves to parameter `index` of `fn`, holds request data, such as
    * the `event` an h3 handler receives. Without it, parameters are not resolved.
@@ -100,12 +100,8 @@ function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, dep
     }
     const declarator =
       current.type === "Program"
-        ? (sources.programBinding?.(current, node.name) ?? null)
-        : SCOPE_TYPES.has(current.type)
-          ? findStatementBinding(current, node.name)
-          : FUNCTION_TYPES.has(current.type)
-            ? findFunctionVar(current.body, node.name)
-            : null;
+        ? (sources.programBinding?.(current, node.name, node) ?? null)
+        : nearerBinding(current, node.name);
     if (declarator?.type === "VariableDeclarator")
       return Boolean(declarator.init) && flows(declarator.init, sources, depth + 1);
     if (declarator) return false;
@@ -117,18 +113,31 @@ function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, dep
 export function resolvesToModuleBinding(node: AnyNode, name: string) {
   for (let current = node.__doctorParent; current; current = current.__doctorParent) {
     if (current.type === "Program") return true;
-    if (FUNCTION_TYPES.has(current.type)) {
-      if (current.type === "FunctionExpression" && current.id?.name === name) return false;
-      if (current.params?.some((param: AnyNode) => patternNames(param).includes(name)))
-        return false;
-      if (findFunctionVar(current.body, name)) return false;
-    } else if (SCOPE_TYPES.has(current.type)) {
-      if (findStatementBinding(current, name)) return false;
-    } else if (current.type === "CatchClause") {
-      if (patternNames(current.param).includes(name)) return false;
-    }
+    if (nearerBinding(current, name)) return false;
   }
   return false;
+}
+
+export function resolveLexicalBinding(node: AnyNode): AnyNode {
+  for (let current = node.__doctorParent; current; current = current.__doctorParent) {
+    if (current.type === "Program") return findStatementBinding(current, node.name);
+    const binding = nearerBinding(current, node.name);
+    if (binding) return binding;
+  }
+  return null;
+}
+
+function nearerBinding(scope: AnyNode, name: string): AnyNode {
+  if (FUNCTION_TYPES.has(scope.type)) {
+    if (scope.type === "FunctionExpression" && scope.id?.name === name) return scope;
+    return (
+      scope.params?.find((param: AnyNode) => patternNames(param).includes(name)) ??
+      findFunctionVar(scope.body, name)
+    );
+  }
+  if (SCOPE_TYPES.has(scope.type)) return findStatementBinding(scope, name);
+  if (scope.type === "CatchClause" && patternNames(scope.param).includes(name)) return scope.param;
+  return null;
 }
 
 const moduleNamesByProgram = new WeakMap<object, Set<string>>();

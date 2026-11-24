@@ -1,6 +1,7 @@
 import {
   holdsRequestValue,
   moduleNames,
+  resolveLexicalBinding,
   resolvesToModuleBinding,
   unwrapExpression,
   type RequestValueSources,
@@ -94,7 +95,7 @@ export const noRequestDataInModuleState = createRule({
 });
 
 /** Module bindings that server code writes request data into, each with its first such write. */
-export function requestStateBindings(program: AnyNode): StateBinding[] {
+function requestStateBindings(program: AnyNode): StateBinding[] {
   const bindings = moduleBindings(program);
   if (!bindings.size) return [];
   walkScriptLocal(program, (node) => {
@@ -104,7 +105,7 @@ export function requestStateBindings(program: AnyNode): StateBinding[] {
     if (nearestFunctionOrProgram(node)?.type === "Program") return;
     if (!resolvesToModuleBinding(node, binding.name)) return;
     const values = binding.shapes.flatMap((shape) => writtenValues(node, shape));
-    if (values.some((value) => holdsRequestValue(value, REQUEST_SOURCES))) binding.write = node;
+    if (values.some(holdsStoredRequestValue)) binding.write = node;
   });
   return [...bindings.values()].filter((binding) => binding.write);
 }
@@ -170,12 +171,31 @@ function writtenValues(reference: AnyNode, shape: Shape): AnyNode[] {
     parent.arguments?.[0] === reference &&
     isObjectAssign(parent.callee)
   )
-    return parent.arguments.slice(1);
+    return parent.arguments.slice(1).flatMap(fixedProperties);
   return [];
 }
 
-function isConstantKey(node: AnyNode) {
+function fixedProperties(source: AnyNode): AnyNode[] {
+  const object = unwrapExpression(source);
+  if (object?.type !== "ObjectExpression") return [];
+  return object.properties.flatMap((property: AnyNode) =>
+    property.type === "Property" && (!property.computed || isConstantKey(property.key))
+      ? [property.value]
+      : [],
+  );
+}
+
+function isConstantKey(node: AnyNode, depth = 0): boolean {
   const key = unwrapExpression(node);
+  if (key?.type === "Identifier" && depth < 5) {
+    const binding = resolveLexicalBinding(key);
+    return (
+      binding?.type === "VariableDeclarator" &&
+      binding.id?.type === "Identifier" &&
+      binding.__doctorParent?.kind === "const" &&
+      isConstantKey(binding.init, depth + 1)
+    );
+  }
   return (
     key?.type === "Literal" ||
     key?.type === "StringLiteral" ||
@@ -204,16 +224,20 @@ function isObjectAssign(callee: AnyNode) {
   );
 }
 
-const REQUEST_SOURCES: RequestValueSources = {
-  isSource: (node) =>
-    node.type === "CallExpression" &&
-    REQUEST_READERS.has(h3Name(unwrapExpression(node.callee)) ?? ""),
-  // The event a handler receives, or a parameter typed H3Event, except when it is only passed on
-  // to another call: what that call returns is not known to depend on the request.
-  parameter: (fn, index, reference) =>
-    (isTypedEvent(fn.params[index]) || (index === 0 && isHandlerCallback(fn))) &&
-    !isCallArgument(reference),
-};
+function holdsStoredRequestValue(value: AnyNode) {
+  const stored = unwrapExpression(value);
+  const sources: RequestValueSources = {
+    isSource: (node) =>
+      node.type === "CallExpression" &&
+      REQUEST_READERS.has(h3Name(unwrapExpression(node.callee)) ?? ""),
+    // The event a handler receives, or a parameter typed H3Event, except when it is only passed on
+    // to another call: what that call returns is not known to depend on the request.
+    parameter: (fn, index, reference) =>
+      (isTypedEvent(fn.params[index]) || (index === 0 && isHandlerCallback(fn))) &&
+      (reference === stored || !isCallArgument(reference)),
+  };
+  return holdsRequestValue(value, sources);
+}
 
 /** The h3 export `callee` names, through an import or Nitro's auto-import, or null. */
 function h3Name(callee: AnyNode): string | null {

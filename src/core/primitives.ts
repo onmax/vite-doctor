@@ -839,7 +839,11 @@ export interface RuleFileSystem {
 export interface DoctorHelpers {
   rangeFromOffsets(file: string, source: string, start: number, end?: number): SourceRange;
   isInSetupLikeContext(node: unknown): boolean;
-  isClientOnlyExecutionContext(node: unknown, source: string): boolean;
+  isClientOnlyExecutionContext(
+    node: unknown,
+    source: string,
+    runsImmediately?: (callback: unknown) => boolean,
+  ): boolean;
   isTypeOnlyContext(node: unknown): boolean;
   /**
    * Whether the identifier names a binding declared in an enclosing scope (parameter, variable,

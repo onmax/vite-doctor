@@ -1,9 +1,9 @@
 import type { RuleContext } from "../../../../core/index.js";
 import {
-  moduleNames,
   resolvesToModuleBinding,
   unwrapExpression,
 } from "../../../../core/internal/request-values.js";
+import { findStatementBinding } from "../../../../core/internal/script-index.js";
 import { nearestFunctionOrProgram, type AnyNode } from "./shared.js";
 
 export interface SourceRange {
@@ -22,6 +22,31 @@ export function inRange(node: AnyNode, range: SourceRange | null) {
   return Boolean(range && node.start >= range.start && node.end <= range.end);
 }
 
+const sfcScopes = new WeakMap<object, Map<string, AnyNode>>();
+
+export function setupBinding(program: AnyNode, name: string, setup: SourceRange | null) {
+  return setup ? bindingInRange(program, name, setup) : null;
+}
+
+function bindingInRange(program: AnyNode, name: string, range: SourceRange) {
+  let scopes = sfcScopes.get(program);
+  if (!scopes) sfcScopes.set(program, (scopes = new Map()));
+  const key = `${range.start}:${range.end}`;
+  let scope = scopes.get(key);
+  if (!scope) {
+    scope = { type: "Program", body: program.body.filter((node: AnyNode) => inRange(node, range)) };
+    scopes.set(key, scope);
+  }
+  return findStatementBinding(scope, name);
+}
+
+export function resolvesToModuleState(node: AnyNode, program: AnyNode, setup: SourceRange | null) {
+  return (
+    resolvesToModuleBinding(node, node.name) &&
+    (!inRange(node, setup) || !setupBinding(program, node.name, setup))
+  );
+}
+
 /** The range that holds module-scope declarations: the plain `<script>` block of an SFC. */
 export function moduleScriptRange(ctx: RuleContext): SourceRange | null {
   return ctx.file.relativePath.endsWith(".vue")
@@ -30,10 +55,15 @@ export function moduleScriptRange(ctx: RuleContext): SourceRange | null {
 }
 
 /** A write that can run while the server renders a request, as far as the file shows. */
-export function isRequestTimeWrite(ctx: RuleContext, node: AnyNode, setup: SourceRange | null) {
+export function isRequestTimeWrite(
+  ctx: RuleContext,
+  node: AnyNode,
+  setup: SourceRange | null,
+  runsImmediately?: (callback: AnyNode) => boolean,
+) {
   if (nearestFunctionOrProgram(node)?.type === "Program" && !inRange(node, setup)) return false;
   if (followsServerReturn(ctx, node)) return false;
-  return !ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text);
+  return !ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text, runsImmediately);
 }
 
 // An `if (import.meta.server) return` earlier in an enclosing block, including the blocks of
@@ -88,20 +118,27 @@ export function importedName(
   if (callee?.type !== "Identifier" || !resolvesToModuleBinding(callee, callee.name)) return null;
   let program = callee;
   while (program.__doctorParent) program = program.__doctorParent;
-  for (const statement of program.body ?? []) {
-    if (statement.type !== "ImportDeclaration") continue;
-    for (const specifier of statement.specifiers ?? []) {
-      if (specifier.local?.name !== callee.name) continue;
-      if (statement.importKind === "type" || specifier.importKind === "type") return null;
-      if (specifier.type !== "ImportSpecifier" || !fromSource(String(statement.source.value)))
-        return null;
-      return String(specifier.imported?.name ?? specifier.imported?.value);
-    }
-  }
-  if (moduleNames(callee).has(callee.name)) return null;
   const nuxt = ctx.project.nuxt;
+  const registryName = (name: string) => {
+    const entry = nuxt?.autoImports.get(name);
+    if (entry && entry.from !== "#imports") return fromSource(entry.from) ? entry.name : null;
+    return nuxt?.autoImportsAuthoritative ? null : name;
+  };
+  const setup = blockRange(ctx, "scriptSetup");
+  const script = moduleScriptRange(ctx);
+  const binding = ctx.file.relativePath.endsWith(".vue")
+    ? ((inRange(callee, setup) ? setupBinding(program, callee.name, setup) : null) ??
+      (script ? bindingInRange(program, callee.name, script) : null))
+    : findStatementBinding(program, callee.name);
+  if (binding) {
+    if (binding.type !== "ImportSpecifier" || binding.importKind === "type") return null;
+    const declaration = binding.__doctorParent;
+    if (declaration.importKind === "type") return null;
+    const name = String(binding.imported?.name ?? binding.imported?.value);
+    const source = String(declaration.source.value);
+    if (source !== "#imports") return fromSource(source) ? name : null;
+    return registryName(name);
+  }
   if (!nuxt?.autoImportEnabled) return null;
-  const entry = nuxt.autoImports.get(callee.name);
-  if (entry) return fromSource(entry.from) ? entry.name : null;
-  return nuxt.autoImportsAuthoritative ? null : callee.name;
+  return registryName(callee.name);
 }
