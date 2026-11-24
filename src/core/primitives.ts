@@ -694,8 +694,11 @@ export interface ComponentRootBranch {
 export interface ComponentFacts {
   /** A Nuxt inline route rule might disable SSR. */
   inlineRouteRulesMayDisableSsr: boolean;
-  /** Enclosing wrappers of dynamic component renders with an unknown target. */
-  dynamicComponentWrappers: ComponentUsageFact["wrappers"][];
+  dynamicRenders: Array<{
+    wrappers: ComponentUsageFact["wrappers"];
+    binding?: string;
+    name?: string;
+  }>;
   /** Names declared in a static Options API or defineOptions components registry. */
   localComponents?: string[];
   /** Props `<script setup>` declares, or `undefined` when they cannot be read statically. */
@@ -771,8 +774,16 @@ export interface ComponentNode {
   renders: ComponentUsageEdge[];
   /** Resolved usages of this component in other templates. */
   callers: ComponentUsageEdge[];
+  /** Resolved dynamic renders, separate from static usages and their prop contracts. */
+  dynamicRenders?: Array<
+    Pick<ComponentUsageEdge, "clientOnlySlot" | "nuxtMode"> & { target: string }
+  >;
   /** A dynamic component outside a recognized client-only default slot may render other SFCs. */
   hasUnresolvedDynamicRender?: true;
+  /** Unresolved literal dynamic names outside recognized client-only slots. */
+  unresolvedDynamicNames?: string[];
+  /** An import can render this SFC outside the tracked static and dynamic usages. */
+  hasUntrackedImporter?: true;
   /**
    * Files that import this SFC other than as a `<script setup>` tag binding: script modules,
    * re-exports, dynamic imports, Options API `<script>` imports, or SFCs that also reference the

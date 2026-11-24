@@ -106,8 +106,13 @@ function componentFacts(value: unknown): boolean {
     ) &&
     strings(value.bindingReferences) &&
     typeof value.inlineRouteRulesMayDisableSsr === "boolean" &&
-    Array.isArray(value.dynamicComponentWrappers) &&
-    value.dynamicComponentWrappers.every(componentWrappers) &&
+    facts(
+      value.dynamicRenders,
+      (render) =>
+        componentWrappers(render.wrappers) &&
+        optionalString(render.binding) &&
+        optionalString(render.name),
+    ) &&
     (value.localComponents === undefined || strings(value.localComponents))
   );
 }

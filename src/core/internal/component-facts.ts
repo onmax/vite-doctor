@@ -13,6 +13,7 @@ import type {
 import { analyzeScriptProgram } from "./script-scope.js";
 import {
   findTemplateDirective,
+  parseTemplateExpression,
   TemplateNodeType,
   templateDirectiveBindings,
   templateRoots,
@@ -64,7 +65,7 @@ export function createComponentFactsCollector(
 ): ComponentFactsCollector {
   const facts: ComponentFacts = {
     inlineRouteRulesMayDisableSsr: false,
-    dynamicComponentWrappers: [],
+    dynamicRenders: [],
     models: [],
     imports: [],
     ownLogic: false,
@@ -702,17 +703,28 @@ function walkElement(
   }
   const kind = elementKind(element);
   if (kind === "markup") walk.facts.ownMarkup = true;
-  if (
-    element.tagType === 1 &&
-    element.tag.toLowerCase() === "component" &&
-    element.props.some(
-      (prop) =>
-        prop.type === TemplateNodeType.DIRECTIVE &&
-        prop.name === "bind" &&
-        (!prop.arg?.isStatic || prop.arg.content === "is"),
-    )
-  )
-    walk.facts.dynamicComponentWrappers.push(wrappers);
+  const dynamicIs =
+    element.tagType === 1 && (element.tag === "component" || element.tag === "Component")
+      ? element.props.find((prop) =>
+          prop.type === TemplateNodeType.ATTRIBUTE
+            ? prop.name === "is"
+            : prop.name === "bind" && prop.arg?.isStatic && prop.arg.content === "is",
+        )
+      : undefined;
+  let knownDynamicExpression = false;
+  if (dynamicIs?.type === TemplateNodeType.ATTRIBUTE) {
+    if (dynamicIs.value)
+      walk.facts.dynamicRenders.push({ wrappers, name: dynamicIs.value.content });
+  } else if (dynamicIs) {
+    const target = dynamicIs.exp && parseTemplateExpression(dynamicIs.exp);
+    const identifier =
+      target?.type === "Identifier" ? target.name : !dynamicIs.exp ? "is" : undefined;
+    const binding = identifier && !elementScope.includes(identifier) ? identifier : undefined;
+    const name =
+      target?.type === "Literal" && typeof target.value === "string" ? target.value : undefined;
+    knownDynamicExpression = binding !== undefined || name !== undefined;
+    walk.facts.dynamicRenders.push({ wrappers, binding, name });
+  }
   const usage =
     kind === "component"
       ? createUsage(walk, element, elementScope, elementInFor, parent, wrappers)
@@ -732,7 +744,12 @@ function walkElement(
       });
       continue;
     }
-    if (prop.exp && prop.name !== "for" && prop.name !== "slot")
+    if (
+      prop.exp &&
+      prop.name !== "for" &&
+      prop.name !== "slot" &&
+      (prop !== dynamicIs || !knownDynamicExpression)
+    )
       readExpression(walk, prop.exp.content);
     if (prop.name === "for" && prop.forParseResult)
       readExpression(walk, prop.forParseResult.source.content);

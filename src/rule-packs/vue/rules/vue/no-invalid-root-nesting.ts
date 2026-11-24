@@ -76,7 +76,7 @@ export const noInvalidRootNesting = createRule({
   },
 });
 
-function skipsHydration(edge: ComponentUsageEdge): boolean {
+function skipsHydration(edge: Pick<ComponentUsageEdge, "clientOnlySlot" | "nuxtMode">): boolean {
   return edge.clientOnlySlot === true || edge.nuxtMode === "client" || edge.nuxtMode === "server";
 }
 
@@ -88,6 +88,8 @@ function componentsWithoutHydration(
   const boundaryTargets = new Set<string>();
   for (const node of graph.components.values()) {
     if (node.callers.some(skipsHydration)) boundaryTargets.add(node.file);
+    for (const edge of node.dynamicRenders ?? [])
+      if (skipsHydration(edge)) boundaryTargets.add(edge.target);
   }
   if (!boundaryTargets.size) return boundaryTargets;
   const behindBoundary = reachComponents(graph, boundaryTargets, () => true);
@@ -106,7 +108,7 @@ function componentsWithoutHydration(
   for (const node of graph.components.values()) {
     if (
       !behindBoundary.has(node.file) ||
-      node.indirectImporters.length ||
+      node.hasUntrackedImporter ||
       nuxtEntries.has(node.file) ||
       (apps.has(node.file) &&
         /(?:^|\/)(?:(?:pages|layouts)\/|(?:app|error)\.vue$)/.test(node.relativePath))
@@ -160,6 +162,7 @@ function possibleSsrTargets(
     }
     const names = app && named.get(app);
     if (!names) return;
+    for (const name of node.unresolvedDynamicNames ?? []) yield* names.get(name) ?? [];
     for (const edge of node.renders) {
       if (edge.unresolvedNuxtName && !skipsHydration(edge))
         yield* names.get(edge.unresolvedNuxtName) ?? [];
@@ -170,7 +173,7 @@ function possibleSsrTargets(
 function reachComponents(
   graph: ComponentUsageGraph,
   starts: ReadonlySet<string>,
-  follows: (edge: ComponentUsageEdge) => boolean,
+  follows: (edge: Pick<ComponentUsageEdge, "clientOnlySlot" | "nuxtMode">) => boolean,
   possibleTargets?: (node: ComponentNode) => Iterable<string>,
 ): Set<string> {
   const seen = new Set(starts);
@@ -184,6 +187,7 @@ function reachComponents(
     const node = graph.components.get(remaining.pop()!);
     if (!node) continue;
     for (const edge of node.renders) if (edge.target && follows(edge)) enqueue(edge.target);
+    for (const edge of node.dynamicRenders ?? []) if (follows(edge)) enqueue(edge.target);
     if (possibleTargets) for (const target of possibleTargets(node)) enqueue(target);
   }
   return seen;

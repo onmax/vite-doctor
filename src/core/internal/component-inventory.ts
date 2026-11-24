@@ -46,7 +46,7 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
     resolveImportedSfc(index, byId, from, source, imported);
   const unresolved: ComponentUsageEdge[] = [];
   for (const fact of facts) {
-    const node = fact.component && components.get(fact.path);
+    const node: ComponentNode | undefined = components.get(fact.path);
     if (!node) continue;
     const nuxt = session.handlesByPath.get(fact.path)?.project.nuxt;
     const registry = nuxt?.components;
@@ -77,8 +77,33 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
           /(?:^|\/)nuxt\/dist\/app\/components\/client-only(?:\.[^/]+)?$/.test(registered.file)
         );
       });
-    if (node.facts.dynamicComponentWrappers.some((wrappers) => !inClientOnlySlot(wrappers)))
-      node.hasUnresolvedDynamicRender = true;
+    for (const render of node.facts.dynamicRenders) {
+      const clientOnly = inClientOnlySlot(render.wrappers);
+      const binding: ComponentNode["facts"]["imports"][number] | undefined =
+        node.facts.imports.find((item) => item.local === render.binding);
+      const entry: { file: string; mode?: ComponentUsageEdge["nuxtMode"] } | undefined =
+        binding?.source === "#components"
+          ? (registry?.get(binding.imported) ??
+            registry?.get(binding.imported.replace(/^Lazy(?=[A-Z])/, "")))
+          : undefined;
+      const target: string | undefined = entry?.file
+        ? resolve(session.root, entry.file)
+        : binding && resolveSfc(fact, binding.source, binding.imported);
+      const callee: ComponentNode | undefined = target ? components.get(target) : undefined;
+      if (target && callee) {
+        (node.dynamicRenders ??= []).push({
+          target,
+          ...(clientOnly && { clientOnlySlot: true }),
+          ...(entry?.mode && { nuxtMode: entry.mode }),
+        });
+        if (callee !== node && !callee.indirectImporters.includes(fact.path))
+          callee.indirectImporters.push(fact.path);
+      } else if (!clientOnly) {
+        if (render.name !== undefined) {
+          if (render.name) (node.unresolvedDynamicNames ??= []).push(pascalCase(render.name));
+        } else node.hasUnresolvedDynamicRender = true;
+      }
+    }
     for (const usage of node.facts.usages) {
       const edge: ComponentUsageEdge = { from: fact.path, usage };
       if (inClientOnlySlot(usage.wrappers)) edge.clientOnlySlot = true;
@@ -116,8 +141,9 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
   for (const fact of facts) {
     for (const target of indirectSfcImports(fact, resolveSfc)) {
       const node = components.get(target);
-      if (node && !node.indirectImporters.includes(fact.path))
-        node.indirectImporters.push(fact.path);
+      if (!node) continue;
+      node.hasUntrackedImporter = true;
+      if (!node.indirectImporters.includes(fact.path)) node.indirectImporters.push(fact.path);
     }
   }
   return { components, unresolved };

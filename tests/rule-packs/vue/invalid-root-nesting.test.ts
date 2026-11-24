@@ -240,6 +240,33 @@ test.each([
   },
 );
 
+test.each([
+  { usage: '<component :is="AboutSection" />', reports: false },
+  { usage: '<component :is="Panel" />', reports: true },
+  { usage: '<ClientOnly><component :is="Panel" /></ClientOnly>', reports: false },
+  { usage: `<component :is="'section'" />`, reports: false },
+  { usage: `<component v-bind="{ is: 'section' }" />`, reports: false },
+  { usage: `<component v-bind:[key]="'section'" />`, reports: false },
+  { usage: `<section v-for="Panel in targets"><component :is="Panel" /></section>`, reports: true },
+])("VUE0052 follows only actual dynamic renders: $usage", async ({ usage, reports }) => {
+  const result = await runRuleFixture({
+    rule: noInvalidRootNesting,
+    framework: "nuxt",
+    files: {
+      "app/components/Card.vue": component("<div />"),
+      "app/components/Panel.vue": caller(["Card"], "<p><Card /></p>"),
+      "app/components/AboutSection.vue": component("<section />"),
+      "app/pages/index.vue": caller(
+        ["Panel"],
+        "<ClientOnly><Panel /></ClientOnly>",
+        "../components",
+      ),
+      "app/pages/about.vue": caller(["AboutSection", "Panel"], usage, "../components"),
+    },
+  });
+  expect(located(result)).toEqual(reports ? [["VUE0052", "app/components/Panel.vue", 5]] : []);
+});
+
 test.each([false, true])(
   "VUE0052 applies Nuxt component mode per usage (mixed: %s)",
   async (mixed) => {
