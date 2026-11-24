@@ -65,6 +65,7 @@ export { moduleRequireMeta } from "./module-require-meta.js";
 export { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
 export { moduleExplicitRuntimeImports } from "./module-explicit-runtime-imports.js";
 export { noModuleScopeRequestState } from "./no-module-scope-request-state.js";
+export { noRequestDataInModuleState } from "./no-request-data-in-module-state.js";
 
 import { noExplicitAutoImport } from "./no-explicit-auto-import.js";
 import { preferAliasOverRelativeParent } from "./prefer-alias-over-relative-parent.js";
@@ -133,6 +134,7 @@ import { moduleRequireMeta } from "./module-require-meta.js";
 import { moduleResolveRuntimePaths } from "./module-resolve-runtime-paths.js";
 import { moduleExplicitRuntimeImports } from "./module-explicit-runtime-imports.js";
 import { noModuleScopeRequestState } from "./no-module-scope-request-state.js";
+import { noRequestDataInModuleState } from "./no-request-data-in-module-state.js";
 import { defineRulePack } from "../../../../core/index.js";
 
 const rules = [
@@ -200,6 +202,7 @@ const rules = [
   moduleRequireMeta,
   moduleResolveRuntimePaths,
   moduleExplicitRuntimeImports,
+  noRequestDataInModuleState,
 ];
 
 const strictOnlyRules = [

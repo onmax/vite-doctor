@@ -1,6 +1,6 @@
 import type { RuleContext } from "../../../../core/index.js";
 import { getObjectPropertyValue, isFalseLiteral } from "./async-data.js";
-import { findStatementBinding, patternNames } from "./script-index.js";
+import { findStatementBinding, patternNames } from "../../../../core/internal/script-index.js";
 import {
   AnyNode,
   classifyExecutionEvidence,

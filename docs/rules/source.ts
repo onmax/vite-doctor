@@ -997,6 +997,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia actions", "https://pinia.vuejs.org/core-concepts/actions.html");
   }
 
+  if (rule.id === "nuxt/ssr/no-request-data-in-module-state") {
+    add("Nuxt useState", "https://nuxt.com/docs/4.x/api/composables/use-state");
+  }
+
+  if (rule.id === "nitro/state/no-request-data-in-module-state") {
+    add("Nitro cached functions", "https://nitro.build/docs/cache");
+  }
+
   if (rule.id === "vue/props/no-unused-props") {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }
