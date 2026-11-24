@@ -14,6 +14,7 @@ import {
 } from "nuxt/kit";
 import type { Nuxt, NuxtModule } from "nuxt/schema";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
+import { resolveAlias } from "pathe/utils";
 import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
 export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
@@ -48,6 +49,16 @@ type NuxtAutoImportContext = {
   getImports?: () => Promise<unknown[]> | unknown[];
 };
 
+type NitroAutoImports = {
+  getImportMap?: () => Promise<Map<string, unknown>>;
+};
+
+type NitroAutoImportEvidence = {
+  enabled: boolean;
+  unimport?: NitroAutoImports;
+  aliases: Record<string, string>;
+};
+
 type NuxtDoctorEvidence = {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
@@ -59,6 +70,7 @@ type NuxtDoctorEvidence = {
   importDirs?: unknown[];
   autoImportContext?: NuxtAutoImportContext;
   autoImportEntries?: unknown[];
+  nitroAutoImports?: NitroAutoImportEvidence;
   composableScan?: { dirs: string; entries: Promise<unknown[]> };
   moduleSources?: NuxtModuleSource[];
   extensions?: string[];
@@ -79,6 +91,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
     autoImportEntries: undefined as unknown[] | undefined,
+    nitroAutoImports: undefined as NitroAutoImportEvidence | undefined,
     composableScan: undefined as NuxtDoctorEvidence["composableScan"],
     moduleSources: undefined as NuxtModuleSource[] | undefined,
     extensions: undefined as string[] | undefined,
@@ -91,6 +104,12 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
+    const imports = nitro.options.imports;
+    evidence.nitroAutoImports = {
+      enabled: Boolean(imports) && imports.autoImport !== false,
+      unimport: nitro.unimport,
+      aliases: nitro.options.alias ?? {},
+    };
     const captureHandlers = async () => {
       const environments = new Set([
         nitro.options.dev ? "dev" : "prod",
@@ -287,6 +306,11 @@ export async function writeManifest(
     normalizeAutoImports(resolvedAutoImports),
     normalizeAutoImports(evidence?.autoImportEntries ?? []),
   );
+  const nitroAutoImports = evidence?.nitroAutoImports;
+  const nitroImportMap =
+    nitroAutoImports?.enabled && nitroAutoImports.unimport?.getImportMap
+      ? await nitroAutoImports.unimport.getImportMap()
+      : undefined;
   const layerDirectories = nuxt.options._layers ? getLayerDirectories(nuxt) : [];
   const composableScanRoots = new Set<string>(
     nuxt.options.imports?.scan === false
@@ -324,6 +348,14 @@ export async function writeManifest(
     buildDir,
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
+    nitroAutoImportEnabled: nitroAutoImports?.enabled,
+    nitroAutoImports:
+      nitroAutoImports?.enabled && nitroImportMap
+        ? normalizeAutoImports([...nitroImportMap.values()]).map((entry) => ({
+            ...entry,
+            from: resolveAlias(entry.from, nitroAutoImports.aliases),
+          }))
+        : undefined,
     scannedComposableFiles:
       scannedAutoImportEntries === undefined
         ? undefined

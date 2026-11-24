@@ -392,6 +392,13 @@ async function detectNuxt(
     autoImportsAuthoritative: manifest?.autoImportEnabled !== undefined && manifestCurrent,
     autoImports: new Map(autoImportEntries.map((entry) => [entry.as ?? entry.name, entry])),
     autoImportEntries,
+    nitroAutoImports: manifest
+      ? {
+          enabled: manifest.nitroAutoImportEnabled !== false,
+          authoritative: manifestCurrent && manifest.nitroAutoImports !== undefined,
+          entries: manifest.nitroAutoImports as AutoImportEntry[] | undefined,
+        }
+      : undefined,
     components: new Map(
       (manifest?.components ?? []).map((component: any) => [component.name, component]),
     ),

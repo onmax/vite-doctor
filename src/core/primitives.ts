@@ -245,6 +245,15 @@ export interface NuxtProjectInfo {
   autoImports: Map<string, AutoImportEntry>;
   /** All resolved auto-import entries, including names shadowed in the lookup map. */
   autoImportEntries?: AutoImportEntry[];
+  /**
+   * Nitro's runtime auto-imports for server files, as Nitro resolved them. `entries` is unset when
+   * the manifest does not record them, and `authoritative` is false when the manifest is stale.
+   */
+  nitroAutoImports?: {
+    enabled: boolean;
+    authoritative: boolean;
+    entries?: AutoImportEntry[];
+  };
   components: Map<
     string,
     { name: string; file: string; mode?: "client" | "server" | "all"; sourceLayer?: string }
@@ -362,6 +371,10 @@ export interface NuxtDoctorManifest {
     exclude: Array<{ source: string; flags: string }>;
   };
   autoImports: unknown[];
+  /** Unset when Nitro was not initialized, `false` when server auto-imports are off. */
+  nitroAutoImportEnabled?: boolean;
+  /** Nitro's resolved runtime auto-imports, with aliases resolved to paths. */
+  nitroAutoImports?: unknown[];
   components: unknown[];
   layers: Array<{
     root: string;
