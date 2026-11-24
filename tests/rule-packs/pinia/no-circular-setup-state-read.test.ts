@@ -12,6 +12,26 @@ function run(files: Record<string, string>, dependencies: Record<string, string>
   });
 }
 
+function runNuxt(
+  files: Record<string, string>,
+  autoImports: Array<{ from: string; name: string; as?: string }>,
+  { enabled = true, stale = false } = {},
+) {
+  return runProjectFixture({
+    framework: "nuxt",
+    dependencies: { pinia: "^3.0.0", nuxt: "^4.0.0", "@pinia/nuxt": "^0.11.0" },
+    rules: [rule],
+    files: {
+      ...files,
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: stale ? "2000-01-01T00:00:00.000Z" : new Date().toISOString(),
+        autoImportEnabled: enabled,
+        autoImports,
+      }),
+    },
+  });
+}
+
 // The X/Y example from https://pinia.vuejs.org/cookbook/composing-stores.html
 const x = `import { defineStore } from 'pinia'
 import { ref } from 'vue'
@@ -321,6 +341,112 @@ export const useUserStore = defineStore('user', {
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]!.confidence).toBe("heuristic-high");
   });
+
+  test.each([true, false])(
+    "resolves a store with a directory index (sibling file: %s)",
+    async (sibling) => {
+      const result = await run({
+        "stores/x.ts": x,
+        "stores/y/index.ts": sibling
+          ? "export const useYStore = () => ({ name: 'helper' })"
+          : y.replace("from './x'", "from '../x'"),
+        ...(sibling ? { "stores/y.ts": y } : {}),
+      });
+      expect(result.diagnostics).toHaveLength(1);
+    },
+  );
+
+  test("ignores a stale Nuxt store registration when #imports points to a helper", async () => {
+    const result = await runNuxt(
+      {
+        "nuxt.config.ts": "export default defineNuxtConfig({ imports: { dirs: ['helpers'] } })",
+        ".nuxt/imports.mjs": "export { useYStore } from '../helpers/y'",
+        "helpers/y.ts": "export const useYStore = () => ({ name: 'helper' })",
+        "stores/x.ts": x.replace("from './y'", "from '#imports'"),
+        "stores/y.ts": y,
+      },
+      [{ from: "~/stores/y", name: "useYStore" }],
+      { stale: true },
+    );
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test.each([true, false])(
+    "honors disabled Nuxt auto-import transforms (explicit: %s)",
+    async (explicit) => {
+      const result = await runNuxt(
+        {
+          "stores/x.ts": x.replace(
+            "import { useYStore } from './y'",
+            explicit ? "import { useYStore } from '#imports'" : "",
+          ),
+          "stores/y.ts": y,
+        },
+        [{ from: "~/stores/y", name: "useYStore" }],
+        { enabled: false },
+      );
+      expect(result.diagnostics).toHaveLength(explicit ? 1 : 0);
+    },
+  );
+
+  test.each([
+    [
+      "implicit Pinia helper",
+      "",
+      "storeToRefs",
+      "storeToRefs",
+      "/app/node_modules/.pnpm/@pinia+nuxt@0.11.3/node_modules/@pinia/nuxt/dist/runtime/composables.js",
+      true,
+      false,
+      1,
+    ],
+    [
+      "explicit Pinia helper",
+      "import { storeToRefs as refs } from '#imports'",
+      "refs",
+      "storeToRefs",
+      "/app/node_modules/@pinia/nuxt/dist/runtime/composables.js",
+      false,
+      false,
+      1,
+    ],
+    [
+      "Vue helper",
+      "import * as helpers from '#imports'",
+      "helpers.toRefs",
+      "toRefs",
+      "vue",
+      true,
+      false,
+      1,
+    ],
+    ["shadowed helper", "", "storeToRefs", "storeToRefs", "pinia", true, true, 0],
+    [
+      "unrelated helper",
+      "import { storeToRefs } from '#imports'",
+      "storeToRefs",
+      "storeToRefs",
+      "~/helpers/refs",
+      true,
+      false,
+      0,
+    ],
+    ["disabled implicit helper", "", "storeToRefs", "storeToRefs", "pinia", false, false, 0],
+  ] as const)(
+    "checks reads through a %s",
+    async (_label, imports, callee, name, from, enabled, shadowed, count) => {
+      const result = await runNuxt(
+        {
+          "stores/x.ts": `${imports}\n${x.replace("  const y = useYStore()\n  y.name", `${shadowed ? "  const storeToRefs = () => ({ name: ref('helper') })\n" : ""}  const { name: otherName } = ${callee}(useYStore())\n  otherName.value.toUpperCase()`)}`,
+          "stores/y.ts": y.replace("  x.name\n", ""),
+          "helpers/refs.ts": "export const storeToRefs = () => ({ name: { value: 'helper' } })",
+        },
+        [{ name, from }],
+        { enabled },
+      );
+      expect(result.diagnostics).toHaveLength(count);
+    },
+  );
 
   test("ignores unresolved, shadowed, and ambiguous store calls", async () => {
     const result = await run({

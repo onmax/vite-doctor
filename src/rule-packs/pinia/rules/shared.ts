@@ -1,4 +1,4 @@
-import type { RuleContext } from "../../../core/index.js";
+import type { NuxtProjectInfo, RuleContext } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseScriptScope, type ScopeReference } from "../../../core/internal/script-scope.js";
 import { parseSfcFile, parseVueScripts } from "../../../core/internal/sfc.js";
@@ -86,12 +86,16 @@ export function findStoreDefinitions(program: AnyNode, source: string): StoreDef
  * outside nested functions, and the property reads, destructuring, and `storeToRefs()` calls on
  * their result that also run before the setup function returns.
  */
-export function findStoreUses(program: AnyNode, source: string): StoreWithUses[] {
+export function findStoreUses(
+  program: AnyNode,
+  source: string,
+  nuxt?: NuxtProjectInfo,
+): StoreWithUses[] {
   const { definitions, references } = analyzeStoreScript(program, source);
   const local = new Set(definitions.flatMap((definition) => definition.binding?.start ?? []));
   return definitions.map((definition) => ({
     ...definition,
-    uses: definition.setup ? setupUses(definition.setup, references, local) : [],
+    uses: definition.setup ? setupUses(definition.setup, references, local, nuxt) : [],
   }));
 }
 
@@ -189,32 +193,70 @@ function importedCallee(
   references: Map<number, ScopeReference>,
   source: string,
 ): string | undefined {
+  const binding = calleeImport(node, references);
+  return binding?.from === source ? binding.name : undefined;
+}
+
+function calleeImport(
+  node: AnyNode,
+  references: Map<number, ScopeReference>,
+  nuxt?: NuxtProjectInfo,
+): { from: string; name: string } | undefined {
   const callee = unwrap(node);
   const member = callee?.type === "MemberExpression";
   const identifier = member ? unwrap(callee.object) : callee;
   if (identifier?.type !== "Identifier") return undefined;
   const reference = references.get(identifier.start);
-  const definitions = reference?.resolved?.defs;
-  if (!reference?.isValueReference || definitions?.length !== 1) return undefined;
+  if (!reference?.isValueReference) return undefined;
+  if (!reference.resolved && !member && nuxt?.autoImportEnabled)
+    return nuxtValueImport(nuxt, identifier.name);
+  const definitions = reference.resolved?.defs;
+  if (definitions?.length !== 1) return undefined;
   const definition = definitions[0]!;
   if (
     definition.type !== "ImportBinding" ||
     definition.parent.type !== "ImportDeclaration" ||
-    definition.parent.source.value !== source ||
     definition.parent.importKind === "type"
   )
     return undefined;
   const binding = definition.node;
-  if (member && binding.type === "ImportNamespaceSpecifier") return memberName(callee);
-  if (!member && binding.type === "ImportSpecifier" && binding.importKind !== "type")
-    return importedName(binding);
-  return undefined;
+  const name =
+    member && binding.type === "ImportNamespaceSpecifier"
+      ? memberName(callee)
+      : !member && binding.type === "ImportSpecifier" && binding.importKind !== "type"
+        ? importedName(binding)
+        : undefined;
+  if (name === undefined) return undefined;
+  const from = String(definition.parent.source.value);
+  return from === "#imports" ? nuxtValueImport(nuxt, name) : { from, name };
+}
+
+export function nuxtValueImport(nuxt: NuxtProjectInfo | undefined, name: string) {
+  const entry = nuxt?.autoImportsAuthoritative ? nuxt.autoImports.get(name) : undefined;
+  return entry && !entry.type ? entry : undefined;
+}
+
+function isRefHelper(
+  node: AnyNode,
+  references: Map<number, ScopeReference>,
+  nuxt?: NuxtProjectInfo,
+) {
+  const binding = calleeImport(node, references, nuxt);
+  if (!binding) return false;
+  const from = binding.from.replaceAll("\\", "/");
+  return (
+    (binding.name === "toRefs" && from === "vue") ||
+    (binding.name === "storeToRefs" &&
+      (from === "pinia" ||
+        /(?:^|\/)node_modules\/@pinia\/nuxt\/dist\/runtime\/composables(?:\.[cm]?js)?$/.test(from)))
+  );
 }
 
 function setupUses(
   setup: AnyNode,
   references: Map<number, ScopeReference>,
   localStores: Set<number>,
+  nuxt?: NuxtProjectInfo,
 ): SetupStoreUse[] {
   const uses: SetupStoreUse[] = [];
   const bindings = new Map<unknown, SetupStoreUse>();
@@ -236,7 +278,7 @@ function setupUses(
     };
     uses.push(use);
     const { expression, parent } = enclosing(node, ancestors);
-    const read = readOf(expression, parent, ancestors, references);
+    const read = readOf(expression, parent, ancestors, references, nuxt);
     if (read) use.reads.push({ ...read, runtimes });
     if (
       parent?.type === "VariableDeclarator" &&
@@ -252,7 +294,7 @@ function setupUses(
     const use = reference?.isValueReference && bindings.get(reference.resolved);
     if (!use || reference.init) continue;
     const { expression, parent } = enclosing(node, ancestors);
-    const read = readOf(expression, parent, ancestors, references);
+    const read = readOf(expression, parent, ancestors, references, nuxt);
     const runtimes = use.runtimes & executionRuntimes(node, ancestors);
     if (read && runtimes) use.reads.push({ ...read, runtimes });
   }
@@ -297,6 +339,7 @@ function readOf(
   parent: AnyNode,
   ancestors: AnyNode[],
   references: Map<number, ScopeReference>,
+  nuxt?: NuxtProjectInfo,
 ): { start: number; end: number } | undefined {
   if (!parent) return undefined;
   if (parent.type === "MemberExpression" && parent.object === expression) {
@@ -324,8 +367,7 @@ function readOf(
   if (
     parent.type === "CallExpression" &&
     parent.arguments?.[0] === expression &&
-    (importedCallee(parent.callee, references, "pinia") === "storeToRefs" ||
-      importedCallee(parent.callee, references, "vue") === "toRefs")
+    isRefHelper(parent.callee, references, nuxt)
   )
     return { start: parent.start, end: parent.end };
   return undefined;

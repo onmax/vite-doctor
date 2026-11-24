@@ -5,6 +5,7 @@ import { diagnostics } from "../diagnostics.js";
 import {
   collectStoreModules,
   findStoreUses,
+  nuxtValueImport,
   setupRuntimes,
   type SetupStoreUse,
   type StoreModule,
@@ -31,7 +32,7 @@ interface ReadSite {
   location: string;
 }
 
-const SCRIPT_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".vue"];
+const VITE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
 const REMEDIATION =
   "Defer every reported read to a computed() getter or an action that runs after setup, or break the cycle by moving a useStore() call out of setup.";
 
@@ -70,7 +71,12 @@ export const noCircularSetupStateRead = createRule({
     return {
       async onWorkspaceEnd() {
         const stores = (await collectStoreModules(ctx)).flatMap((module) =>
-          findStoreUses(module.program, module.text).map((store) => ({ store, module })),
+          findStoreUses(module.program, module.text, nuxtForFile(ctx, module.file)).map(
+            (store) => ({
+              store,
+              module,
+            }),
+          ),
         );
         const edges = storeEdges(ctx, stores);
         const seen = new Set<string>();
@@ -112,11 +118,15 @@ function storeResolver(ctx: RuleContext, stores: LocatedStore[]) {
   }
 
   function moduleFile(from: string, source: string) {
-    const existing = [...importCandidates(ctx, from, source)].filter((file) => {
-      if (byFile.has(file)) return true;
-      return SCRIPT_EXTENSIONS.some((ext) => file.endsWith(ext)) && ctx.fs.stat(file)?.isFile();
-    });
-    return existing.length === 1 ? existing[0] : undefined;
+    const matches = new Set(
+      importBases(ctx, from, source).flatMap((base) => {
+        const file = importCandidates(base).find(
+          (candidate) => byFile.has(candidate) || ctx.fs.stat(candidate)?.isFile(),
+        );
+        return file ? [file] : [];
+      }),
+    );
+    return matches.size === 1 ? matches.values().next().value : undefined;
   }
 
   function program(file: string) {
@@ -204,9 +214,7 @@ function storeResolver(ctx: RuleContext, stores: LocatedStore[]) {
     const { target } = use;
     const file = from.module.file;
     const ownPackage = packageRoot(ctx, file);
-    const nuxt =
-      ctx.project.workspaceNuxt?.find((item) => resolve(ctx.project.root, item.root) === ownPackage)
-        ?.nuxt ?? ctx.project.nuxt;
+    const nuxt = nuxtForFile(ctx, file);
     if (target.kind === "local") {
       const store = byFile.get(file)?.find((item) => item.store.binding?.start === target.start);
       return store && { store, byName: false };
@@ -216,18 +224,14 @@ function storeResolver(ctx: RuleContext, stores: LocatedStore[]) {
       const store = imported && exported(imported, target.name);
       return store ? { store, byName: false } : undefined;
     }
-    const registration = nuxt?.autoImports.get(target.name);
-    if (registration) {
-      const imported = !registration.type && moduleFile(file, registration.from);
+    if (target.kind === "auto-import" && nuxt?.autoImportEnabled === false) return undefined;
+    if (nuxt?.autoImportsAuthoritative) {
+      const registration = nuxtValueImport(nuxt, target.name);
+      const imported = registration && moduleFile(file, registration.from);
       const store = imported && exported(imported, registration.name);
       return store ? { store, byName: false } : undefined;
     }
-    if (
-      target.kind === "import" ||
-      nuxt?.autoImportsAuthoritative ||
-      nuxt?.autoImportEnabled === false
-    )
-      return undefined;
+    if (target.kind === "import" || nuxt?.autoImports.has(target.name)) return undefined;
     const named = [
       ...new Set([...byFile.keys()].flatMap((candidate) => exported(candidate, target.name) ?? [])),
     ];
@@ -260,7 +264,7 @@ function bindsName(pattern: StoreModule["program"], name: string): boolean {
   }
 }
 
-function importCandidates(ctx: RuleContext, from: string, specifier: string): Set<string> {
+function importBases(ctx: RuleContext, from: string, specifier: string): string[] {
   const bare = specifier.split("?")[0]!;
   const root = ctx.project.root;
   const own = packageRoot(ctx, from);
@@ -269,21 +273,32 @@ function importCandidates(ctx: RuleContext, from: string, specifier: string): Se
   else if (bare.startsWith("./") || bare.startsWith("../")) bases = [resolve(dirname(from), bare)];
   else if (/^(?:~~|@@)\//.test(bare))
     bases = [own, root].map((base) => resolve(base, bare.slice(3)));
-  else if (/^[~@]\//.test(bare))
+  else if (/^[~@]\//.test(bare)) {
+    const appDir = nuxtForFile(ctx, from)?.appDir;
     bases = [
-      ...(ctx.project.nuxt?.appDir ? [ctx.project.nuxt.appDir] : []),
+      ...(appDir ? [appDir] : []),
       ...[own, root].flatMap((base) => [resolve(base, "app"), resolve(base, "src"), base]),
     ].map((base) => resolve(base, bare.slice(2)));
-  const files = new Set<string>();
-  for (const base of bases) {
-    files.add(base);
-    files.add(base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2"));
-    for (const extension of SCRIPT_EXTENSIONS) {
-      files.add(`${base}${extension}`);
-      files.add(`${base}/index${extension}`);
-    }
   }
-  return files;
+  return bases;
+}
+
+function importCandidates(base: string): string[] {
+  const ts = base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
+  return [
+    base,
+    ...(ts === base ? [] : [ts]),
+    ...VITE_EXTENSIONS.map((extension) => `${base}${extension}`),
+    ...VITE_EXTENSIONS.map((extension) => `${base}/index${extension}`),
+  ];
+}
+
+function nuxtForFile(ctx: RuleContext, file: string) {
+  const ownPackage = packageRoot(ctx, file);
+  return (
+    ctx.project.workspaceNuxt?.find((item) => resolve(ctx.project.root, item.root) === ownPackage)
+      ?.nuxt ?? ctx.project.nuxt
+  );
 }
 
 function packageRoot(ctx: RuleContext, file: string): string {
