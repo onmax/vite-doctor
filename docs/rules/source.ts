@@ -1126,6 +1126,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Nitro cache", "https://nitro.build/guide/cache");
   }
 
+  if (rule.id.startsWith("nitro/storage/")) {
+    add("Nitro KV storage", "https://nitro.build/docs/storage");
+  }
+
+  if (rule.id === "nitro/handler/require-waituntil-for-background-work") {
+    add("Cloudflare waitUntil", "https://developers.cloudflare.com/workers/runtime-apis/context/");
+    add(
+      "Vercel waitUntil",
+      "https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package",
+    );
+  }
+
   if (rule.framework === "vite" && rule.category === "env") {
     add("Vite env variables and modes", "https://vite.dev/guide/env-and-mode/");
   }
