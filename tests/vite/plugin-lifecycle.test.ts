@@ -218,6 +218,41 @@ export { use${name}A }
   });
 });
 
+test("a build with a warning limit respects the Doctor plugin's environment filter", async () => {
+  await withProject(async (root) => {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0" } }),
+    );
+    await writeFile(
+      join(root, "entry.ts"),
+      `import { defineStore } from 'pinia'
+export const useA = defineStore('a', () => ({ name: useB().name }))
+export const useB = defineStore('b', () => ({ name: useA().name }))`,
+    );
+    const plugin = doctor({
+      rules: "pinia/stores/no-circular-setup-state-read",
+      config: { rules: { "pinia/stores/no-circular-setup-state-read": "warn" } },
+      cache: false,
+      maxWarnings: 0,
+    });
+    plugin.applyToEnvironment = ({ name }) => name === "client";
+    const config = {
+      root,
+      configFile: false as const,
+      logLevel: "silent" as const,
+      plugins: [plugin],
+      build: {
+        write: false,
+        lib: { entry: join(root, "entry.ts"), formats: ["es" as const] },
+        rolldownOptions: { external: ["pinia"] },
+      },
+    };
+    await build({ ...config, build: { ...config.build, ssr: true } });
+    await expect(build(config)).rejects.toThrow(/PINIA0003/);
+  });
+});
+
 test("a shared Plugin Surface runs once across a Vite application's environments", async () => {
   await withProject(async (root) => {
     let runs = 0;

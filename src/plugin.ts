@@ -57,17 +57,15 @@ declare module "vite" {
 }
 
 export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
-  return createDoctorPlugin(options);
-}
-
-function createDoctorPlugin(
-  options: ViteDoctorSurfaceOptions,
-  sessionWarnings?: Set<string>,
-): Plugin {
   let config: ResolvedConfig | undefined;
   let ran = false;
   let serveRun: ServeDoctorRun | undefined;
   const checkedTargets = new WeakSet<BuildTarget>();
+  const warningBudgets = new WeakMap<Plugin, Set<string>>();
+
+  function sessionPlugin(resolved: ResolvedConfig) {
+    return resolved.plugins.find((candidate) => warningBudgets.has(candidate));
+  }
 
   async function checkBuild(
     resolved: ResolvedConfig,
@@ -80,6 +78,8 @@ function createDoctorPlugin(
       surfaceExtensions(resolved, options),
     );
     const maxWarnings = options.maxWarnings;
+    const session = maxWarnings === undefined ? undefined : sessionPlugin(resolved);
+    const sessionWarnings = session && warningBudgets.get(session);
     if (sessionWarnings) for (const warning of outcome.warningKeys) sessionWarnings.add(warning);
     const overBudget =
       sessionWarnings && maxWarnings !== undefined && sessionWarnings.size > maxWarnings;
@@ -96,9 +96,12 @@ function createDoctorPlugin(
     async handler(builder) {
       if (options.enabled === false || !shouldRun(options.run ?? "build", "build")) return;
       const targets = Object.values(builder.environments);
+      const configuredPlugin = sessionPlugin(builder.config) ?? plugin;
       if (
         targets.length === 0 ||
-        targets.some((target) => target.isBuilt !== false || !target.plugins.includes(plugin)) ||
+        targets.some(
+          (target) => target.isBuilt !== false || !target.plugins.includes(configuredPlugin),
+        ) ||
         builder.config.plugins.some((plugin) => plugin.buildApp && plugin.buildApp !== buildApp)
       )
         return;
@@ -114,7 +117,6 @@ function createDoctorPlugin(
       config = resolved;
       ran = false;
       if (
-        sessionWarnings ||
         resolved.command !== "build" ||
         options.maxWarnings === undefined ||
         !resolved.environments
@@ -122,7 +124,13 @@ function createDoctorPlugin(
         return;
       const plugins = resolved.plugins as Plugin[];
       const index = plugins.indexOf(plugin);
-      if (index >= 0) plugins[index] = createDoctorPlugin(options, new Set());
+      if (index < 0) return;
+      const session = Object.create(
+        Object.getPrototypeOf(plugin),
+        Object.getOwnPropertyDescriptors(plugin),
+      ) as Plugin;
+      warningBudgets.set(session, new Set());
+      plugins[index] = session;
     },
     configureServer(server) {
       if (options.enabled === false || !shouldRun(options.run ?? "build", "serve")) return;
