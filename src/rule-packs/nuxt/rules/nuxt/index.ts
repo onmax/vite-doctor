@@ -41,6 +41,7 @@ export { noNestedSharedAutoimportAssumption } from "./no-nested-shared-autoimpor
 export { noSubdirPluginAutoRegistrationAssumption } from "./no-subdir-plugin-auto-registration-assumption.js";
 export { noNonSerializableUseState } from "./no-non-serializable-use-state.js";
 export { noDivergingUseStateInit } from "./no-diverging-usestate-init.js";
+export { noGlobalMiddlewareRedirectLoop } from "./no-global-middleware-redirect-loop.js";
 export { requireStableAsyncDataKey } from "./require-stable-async-data-key.js";
 export { preferExplicitUseStateKeyInExportedComposables } from "./prefer-explicit-use-state-key-in-exported-composables.js";
 export { noComposableAfterAwait } from "./no-composable-after-await.js";
@@ -105,6 +106,7 @@ import { noNestedSharedAutoimportAssumption } from "./no-nested-shared-autoimpor
 import { noSubdirPluginAutoRegistrationAssumption } from "./no-subdir-plugin-auto-registration-assumption.js";
 import { noNonSerializableUseState } from "./no-non-serializable-use-state.js";
 import { noDivergingUseStateInit } from "./no-diverging-usestate-init.js";
+import { noGlobalMiddlewareRedirectLoop } from "./no-global-middleware-redirect-loop.js";
 import { requireStableAsyncDataKey } from "./require-stable-async-data-key.js";
 import { preferExplicitUseStateKeyInExportedComposables } from "./prefer-explicit-use-state-key-in-exported-composables.js";
 import { noComposableAfterAwait } from "./no-composable-after-await.js";
@@ -171,6 +173,7 @@ const rules = [
   noSubdirPluginAutoRegistrationAssumption,
   noNonSerializableUseState,
   noDivergingUseStateInit,
+  noGlobalMiddlewareRedirectLoop,
   requireStableAsyncDataKey,
   preferExplicitUseStateKeyInExportedComposables,
   noComposableAfterAwait,

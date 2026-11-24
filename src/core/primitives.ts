@@ -300,6 +300,12 @@ export interface NuxtProjectInfo {
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
     pages?: Array<{ path?: string; file?: string; name?: string }>;
+    /** Route middleware Nuxt resolved, with absolute paths. Absent in manifests that predate it. */
+    middleware?: NuxtResolvedMiddleware[];
+    /** Page routes Nuxt resolved, with absolute files. Absent unless `scanPageMeta` is on. */
+    routes?: NuxtResolvedRoute[];
+    /** Absolute router.options files Nuxt merges into the router. */
+    routerOptionsFiles?: string[];
     prerenderRoutes?: string[];
     buildManifest?: {
       hasBuildManifest: boolean;
@@ -312,6 +318,26 @@ export interface NuxtProjectInfo {
       serverRoutes: number;
     };
   };
+}
+
+/** One route middleware from Nuxt's resolved app, global when Nuxt runs it on every navigation. */
+export interface NuxtResolvedMiddleware {
+  name: string;
+  path: string;
+  global: boolean;
+}
+
+/**
+ * One page route record as Nuxt hands it to vue-router, with the full path vue-router matches.
+ * `redirect` is the statically extracted value; `dynamic` lists route fields Nuxt reads at runtime.
+ */
+export interface NuxtResolvedRoute {
+  path: string;
+  name?: string;
+  file?: string;
+  redirect?: unknown;
+  alias?: unknown;
+  dynamic?: string[];
 }
 
 export interface NuxtModuleSource {
@@ -387,6 +413,9 @@ export interface NuxtDoctorManifest {
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
   pages?: Array<{ path?: string; file?: string; name?: string }>;
+  middleware?: NuxtResolvedMiddleware[];
+  routes?: NuxtResolvedRoute[];
+  routerOptionsFiles?: string[];
   prerenderRoutes?: string[];
   buildManifest?: {
     hasBuildManifest: boolean;

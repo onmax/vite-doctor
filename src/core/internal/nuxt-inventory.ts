@@ -1,6 +1,12 @@
 import { relative, resolve } from "pathe";
 import { isNuxtManifestCurrent } from "./runtime-graph.js";
-import type { NuxtDoctorManifest, NuxtKeyedComposable, NuxtModuleSource } from "../primitives.js";
+import type {
+  NuxtDoctorManifest,
+  NuxtKeyedComposable,
+  NuxtModuleSource,
+  NuxtResolvedMiddleware,
+  NuxtResolvedRoute,
+} from "../primitives.js";
 
 export interface NuxtProjectInventory {
   scannedComposableFiles?: string[];
@@ -19,6 +25,9 @@ export interface NuxtProjectInventory {
   serverHandlers: NuxtDoctorManifest["serverHandlers"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   pages: Array<{ path?: string; file?: string; name?: string }>;
+  middleware?: NuxtResolvedMiddleware[];
+  routes?: NuxtResolvedRoute[];
+  routerOptionsFiles?: string[];
   prerenderRoutes: string[];
   buildManifest?: {
     hasBuildManifest: boolean;
@@ -63,6 +72,14 @@ export function createNuxtProjectInventory(
       file: resolve(root, handler.file),
     })),
     pages: manifest?.pages ?? [],
+    middleware: manifest?.middleware?.map((entry) => ({
+      ...entry,
+      path: resolve(root, entry.path),
+    })),
+    routes: manifest?.routes?.map((route) =>
+      route.file ? { ...route, file: resolve(root, route.file) } : route,
+    ),
+    routerOptionsFiles: manifest?.routerOptionsFiles?.map((file) => resolve(root, file)),
     prerenderRoutes: manifest?.prerenderRoutes ?? [],
     buildManifest: manifest?.buildManifest,
     evidence: {

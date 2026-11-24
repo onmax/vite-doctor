@@ -1323,6 +1323,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/routing/no-global-middleware-redirect-loop": {
+    description:
+      "Flags a global route middleware that redirects to a fixed route without checking where navigation is going.",
+    why: "Nuxt runs global middleware before every navigation, including the redirect it just issued. A redirect that does not depend on `to` runs again on the target route and loops until vue-router gives up.",
+    recommendedReplacement:
+      "Return early when `to.path` (or `to.meta`) already matches the target, or move the redirect into named middleware.",
+    examples: [
+      {
+        title: "Skip the redirect on its target",
+        language: "ts",
+        invalid:
+          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware(() => {\n  const user = useState('user')\n  if (!user.value) return navigateTo('/login')\n})",
+        valid:
+          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware((to) => {\n  const user = useState('user')\n  if (to.path !== '/login' && !user.value) return navigateTo('/login')\n})",
+      },
+    ],
+  },
   "nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup": {
     description:
       "Flags hash sensitive route fullpath in SSR markup in Nuxt routing code before it leaks into runtime behavior.",
@@ -2580,6 +2597,22 @@ export const ruleDocumentationMetadata = {
           '<script setup lang="ts">\nconst count = ref(1)\nconst doubled = ref(0)\nwatch(count, (value) => {\n  doubled.value = value * 2\n})\n</script>',
         valid:
           '<script setup lang="ts">\nconst count = ref(1)\nconst doubled = computed(() => count.value * 2)\n</script>',
+      },
+    ],
+  },
+  "vue/router/no-redirect-cycle": {
+    description: "Flags static route records whose redirects lead back to themselves.",
+    why: "vue-router follows record redirects without a limit, so a cycle of static redirects never resolves and navigation to any member hangs or overflows the stack.",
+    recommendedReplacement:
+      "Point one record in the cycle at a route that renders a component, or remove the redundant redirect.",
+    examples: [
+      {
+        title: "End the redirect chain at a page",
+        language: "ts",
+        invalid:
+          "createRouter({\n  history: createWebHistory(),\n  routes: [\n    { path: '/old', redirect: '/new' },\n    { path: '/new', redirect: '/old' },\n  ],\n})",
+        valid:
+          "createRouter({\n  history: createWebHistory(),\n  routes: [\n    { path: '/old', redirect: '/new' },\n    { path: '/new', component: NewPage },\n  ],\n})",
       },
     ],
   },
