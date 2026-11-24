@@ -254,6 +254,7 @@ export interface NuxtProjectInfo {
     authoritative: boolean;
     entries?: AutoImportEntry[];
     scanDirs?: string[];
+    installedPackageJsonPath?: string;
     scan?: NuxtDoctorManifest["nitroAutoImportScan"];
     transform?: NuxtDoctorManifest["nitroAutoImportTransform"];
   };

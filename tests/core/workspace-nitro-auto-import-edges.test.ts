@@ -9,6 +9,7 @@ import {
   defineDoctorExtension,
   defineRulePack,
   type ImportGraph,
+  type RuntimeTarget,
 } from "../../src/core/index.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import { captureNitroAutoImportScan } from "../../src/core/internal/nitro-auto-import-scan.ts";
@@ -82,7 +83,7 @@ function writeFixture(root: string, files: Record<string, string>) {
   }
 }
 
-async function analyze(root: string, hostExtensions = false) {
+async function analyze(root: string, hostExtensions = false, runtimeTarget?: RuntimeTarget) {
   let graph: ImportGraph | undefined;
   const capture = createRule({
     meta: {
@@ -108,6 +109,7 @@ async function analyze(root: string, hostExtensions = false) {
     rules: `test/import-graph,${cycleRule}`,
     cache: false,
     hostExtensions,
+    runtimeTarget,
     extensions: [
       defineDoctorExtension({
         name: "capture",
@@ -399,6 +401,10 @@ test("trusted analysis replays the scanner installed under Nitro, not Doctor's v
       const trusted = await analyze(root, true);
       expect(trusted.cycles).toHaveLength(1);
       expect(trusted.gaps).toEqual([]);
+      const targeted = await analyze(root, true, { nitro: "2.13.4" });
+      expect(targeted.autoImportEdges).toEqual(trusted.autoImportEdges);
+      expect(targeted.cycles).toEqual(trusted.cycles);
+      expect(targeted.gaps).toEqual([]);
       const standalone = await analyze(root);
       expect(standalone.cycles).toEqual([]);
       expect(standalone.gaps).toEqual([expect.stringContaining("--host-extensions")]);

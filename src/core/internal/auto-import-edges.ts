@@ -110,7 +110,7 @@ async function collect(
       if (scan) {
         const verification = await verifyNitroAutoImportScan(
           scan,
-          handle.project.runtimeGraph?.packages.nitro?.packageJsonPath,
+          nitro?.installedPackageJsonPath,
           session.options.hostExtensions === true,
         );
         if (verification !== "current") {

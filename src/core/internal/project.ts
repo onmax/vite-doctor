@@ -165,6 +165,9 @@ async function detectNuxtInventory(
     facts,
   );
   const graph = resolveRuntimeGraph(workspaceRoot, "nuxt", join(appRoot, "package.json"));
+  const installedNitro = graph.packages.nitro;
+  if (nuxt.nitroAutoImports && installedNitro?.state === "resolved")
+    nuxt.nitroAutoImports.installedPackageJsonPath = installedNitro.packageJsonPath;
   const targeted = applyRuntimeTarget(
     graph,
     resolveNuxtCompatibility(appRoot, graph, facts.manifest, facts.configs, facts.manifestCurrent),
