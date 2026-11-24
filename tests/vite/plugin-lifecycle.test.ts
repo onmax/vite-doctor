@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { build, createBuilder, type Logger } from "vite";
+import { build, createBuilder, resolveConfig, type Logger } from "vite";
 import { expect, test } from "vite-plus/test";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../src/extension.ts";
 import { doctor } from "../../src/plugin.ts";
@@ -61,12 +61,17 @@ export const useYStore = defineStore('y', () => ({ name: useXStore().name }))
 `,
     );
     await writeFile(join(root, "y.jsx"), "export const useYStore = () => ({ name: 'helper' })");
+    await writeFile(join(root, "entry.ts"), "export { useXStore } from './x'");
     const config = {
       root,
       configFile: false as const,
       logLevel: "silent" as const,
       plugins: [doctor({ rules: "pinia/stores/no-circular-setup-state-read", cache: false })],
-      build: { write: false, lib: { entry: join(root, "entry.ts"), formats: ["es" as const] } },
+      build: {
+        write: false,
+        lib: { entry: join(root, "entry.ts"), formats: ["es" as const] },
+        rolldownOptions: { external: ["pinia"] },
+      },
     };
     await build(config);
     await expect(
@@ -79,11 +84,42 @@ export const useYStore = defineStore('y', () => ({ name: useXStore().name }))
     ).rejects.toThrow(/PINIA0003/);
     await build({ ...config, environments: { client: helperFirst, ssr: storeFirst } });
     await writeFile(join(root, "x.ts"), xStore("import.meta.env.SSR"));
-    await expect(
-      build({ ...config, environments: { client: helperFirst, ssr: storeFirst } }),
-    ).rejects.toThrow(/PINIA0003/);
+    const ssrCycle = { ...config, environments: { client: helperFirst, ssr: storeFirst } };
+    await build(ssrCycle);
+    await expect(build({ ...ssrCycle, build: { ...config.build, ssr: true } })).rejects.toThrow(
+      /PINIA0003/,
+    );
+    const app = await createBuilder({ ...ssrCycle, builder: { sharedPlugins: true } });
+    await expect(app.buildApp()).rejects.toThrow(/PINIA0003/);
+    const clientApp = await createBuilder({
+      ...ssrCycle,
+      builder: {
+        async buildApp(builder) {
+          await builder.build(builder.environments.client!);
+        },
+      },
+    });
+    await clientApp.buildApp();
+    await expect(clientApp.build(clientApp.environments.ssr!)).rejects.toThrow(/PINIA0003/);
 
     await writeFile(join(root, "x.ts"), xStore("!import.meta.env.SSR"));
+    const legacyConfig = await resolveConfig({ ...config, ...storeFirst }, "build");
+    Reflect.deleteProperty(legacyConfig, "environments");
+    const [plugin] = config.plugins;
+    const { configResolved, buildStart } = plugin!;
+    if (typeof configResolved !== "function" || typeof buildStart !== "function") {
+      throw new Error("Expected callable Doctor hooks");
+    }
+    await configResolved.call({} as ThisParameterType<typeof configResolved>, legacyConfig);
+    const legacyContext = {
+      error(message: string): never {
+        throw new Error(message);
+      },
+    } as ThisParameterType<typeof buildStart>;
+    await expect(
+      buildStart.call(legacyContext, {} as Parameters<typeof buildStart>[0]),
+    ).rejects.toThrow(/PINIA0003/);
+
     await writeFile(
       join(root, "y.tsx"),
       `
@@ -97,10 +133,12 @@ export const useYStore = defineStore('y', () => ({ name: useXStore().name }))
       join(root, "reverse.tsx"),
       "export const useXStore = () => ({ name: 'helper' })",
     );
-    await build({
+    const splitApp = await createBuilder({
       ...config,
+      builder: { sharedPlugins: true },
       environments: { client: storeFirst, secondClient: { ...helperFirst, consumer: "client" } },
     });
+    await splitApp.buildApp();
   });
 });
 
