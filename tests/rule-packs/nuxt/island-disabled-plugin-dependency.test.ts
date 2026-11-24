@@ -58,6 +58,7 @@ async function withPreparedApp(
     gaps: () => Promise<string[]>;
   }) => Promise<void>,
   setup?: (root: string) => void,
+  prepareFirst = true,
 ) {
   const root = mkdtempSync(join(tmpdir(), "doctor-island-registration-"));
   const cwd = process.cwd();
@@ -88,7 +89,7 @@ async function withPreparedApp(
       await nuxt.close();
       nuxt = undefined;
     };
-    await prepare();
+    if (prepareFirst) await prepare();
     const result = () => runViteDoctor({ root, framework: "nuxt", cache: false });
     await check({
       root,
@@ -108,6 +109,38 @@ async function withPreparedApp(
 }
 
 describe("nuxt/plugins/no-island-disabled-dependency", () => {
+  test.each<{ config: string; modules: Record<string, string> }>([
+    {
+      config: "export default defineNuxtConfig({ experimental: { componentIslands: false } })",
+      modules: {
+        "modules/islands.ts":
+          "export default function (_, nuxt) { nuxt.options.experimental.componentIslands = true }",
+      },
+    },
+    {
+      config:
+        "const key = 'componentIslands'; export default defineNuxtConfig({ experimental: { componentIslands: false, [key]: true } })",
+      modules: {},
+    },
+  ])(
+    "keeps island enablement unknown before prepare when config can be overridden",
+    async ({ config, modules }) => {
+      await withPreparedApp(
+        { ...island, ...modules, "nuxt.config.ts": config },
+        async ({ scan, prepare, gaps }) => {
+          expect(await scan()).toEqual([]);
+          expect(await gaps()).toContain(
+            "nuxt/plugins/no-island-disabled-dependency/island-registration",
+          );
+          await prepare();
+          expect(await scan()).toEqual([expect.stringContaining("/app/plugins/api.ts")]);
+        },
+        undefined,
+        false,
+      );
+    },
+  );
+
   test("invalidates stale registration when a parent is added through a linked pages directory", async () => {
     await withPreparedApp(
       { "shared-pages/catalog/details.server.vue": "<template><div /></template>" },

@@ -365,10 +365,45 @@ test("island plugin registration gaps identify each affected Nuxt app", async ()
     join(root, "packages/app-a/nuxt.config.ts"),
     "export default defineNuxtConfig({ experimental: { componentIslands: false } })",
   );
+  expect(await scan()).toEqual([
+    "packages/app-a/.nuxt/doctor.manifest.json",
+    "packages/app-b/.nuxt/doctor.manifest.json",
+  ]);
+  mkdirSync(join(root, "packages/app-a/.nuxt"), { recursive: true });
+  writeFileSync(
+    join(root, "packages/app-a/.nuxt/doctor.manifest.json"),
+    JSON.stringify({
+      generatedAt: new Date(Date.now() + 10_000).toISOString(),
+      componentIslands: false,
+    }),
+  );
   expect(await scan()).toEqual(["packages/app-b/.nuxt/doctor.manifest.json"]);
 
   rmSync(join(root, "packages/app-b/web/plugins/auth.ts"));
   expect(await scan()).toEqual([]);
+});
+
+test("an explicitly registered shared plugin can require only its Nuxt app's manifest", async () => {
+  const root = multiNuxtMonorepo({
+    "packages/shared/package.json": JSON.stringify({ name: "@workspace/shared" }),
+    "packages/shared/auth.ts":
+      "export default defineNuxtPlugin({ name: 'auth', env: { islands: false } })",
+    "packages/app-a/nuxt.config.ts":
+      "export default defineNuxtConfig({ plugins: ['../shared/auth.ts'] })",
+    "packages/app-a/app/components/Chart.server.vue": button,
+    "packages/app-a/app/plugins/api.ts":
+      "export default defineNuxtPlugin({ name: 'api', dependsOn: ['auth'] })",
+    "packages/app-b/web/components/Chart.server.vue": button,
+    "packages/app-b/web/plugins/api.ts":
+      "export default defineNuxtPlugin({ name: 'api', dependsOn: ['auth'] })",
+  });
+  const result = await runViteDoctor({ root, cache: false, runtimeTarget: { nuxt: "4.5.2" } });
+  expect(result.diagnostics.map(({ code }) => code)).not.toContain("NUXT0104");
+  expect(
+    result.project.evidenceGaps?.filter(
+      ({ source }) => source === "nuxt/plugins/no-island-disabled-dependency/island-registration",
+    ),
+  ).toMatchObject([{ files: ["packages/app-a/.nuxt/doctor.manifest.json"] }]);
 });
 
 test("Nuxt manifest Rules review each Nuxt app's inventory", async () => {

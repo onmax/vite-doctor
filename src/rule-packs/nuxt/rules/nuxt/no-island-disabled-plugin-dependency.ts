@@ -1,7 +1,7 @@
-import { join, relative } from "pathe";
+import { isAbsolute, join, relative, resolve } from "pathe";
 import { createRule, type RuleContext, type SourceRange } from "../../../../core/index.js";
 import { projectWorkspacePackages } from "../../../../core/internal/applicability.js";
-import { readExportedExperimentalOption } from "../../../../core/internal/runtime-graph.js";
+import { readExportedNuxtOption } from "../../../../core/internal/runtime-graph.js";
 import { parseScript } from "../../../../core/internal/script.js";
 import {
   nuxtInventoryOwner,
@@ -47,13 +47,16 @@ export const noIslandDisabledPluginDependency = createRule({
         const packages = projectWorkspacePackages(ctx.project);
         const owner = workspaceViewRoot(ctx.project) ?? nuxtInventoryOwner(packages)?.root ?? ".";
         const root = join(ctx.project.root, owner);
-        const islands = islandsRender(ctx, root);
+        const islands = islandsRender(ctx);
         if (islands === false) return;
         const sources = new Set(await ctx.inventory.sourcePaths());
         const registered = ctx.project.nuxt?.manifest?.resolvedPlugins;
         if (!registered) {
+          const explicit = explicitPluginPaths(ctx, root);
           const candidates = [...sources].filter(
-            (file) => owningWorkspacePackage(packages, relative(ctx.project.root, file)) === owner,
+            (file) =>
+              owningWorkspacePackage(packages, relative(ctx.project.root, file)) === owner ||
+              explicit.has(file),
           );
           if (findDependencies(readPlugins(ctx, candidates), false).length) {
             recordRegistrationGap(ctx, root, islands === undefined ? "island" : "plugin");
@@ -144,6 +147,38 @@ function readPlugins(ctx: RuleContext, files: string[]): PluginMeta[] {
   });
 }
 
+function explicitPluginPaths(ctx: RuleContext, root: string): Set<string> {
+  const paths = new Set<string>();
+  for (const extension of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
+    const config = join(root, `nuxt.config.${extension}`);
+    const text = ctx.fs.readText(config);
+    if (text === undefined) continue;
+    const plugins = readExportedNuxtOption(config, text, "plugins");
+    if (plugins?.type !== "ArrayExpression") break;
+    for (const element of plugins.elements ?? []) {
+      const entry = unwrap(element);
+      const src =
+        entry?.type === "ObjectExpression"
+          ? entry.properties.findLast(
+              (property: AnyNode) =>
+                property.type === "Property" &&
+                !property.computed &&
+                (property.key.name ?? property.key.value) === "src",
+            )?.value
+          : entry;
+      const value = unwrap(src)?.value;
+      if (typeof value !== "string") continue;
+      if (value.startsWith("./") || value.startsWith("../") || isAbsolute(value)) {
+        paths.add(resolve(root, value));
+      } else if (value.startsWith("~~/") || value.startsWith("@@/")) {
+        paths.add(resolve(root, value.slice(3)));
+      }
+    }
+    break;
+  }
+  return paths;
+}
+
 function readPlugin(file: string, text: string): PluginMeta | undefined {
   const unreadable = { file, text, readable: false };
   const program = parseScript(file, text) as AnyNode;
@@ -197,20 +232,10 @@ function unwrap(node: AnyNode): AnyNode {
  * Whether island renders can happen: experimental.componentIslands is not turned off and the app
  * has a component or page that renders as an island.
  */
-function islandsRender(ctx: RuleContext, root: string): boolean | undefined {
+function islandsRender(ctx: RuleContext): boolean | undefined {
   const inventory = ctx.project.nuxt?.manifest;
   if (inventory?.componentIslands === false) return false;
-  if (inventory?.componentIslands === undefined) {
-    for (const extension of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
-      const file = join(root, `nuxt.config.${extension}`);
-      const text = ctx.fs.readText(file);
-      if (text === undefined) continue;
-      if (readExportedExperimentalOption(file, text, "componentIslands")?.value === false)
-        return false;
-      break;
-    }
-    return undefined;
-  }
+  if (inventory?.componentIslands === undefined) return undefined;
   if (inventory?.hasServerPageIslands) return true;
   const components = inventory?.resolvedComponents;
   if (components) {
