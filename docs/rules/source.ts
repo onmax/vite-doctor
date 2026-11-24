@@ -963,6 +963,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }
 
+  if (rule.id === "vue/state/no-external-shared-state-mutation") {
+    add(
+      "Vue simple state management with the Reactivity API",
+      "https://vuejs.org/guide/scaling-up/state-management.html#simple-state-management-with-reactivity-api",
+    );
+    add("Pinia", "https://pinia.vuejs.org/");
+  }
+
   if (rule.id === "vue/attrs/require-explicit-emits") {
     add(
       "Vue declaring emitted events",

@@ -226,6 +226,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/reactivity/no-constant-computed": "Constant computed",
   "vue/reactivity/prefer-computed-over-watch-assign": "Watcher-derived refs",
   "vue/security/restrict-v-html": "v-html",
+  "vue/state/no-external-shared-state-mutation": "Shared state writes",
   "vue/ssr/data-allow-mismatch-surgical": "allow-mismatch",
   "vue/ssr/no-browser-api-in-setup": "Browser APIs",
   "vue/ssr/no-random-or-local-time-render": "Random, time, locale",
