@@ -813,18 +813,22 @@ function walkElement(
   const defaultSlot = !slot?.arg || (slot.arg.isStatic && slot.arg.content === "default");
   let childWrappers = wrappers;
   if (element.tagType === 1 || element.tagType === 2) {
+    const staticIs = element.props.find(
+      (prop) => prop.type === TemplateNodeType.ATTRIBUTE && prop.name === "is",
+    );
+    const isValue = staticIs?.type === TemplateNodeType.ATTRIBUTE && staticIs.value?.content;
+    const renderTag = isValue && isValue.startsWith("vue:") ? isValue.slice(4) : element.tag;
     childWrappers = [
       ...wrappers,
       {
         tag: element.tag,
+        renderTag,
         offset: element.loc.start.offset,
         defaultSlot,
         shadowed:
-          tagCandidates(element.tag).some((tag) => elementScope.includes(tag)) ||
-          element.props.some((prop) =>
-            prop.type === TemplateNodeType.ATTRIBUTE
-              ? prop.name === "is" && prop.value?.content.startsWith("vue:")
-              : prop.name === "is",
+          tagCandidates(renderTag).some((tag) => elementScope.includes(tag)) ||
+          element.props.some(
+            (prop) => prop.type !== TemplateNodeType.ATTRIBUTE && prop.name === "is",
           ),
       },
     ];

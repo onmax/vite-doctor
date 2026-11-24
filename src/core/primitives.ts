@@ -668,7 +668,13 @@ export interface ComponentUsageFact {
    * Tags of the components, built-ins such as `<Transition>`, and `<slot>` outlets that enclose
    * the usage in the same template, outermost first.
    */
-  wrappers: Array<{ tag: string; offset: number; defaultSlot: boolean; shadowed: boolean }>;
+  wrappers: Array<{
+    tag: string;
+    renderTag: string;
+    offset: number;
+    defaultSlot: boolean;
+    shadowed: boolean;
+  }>;
   /** Names that an enclosing `v-for` or `v-slot` introduces, or a `v-for` on this element. */
   scope: string[];
   /** Whether this element or an ancestor has `v-for`. */
@@ -774,6 +780,8 @@ export interface ComponentUsageEdge {
   nuxtMode?: "client" | "server" | "all";
   /** This usage is inside a recognized client-only default slot. */
   clientOnlySlot?: true;
+  /** The server render of this Nuxt slot could not be established. */
+  unknownSsrSlot?: true;
   /** A Nuxt auto-import name that could not be resolved to an SFC. */
   unresolvedNuxtName?: string;
 }
@@ -789,7 +797,7 @@ export interface ComponentNode {
   callers: ComponentUsageEdge[];
   /** Resolved dynamic renders, separate from static usages and their prop contracts. */
   dynamicRenders?: Array<
-    Pick<ComponentUsageEdge, "clientOnlySlot" | "nuxtMode"> & { target: string }
+    Pick<ComponentUsageEdge, "clientOnlySlot" | "unknownSsrSlot" | "nuxtMode"> & { target: string }
   >;
   /** A dynamic component outside a recognized client-only default slot may render other SFCs. */
   hasUnresolvedDynamicRender?: true;

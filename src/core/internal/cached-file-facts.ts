@@ -124,6 +124,7 @@ function componentWrappers(value: unknown): boolean {
     value,
     (wrapper) =>
       typeof wrapper.tag === "string" &&
+      typeof wrapper.renderTag === "string" &&
       typeof wrapper.offset === "number" &&
       typeof wrapper.defaultSlot === "boolean" &&
       typeof wrapper.shadowed === "boolean",

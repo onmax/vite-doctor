@@ -76,8 +76,15 @@ export const noInvalidRootNesting = createRule({
   },
 });
 
-function skipsHydration(edge: Pick<ComponentUsageEdge, "clientOnlySlot" | "nuxtMode">): boolean {
-  return edge.clientOnlySlot === true || edge.nuxtMode === "client" || edge.nuxtMode === "server";
+type HydrationEdge = Pick<ComponentUsageEdge, "clientOnlySlot" | "unknownSsrSlot" | "nuxtMode">;
+
+function skipsHydration(edge: HydrationEdge): boolean {
+  return (
+    edge.clientOnlySlot === true ||
+    edge.unknownSsrSlot === true ||
+    edge.nuxtMode === "client" ||
+    edge.nuxtMode === "server"
+  );
 }
 
 function componentsWithoutHydration(
@@ -172,7 +179,7 @@ function possibleSsrTargets(
 function reachComponents(
   graph: ComponentUsageGraph,
   starts: ReadonlySet<string>,
-  follows: (edge: Pick<ComponentUsageEdge, "clientOnlySlot" | "nuxtMode">) => boolean,
+  follows: (edge: HydrationEdge) => boolean,
   possibleTargets?: (node: ComponentNode) => Iterable<string>,
 ): Set<string> {
   const seen = new Set(starts);

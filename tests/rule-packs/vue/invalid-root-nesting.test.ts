@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -9,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { buildNuxt, loadNuxt } from "nuxt/kit";
 import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
@@ -301,6 +303,7 @@ test(
 }`,
         "app/components/Card.vue": component("<div>card</div>"),
         "app/components/Wrapper.vue": component("<section><slot /></section>"),
+        "app/pages/props.ts": "export interface Props { title?: string }",
         "app/pages/index.vue": `<script>
 import Wrapper from '../components/Wrapper.vue'
 const components = { ClientOnly: Wrapper }
@@ -313,14 +316,16 @@ import Card from '../components/Card.vue'
   <ClientOnly><p><Card />static-default-marker</p></ClientOnly>
   <component is="ClientOnly"><p><Card />literal-is-marker</p></component>
 </template>`,
-        "app/pages/excluded.vue": `<script>
-import Wrapper from '../components/Wrapper.vue'
+        "app/pages/excluded.vue": `<script lang="ts">
+import LocalWrapper from '../components/Wrapper.vue'
 import { h } from 'vue'
 const RenderSlot = (_, { slots }) => h('article', slots.default?.())
-export default { components: { ClientOnly: Wrapper, Wrapper, RenderSlot } }
+export default { components: { ClientOnly: LocalWrapper, Wrapper: LocalWrapper, RenderSlot } }
 </script>
-<script setup>
+<script setup lang="ts">
 import Card from '../components/Card.vue'
+import type { Props } from './props'
+defineProps<Props>()
 const ready = true
 </script>
 <template>
@@ -329,6 +334,8 @@ const ready = true
   <ClientOnly><template v-if="ready" #other><i /></template><p><Card />dynamic-slots-marker</p></ClientOnly>
   <RenderSlot><ClientOnly><p><Card />vnode-slot-marker</p></ClientOnly></RenderSlot>
   <ClientOnly is="vue:Wrapper"><p><Card />renamed-wrapper-marker</p></ClientOnly>
+  <Transition><ClientOnly><p><Card />transition-marker</p></ClientOnly></Transition>
+  <ClientOnly is="vue:ClientOnly"><p><Card />same-wrapper-marker</p></ClientOnly>
 </template>`,
       })) {
         const file = join(root, path);
@@ -355,18 +362,49 @@ const ready = true
       expect(excluded).toContain("<p><div>card</div>dynamic-slots-marker</p>");
       expect(excluded).toContain("<p><div>card</div>vnode-slot-marker</p>");
       expect(excluded).toContain("<p><div>card</div>renamed-wrapper-marker</p>");
-      const result = await runDoctor({
-        root,
-        framework: "nuxt",
-        cache: false,
-        rules: noInvalidRootNesting.meta.id,
-        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
-      });
-      expect(located(result)).toEqual([
-        ["VUE0052", "app/pages/excluded.vue", 12],
+      expect(excluded).not.toContain("transition-marker");
+      expect(excluded).not.toContain("same-wrapper-marker");
+      const cli = new URL("../../../dist/cli.mjs", import.meta.url).href;
+      const report = join(root, "doctor-report.json");
+      const scan = async () => {
+        rmSync(report, { force: true });
+        await promisify(execFile)(
+          process.execPath,
+          [
+            "--input-type=module",
+            "--eval",
+            `import { appendFileSync } from 'node:fs';
+           import { main } from ${JSON.stringify(cli)};
+           process.stdout.write = (chunk) => (appendFileSync(${JSON.stringify(report)}, chunk), true);
+           process.exitCode = await main(${JSON.stringify([
+             ".",
+             "--framework",
+             "nuxt",
+             "--no-cache",
+             "--format",
+             "json",
+             "--rules",
+             noInvalidRootNesting.meta.id,
+           ])});`,
+          ],
+          { cwd: root, encoding: "utf8" },
+        );
+        const diagnostics = JSON.parse(readFileSync(report, "utf8")).diagnostics as Array<{
+          code: string;
+          location: { path: string; line: number };
+        }>;
+        return diagnostics.map(({ code, location }) => [code, location.path, location.line]);
+      };
+      expect(await scan()).toEqual([
         ["VUE0052", "app/pages/excluded.vue", 14],
-        ["VUE0052", "app/pages/excluded.vue", 15],
         ["VUE0052", "app/pages/excluded.vue", 16],
+        ["VUE0052", "app/pages/excluded.vue", 17],
+        ["VUE0052", "app/pages/excluded.vue", 18],
+        ["VUE0052", "app/pages/index.vue", 11],
+      ]);
+      rmSync(join(root, "app/pages/props.ts"));
+      expect(await scan()).toEqual([
+        ["VUE0052", "app/pages/excluded.vue", 18],
         ["VUE0052", "app/pages/index.vue", 11],
       ]);
     } finally {

@@ -11,7 +11,7 @@ import type {
 import { pascalCase, tagCandidates } from "./component-facts.js";
 import { sourceFacts } from "./facts.js";
 import type { ScanSession } from "./scan-session.js";
-import { nuxtPrunableDefaultSlots } from "./sfc.js";
+import { NUXT_CLIENT_ONLY_TAG, nuxtDefaultSlotSsr } from "./sfc.js";
 import { createGraphIndex, type GraphIndex } from "./workspace-graph.js";
 
 const graphs = new WeakMap<ScanSession, Promise<ComponentUsageGraph>>();
@@ -29,7 +29,8 @@ export function componentUsageGraph(session: ScanSession): Promise<ComponentUsag
 async function buildComponentUsageGraph(session: ScanSession): Promise<ComponentUsageGraph> {
   session.facts = await sourceFacts(session);
   const facts = session.facts;
-  const index = createGraphIndex(session, session.ruleInputs.frame().fs);
+  const fs = session.ruleInputs.frame().fs;
+  const index = createGraphIndex(session, fs);
   const byId = new Map(facts.map((fact) => [fact.fileId, fact]));
   const components = new Map<string, ComponentNode>();
   for (const fact of facts) {
@@ -62,22 +63,29 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       const candidates = tagCandidates(tag);
       return node.facts.imports.find((item) => candidates.includes(item.local));
     };
-    const prunableSlots =
+    const compiledSlots =
       handle &&
       excludedFromComponentTransform &&
       [...node.facts.usages, ...node.facts.dynamicRenders].some((usage) =>
         usage.wrappers.some(
-          ({ tag, defaultSlot }) =>
-            defaultSlot && /^(?:Lazy|lazy-)?(?:ClientOnly|client-only)$/.test(tag),
+          ({ renderTag, defaultSlot }) => defaultSlot && NUXT_CLIENT_ONLY_TAG.test(renderTag),
         ),
       )
-        ? await nuxtPrunableDefaultSlots(handle.path, handle.text)
+        ? nuxtDefaultSlotSsr(handle.path, handle.text, fs)
         : undefined;
-    const inClientOnlySlot = (wrappers: ComponentUsageFact["wrappers"]) =>
-      wrappers.some(({ tag, offset, defaultSlot, shadowed }) => {
-        if (!defaultSlot || shadowed) return false;
+    const slotEvidence = (
+      wrappers: ComponentUsageFact["wrappers"],
+    ): Pick<ComponentUsageEdge, "clientOnlySlot" | "unknownSsrSlot"> => {
+      let unknownSsrSlot = false;
+      const clientOnlySlot = wrappers.some(({ renderTag: tag, offset, defaultSlot, shadowed }) => {
+        if (!defaultSlot) return false;
+        if (compiledSlots?.get(offset) === "pruned") return true;
+        if (shadowed) return false;
         const binding = findBinding(tag);
-        if (!binding && excludedFromComponentTransform) return prunableSlots?.has(offset) ?? false;
+        if (!binding && excludedFromComponentTransform) {
+          if (NUXT_CLIENT_ONLY_TAG.test(tag) && !compiledSlots?.has(offset)) unknownSsrSlot = true;
+          return false;
+        }
         const name = binding?.source === "#components" ? binding.imported : pascalCase(tag);
         if (
           binding?.source === "vue-client-only" ||
@@ -97,8 +105,14 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
           );
         return !!binding || !locallyRegistered;
       });
+      return clientOnlySlot
+        ? { clientOnlySlot: true }
+        : unknownSsrSlot
+          ? { unknownSsrSlot: true }
+          : {};
+    };
     for (const render of node.facts.dynamicRenders) {
-      const clientOnly = inClientOnlySlot(render.wrappers);
+      const slot = slotEvidence(render.wrappers);
       const binding: ComponentNode["facts"]["imports"][number] | undefined =
         node.facts.imports.find((item) => item.local === render.binding);
       const entry: { file: string; mode?: ComponentUsageEdge["nuxtMode"] } | undefined =
@@ -115,16 +129,17 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       if (target && callee) {
         (node.dynamicRenders ??= []).push({
           target,
-          ...(clientOnly && { clientOnlySlot: true }),
+          ...slot,
           ...(entry?.mode && { nuxtMode: entry.mode }),
         });
         if (callee !== node && !callee.indirectImporters.includes(fact.path))
           callee.indirectImporters.push(fact.path);
-      } else if (!clientOnly && render.name === undefined) node.hasUnresolvedDynamicRender = true;
+      } else if (!slot.clientOnlySlot && !slot.unknownSsrSlot && render.name === undefined) {
+        node.hasUnresolvedDynamicRender = true;
+      }
     }
     for (const usage of node.facts.usages) {
-      const edge: ComponentUsageEdge = { from: fact.path, usage };
-      if (inClientOnlySlot(usage.wrappers)) edge.clientOnlySlot = true;
+      const edge: ComponentUsageEdge = { from: fact.path, usage, ...slotEvidence(usage.wrappers) };
       const binding = usage.tag.includes(".") ? undefined : findBinding(usage.tag);
       if (binding && binding.source !== "#components") {
         const target = resolveSfc(fact, binding.source, binding.imported);
