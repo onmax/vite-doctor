@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build, createBuilder, type InlineConfig, type Logger } from "vite";
@@ -7,6 +7,7 @@ import { runViteDoctor } from "../../src/doctor.ts";
 import { doctor } from "../../src/plugin.ts";
 
 const rule = "vite/build/no-node-builtin-in-client-chunk";
+const liveFs = 'import fs from "node:fs";\nconsole.log(fs.readFileSync("x"));';
 
 const db = [
   'import { readFileSync } from "node:fs";',
@@ -279,6 +280,100 @@ test("reports each client environment separately without repeating previous outp
     expect(reports[0]).toContain("src/main.ts:1:");
     expect(reports[1]).toContain("src/other.ts:1:");
     expect(reports[1]).not.toContain("src/main.ts");
+  });
+});
+
+test("counts identical warnings in distinct client environments toward the budget", async () => {
+  await withProject({ "src/main.ts": liveFs }, async (root) => {
+    const { logger, warnings } = capture();
+    const builder = await createBuilder({
+      ...config(root, logger, { plugins: [doctor({ rules: rule, cache: false, maxWarnings: 1 })] }),
+      environments: { other: { consumer: "client" } },
+    });
+    await expect(builder.buildApp()).rejects.toThrow("VITE0033");
+    expect(warnings.filter((warning) => warning.includes("VITE0033"))).toHaveLength(1);
+  });
+});
+
+test("preserves host hidden maps requested by a later output hook", async () => {
+  await withProject({ "src/main.ts": liveFs }, async (root) => {
+    const { logger, warnings } = capture();
+    const options = config(root, logger);
+    const result = await build({
+      ...options,
+      plugins: [
+        options.plugins,
+        {
+          name: "host-sourcemaps",
+          outputOptions: {
+            order: "post",
+            handler: (output) => ({ ...output, sourcemap: "hidden" }),
+          },
+        },
+      ],
+    });
+    expect(warnings.join("\n")).toContain("VITE0033");
+    expect("output" in result && result.output.some((item) => item.fileName.endsWith(".map"))).toBe(
+      true,
+    );
+  });
+});
+
+async function withWatch(
+  root: string,
+  options: InlineConfig,
+  run: (nextPass: () => Promise<string>) => Promise<void>,
+) {
+  const watcher = await build(options);
+  if (!("on" in watcher)) throw new Error("Expected a Vite build watcher");
+  let { promise, resolve } = Promise.withResolvers<string>();
+  let error = "";
+  watcher.on("event", (event) => {
+    if (event.code === "ERROR") error = event.error.message;
+    if (event.code === "END") resolve(error);
+  });
+  try {
+    await run(async () => {
+      const result = await promise;
+      ({ promise, resolve } = Promise.withResolvers<string>());
+      error = "";
+      return result;
+    });
+  } finally {
+    await watcher.close();
+    await rm(join(root, "dist"), { recursive: true, force: true });
+  }
+}
+
+test("does not publish internal source maps on any watch write", async () => {
+  await withProject({ "src/main.ts": 'console.log("first");' }, async (root) => {
+    const { logger } = capture();
+    const options = config(root, logger, { build: { watch: {}, write: true, sourcemap: false } });
+    await withWatch(root, options, async (nextPass) => {
+      const files = () => readdir(join(root, "dist", "assets"));
+      expect(await nextPass()).toBe("");
+      expect((await files()).filter((file) => file.endsWith(".map"))).toEqual([]);
+      await writeFile(join(root, "src/main.ts"), 'console.log("second");');
+      expect(await nextPass()).toBe("");
+      expect((await files()).filter((file) => file.endsWith(".map"))).toEqual([]);
+    });
+  });
+});
+
+test("recovers from a VITE0033 error in watch mode and reports fresh findings", async () => {
+  await withProject({ "src/main.ts": liveFs }, async (root) => {
+    const { logger } = capture();
+    const options = config(root, logger, {
+      plugins: [doctor({ rules: rule, cache: false, config: { rules: { [rule]: "error" } } })],
+      build: { watch: {}, write: true, sourcemap: "hidden" },
+    });
+    await withWatch(root, options, async (nextPass) => {
+      expect(await nextPass()).toContain("VITE0033");
+      await writeFile(join(root, "src/main.ts"), 'console.log("fixed");');
+      expect(await nextPass()).toBe("");
+      await writeFile(join(root, "src/main.ts"), 'console.log(import("node:crypto"));');
+      expect(await nextPass()).toMatch(/VITE0033[^\n]*node:crypto/);
+    });
   });
 });
 

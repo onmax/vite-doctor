@@ -60,7 +60,11 @@ export async function runSurfaceDoctor(
         ? []
         : result.diagnostics
             .filter((diagnostic) => diagnostic.severity === "warn")
-            .map(diagnosticOccurrenceKey),
+            .map((diagnostic) =>
+              diagnostic.ruleId === BUILD_EVIDENCE_RULE && diagnostic.fingerprint
+                ? diagnostic.fingerprint
+                : diagnosticOccurrenceKey(diagnostic),
+            ),
     diagnostics: result.diagnostics.map((diagnostic) => surfaceDiagnostic(result, diagnostic)),
     evidenceGaps: (result.project.evidenceGaps ?? []).map((gap) => ({
       ...gap,

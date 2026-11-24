@@ -29,6 +29,14 @@ import type { BuildEnvironment, Plugin, ResolvedConfig, ViteDevServer } from "vi
 
 type BuildTarget = Pick<BuildEnvironment, "name" | "config">;
 
+function newBuildReports() {
+  return {
+    pending: Promise.resolve(),
+    reported: new Set<string>(),
+    warnings: new Set<string>(),
+  };
+}
+
 export interface ViteDoctorSurfaceOptions {
   enabled?: boolean;
   run?: "build" | "serve" | "both";
@@ -68,8 +76,8 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
   let config: ResolvedConfig | undefined;
   let ran = false;
   let serveRun: ServeDoctorRun | undefined;
-  let buildReports: Promise<void> = Promise.resolve();
-  let reported = new Set<string>();
+  let buildReports = newBuildReports();
+  const watchReports = new WeakMap<BuildTarget, ReturnType<typeof newBuildReports>>();
   let privateMaps = new WeakSet<object>();
   let stubResolutions = new WeakMap<object, Map<string, string>>();
   const inspectBuild =
@@ -89,23 +97,25 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     resolved: ResolvedConfig,
     fail: (message: string) => never,
     targets?: BuildTarget[],
+    warnings?: Set<string>,
   ) {
     const { runSurfaceDoctor } = await import("./plugin-run.js");
     const outcome = await runSurfaceDoctor(
       surfaceRunInput(resolved, options, targets),
       surfaceExtensions(resolved, options),
     );
-    reportBuild(resolved, outcome, fail);
+    reportBuild(resolved, outcome, fail, warnings);
   }
 
   function reportBuild(
     resolved: ResolvedConfig,
     outcome: SurfaceRunOutcome,
     fail: (message: string) => never,
+    warnings?: Set<string>,
   ) {
     const maxWarnings = options.maxWarnings;
     const session = maxWarnings === undefined ? undefined : sessionPlugin(resolved);
-    const sessionWarnings = session && warningBudgets.get(session);
+    const sessionWarnings = warnings ?? (session && warningBudgets.get(session));
     if (sessionWarnings) for (const warning of outcome.warningKeys) sessionWarnings.add(warning);
     const overBudget =
       sessionWarnings && maxWarnings !== undefined && sessionWarnings.size > maxWarnings;
@@ -126,7 +136,10 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       if (
         targets.length === 0 ||
         targets.some(
-          (target) => target.isBuilt !== false || !target.plugins.includes(configuredPlugin),
+          (target) =>
+            target.config.build.watch ||
+            target.isBuilt !== false ||
+            !target.plugins.includes(configuredPlugin),
         ) ||
         builder.config.plugins.some((plugin) => plugin.buildApp && plugin.buildApp !== buildApp)
       )
@@ -142,8 +155,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     configResolved(resolved) {
       config = resolved;
       ran = false;
-      buildReports = Promise.resolve();
-      reported = new Set();
+      buildReports = newBuildReports();
       privateMaps = new WeakSet();
       stubResolutions = new WeakMap();
       if (
@@ -171,7 +183,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     },
     async buildStart() {
       const target = this.environment;
-      if (options.enabled === false || (target ? checkedTargets.has(target) : ran)) return;
+      if (options.enabled === false) return;
       const resolved = target?.getTopLevelConfig() ?? config;
       if (!resolved || !shouldRun(options.run ?? "build", resolved.command)) return;
 
@@ -182,6 +194,13 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         run.startAfterListening();
         return;
       }
+      if (target && this.meta.watchMode) {
+        const reports = newBuildReports();
+        watchReports.set(target, reports);
+        await checkBuild(resolved, (message) => this.error(message), [target], reports.warnings);
+        return;
+      }
+      if (target ? checkedTargets.has(target) : ran) return;
       await checkBuild(resolved, (message) => this.error(message), target ? [target] : undefined);
       if (target) checkedTargets.add(target);
       else ran = true;
@@ -211,14 +230,21 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     outputOptions: {
       order: "post",
       handler(output) {
+        const env = this.environment;
         if (
           !inspectBuild ||
           !this.meta.rolldownVersion ||
-          this.environment?.config.consumer !== "client" ||
-          output.sourcemap
+          this.meta.watchMode ||
+          env?.config.consumer !== "client" ||
+          output.sourcemap ||
+          output.plugins ||
+          env.plugins.findLast(
+            ({ outputOptions }) =>
+              typeof outputOptions === "object" && outputOptions.order === "post",
+          )?.outputOptions !== plugin.outputOptions
         )
           return;
-        privateMaps.add(this.environment);
+        privateMaps.add(env);
         return { ...output, sourcemap: "hidden" };
       },
     },
@@ -241,14 +267,18 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         );
         if (!environment.browserStubReads.length) return;
 
-        return (buildReports = buildReports.then(async () => {
+        const watch = watchReports.get(env);
+        const reports = watch ?? buildReports;
+        return (reports.pending = reports.pending.then(async () => {
           const evidence = { root: resolved.root, environments: [environment] };
           const doctorRoot = surfaceRoot(resolved, options);
           environment.browserStubReads = environment.browserStubReads.filter(({ id }) => {
             const file = buildModuleFile(evidence, id);
             return (
               file &&
-              !reported.has(buildDiagnosticFingerprint(relative(doctorRoot, file), env.name))
+              !reports.reported.has(
+                buildDiagnosticFingerprint(relative(doctorRoot, file), env.name),
+              )
             );
           });
           if (!environment.browserStubReads.length) return;
@@ -258,8 +288,8 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
             surfaceExtensions(resolved, options),
           );
           if (!outcome.diagnostics.length) return;
-          for (const diagnostic of outcome.diagnostics) reported.add(diagnostic.id);
-          reportBuild(resolved, outcome, (message) => this.error(message));
+          for (const diagnostic of outcome.diagnostics) reports.reported.add(diagnostic.id);
+          reportBuild(resolved, outcome, (message) => this.error(message), watch?.warnings);
         }));
       },
     },
