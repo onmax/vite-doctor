@@ -116,6 +116,47 @@ test("finds conditions inside reachable array entries, including at the exports 
   ]);
 });
 
+test("only visits array fallbacks reachable under the enclosing conditions", async () => {
+  const fallback = { default: "./fallback.mjs", import: "./esm.mjs" };
+  const diagnostics = await shadowed({
+    exports: {
+      ".": { import: [{ import: "./runtime.mjs" }, fallback] },
+      "./custom": { custom: { import: [{ custom: "./runtime.mjs" }, fallback] } },
+      "./conditional": { import: [{ browser: "./browser.mjs" }, fallback] },
+    },
+  });
+  expect(diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect.stringContaining('exports["./conditional"]["import"][1] comes before "import"'),
+  ]);
+});
+
+test("uses enclosing conditions to determine whether a nested default can fall through", async () => {
+  const diagnostics = await shadowed({
+    exports: {
+      import: [{ default: { import: "./runtime.mjs" }, import: "./esm.mjs" }],
+    },
+  });
+  expect(diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect.stringContaining('exports["import"][0] comes before "import"'),
+  ]);
+});
+
+test("validates export pathnames separately from URL queries and fragments", async () => {
+  const fallback = { default: "./fallback.mjs", import: "./esm.mjs" };
+  const diagnostics = await shadowed({
+    exports: {
+      "./query": { ...fallback, default: "./runtime.mjs?mode=fast%2Fsafe" },
+      "./fragment": { ...fallback, default: "./runtime.mjs#fast%5Csafe" },
+      "./array": ["./runtime.mjs?mode=fast%2Fsafe", fallback],
+      "./encoded-path": { ...fallback, default: "./fast%2Fsafe.mjs?mode=test" },
+    },
+  });
+  expect(diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+    expect.stringContaining('exports["./query"] comes before "import"'),
+    expect.stringContaining('exports["./fragment"] comes before "import"'),
+  ]);
+});
+
 test("skips declaration branches but reports custom runtime conditions starting with types", async () => {
   const declarations = { default: "./fallback.js", import: "./public.d.mts" };
   const diagnostics = await shadowed({

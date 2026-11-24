@@ -126,9 +126,14 @@ function shadowedConditions(exports: unknown, root: string): ShadowedConditions[
   visit(exports, ["exports"]);
   return found;
 
-  function visit(target: unknown, path: (string | number)[]): TargetResolution {
+  function visit(
+    target: unknown,
+    path: (string | number)[],
+    activeConditions: ReadonlySet<string> = new Set(),
+  ): TargetResolution {
     if (typeof target === "string") {
-      const valid = validExportTarget(target, root);
+      const [pathname] = target.split(/[?#]/, 1);
+      const valid = validExportTarget(pathname!, root);
       return { terminal: valid, canBlock: !valid };
     }
     if (target === null) return { terminal: true, canBlock: true };
@@ -136,7 +141,7 @@ function shadowedConditions(exports: unknown, root: string): ShadowedConditions[
       let terminal = target.length === 0;
       let canBlock = terminal;
       for (const [index, entry] of target.entries()) {
-        const resolution = visit(entry, [...path, index]);
+        const resolution = visit(entry, [...path, index], activeConditions);
         if (resolution.terminal && !resolution.canBlock) return resolution;
         terminal ||= resolution.terminal;
         canBlock ||= resolution.canBlock;
@@ -147,11 +152,17 @@ function shadowedConditions(exports: unknown, root: string): ShadowedConditions[
     const keys = Object.keys(target).filter((key) => key !== "types" && !key.startsWith("types@"));
     let canBlock = false;
     for (const [index, key] of keys.entries()) {
-      const resolution = visit(target[key], [...path, key]);
+      const alwaysMatches = key === "default" || activeConditions.has(key);
+      const resolution = visit(
+        target[key],
+        [...path, key],
+        alwaysMatches ? activeConditions : new Set([...activeConditions, key]),
+      );
       canBlock ||= resolution.canBlock;
-      if (key === "default" && resolution.terminal) {
-        const shadowed = keys.slice(index + 1);
-        if (shadowed.length) found.push({ path, shadowed });
+      if (alwaysMatches && resolution.terminal) {
+        if (key === "default" && index + 1 < keys.length) {
+          found.push({ path, shadowed: keys.slice(index + 1) });
+        }
         return { terminal: true, canBlock };
       }
     }
