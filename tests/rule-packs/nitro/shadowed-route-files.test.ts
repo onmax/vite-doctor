@@ -63,6 +63,31 @@ describe("NITRO0031 route files that resolve to the same route", () => {
     ]);
   });
 
+  test("walks each route directory only once per run", async () => {
+    const scanned: string[] = [];
+    const result = await runRuleFixture({
+      framework: "nitro",
+      rule: {
+        ...noShadowedFileHandler,
+        create(ctx) {
+          return noShadowedFileHandler.create({
+            ...ctx,
+            fs: {
+              ...ctx.fs,
+              readDirRecursive(path) {
+                scanned.push(path);
+                return ctx.fs.readDirRecursive(path);
+              },
+            },
+          });
+        },
+      },
+      files: routeFiles(...Array.from({ length: 100 }, (_, index) => `api/pages/${index}.ts`)),
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(scanned).toHaveLength(1);
+  });
+
   test("reports Nitro 3 routes", async () => {
     expect(
       await shadowed(
@@ -74,6 +99,37 @@ describe("NITRO0031 route files that resolve to the same route", () => {
         nitro3,
       ),
     ).toEqual(["server/api/hello/index.query.ts"]);
+  });
+
+  test("keeps recognized Nitro 3 route extensions but not unknown suffixes", async () => {
+    expect(
+      await shadowed(
+        {
+          "nitro.config.ts": "export default defineConfig({ serverDir: true })",
+          ...routeFiles(
+            "server/routes/(docs)/sitemap.xml.ts",
+            "server/routes/sitemap.xml.ts",
+            "server/routes/(docs)/page.custom.ts",
+            "server/routes/page.custom.ts",
+          ),
+        },
+        "nitro",
+        nitro3,
+      ),
+    ).toEqual(["server/routes/sitemap.xml.ts"]);
+  });
+
+  test("does not report a collision when an inherited ignore may exclude the winner", async () => {
+    expect(
+      await shadowed(
+        {
+          "nitro.config.ts": "export default defineNitroConfig({ extends: './base' })",
+          "base/nitro.config.ts": "export default defineNitroConfig({ ignore: ['api/users.ts'] })",
+          ...routeFiles("api/users.ts", "api/users/index.ts"),
+        },
+        "nitro",
+      ),
+    ).toEqual([]);
   });
 
   test.each([

@@ -20,6 +20,7 @@ async function run(
     code: diagnostic.code,
     line: diagnostic.range?.line,
     why: diagnostic.why,
+    suggestion: diagnostic.suggestion,
   }));
 }
 
@@ -32,6 +33,19 @@ test("is a recommended Nitro rule", () => {
 });
 
 describe("NITRO0029 Nitro 2 cached handlers", () => {
+  test("explains that a custom key must vary independently of header passthrough", async () => {
+    expect(
+      await run({
+        "server/api/locale.ts":
+          "export default defineCachedEventHandler((event) => getHeader(event, 'accept-language'), { getKey: () => 'page' })",
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        suggestion: expect.stringContaining("custom getKey"),
+      }),
+    ]);
+  });
+
   test("reports a header read that varies does not list", async () => {
     const diagnostics = await run({
       "server/api/greeting.get.ts": `export default defineCachedEventHandler(async (event) => {
@@ -129,7 +143,7 @@ export default defineCachedHandler((event) => {
   const tenant = event.req.headers.get('x-tenant')
   const theme = getCookie(event, 'theme')
   return { tenant, theme }
-}, { allowCookies: ['session'] })
+}, { varies: ['cookie'], allowCookies: ['session'] })
 `,
       },
       "nitro",
@@ -176,6 +190,42 @@ export default defineCachedHandler((event) => event.req.headers.get('x-tenant'))
           "server/routes/page.ts": `import { defineCachedHandler } from 'nitro/cache'
 export default defineCachedHandler((event) => event.req.headers.get('x-tenant'))
 `,
+        },
+        "nitro",
+        nitro3,
+      ),
+    ).toEqual([]);
+  });
+
+  test("stays quiet for QUERY, POST TSX, and Range on GET", async () => {
+    const cachedRead = (header: string) => `import { defineCachedHandler } from 'nitro/cache'
+export default defineCachedHandler((event) => event.req.headers.get('${header}'))`;
+    expect(
+      await codes(
+        {
+          "nitro.config.ts": nitro3Config,
+          "server/routes/page.query.ts": cachedRead("x-tenant"),
+          "server/routes/page.post.tsx": cachedRead("x-tenant"),
+          "server/routes/page.get.ts": cachedRead("Range"),
+        },
+        "nitro",
+        nitro3,
+      ),
+    ).toEqual([]);
+  });
+
+  test.each([
+    "extends: './base'",
+    "$production: { cache: { defaults: { varies: ['x-tenant'] } } }",
+  ])("does not assume cache defaults with %s", async (config) => {
+    expect(
+      await codes(
+        {
+          "nitro.config.ts": `export default defineConfig({ serverDir: true, ${config} })`,
+          "base/nitro.config.ts":
+            "export default defineConfig({ cache: { defaults: { varies: ['x-tenant'] } } })",
+          "server/routes/page.ts":
+            "import { defineCachedHandler } from 'nitro/cache'\nexport default defineCachedHandler(event => event.req.headers.get('x-tenant'))",
         },
         "nitro",
         nitro3,

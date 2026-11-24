@@ -12,7 +12,11 @@ const HANDLER_FACTORIES = new Set([
   "defineMiddleware",
 ]);
 const HANDLER_SOURCES = new Set(["h3", "nitro", "nitro/h3", "#imports"]);
-const FUNCTION_TYPES = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
+const FUNCTION_TYPES = new Set([
+  "ArrowFunctionExpression",
+  "FunctionExpression",
+  "FunctionDeclaration",
+]);
 const WRAPPERS = new Set([
   "TSAsExpression",
   "TSSatisfiesExpression",
@@ -29,9 +33,8 @@ export const noImplicitMiddlewareResponse = createRule({
     severity: "error",
     confidence: "heuristic-high",
     fixable: "suggestion",
-    docsUrl: "https://nitro.build/guide/routing#middleware",
+    docsUrl: "https://nitro.build/docs/routing#middleware",
     requires: { script: true, nitro: true },
-    prefilter: { names: [...HANDLER_FACTORIES] },
   },
   create(ctx) {
     if (!nitroScannedFile(ctx, ctx.file.path, MIDDLEWARE_DIRS) || hasCustomScanIgnore(ctx)) return;
@@ -55,7 +58,9 @@ function reportImplicitResponse(ctx: RuleContext, node: AnyNode) {
     "error",
     "correctness",
     "This middleware returns the result of an assignment. Nitro treats any value a middleware returns, other than undefined, as the response: it sends that value and skips the route handler, so every request this middleware sees ends here whenever the assigned value is defined.",
-    "Wrap the body in braces so the middleware returns nothing, for example `(event) => { event.context.user = user }`. Return a value from middleware only to end the request on purpose.",
+    node.type === "ReturnStatement"
+      ? "Evaluate the returned expression, then use a bare `return` on the same branch, for example `if (!user) { event.context.locale = 'en'; return }`. This preserves the early exit without sending a response."
+      : "Wrap the body in braces so the middleware returns nothing, for example `(event) => { event.context.user = user }`. Return a value from middleware only to end the request on purpose.",
   );
 }
 
@@ -65,18 +70,20 @@ function middlewareHandler(scope: ScriptScope): AnyNode {
     (statement: AnyNode) => statement.type === "ExportDefaultDeclaration",
   )?.declaration;
   const call = unwrap(declaration);
+  if (FUNCTION_TYPES.has(call?.type)) return call;
   if (call?.type !== "CallExpression" || call.callee?.type !== "Identifier") return undefined;
   if (!HANDLER_FACTORIES.has(call.callee.name) || !isHandlerFactory(scope, call.callee))
     return undefined;
   const input = unwrap(call.arguments?.[0]);
   if (FUNCTION_TYPES.has(input?.type)) return input;
   if (input?.type !== "ObjectExpression") return undefined;
-  const property = input.properties.find(
-    (item: AnyNode) =>
-      item.type === "Property" && !item.computed && propertyName(item.key) === "handler",
-  );
-  const handler = unwrap(property?.value);
-  return FUNCTION_TYPES.has(handler?.type) ? handler : undefined;
+  for (const property of [...input.properties].reverse()) {
+    if (property.type !== "Property" || property.computed) return undefined;
+    if (propertyName(property.key) !== "handler") continue;
+    const handler = unwrap(property.value);
+    return property.kind === "init" && FUNCTION_TYPES.has(handler?.type) ? handler : undefined;
+  }
+  return undefined;
 }
 
 function isHandlerFactory(scope: ScriptScope, callee: AnyNode) {

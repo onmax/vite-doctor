@@ -27,6 +27,7 @@ test("is a recommended Nitro rule", () => {
 
 describe("NITRO0030 middleware that returns an assigned value", () => {
   test.each([
+    ["a bare default export", "(event) => event.context.locale = 'en'"],
     [
       "an assignment arrow body",
       "defineEventHandler((event) => event.context.user = getUser(event))",
@@ -48,6 +49,49 @@ describe("NITRO0030 middleware that returns an assigned value", () => {
     expect(await codes({ "server/middleware/context.ts": `export default ${handler}\n` })).toEqual([
       "NITRO0030:1",
     ]);
+  });
+
+  test("uses the last known object handler and does not assume a spread's value", async () => {
+    const accidental = "handler: event => event.context.locale = 'en'";
+    const intentional = "handler: event => { event.context.locale = 'en' }";
+    expect(
+      await codes({
+        "server/middleware/spread.ts": `export default defineEventHandler({ ${accidental}, ...options })`,
+        "server/middleware/computed.ts": `export default defineEventHandler({ ${accidental}, [key]: callback })`,
+        "server/middleware/last.ts": `export default defineEventHandler({ ${accidental}, ${intentional} })`,
+      }),
+    ).toEqual([]);
+    expect(
+      await codes({
+        "server/middleware/first.ts": `export default defineEventHandler({ ...options, ${accidental} })`,
+      }),
+    ).toEqual(["NITRO0030:1"]);
+  });
+
+  test("the suggestion for a returned assignment preserves the early exit", async () => {
+    const result = await runRuleFixture({
+      rule: noImplicitMiddlewareResponse,
+      framework: "nuxt",
+      files: {
+        "server/middleware/locale.ts":
+          "export default defineEventHandler(event => { if (!user) return event.context.locale = 'en'; nextStep() })",
+      },
+    });
+    expect(result.diagnostics[0]?.suggestion).toContain("bare `return`");
+  });
+
+  test("does not diagnose Nitro 3 middleware with an unrecognized suffix", async () => {
+    expect(
+      await codes(
+        {
+          "nitro.config.ts": "export default defineConfig({ serverDir: true })",
+          "server/middleware/locale.custom.ts":
+            "export default defineHandler(event => event.context.locale = 'en')",
+        },
+        "nitro",
+        nitro3,
+      ),
+    ).toEqual([]);
   });
 
   test("reports a returned assignment in a block body", async () => {
@@ -122,6 +166,14 @@ export default defineEventHandler((event) => event.context.user = 1)
       },
     ],
     ["a .nuxtignore file", { ".nuxtignore": "server/middleware/context.ts\n" }],
+    [
+      "ignore from a layer",
+      {
+        "nuxt.config.ts": "export default defineNuxtConfig({ extends: './base' })",
+        "base/nuxt.config.ts":
+          "export default defineNuxtConfig({ ignore: ['server/middleware/context.ts'] })",
+      },
+    ],
   ])("records an evidence gap for %s", async (_name, files) => {
     expect(
       await codes({

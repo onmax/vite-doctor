@@ -5,6 +5,7 @@ import { createRule } from "./shared.js";
 import {
   hasCustomScanIgnore,
   isNitroScannedScript,
+  nitro3ScanPath,
   nitroRouteFile,
   runtimeMajor,
 } from "./server-layout.js";
@@ -12,20 +13,6 @@ import {
 const RULE_ID = "nitro/routes/no-shadowed-file-handler";
 const NITRO2_SUFFIX =
   /(\.(?<method>connect|delete|get|head|options|patch|post|put|trace))?(\.(?<env>dev|prod|prerender))?$/;
-const NITRO3_METHODS = new Set([
-  "connect",
-  "delete",
-  "get",
-  "head",
-  "options",
-  "patch",
-  "post",
-  "put",
-  "query",
-  "trace",
-]);
-const NITRO3_ENVS = new Set(["dev", "prod", "prerender"]);
-const LAST_SUFFIX = /(?<=[^/])\.([a-z]+)$/;
 
 export const noShadowedFileHandler = createRule({
   meta: {
@@ -35,7 +22,7 @@ export const noShadowedFileHandler = createRule({
     severity: "error",
     confidence: "proven",
     fixable: "suggestion",
-    docsUrl: "https://nitro.build/guide/routing#filesystem-routing",
+    docsUrl: "https://nitro.build/docs/routing#filesystem-routing",
     requires: { script: true, nitro: true },
   },
   create(ctx) {
@@ -65,21 +52,33 @@ function shadowingFile(ctx: RuleContext, serverDir: string, dir: string, path: s
   const own = routeKey(path.slice(dir.length + 1), version);
   if (own === undefined) return undefined;
   const root = join(serverDir, dir);
-  const colliding: string[] = [];
-  for (const entry of ctx.fs.readDirRecursive(root) ?? []) {
-    const relativePath = entry.replace(/\\/g, "/");
-    if (!isNitroScannedScript(ctx, `${dir}/${relativePath}`)) continue;
-    if (!ctx.fs.stat(join(root, relativePath))?.isFile()) continue;
-    if (routeKey(relativePath, version) === own) colliding.push(relativePath);
+  const cacheKey = `nitro:route-candidates:${version}:${root}`;
+  let candidates = ctx.cache.get<Map<string, string[]>>(cacheKey);
+  if (!candidates) {
+    candidates = new Map();
+    for (const relativePath of ctx.fs.readDirRecursive(root) ?? []) {
+      if (!isNitroScannedScript(ctx, `${dir}/${relativePath}`)) continue;
+      const key = routeKey(relativePath, version);
+      if (key === undefined) continue;
+      const files = candidates.get(key);
+      if (files) files.push(relativePath);
+      else candidates.set(key, [relativePath]);
+    }
+    for (const files of candidates.values())
+      files.sort((first, second) => first.localeCompare(second));
+    ctx.cache.set(cacheKey, candidates);
   }
-  const first = colliding.sort((a, b) => a.localeCompare(b))[0];
-  return first && `${dir}/${first}` !== path ? `${dir}/${first}` : undefined;
+  for (const candidate of candidates.get(own) ?? []) {
+    const winner = `${dir}/${candidate}`;
+    if (winner === path) return undefined;
+    if (ctx.fs.stat(join(root, candidate))?.isFile()) return winner;
+  }
+  return undefined;
 }
 
 /** Nitro's dedupe key for a scanned route file: route, method and env. */
 function routeKey(path: string, version: 2 | 3): string | undefined {
-  const name = path.replace(/\.[A-Za-z]+$/, "");
-  return version === 2 ? nitro2RouteKey(name) : nitro3RouteKey(name);
+  return version === 2 ? nitro2RouteKey(path.replace(/\.[A-Za-z]+$/, "")) : nitro3RouteKey(path);
 }
 
 /** nitropack `scanServerRoutes`: params and groups first, then the method and env suffixes. */
@@ -97,22 +96,10 @@ function nitro2RouteKey(name: string) {
   return `${route}\0${method}\0${env}`;
 }
 
-/** nitro `parseScanPath` then `scanServerRoutes`; files that keep a dotted suffix are left out. */
-function nitro3RouteKey(name: string) {
-  let env: string | undefined;
-  let method: string | undefined;
-  const envSuffix = name.match(LAST_SUFFIX)?.[1];
-  if (envSuffix && NITRO3_ENVS.has(envSuffix)) {
-    env = envSuffix;
-    name = name.slice(0, -envSuffix.length - 1);
-  }
-  const methodSuffix = name.match(LAST_SUFFIX)?.[1];
-  if (methodSuffix && NITRO3_METHODS.has(methodSuffix)) {
-    method = methodSuffix;
-    name = name.slice(0, -methodSuffix.length - 1);
-  }
-  // Nitro 3 keeps, ignores or rejects other dotted suffixes depending on config and mode.
-  if (LAST_SUFFIX.test(name)) return undefined;
+function nitro3RouteKey(path: string) {
+  const scanned = nitro3ScanPath(path, true);
+  if (!scanned) return undefined;
+  const { name, method, env } = scanned;
   const route =
     `/${name
       .replace(/\(([^(/\\]+)\)[/\\]/g, "")

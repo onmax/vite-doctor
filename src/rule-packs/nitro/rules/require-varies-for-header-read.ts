@@ -1,8 +1,14 @@
 import type { RuleContext } from "../../../core/index.js";
 import { fileTextScope, type ScriptScope } from "../../../core/internal/script-scope.js";
 import { type AnyNode, createRule, report } from "./shared.js";
-import { readStaticConfigOptions, nitroServerFile } from "./server-layout.js";
-import { routeMethodSuffix } from "./request-helpers.js";
+import {
+  hasCustomScanIgnore,
+  hasUnresolvedNitroConfig,
+  nitro3ScanPath,
+  nitroRouteFile,
+  nitroServerFile,
+  readStaticConfigOptions,
+} from "./server-layout.js";
 
 const RULE_ID = "nitro/cache/require-varies-for-header-read";
 const NITRO2_HANDLERS = new Set(["defineCachedEventHandler", "cachedEventHandler"]);
@@ -18,6 +24,8 @@ const HEADER_HELPERS = new Set(["getHeader", "getRequestHeader"]);
 const COOKIE_HELPERS = new Set(["getCookie", "parseCookies"]);
 const H3_SOURCES = new Set(["h3", "nitro/h3", "#imports"]);
 const AUTHORIZATION_HEADERS = ["authorization", "proxy-authorization"];
+const KEY_GUIDANCE =
+  " Nitro's default key varies by this value. If you supply a custom getKey, include the inputs the response varies on in that key, or remove it to use Nitro's default key.";
 const FUNCTION_TYPES = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
 const WRAPPERS = new Set([
   "TSAsExpression",
@@ -84,9 +92,19 @@ function checkCachedHandler(ctx: RuleContext, scope: ScriptScope, call: AnyNode,
   if (event?.type !== "Identifier") return;
   // Nitro 3 serves every method other than GET and HEAD from the live request.
   if (version === 3) {
-    const method = routeMethodSuffix(ctx.file.relativePath);
-    if (method && method !== "GET" && method !== "HEAD") return;
     if (hasNitro3CacheDefaults(ctx)) return;
+    if (
+      scope.ast.body.some(
+        (statement: AnyNode) =>
+          statement.type === "ExportDefaultDeclaration" && unwrap(statement.declaration) === call,
+      )
+    ) {
+      const route = nitroRouteFile(ctx, ctx.file.path);
+      if (route && !hasCustomScanIgnore(ctx)) {
+        const method = nitro3ScanPath(route.path, true)?.method;
+        if (method && method !== "get" && method !== "head") return;
+      }
+    }
   }
   const kept = keptHeaders(call.arguments?.[1], version);
   if (!kept) return;
@@ -96,12 +114,13 @@ function checkCachedHandler(ctx: RuleContext, scope: ScriptScope, call: AnyNode,
     if (read) reads.push(read);
   });
   for (const read of reads) {
-    if (kept.headers.has(read.header)) continue;
+    if (version === 3 && read.header === "range") continue;
     if (read.header === "cookie" && kept.cookies) {
       if (read.cookie === undefined || kept.cookies.has(read.cookie)) continue;
       reportFilteredCookie(ctx, read, call);
       continue;
     }
+    if (kept.headers.has(read.header)) continue;
     reportStrippedHeader(ctx, read, call, version);
   }
 }
@@ -115,8 +134,8 @@ function reportStrippedHeader(ctx: RuleContext, read: HeaderRead, call: AnyNode,
   const cookie =
     read.header === "cookie"
       ? version === 3
-        ? " For cookies, allowCookies: ['<name>'] keeps only the cookies the response depends on and keys the cache by them."
-        : " Varying on cookie keys the cache by the whole cookie header, so read per-user state outside the cached handler when it should not be cached per visitor."
+        ? " Alternatively, allowCookies: ['<name>'] passes through only the named cookies and varies the default key by those cookies."
+        : " Varying on cookie varies the default key by the whole cookie header, so read per-user state outside the cached handler when it should not be cached per visitor."
       : "";
   report(
     ctx,
@@ -124,8 +143,8 @@ function reportStrippedHeader(ctx: RuleContext, read: HeaderRead, call: AnyNode,
     RULE_ID,
     "error",
     "cache",
-    `${read.label} reads the ${read.header} request header inside ${handler}(), but ${read.header} is not in varies. ${runtime}, so this read always sees no value and the cached response ignores it.`,
-    `Add '${read.header}' to the varies option of ${handler}(). Nitro then passes the header through and keys the cache by its value.${cookie}`,
+    `${read.label} reads the ${read.header} request header inside ${handler}(), but ${read.header} is not in varies. ${runtime}, so this read sees no value on the narrowed request.`,
+    `Add '${read.header}' to the varies option of ${handler}() to pass the header through.${KEY_GUIDANCE}${cookie}`,
   );
 }
 
@@ -137,8 +156,8 @@ function reportFilteredCookie(ctx: RuleContext, read: HeaderRead, call: AnyNode)
     RULE_ID,
     "error",
     "cache",
-    `${read.label} reads the ${read.cookie} cookie inside ${handler}(), but allowCookies does not list it. Nitro strips every cookie not in allowCookies from the request it passes to the cached handler, so this read always sees no value.`,
-    `Add '${read.cookie}' to the allowCookies option of ${handler}(). Nitro then passes that cookie through and keys the cache by its value.`,
+    `${read.label} reads the ${read.cookie} cookie inside ${handler}(), but allowCookies does not list it. Nitro strips every cookie not in allowCookies from the narrowed request, even when varies includes cookie.`,
+    `Add '${read.cookie}' to the allowCookies option of ${handler}() to pass that cookie through.${KEY_GUIDANCE}`,
   );
 }
 
@@ -221,7 +240,9 @@ function keptHeaders(options: AnyNode, version: Version): KeptHeaders | undefine
 /** Nitro 3 merges `cache.defaults`, including varies, into every cached handler. */
 function hasNitro3CacheDefaults(ctx: RuleContext) {
   const options = readStaticConfigOptions(ctx, ctx.project.framework === "nuxt" ? "nuxt" : "nitro");
-  return options.some(({ path }) => path.length === 0 || path.at(-1) === "cache");
+  return (
+    hasUnresolvedNitroConfig(ctx, options) || options.some(({ path }) => path.at(-1) === "cache")
+  );
 }
 
 function headerRead(scope: ScriptScope, node: AnyNode, event: AnyNode): HeaderRead | undefined {

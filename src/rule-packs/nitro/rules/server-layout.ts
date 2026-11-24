@@ -21,6 +21,32 @@ const SCANNED_SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const DECLARATION_FILE = /\.d\.[cm]?ts$/;
 const TEST_FILE = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
 const SCAN_IGNORE_OPTIONS = new Set(["ignore", "ignorePrefix", "ignoreOptions"]);
+const NITRO3_METHODS = new Set([
+  "connect",
+  "delete",
+  "get",
+  "head",
+  "options",
+  "patch",
+  "post",
+  "put",
+  "query",
+  "trace",
+]);
+const NITRO3_ENVS = new Set(["dev", "prod", "prerender"]);
+const LAST_SUFFIX = /(?<=[^/])\.([a-z]+)$/;
+const NITRO3_ROUTE_EXTENSIONS = new Set([
+  "css",
+  "csv",
+  "html",
+  "ico",
+  "js",
+  "json",
+  "map",
+  "svg",
+  "txt",
+  "xml",
+]);
 
 export function nitroServerDirs(ctx: RuleContext): string[] {
   const key = "nitro:server-dirs";
@@ -60,13 +86,41 @@ export function nitroScannedFile(
   const options = readStaticConfigOptions(ctx, project.framework === "nuxt" ? "nuxt" : "nitro");
   if (
     options.some(
-      ({ path }) => path.length === 0 || ["scanDirs", "apiDir", "routesDir"].includes(path.at(-1)!),
+      ({ path }) =>
+        path.length === 0 ||
+        ["scanDirs", "apiDir", "routesDir", "middlewareDir"].includes(path.at(-1)!),
     )
   )
     return null;
   const serverFile = nitroServerFile(ctx, file);
   if (!serverFile || !dirs.has(serverFile.dir) || !serverFile.path.includes("/")) return null;
-  return isNitroScannedScript(ctx, serverFile.path) ? serverFile : null;
+  if (!isNitroScannedScript(ctx, serverFile.path)) return null;
+  if ((runtimeMajor(project, "nitro") ?? 2) >= 3) {
+    if (options.some(({ path }) => path.at(-1) === "scanSuffixes")) return null;
+    if (!nitro3ScanPath(serverFile.path, ROUTE_DIRS.has(serverFile.dir))) return null;
+  }
+  return serverFile;
+}
+
+export function nitro3ScanPath(path: string, route: boolean) {
+  let name = path.replace(SCANNED_SCRIPT, "");
+  let env: string | undefined;
+  let method: string | undefined;
+  if (route) {
+    const envSuffix = name.match(LAST_SUFFIX)?.[1];
+    if (envSuffix && NITRO3_ENVS.has(envSuffix)) {
+      env = envSuffix;
+      name = name.slice(0, -env.length - 1);
+    }
+    const methodSuffix = name.match(LAST_SUFFIX)?.[1];
+    if (methodSuffix && NITRO3_METHODS.has(methodSuffix)) {
+      method = methodSuffix;
+      name = name.slice(0, -method.length - 1);
+    }
+  }
+  const suffix = name.match(LAST_SUFFIX)?.[1];
+  if (suffix && !NITRO3_ROUTE_EXTENSIONS.has(suffix)) return undefined;
+  return { name, method, env };
 }
 
 /** Whether Nitro's directory scan keeps this server-relative path under default ignore patterns. */
@@ -81,9 +135,26 @@ export function isNitroScannedScript(ctx: RuleContext, path: string): boolean {
 export function hasCustomScanIgnore(ctx: RuleContext): boolean {
   const nuxt = ctx.project.framework === "nuxt";
   const options = readStaticConfigOptions(ctx, nuxt ? "nuxt" : "nitro");
-  if (options.some(({ path }) => path.length === 0 || SCAN_IGNORE_OPTIONS.has(path.at(-1)!)))
+  if (
+    hasUnresolvedNitroConfig(ctx, options) ||
+    options.some(({ path }) => SCAN_IGNORE_OPTIONS.has(path.at(-1)!))
+  )
     return true;
   return nuxt && ctx.fs.exists(resolve(ctx.project.root, ".nuxtignore"));
+}
+
+export function hasUnresolvedNitroConfig(ctx: RuleContext, options: StaticConfigOption[]): boolean {
+  if (
+    options.some(
+      ({ path }) => path.length === 0 || path.at(-1) === "extends" || path.at(-1)?.startsWith("$"),
+    )
+  )
+    return true;
+  if (ctx.project.framework !== "nuxt") return false;
+  if ((ctx.project.nuxt?.layers.length ?? 0) > 1) return true;
+  return (ctx.fs.readDir(resolve(ctx.project.root, "layers")) ?? []).some(
+    (entry) => entry.isDirectory() || entry.isSymbolicLink(),
+  );
 }
 
 export function readStaticConfigOptions(
@@ -332,6 +403,10 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
     }
     const key = propertyKey(property.key);
     if (!key) continue;
+    if (key === "extends" || key.startsWith("$")) {
+      options.push({ path: [...path, key], value: null });
+      continue;
+    }
     if (key === "imports" || key === "experimental") {
       const nested = unwrapConfig(property.value);
       if (nested) {
@@ -350,6 +425,8 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
         "scanDirs",
         "apiDir",
         "routesDir",
+        "middlewareDir",
+        "scanSuffixes",
         "nitro",
         "imports",
         "cache",

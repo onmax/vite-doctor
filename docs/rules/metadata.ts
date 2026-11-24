@@ -163,10 +163,10 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/cache/require-varies-for-header-read": {
     description:
-      "Reports request headers and cookies read inside a cached event handler when the handler's varies option does not list them. Covers getHeader, getRequestHeader, getCookie, parseCookies, event.headers.get, event.req.headers.get, and event.node.req.headers with a literal name. Nitro 2 handlers are defineCachedEventHandler and cachedEventHandler; Nitro 3 handlers are defineCachedHandler from nitro/cache. Dynamic options, spreads, headersOnly, Nitro 3 shouldBypassCache, and Nitro 3 cache defaults in config are evidence gaps and stay quiet.",
-    why: "A cached handler does not see the incoming request. Nitro builds a copy that carries only the headers listed in varies, so a header the handler reads without listing it always comes back empty. Nitro 3 also keeps host, keeps authorization when allowAuthorization is true, and keeps only the cookies named in allowCookies. Requests that differ by that header then share one cache entry, so a response built for one tenant, language or user can be served to another.",
+      "Reports request headers and cookies read inside a cached event handler when Nitro strips them from the request it passes to that handler. Covers getHeader, getRequestHeader, getCookie, parseCookies, event.headers.get, event.req.headers.get, and event.node.req.headers with a literal name. Nitro 2 handlers are defineCachedEventHandler and cachedEventHandler; Nitro 3 handlers are defineCachedHandler from nitro/cache. Dynamic options, spreads, headersOnly, Nitro 3 shouldBypassCache, and unresolved Nitro 3 cache defaults are evidence gaps and stay quiet.",
+    why: "Nitro narrows the request to the headers listed in varies. Nitro 3 also keeps host, keeps authorization when allowAuthorization is true, and filters cookies to the names in a nonempty allowCookies list, even if varies includes cookie. Nitro 3 uses the live request when it bypasses the cache, for example for non-GET/HEAD methods or requests with a Range header. Without a varying input in the cache key, requests for different tenants, languages, or users can share one response.",
     recommendedReplacement:
-      "Add each header the handler reads to varies. Nitro passes it through and keys the cache by its value. In Nitro 3, list cookies in allowCookies instead of varying on the whole cookie header.",
+      "Add each header the handler reads to varies to pass it through to the cached handler. Nitro's default cache key varies by these headers. If you supply a custom getKey, include the inputs the response varies on in that key, or remove it to use Nitro's default key. In Nitro 3, use allowCookies to pass through named cookies instead of varying on the whole cookie header.",
     examples: [
       {
         title: "List the header in varies",
@@ -349,10 +349,10 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/middleware/no-implicit-response": {
     description:
-      "Reports server middleware whose default-exported handler returns the result of an assignment, such as an arrow body `event.context.user = user`, `Object.assign(event.context, ...)`, or `return event.context.x = value`. Only files Nitro scans from middleware/ are checked. Explicit return values, such as createError() or sendRedirect(), are left alone. Custom ignore options and .nuxtignore are evidence gaps.",
+      "Reports server middleware whose default-exported handler returns the result of an assignment, such as an arrow body `event.context.user = user`, `Object.assign(event.context, ...)`, or `return event.context.x = value`. Only files Nitro scans from middleware/ are checked. Explicit return values, such as createError() or sendRedirect(), are left alone. Unresolved layers, environment overrides, custom scan suffixes, ignore options, and .nuxtignore are evidence gaps.",
     why: "Nitro runs every middleware before the route handler and treats any value a middleware returns, other than undefined, as the response. An arrow function with an assignment body returns the assigned value, so a middleware that only meant to set event.context ends every request with that value and the route handler never runs.",
     recommendedReplacement:
-      "Give the middleware a block body so it returns nothing, and return a value only when the middleware should end the request.",
+      "For an arrow expression body, use a block body that performs the assignment without returning a value. For a return statement, evaluate the assignment and then use a bare return on the same branch to preserve the early exit.",
     examples: [
       {
         title: "Use a block body for context assignments",
@@ -383,7 +383,7 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/routes/no-shadowed-file-handler": {
     description:
-      "Reports a route file when another file in the same api/ or routes/ directory resolves to the same route, method, and environment, and Nitro keeps the other one. Route groups, index files, parameters, and method and environment suffixes are resolved the way Nitro 2 and Nitro 3 scan them. A method-less handler next to a method handler is not reported, and neither are overrides across Nuxt layers. Custom scan directories and ignore options are evidence gaps.",
+      "Reports a route file when another file in the same api/ or routes/ directory resolves to the same route, method, and environment, and Nitro keeps the other one. A method-less handler next to a method handler is not reported, and neither are overrides across Nuxt layers. Unresolved layers, environment overrides, custom scan directories or suffixes, and ignore options are evidence gaps.",
     why: "Nitro registers the first scanned file for each route, method, and environment and silently drops the rest. Two files such as api/users.ts and api/users/index.ts both serve /api/users, so one of them never runs and edits to it have no effect.",
     recommendedReplacement:
       "Delete or rename one of the files. Keep one handler per route, or give each file a method suffix when they handle different methods.",
