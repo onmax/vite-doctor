@@ -99,6 +99,7 @@ export const nuxtDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0096", ruleId: "nuxt/imports/prefer-alias-over-relative-parent" },
   { code: "NUXT0097", ruleId: "nuxt/state/no-diverging-usestate-init" },
   { code: "NUXT0105", ruleId: "nuxt/ssr/no-request-data-in-module-state" },
+  { code: "NUXT0106", ruleId: "nuxt/ssr/no-request-state-in-cached-page" },
 ]);
 
 export const diagnostics = nuxtDiagnosticRegistry.diagnostics;

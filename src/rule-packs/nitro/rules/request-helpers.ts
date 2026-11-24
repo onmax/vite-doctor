@@ -1,3 +1,4 @@
+import { moduleNames, resolvesToModuleBinding } from "../../../core/internal/request-values.js";
 import { fileTextScope } from "../../../core/internal/script-scope.js";
 import {
   type AnyNode,
@@ -9,6 +10,10 @@ import {
   walkScriptLocal,
 } from "./shared.js";
 export { isNitroRouteFile } from "./shared.js";
+
+const H3_SOURCES = /^(?:h3|nitro\/h3|nitropack\/runtime(?:\/.*)?|#imports)$/;
+// `event.context` fields that describe the matched route rather than the visitor.
+const ROUTE_CONTEXT = new Set(["params", "matchedRoute", "cache", "_nitro"]);
 
 import type { Confidence, RuleContext } from "../../../core/index.js";
 
@@ -385,4 +390,40 @@ function isHttpMethod(method: string) {
 
 function normalizePath(path: string) {
   return path.replace(/\\/g, "/");
+}
+
+/** The h3 export `callee` names, through an import or Nitro's auto-import, or null. */
+export function h3Name(callee: AnyNode): string | null {
+  if (callee?.type !== "Identifier" || !resolvesToModuleBinding(callee, callee.name)) return null;
+  let program = callee;
+  while (program.__doctorParent) program = program.__doctorParent;
+  for (const statement of program.body ?? []) {
+    if (statement.type !== "ImportDeclaration") continue;
+    for (const specifier of statement.specifiers ?? []) {
+      if (specifier.local?.name !== callee.name) continue;
+      if (statement.importKind === "type" || specifier.importKind === "type") return null;
+      if (specifier.type !== "ImportSpecifier" || !H3_SOURCES.test(String(statement.source.value)))
+        return null;
+      return String(specifier.imported?.name ?? specifier.imported?.value);
+    }
+  }
+  return moduleNames(callee).has(callee.name) ? null : callee.name;
+}
+
+/**
+ * Whether `member` reads the visitor's side of an h3 event: `event.headers`,
+ * `event.node.req.headers`, or `event.context` other than the matched route.
+ */
+export function isEventRequestRead(member: AnyNode) {
+  if (member?.type !== "MemberExpression" || member.computed) return false;
+  const next = member.__doctorParent;
+  const nextField =
+    next?.type === "MemberExpression" && next.object === member && !next.computed
+      ? next.property?.name
+      : undefined;
+  const field = member.property?.name;
+  if (field === "headers") return true;
+  if (field === "context") return !ROUTE_CONTEXT.has(nextField);
+  if (field === "node") return nextField === "req";
+  return false;
 }

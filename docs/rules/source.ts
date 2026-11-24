@@ -972,6 +972,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Nuxt useState", "https://nuxt.com/docs/4.x/api/composables/use-state");
   }
 
+  if (rule.id === "nuxt/ssr/no-request-state-in-cached-page") {
+    add(
+      "Nuxt hybrid rendering",
+      "https://nuxt.com/docs/4.x/guide/concepts/rendering#hybrid-rendering",
+    );
+    add("Nitro route rules", "https://nitro.build/guide/routing#route-rules");
+  }
+
   if (rule.id === "nitro/state/no-request-data-in-module-state") {
     add("Nitro cached functions", "https://nitro.build/docs/cache");
   }

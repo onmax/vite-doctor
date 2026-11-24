@@ -1641,6 +1641,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/ssr/no-request-state-in-cached-page": {
+    description:
+      "Report a page that reads request headers, cookies, or the request event while it renders on the server, when Nitro's route rules serve that page from a shared cache (cache, swr, isr, or prerender).",
+    why: "Nitro decides which route rules apply to a request with its radix3 route matcher and merges every match, most specific first. When the merged rules for a page set cache or swr, Nitro renders the page through a cached handler that sees a copy of the request with every header not listed in cache.varies removed, cookies included, but the original event.context; isr asks presets that implement it (Vercel, Netlify, Zeabur) to cache the rendered response; prerender renders the page once at build time. In every case one render is served to many visitors, so header and cookie reads come back empty and values from event.context belong to whoever filled the cache. Doctor matches the page routes Nuxt resolved against Nitro's resolved route rules from the Doctor manifest, so inline defineRouteRules and nitro.routeRules count. It skips reads in onMounted() or behind import.meta.client, routes whose rules set cache: false or ssr: false, caches that vary on request headers, and query reads on cache and swr routes, whose cache key holds the query. When the manifest is missing or stale, or the page route can match a varying number of segments, Doctor records an evidence gap instead.",
+    recommendedReplacement:
+      "Move the per-visitor part to the client (onMounted(), import.meta.client, or <ClientOnly>) or to an uncached API call, or exclude the route from the cache with cache: false, isr: false, or prerender: false. For a cache keyed on a header, list it in cache.varies.",
+    examples: [
+      {
+        title: "Read the session on the client of a cached page",
+        language: "vue",
+        invalid:
+          "<!-- routeRules: { '/pricing': { swr: 3600 } } -->\n<script setup lang=\"ts\">\nconst headers = useRequestHeaders(['cookie'])\nconst { data: plan } = await useFetch('/api/me/plan', { headers })\n</script>",
+        valid:
+          "<!-- routeRules: { '/pricing': { swr: 3600 } } -->\n<script setup lang=\"ts\">\nconst { data: plan } = useFetch('/api/me/plan', { server: false })\n</script>",
+      },
+    ],
+  },
   "nuxt/state/no-diverging-usestate-init": {
     description:
       "Finds a useState() key that two or more call sites initialize with different functions.",
@@ -1721,10 +1738,10 @@ export const ruleDocumentationMetadata = {
   },
   "nuxthub/no-personalized-cached-handler": {
     description:
-      "Flags personalized cached handler in Nuxthub project code before it leaks into runtime behavior.",
-    why: "Cached server responses are shared beyond one request. Personalized data in a shared cache can leak state or serve stale content.",
+      "Report a server handler that reads the visitor's cookies, headers, session, or event.context when Nitro caches it, through cachedEventHandler() or through a cache or swr route rule.",
+    why: "Nitro runs a cached handler with a copy of the request that keeps only the headers listed in varies, so cookies and authorization are dropped, while event.context stays the same object, and it serves the cached response to every visitor. Doctor reports reads it can trace to the handler's event: h3 cookie, header, and session readers, nuxt-auth-utils' getUserSession(), event.headers, and event.context other than params. For a plain defineEventHandler(), it matches the handler routes Nitro scanned against Nitro's resolved route rules from the Doctor manifest, and records an evidence gap when the manifest is missing or stale. Handlers with getKey, varies, or shouldBypassCache options, and rules that vary on headers, are left alone.",
     recommendedReplacement:
-      "Remove personalized cached handler, or move it to the Nuxthub runtime/API that owns that behavior.",
+      "Do not cache the personalized response: drop cachedEventHandler() or set cache: false for the route. When the response depends on a header, list it in varies or pass a getKey that includes it.",
     examples: [
       {
         title: "Avoid personalized cached handlers",

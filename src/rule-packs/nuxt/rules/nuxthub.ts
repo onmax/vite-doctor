@@ -1,6 +1,21 @@
-import { createRule, defineRulePack, type DoctorRule } from "../../../core/index.js";
+import {
+  createRule,
+  defineRulePack,
+  type DoctorRule,
+  type RuleContext,
+} from "../../../core/index.js";
+import {
+  FUNCTION_TYPES,
+  holdsRequestValue,
+  type RequestValueSources,
+} from "../../../core/internal/request-values.js";
+import { handlerRouteRules, recordRouteRulesGap } from "../../../core/internal/route-rules.js";
 import { walkScriptLocal } from "../../../core/rule-authoring.js";
-import { routeMethodSuffix } from "../../nitro/rules/request-helpers.js";
+import {
+  h3Name,
+  isEventRequestRead,
+  routeMethodSuffix,
+} from "../../nitro/rules/request-helpers.js";
 import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
@@ -147,36 +162,143 @@ export const noPersonalizedCachedHandler = createRule({
     fixable: "suggestion",
     docsUrl: "https://hub.nuxt.com/docs/features/cache#when-to-use-cache",
     requires: { script: true, nuxt: true },
-    prefilter: { calls: ["cachedEventHandler", "defineCachedEventHandler"] },
+    prefilter: {
+      calls: [
+        "cachedEventHandler",
+        "defineCachedEventHandler",
+        "defineEventHandler",
+        "eventHandler",
+      ],
+    },
   },
   create(ctx) {
     if (!ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return;
     return {
-      CallExpression(node: AnyNode) {
-        if (!isCachedEventHandler(node)) return;
-        const handler = node.arguments?.[0];
-        if (!handler) return;
-        const snippet = ctx.file.text.slice(handler.start, handler.end);
-        if (!/(getUserSession|getCookie|getHeader|authorization|tenant|user)/i.test(snippet))
-          return;
-        if (hasMeaningfulCacheControl(node)) return;
-        ctx.helpers.report(
-          ctx,
-          node,
-          diagnostics.NUXT0062({
-            why: "This cached handler appears to depend on user, tenant, cookie, or auth state.",
-            fix: "Avoid caching personalized responses or include an explicit cache key/vary strategy.",
-          }),
-          {
-            ruleId: "nuxthub/no-personalized-cached-handler",
-            severity: "error",
-            category: "cache",
-          },
-        );
+      Program(program: AnyNode) {
+        let wrapped = false;
+        walkScriptLocal(program, (node) => {
+          if (!isCachedEventHandler(node)) return;
+          wrapped = true;
+          const read = personalRead(node.arguments?.[0]);
+          if (!read || hasMeaningfulCacheControl(node)) return;
+          ctx.helpers.report(
+            ctx,
+            node,
+            diagnostics.NUXT0062({
+              why: `This cached handler reads ${read} from the request. Nitro renders cached handlers with a copy of the request that keeps only the headers listed in varies, cookies and authorization included, while event.context stays shared, so one visitor's response is cached and served to the others.`,
+              fix: "Avoid caching personalized responses or include an explicit cache key/vary strategy.",
+            }),
+            {
+              ruleId: "nuxthub/no-personalized-cached-handler",
+              severity: "error",
+              category: "cache",
+            },
+          );
+        });
+        if (!wrapped) reportRouteRuleCache(ctx, program);
       },
     };
   },
 });
+
+// Nitro wraps a plain handler in cachedEventHandler when the route rules for its route set
+// `cache` or `swr`, so the same reads leak without a cachedEventHandler call in the file.
+function reportRouteRuleCache(ctx: RuleContext, program: AnyNode) {
+  const call = exportedEventHandler(program);
+  const read = call && personalRead(handlerFunction(call));
+  if (!read) return;
+  const fact = handlerRouteRules(ctx.project, ctx.file.path);
+  if (fact.state === "unknown") {
+    if (Object.keys(ctx.project.nuxt?.routeRules ?? {}).length)
+      recordRouteRulesGap(ctx.project, ctx.file.relativePath, fact.reason);
+    return;
+  }
+  if (fact.state !== "resolved") return;
+  const cached = fact.routes.find(({ rules }) => {
+    const cache = rules.cache;
+    return cache && !(Array.isArray(cache.varies) && cache.varies.length);
+  });
+  if (!cached) return;
+  ctx.helpers.report(
+    ctx,
+    call,
+    diagnostics.NUXT0062({
+      why: `This handler reads ${read} from the request, and the route rules for ${cached.route} (${cached.patterns.join(", ")}) set \`${cached.rules.cache && cached.rules.cache.swr ? "swr" : "cache"}\`, so Nitro wraps it in cachedEventHandler. The cached handler sees a copy of the request that keeps only the headers listed in cache.varies, cookies and authorization included, while event.context stays shared, so one visitor's response is cached and served to the others.`,
+      fix: "Exclude the route from the cache with `cache: false`, or list the headers the response depends on in the rule's `cache.varies`.",
+    }),
+    {
+      ruleId: "nuxthub/no-personalized-cached-handler",
+      severity: "error",
+      category: "cache",
+      confidence: "manifest-backed",
+      evidence: [
+        {
+          kind: "manifest",
+          summary: `Nitro's route rule matcher applies ${cached.patterns.join(", ")} to the handler route ${cached.route}.`,
+        },
+      ],
+    },
+  );
+}
+
+const EVENT_HANDLERS = new Set(["defineEventHandler", "eventHandler"]);
+// h3 readers of the visitor's headers, cookies and session, plus nuxt-auth-utils' session helpers.
+const PERSONAL_READERS = new Set([
+  "getCookie",
+  "parseCookies",
+  "getHeader",
+  "getHeaders",
+  "getRequestHeader",
+  "getRequestHeaders",
+  "getRequestIP",
+  "getSession",
+  "useSession",
+  "getUserSession",
+  "requireUserSession",
+]);
+
+function exportedEventHandler(program: AnyNode): AnyNode | null {
+  for (const statement of program.body ?? []) {
+    if (statement.type !== "ExportDefaultDeclaration") continue;
+    const call = unwrap(statement.declaration);
+    return call?.type === "CallExpression" && EVENT_HANDLERS.has(h3Name(unwrap(call.callee)) ?? "")
+      ? call
+      : null;
+  }
+  return null;
+}
+
+/** The function an h3 handler factory receives, or its `{ handler }` option. */
+function handlerFunction(call: AnyNode): AnyNode | null {
+  const argument = unwrap(call.arguments?.[0]);
+  if (argument?.type !== "ObjectExpression") return argument;
+  const property = argument.properties.find(
+    (entry: AnyNode) => entry.type === "Property" && propertyName(entry) === "handler",
+  );
+  return property ? unwrap(property.value) : null;
+}
+
+/** A description of the first visitor-specific read the handler makes from its event, or null. */
+function personalRead(input: AnyNode): string | null {
+  const handler = unwrap(input);
+  if (!FUNCTION_TYPES.has(handler?.type)) return null;
+  const event: RequestValueSources = {
+    isSource: () => false,
+    parameter: (fn, index) => fn === handler && index === 0,
+  };
+  let read: string | null = null;
+  walkScriptLocal(handler.body, (node) => {
+    if (read) return;
+    if (node.type === "CallExpression") {
+      const name = h3Name(unwrap(node.callee));
+      if (name && PERSONAL_READERS.has(name) && node.arguments?.[0])
+        if (holdsRequestValue(node.arguments[0], event)) read = `${name}()`;
+    } else if (isEventRequestRead(node) && holdsRequestValue(node.object, event)) {
+      read = node.property.name === "context" ? "event.context" : "request headers";
+    }
+  });
+  return read;
+}
 
 export const preferCachedEventHandler = createRule({
   meta: {
