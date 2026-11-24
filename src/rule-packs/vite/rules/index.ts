@@ -8,6 +8,7 @@ export {
   noBroadEnvPrefix,
   noClientSecretPattern,
   noEmptyEnvPrefix,
+  noUnprefixedClientEnv,
   noUntypedEnv,
   preferDirectImportMetaEnvAccess,
 } from "./env.js";
@@ -29,6 +30,10 @@ export { noFragmentInVirtualId } from "./virtual-ids.js";
 
 export { noCircularImportAtHmrBoundary } from "./hmr-cycles.js";
 
+export { noLoadEnvAllInDefine } from "./loadenv-define.js";
+
+export { noUnreachableHook } from "./plugin-apply.js";
+
 export { noNodeBuiltinInClientChunk } from "./build.js";
 export {
   requireDisposeForSideEffects,
@@ -47,6 +52,7 @@ import {
   noBroadEnvPrefix,
   noClientSecretPattern,
   noEmptyEnvPrefix,
+  noUnprefixedClientEnv,
   noUntypedEnv,
   preferDirectImportMetaEnvAccess,
 } from "./env.js";
@@ -67,6 +73,10 @@ import { noUrlPathnameAsFsPath } from "./config-paths.js";
 import { noFragmentInVirtualId } from "./virtual-ids.js";
 
 import { noCircularImportAtHmrBoundary } from "./hmr-cycles.js";
+
+import { noLoadEnvAllInDefine } from "./loadenv-define.js";
+
+import { noUnreachableHook } from "./plugin-apply.js";
 
 import { noNodeBuiltinInClientChunk } from "./build.js";
 import {
@@ -111,6 +121,10 @@ const rules = [
 
   noCircularImportAtHmrBoundary,
 
+  noUnprefixedClientEnv,
+  noLoadEnvAllInDefine,
+  noUnreachableHook,
+
   noNodeBuiltinInClientChunk,
 ];
 
@@ -138,6 +152,10 @@ const recommended = [
   noUrlPathnameAsFsPath,
 
   noFragmentInVirtualId,
+
+  noUnprefixedClientEnv,
+  noLoadEnvAllInDefine,
+  noUnreachableHook,
 
   noNodeBuiltinInClientChunk,
 ].map((rule) => rule.meta.id);

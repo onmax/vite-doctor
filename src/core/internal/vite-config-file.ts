@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "pathe";
 
 // Vite's own lookup order for a config file without --config.
-const VITE_CONFIG_FILES = [
+export const VITE_CONFIG_FILES = [
   "vite.config.js",
   "vite.config.mjs",
   "vite.config.ts",

@@ -1986,6 +1986,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/define/no-loadenv-all-in-define": {
+    description:
+      "Reports Vite define entries that receive the whole result of loadEnv with an empty prefix, or the whole process.env.",
+    why: "loadEnv(mode, dir, '') returns variables from the .env files and process.env without prefix filtering. Vite inlines client define values and injects global defines into the browser in dev. Passing the whole environment, spreading it, or serializing it without a filtering replacer can expose secrets. Doctor checks resolvable client defines in the Vite config; it ignores SSR-only entries, entries replaced before reaching the client, and JSON.stringify calls whose replacer may filter the object.",
+    recommendedReplacement:
+      "Define only the public values the client needs, such as __API_URL__: JSON.stringify(env.API_URL), or keep the default VITE_ prefix and read those variables through import.meta.env.",
+    examples: [
+      {
+        title: "Define one public value",
+        language: "ts",
+        invalid:
+          "import { defineConfig, loadEnv } from 'vite'\n\nexport default defineConfig(({ mode }) => {\n  const env = loadEnv(mode, process.cwd(), '')\n  return {\n    define: { 'process.env': env },\n  }\n})",
+        valid:
+          "import { defineConfig, loadEnv } from 'vite'\n\nexport default defineConfig(({ mode }) => {\n  const env = loadEnv(mode, process.cwd(), '')\n  return {\n    define: { __API_URL__: JSON.stringify(env.API_URL) },\n  }\n})",
+      },
+    ],
+  },
   "vite/define/no-runtime-object-define": {
     description:
       "Flags runtime object define in Vite define code before it leaks into runtime behavior.",
@@ -2080,16 +2097,33 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "vite/env/no-empty-env-prefix": {
-    description: "Flags empty env prefix in Vite env code before it leaks into runtime behavior.",
-    why: "Vite rejects an empty envPrefix to prevent exposing every environment variable to bundled client code, including secrets.",
+    description:
+      'Reports envPrefix: "" in Vite config, which Vite rejects when it resolves the config.',
+    why: "Vite's resolveEnvPrefix throws \"envPrefix option contains value ''\" for an empty string, alone or in an array, so vite dev and vite build fail while resolving the config and never load or expose any env variable. The empty prefix would match every variable, which is why Vite refuses it.",
     recommendedReplacement:
-      "Remove empty env prefix, or move it to the Vite runtime/API that owns that behavior.",
+      'Remove "" from envPrefix and keep the default VITE_ prefix or a narrow public prefix.',
     examples: [
       {
-        title: "Do not expose every env var",
+        title: "Keep a non-empty env prefix",
         language: "ts",
         invalid: "export default defineConfig({\n  envPrefix: '',\n})",
         valid: "export default defineConfig({\n  envPrefix: 'VITE_',\n})",
+      },
+    ],
+  },
+  "vite/env/no-unprefixed-client-env": {
+    description:
+      "Reports import.meta.env reads in client code of keys that miss every envPrefix and that no define entry sets, so Vite leaves them undefined.",
+    why: "Vite exposes env variables matching envPrefix (VITE_ by default), built-in keys, and import.meta.env.* client defines. Doctor uses resolved Vite evidence when available. Otherwise it reads the owning project's default vite.config file in Vite's lookup order and skips configurations it cannot resolve, including composed configs and known plugins or frameworks that manage env. Test, config, server and SSR entry files are skipped. Doctor also skips TEST, VITEST and the VITEST_* keys set for test-only branches when the owning package declares Vitest, has its own vitest.config file, configures tests through Vite+, or is selected by a static test.projects entry in the workspace root config. Secret-looking names are left to vite/env/no-client-secret-pattern unless the host config proves they are not exposed.",
+    recommendedReplacement:
+      "If the value is public and a prefix is configured, rename it with that prefix in both the .env file and the code. Keep secret values in server-only code.",
+    examples: [
+      {
+        title: "Use the env prefix Vite exposes",
+        language: "ts",
+        invalid: "// .env: API_URL=https://api.example.com\nconst apiUrl = import.meta.env.API_URL",
+        valid:
+          "// .env: VITE_API_URL=https://api.example.com\nconst apiUrl = import.meta.env.VITE_API_URL",
       },
     ],
   },
@@ -2207,6 +2241,23 @@ export const ruleDocumentationMetadata = {
           "async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) res.setHeader(name, value)\n  res.end(await response.text())\n}",
         valid:
           'async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) {\n    if (name !== "set-cookie") res.setHeader(name, value)\n  }\n  const cookies = response.headers.getSetCookie()\n  if (cookies.length > 0) res.setHeader("set-cookie", cookies)\n  res.end(await response.text())\n}',
+      },
+    ],
+  },
+  "vite/plugin/no-unreachable-hook": {
+    description:
+      'Reports configureServer, configurePreviewServer, handleHotUpdate and hotUpdate hooks on Vite plugin objects whose apply is "build".',
+    why: 'Vite filters plugins by apply before calling these hooks. Dev, preview, and createServer use the serve command, so they exclude plugins whose apply is "build". Doctor checks objects it can trace to Vite config plugins or a factory with a Vite Plugin return type, and skips spreads, unresolved computed keys, and objects with unproven apply values. It does not report build output hooks on apply: "serve" plugins, because those can run in dev.',
+    recommendedReplacement:
+      'Remove apply: "build" or change it to apply: "serve" if the hook should run, or delete the hook.',
+    examples: [
+      {
+        title: "Keep serve hooks on plugins that run in serve",
+        language: "ts",
+        invalid:
+          "import type { Plugin } from 'vite'\n\nexport function headers(): Plugin {\n  return {\n    name: 'headers',\n    apply: 'build',\n    configureServer(server) {\n      server.middlewares.use(setHeaders)\n    },\n  }\n}",
+        valid:
+          "import type { Plugin } from 'vite'\n\nexport function headers(): Plugin {\n  return {\n    name: 'headers',\n    apply: 'serve',\n    configureServer(server) {\n      server.middlewares.use(setHeaders)\n    },\n  }\n}",
       },
     ],
   },
