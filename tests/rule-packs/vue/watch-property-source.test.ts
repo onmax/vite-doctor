@@ -74,6 +74,20 @@ test.each(['<button @click="state.count = source" />', '<input v-model="state.co
   },
 );
 
+test.each(["({ source: state.source } = replacement)", "[state.source] = [replacement.source]"])(
+  "VUE0050 leaves a getter installed by template destructuring alone: %s",
+  async (assignment) => {
+    expect(
+      await run(
+        `const state = reactive({ source: 0 as number | (() => number) });
+const replacement = { source: () => 1 };
+function startWatch() { watch(state.source, cb) }`,
+        `<button @click="${assignment}; startWatch()" />`,
+      ),
+    ).toEqual([]);
+  },
+);
+
 test("VUE0050 suggests a getter that Vue's compiler accepts", async () => {
   const source = `<script setup lang="ts">
 import { watch } from 'vue'

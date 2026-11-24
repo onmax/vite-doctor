@@ -28,16 +28,8 @@ const REACTIVE_READERS = new Set([
   "watchPostEffect",
   "watchSyncEffect",
 ]);
-/** Vue APIs that call a function argument after setup has returned and the first render ran. */
-const LATER_VUE_CALLBACKS = new Set([
-  "onMounted",
-  "onUpdated",
-  "onActivated",
-  "onDeactivated",
-  "nextTick",
-  "watchPostEffect",
-]);
-const WATCH_CALLBACKS = new Set(["watch", "watchEffect"]);
+const POST_RENDER_HOOKS = new Set(["onMounted", "onUpdated", "onActivated", "onDeactivated"]);
+const SCHEDULED_VUE_CALLBACKS = new Set(["watch", "watchEffect", "watchPostEffect", "nextTick"]);
 const LATER_GLOBALS = new Set([
   "setTimeout",
   "setInterval",
@@ -110,6 +102,18 @@ export const noShallowRefDeepMutation = createRule({
 function deepMutations(ctx: RuleContext): DeepMutation[] {
   const script = indexedScript(ctx);
   if (!script) return [];
+  const descriptor = ctx.file.sfc?.descriptor as SFCDescriptor | undefined;
+  const setup = descriptor?.scriptSetup;
+  const setupMaySuspend =
+    !!setup &&
+    script
+      .nodes("AwaitExpression")
+      .some(
+        (node) =>
+          !script.owner(node) &&
+          node.range[0] >= setup.loc.start.offset &&
+          node.range[1] <= setup.loc.end.offset,
+      );
   const result: DeepMutation[] = [];
   try {
     for (const call of script.nodes("CallExpression")) {
@@ -139,8 +143,8 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
       }
       if (mayTrigger || !mutations.length) continue;
       const name = declarator.id.name;
-      const descriptor = ctx.file.sfc?.descriptor as SFCDescriptor | undefined;
-      const templateScope = !declarationOwner && !!descriptor?.scriptSetup;
+      const templateScope = !declarationOwner && !!setup;
+      const timing = { declarationOwner, setupMaySuspend: templateScope && setupMaySuspend };
       const writes = templateScope ? templateWrites(ctx, name) : [];
       if (writes.some((write) => !write.path.length)) continue;
       if (!readReactively && !(templateScope && renderTemplateReads(ctx).has(name))) continue;
@@ -159,7 +163,7 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
         )
           continue;
         if (!values.every((value) => mutatesPlainValue(script, value, mutation))) continue;
-        if (!runsAfterSetup(script, mutation.node, declarationOwner)) continue;
+        if (!laterPath(script, mutation.node, timing, new Set())) continue;
         result.push({
           node: mutation.node,
           ref: name,
@@ -344,22 +348,20 @@ function insideReactiveReader(script: IndexedScript, id: AnyNode): boolean {
   return false;
 }
 
-/**
- * Whether the mutation runs after setup returned, when something may already have read the ref.
- * Code that runs while setup runs changes the value before the first render reads it.
- */
-function runsAfterSetup(script: IndexedScript, node: AnyNode, declarationOwner: AnyNode): boolean {
-  return laterPath(script, node, declarationOwner, new Set());
+interface SetupTiming {
+  declarationOwner: AnyNode;
+  setupMaySuspend: boolean;
 }
 
+/** Whether the mutation runs after setup returned, when something may already have read the ref. */
 function laterPath(
   script: IndexedScript,
   node: AnyNode,
-  declarationOwner: AnyNode,
+  timing: SetupTiming,
   seen: Set<AnyNode>,
 ): boolean {
-  for (let fn = script.owner(node); fn && fn !== declarationOwner; fn = script.owner(fn)) {
-    if (runsLater(script, fn, node, declarationOwner, seen)) return true;
+  for (let fn = script.owner(node); fn && fn !== timing.declarationOwner; fn = script.owner(fn)) {
+    if (runsLater(script, fn, node, timing, seen)) return true;
   }
   return false;
 }
@@ -368,13 +370,13 @@ function runsLater(
   script: IndexedScript,
   fn: AnyNode,
   at: AnyNode,
-  declarationOwner: AnyNode,
+  timing: SetupTiming,
   seen: Set<AnyNode>,
 ): boolean {
-  if (fn.async && awaitsBefore(script, fn, at)) return true;
+  if (!timing.setupMaySuspend && fn.async && awaitsBefore(script, fn, at)) return true;
   const [parent, child] = valueParent(script, fn);
   if (parent?.type === "CallExpression" && parent.arguments.includes(child))
-    return callsLater(script, parent, child);
+    return callsLater(script, parent, child, timing.setupMaySuspend);
   const binding = functionBinding(script, fn, parent);
   if (!binding || seen.has(fn)) return false;
   seen.add(fn);
@@ -383,9 +385,9 @@ function runsLater(
       if (reference.init) continue;
       const [use, used] = valueParent(script, reference.identifier);
       if (use?.type === "CallExpression" && use.callee === used) {
-        if (!laterPath(script, use, declarationOwner, seen)) return false;
+        if (!laterPath(script, use, timing, seen)) return false;
       } else if (use?.type === "CallExpression" && use.arguments.includes(used)) {
-        if (!callsLater(script, use, used)) return false;
+        if (!callsLater(script, use, used, timing.setupMaySuspend)) return false;
       } else if (!isHandlerUse(script, use, used)) return false;
     }
     return true;
@@ -421,9 +423,16 @@ function awaitsBefore(script: IndexedScript, fn: AnyNode, at: AnyNode): boolean 
   return false;
 }
 
-/** Whether `call` runs its function argument `argument` later, as a hook, timer, or listener. */
-function callsLater(script: IndexedScript, call: AnyNode, argument: AnyNode): boolean {
-  const watcher = vueApiCall(script, call.callee, WATCH_CALLBACKS);
+/** Whether `call` runs its function argument `argument` later, as a hook or scheduled callback. */
+function callsLater(
+  script: IndexedScript,
+  call: AnyNode,
+  argument: AnyNode,
+  setupMaySuspend: boolean,
+): boolean {
+  if (vueApiCall(script, call.callee, POST_RENDER_HOOKS)) return call.arguments[0] === argument;
+  if (setupMaySuspend) return false;
+  const watcher = vueApiCall(script, call.callee, SCHEDULED_VUE_CALLBACKS);
   if (watcher === "watch") {
     if (call.arguments[1] !== argument) return false;
     if (call.arguments.length < 3) return true;
@@ -439,8 +448,7 @@ function callsLater(script: IndexedScript, call: AnyNode, argument: AnyNode): bo
       call.arguments[0] === argument &&
       watchOptions(call.arguments[1])?.get("flush")?.value === "post"
     );
-  const api = vueApiCall(script, call.callee, LATER_VUE_CALLBACKS);
-  if (api) return call.arguments[0] === argument;
+  if (watcher) return call.arguments[0] === argument;
   const callee = unwrapTs(call.callee);
   if (callee?.type === "Identifier")
     return (
@@ -449,11 +457,6 @@ function callsLater(script: IndexedScript, call: AnyNode, argument: AnyNode): bo
       !script.references.get(callee)?.resolved
     );
   const method = memberName(callee);
-  if (method === "addEventListener")
-    return (
-      call.arguments[1] === argument &&
-      ["window", "document"].some((name) => isGlobal(script, callee.object, name))
-    );
   return (
     !!method &&
     PROMISE_METHODS.has(method) &&

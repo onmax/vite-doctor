@@ -101,6 +101,26 @@ export function useCart() {
   expect(diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([RULE_ID]);
 });
 
+test("VUE0049 does not treat a microtask during async setup as a post-setup write", async () => {
+  expect(
+    await run(
+      component(`const todos = shallowRef([]);
+Promise.resolve().then(() => todos.value.push('seed'));
+await Promise.resolve();`),
+    ),
+  ).toEqual([]);
+});
+
+test("VUE0049 still reports a mounted hook in async setup", async () => {
+  expect(
+    await run(
+      component(`const todos = shallowRef([]);
+onMounted(() => todos.value.push('seed'));
+await Promise.resolve();`),
+    ),
+  ).toHaveLength(1);
+});
+
 test.each([
   [
     "the function calls triggerRef()",
@@ -119,6 +139,11 @@ test.each([
     `todos.value.push('first')\n;['a', 'b'].forEach((t) => todos.value.push(t))`,
   ],
   ["setup calls the function synchronously", `function seed() { todos.value.push('a') }\nseed()`],
+  [
+    "an event listener is dispatched synchronously during setup",
+    `window.addEventListener('seed', () => todos.value.push('seed'), { once: true });
+window.dispatchEvent(new Event('seed'))`,
+  ],
   ["an immediate effect seeds the array", `watchEffect(() => { todos.value.push('seed') })`],
   ["a sync effect seeds the array", `watchSyncEffect(() => { todos.value.push('seed') })`],
   [
@@ -200,19 +225,20 @@ test.each(["todos = replacement", "todos = replacement; add()"])(
   },
 );
 
-test.each([`@click="todos.items = replacement; add()"`, `v-model="todos.items"`])(
-  "VUE0049 sees a template replacement of a nested receiver: %s",
-  async (directive) => {
-    expect(
-      await run(
-        component(
-          `const todos = shallowRef({ items: [] }); const replacement = reactive([]); function add() { todos.value.items.push('a') }`,
-          `<p>{{ todos.items.length }}</p><Picker ${directive} />`,
-        ),
+test.each([
+  `@click="todos.items = replacement; add()"`,
+  `@click="[todos.items] = [replacement]; add()"`,
+  `v-model="todos.items"`,
+])("VUE0049 sees a template replacement of a nested receiver: %s", async (directive) => {
+  expect(
+    await run(
+      component(
+        `const todos = shallowRef({ items: [] }); const replacement = reactive([]); function add() { todos.value.items.push('a') }`,
+        `<p>{{ todos.items.length }}</p><Picker ${directive} />`,
       ),
-    ).toEqual([]);
-  },
-);
+    ),
+  ).toEqual([]);
+});
 
 test.each([
   ["Array", "[]", "length", "push('a')"],

@@ -134,5 +134,32 @@ function templateWrite(id: AnyNode, model: AnyNode): TemplateWrite | undefined {
       return { path, operation: parent };
     break;
   }
-  return unwrapTs(node) === model ? { path } : undefined;
+  if (unwrapTs(node) === model || isPatternWrite(node)) return { path };
+  return undefined;
+}
+
+function isPatternWrite(node: AnyNode): boolean {
+  let inPattern = false;
+  for (let parent = node.__doctorParent; parent; parent = node.__doctorParent) {
+    if (
+      (parent.type === "Property" &&
+        parent.value === node &&
+        parent.__doctorParent?.type === "ObjectPattern") ||
+      parent.type === "ObjectPattern" ||
+      (parent.type === "ArrayPattern" && parent.elements.includes(node)) ||
+      (parent.type === "AssignmentPattern" && parent.left === node) ||
+      (parent.type === "RestElement" && parent.argument === node)
+    ) {
+      inPattern = true;
+      node = parent;
+      continue;
+    }
+    return (
+      parent.left === node &&
+      ((inPattern && parent.type === "AssignmentExpression") ||
+        parent.type === "ForInStatement" ||
+        parent.type === "ForOfStatement")
+    );
+  }
+  return false;
 }
