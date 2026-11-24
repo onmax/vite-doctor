@@ -51,7 +51,7 @@ export const noCircularImportAtHmrBoundary = createRule({
           ctx.report(
             diagnostics.VITE0029({
               why: `Circular import through the HMR boundary ${path(boundary)}: ${steps}.${viaAutoImports} ${path(boundary)} is ${kind}. When an edit inside this cycle reaches it, Vite marks the update as within a circular import, and the browser re-imports ${path(boundary)}, which re-runs the modules in the cycle. If that re-import throws, for example because a module reads a binding of the cycle before it is initialized, Vite reloads the whole page instead of applying the update.`,
-              fix: `${cycleFix(ctx, edge, autoImports, path)} Do not decline HMR with import.meta.hot.decline() or suppress this Diagnostic to hide the cycle.`,
+              fix: `${cycleFix(ctx, graph, edge, autoImports, path)} Do not decline HMR with import.meta.hot.decline() or suppress this Diagnostic to hide the cycle.`,
               sources: edge.range
                 ? [`${edge.from}:${edge.range.line}:${edge.range.column}`]
                 : undefined,
@@ -87,21 +87,18 @@ function describeEdge(edge: ImportGraphEdge, path: (file: string) => string): st
   return `${edge.kind === "re-export" ? "re-exports" : "imports"} '${edge.specifier}' → ${path(edge.to!)}`;
 }
 
-/**
- * Lazy loading only fits a component that a route record names, as in `component: Page`; any
- * other edge, and every auto-import, is cut by moving what the importer needs.
- */
 function cycleFix(
   ctx: RuleContext,
+  graph: ImportGraph,
   edge: ImportGraphEdge,
   autoImports: readonly ImportGraphEdge[],
   path: (file: string) => string,
 ): string {
   const from = path(edge.from);
   const to = path(edge.to!);
-  if (isRouteComponentImport(ctx, edge)) {
+  if (isRouteComponentImport(ctx, graph, edge)) {
     const specifier = JSON.stringify(edge.specifier).slice(1, -1).replaceAll("'", "\\'");
-    return `Break the cycle where ${from} imports the component ${to}: replace its static import with a lazy loader in the route record, as in \`component: () => import('${specifier}')\`, or move what ${from} needs from ${to} into a module that imports neither.`;
+    return `Break this loop by removing the static import of ${to} from ${from} and using a lazy loader in the route record, as in \`component: () => import('${specifier}')\`. Other loops may need separate fixes.`;
   }
   const cut =
     edge.kind === "auto-import"
@@ -113,8 +110,21 @@ function cycleFix(
   return `Break the cycle at the edge where ${from} ${cut}: move what ${from} needs into a module that neither side depends on.${deferred}`;
 }
 
-function isRouteComponentImport(ctx: RuleContext, edge: ImportGraphEdge): boolean {
-  if (edge.kind !== "import" || !edge.to!.endsWith(".vue") || !/\.[cm]?[jt]sx?$/.test(edge.from))
+function isRouteComponentImport(
+  ctx: RuleContext,
+  graph: ImportGraph,
+  edge: ImportGraphEdge,
+): boolean {
+  const start = edge.range?.start;
+  if (
+    edge.kind !== "import" ||
+    start === undefined ||
+    !edge.to?.endsWith(".vue") ||
+    !/\.[cm]?[jt]sx?$/.test(edge.from) ||
+    graph
+      .importsOf(edge.from)
+      .some((other) => other !== edge && other.to === edge.to && isRuntimeImportEdge(other))
+  )
     return false;
   const text = ctx.fs.readText(edge.from);
   if (!text?.includes("vue-router")) return false;
@@ -151,6 +161,7 @@ function isRouteComponentImport(ctx: RuleContext, edge: ImportGraphEdge): boolea
         definition.node.type === "ImportDefaultSpecifier" &&
         definition.parent.type === "ImportDeclaration" &&
         definition.parent.importKind !== "type" &&
+        definition.parent.range[0] === start &&
         definition.parent.source.value === edge.specifier &&
         definition.parent.specifiers.length === 1
       );

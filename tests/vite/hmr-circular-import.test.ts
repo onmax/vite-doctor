@@ -64,6 +64,34 @@ test("reports a static cycle through a Vue SFC at the import into the SFC", asyn
 });
 
 test.each([
+  ["a named import before the default import", 'import { pageTitle } from "./Page.vue";\n', ""],
+  ["a named import after the default import", "", '\nimport { pageTitle } from "./Page.vue";'],
+  ["a re-export", "", '\nexport { pageTitle } from "./Page.vue";'],
+  ["an aliased side-effect import", "", '\nimport "@/src/Page.vue";'],
+])("uses generic advice when %s keeps the route component link", async (_name, before, after) => {
+  const diagnostics = await run({
+    ...app,
+    "src/router.ts": before + app["src/router.ts"] + after,
+    "src/Page.vue": '<script lang="ts">export const pageTitle = "Home";</script>\n' + page,
+  });
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]!.fix).toContain("move what src/router.ts needs");
+  expect(diagnostics[0]!.fix).not.toContain("component: () => import");
+});
+
+test("still suggests a lazy loader alongside type-only and dynamic dependencies", async () => {
+  const diagnostics = await run({
+    ...app,
+    "src/router.ts":
+      'import type PageType from "./Page.vue";\n' +
+      app["src/router.ts"] +
+      'export const preload: () => Promise<{ default: typeof PageType }> = () => import("./Page.vue");',
+  });
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]!.fix).toContain("component: () => import('./Page.vue')");
+});
+
+test.each([
   [
     "a non-route component registry",
     'import { h } from "vue";\nimport Page from "./Page.vue";\nconst dialog = { component: Page };\nexport const router = { push: () => h(dialog.component) };',
