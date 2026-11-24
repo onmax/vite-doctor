@@ -965,6 +965,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("DOC0001: circular dependencies", "/diagnostics/DOC0001");
   }
 
+  if (rule.id === "pinia/state/no-action-bypass") {
+    add(
+      "Pinia mutating the state",
+      "https://pinia.vuejs.org/core-concepts/state.html#Mutating-the-state",
+    );
+    add("Pinia actions", "https://pinia.vuejs.org/core-concepts/actions.html");
+  }
+
   if (rule.id === "vue/props/no-unused-props") {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }

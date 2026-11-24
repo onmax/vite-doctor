@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { nitroRulePack } from "../../src/rule-packs/nitro/index.js";
+import { piniaRulePack } from "../../src/rule-packs/pinia/index.js";
 import nuxtRulePack from "../../src/rule-packs/nuxt/rules/nuxt/index.js";
 import typescriptRulePack from "../../src/rule-packs/typescript/rules/index.js";
 import viteRulePack from "../../src/rule-packs/vite/rules/index.js";
@@ -33,6 +34,7 @@ test("Strict-only Nuxt rule commands survive combined preset discovery", async (
 });
 
 test.each([
+  ["pinia", piniaRulePack, "pinia/state/no-action-bypass", "pnpm vite-doctor ."],
   [
     "typescript",
     typescriptRulePack,

@@ -1,3 +1,4 @@
+import { dirname, isAbsolute, resolve } from "pathe";
 import type { NuxtProjectInfo, RuleContext } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseScriptScope, type ScopeReference } from "../../../core/internal/script-scope.js";
@@ -48,6 +49,13 @@ export interface StoreModule {
   text: string;
   program: AnyNode;
 }
+
+export interface LocatedStore<S extends StoreDefinition = StoreDefinition> {
+  store: S;
+  module: StoreModule;
+}
+
+const VITE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
 
 const TRANSPARENT_WRAPPERS = new Set([
   "ParenthesizedExpression",
@@ -551,4 +559,217 @@ function walk(
     else walk(value, ancestors, visit);
   }
   ancestors.pop();
+}
+
+/**
+ * Resolves a `useXStore` reference in `file` to the store it calls: through imports, re-exports,
+ * and Nuxt's auto-import registrations, or, with no import and no authoritative registrations, to
+ * the only store exported under that name (`byName`), as `@pinia/nuxt` and `unplugin-auto-import`
+ * would resolve it.
+ */
+export function storeResolver<S extends StoreDefinition>(
+  ctx: RuleContext,
+  stores: LocatedStore<S>[],
+) {
+  const byFile = new Map<string, LocatedStore<S>[]>();
+  const programs = new Map<string, StoreModule["program"]>();
+  for (const store of stores) {
+    const file = store.module.file;
+    const local = byFile.get(file) ?? [];
+    local.push(store);
+    byFile.set(file, local);
+    programs.set(file, store.module.program);
+  }
+
+  function moduleFile(from: string, source: string) {
+    const matches = new Set(
+      importBases(ctx, from, source).flatMap((base) => {
+        const file = importCandidates(base).find(
+          (candidate) => byFile.has(candidate) || ctx.fs.stat(candidate)?.isFile(),
+        );
+        return file ? [file] : [];
+      }),
+    );
+    return matches.size === 1 ? matches.values().next().value : undefined;
+  }
+
+  function program(file: string) {
+    if (!programs.has(file)) {
+      const text = ctx.fs.readText(file);
+      programs.set(file, text && !file.endsWith(".vue") ? parseScript(file, text) : undefined);
+    }
+    return programs.get(file);
+  }
+
+  function declarationStore(file: string, declaration: StoreModule["program"], name: string) {
+    const binding = declaration?.declarations?.find(
+      (entry: StoreModule["program"]) => entry.id?.type === "Identifier" && entry.id.name === name,
+    )?.id;
+    return (
+      binding &&
+      byFile.get(file)?.find((candidate) => candidate.store.binding?.start === binding.start)
+    );
+  }
+
+  // `null` means the export might exist but cannot be proven to be a store; `undefined` means absent.
+  function exported(
+    file: string,
+    name: string,
+    seen = new Set<string>(),
+  ): LocatedStore<S> | null | undefined {
+    const key = `${file}\0${name}`;
+    if (seen.has(key)) return undefined;
+    const body = program(file)?.body;
+    if (!body) return null;
+    const path = new Set(seen).add(key);
+    for (const statement of body) {
+      if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
+      const declaration = statement.declaration;
+      if (declaration?.id?.name === name) return null;
+      if (declaration?.type === "VariableDeclaration") {
+        const store = declarationStore(file, declaration, name);
+        if (store) return store;
+        if (
+          declaration.declarations.some((entry: StoreModule["program"]) =>
+            bindsName(entry.id, name),
+          )
+        )
+          return null;
+      }
+      for (const item of statement.specifiers ?? []) {
+        if (item.exportKind === "type" || exportName(item.exported) !== name) continue;
+        const local = exportName(item.local);
+        if (!local) return null;
+        if (statement.source) {
+          const target = moduleFile(file, statement.source.value);
+          return (target && exported(target, local, path)) || null;
+        }
+        for (const binding of body) {
+          const store = declarationStore(file, binding.declaration ?? binding, local);
+          if (store) return store;
+          if (binding.type !== "ImportDeclaration" || binding.importKind === "type") continue;
+          const imported = binding.specifiers.find(
+            (entry: StoreModule["program"]) => entry.local.name === local,
+          );
+          if (imported?.type !== "ImportSpecifier" || imported.importKind === "type") continue;
+          const target = moduleFile(file, binding.source.value);
+          return (target && exported(target, exportName(imported.imported), path)) || null;
+        }
+        return null;
+      }
+    }
+    let match: LocatedStore<S> | undefined;
+    for (const statement of body) {
+      if (statement.type !== "ExportAllDeclaration" || statement.exportKind === "type") continue;
+      if (statement.exported) {
+        if (exportName(statement.exported) === name) return null;
+        continue;
+      }
+      const target = moduleFile(file, statement.source.value);
+      if (!target) return null;
+      const store = exported(target, name, path);
+      if (store === null || (store && match && match !== store)) return null;
+      match ??= store;
+    }
+    return match;
+  }
+
+  return (
+    file: string,
+    target: SetupStoreUseTarget,
+  ): { store: LocatedStore<S>; byName: boolean } | undefined => {
+    const ownPackage = packageRoot(ctx, file);
+    const nuxt = nuxtForFile(ctx, file);
+    if (target.kind === "local") {
+      const store = byFile.get(file)?.find((item) => item.store.binding?.start === target.start);
+      return store && { store, byName: false };
+    }
+    if (target.kind === "import" && target.source !== "#imports") {
+      const imported = moduleFile(file, target.source);
+      const store = imported && exported(imported, target.name);
+      return store ? { store, byName: false } : undefined;
+    }
+    if (target.kind === "auto-import" && nuxt?.autoImportEnabled === false) return undefined;
+    if (nuxt?.autoImportsAuthoritative) {
+      const registration = nuxtValueImport(nuxt, target.name);
+      const imported = registration && moduleFile(file, registration.from);
+      const store = imported && exported(imported, registration.name);
+      return store ? { store, byName: false } : undefined;
+    }
+    if (target.kind === "import" || nuxt?.autoImports.has(target.name)) return undefined;
+    const named = [
+      ...new Set([...byFile.keys()].flatMap((candidate) => exported(candidate, target.name) ?? [])),
+    ];
+    const samePackage = named.filter((store) => packageRoot(ctx, store.module.file) === ownPackage);
+    const candidates = samePackage.length ? samePackage : named;
+    return candidates.length === 1 ? { store: candidates[0]!, byName: true } : undefined;
+  };
+}
+
+function exportName(node: StoreModule["program"]): string {
+  return node?.name ?? node?.value;
+}
+
+function bindsName(pattern: StoreModule["program"], name: string): boolean {
+  switch (pattern?.type) {
+    case "Identifier":
+      return pattern.name === name;
+    case "RestElement":
+      return bindsName(pattern.argument, name);
+    case "AssignmentPattern":
+      return bindsName(pattern.left, name);
+    case "ArrayPattern":
+      return pattern.elements.some((element: StoreModule["program"]) => bindsName(element, name));
+    case "ObjectPattern":
+      return pattern.properties.some((property: StoreModule["program"]) =>
+        bindsName(property.value ?? property.argument, name),
+      );
+    default:
+      return false;
+  }
+}
+
+function importBases(ctx: RuleContext, from: string, specifier: string): string[] {
+  const bare = specifier.split("?")[0]!;
+  const root = ctx.project.root;
+  const own = packageRoot(ctx, from);
+  let bases: string[] = [];
+  if (isAbsolute(bare)) bases = [bare];
+  else if (bare.startsWith("./") || bare.startsWith("../")) bases = [resolve(dirname(from), bare)];
+  else if (/^(?:~~|@@)\//.test(bare))
+    bases = [own, root].map((base) => resolve(base, bare.slice(3)));
+  else if (/^[~@]\//.test(bare)) {
+    const appDir = nuxtForFile(ctx, from)?.appDir;
+    bases = [
+      ...(appDir ? [appDir] : []),
+      ...[own, root].flatMap((base) => [resolve(base, "app"), resolve(base, "src"), base]),
+    ].map((base) => resolve(base, bare.slice(2)));
+  }
+  return bases;
+}
+
+function importCandidates(base: string): string[] {
+  const ts = base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
+  return [
+    base,
+    ...(ts === base ? [] : [ts]),
+    ...VITE_EXTENSIONS.map((extension) => `${base}${extension}`),
+    ...VITE_EXTENSIONS.map((extension) => `${base}/index${extension}`),
+  ];
+}
+
+export function nuxtForFile(ctx: RuleContext, file: string) {
+  const ownPackage = packageRoot(ctx, file);
+  return (
+    ctx.project.workspaceNuxt?.find((item) => resolve(ctx.project.root, item.root) === ownPackage)
+      ?.nuxt ?? ctx.project.nuxt
+  );
+}
+
+function packageRoot(ctx: RuleContext, file: string): string {
+  const roots = (ctx.project.workspacePackages ?? [])
+    .map((item) => resolve(ctx.project.root, item.root))
+    .filter((root) => file.startsWith(`${root}/`))
+    .sort((left, right) => right.length - left.length);
+  return roots[0] ?? ctx.project.root;
 }

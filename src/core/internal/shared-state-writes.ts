@@ -21,6 +21,11 @@ export interface SharedStateBinding {
   access?: "value" | "call";
   /** Known collection initializers, indexed by path relative to the unwrapped state. */
   collectionAt?: CollectionAt;
+  /**
+   * Whether `file` resolves its unimported, undeclared references to `exportName` to this binding,
+   * as Nuxt and `unplugin-auto-import` do. Without it, only written imports reach the binding.
+   */
+  autoImport?: (file: string) => boolean;
 }
 
 export interface SharedStateWrite {
@@ -31,6 +36,8 @@ export interface SharedStateWrite {
   in: "script" | "template";
   /** The written expression as source text, such as `store.count` or `items.value`. */
   target: string;
+  /** The written property path relative to the unwrapped state; `null` marks a computed key. */
+  path: PropertyPath;
 }
 
 export interface LocalStateWrite extends SharedStateWrite {
@@ -39,7 +46,7 @@ export interface LocalStateWrite extends SharedStateWrite {
 
 type Node = any;
 type ParentOf = (node: Node) => Node;
-type PropertyPath = readonly (string | null)[];
+export type PropertyPath = readonly (string | null)[];
 type CollectionAt = (path: PropertyPath) => "array" | "map" | "set" | undefined;
 type IsGlobal = (id: Node) => boolean;
 
@@ -70,6 +77,7 @@ const WRAPPERS = new Set([
   "ParenthesizedExpression",
 ]);
 const SCRIPT_RE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+const NUXT_IMPORTS = "#imports";
 
 /**
  * Direct writes to `binding` in the files that import it, following unambiguous re-exports: assignments,
@@ -113,9 +121,64 @@ export async function findSharedStateWrites(
       }
     }
   }
+  if (binding.autoImport) {
+    for (const file of graph.files) {
+      if (file === binding.file || !ctx.fs.readText(file)?.includes(binding.exportName)) continue;
+      let loading = sources.get(file);
+      if (!loading) sources.set(file, (loading = loadSource(ctx, file)));
+      const source = await loading;
+      if (!source || !usesAutoImport(source, binding.exportName) || !binding.autoImport(file))
+        continue;
+      const found = await writesInFile(
+        ctx,
+        source,
+        new Set([NUXT_IMPORTS]),
+        [binding.exportName],
+        binding,
+        true,
+      );
+      for (const write of found.writes) writes.set(`${write.file}:${write.range.start}`, write);
+    }
+  }
   return [...writes.values()].sort((a, b) =>
     a.file === b.file ? a.range.start - b.range.start : a.file < b.file ? -1 : 1,
   );
+}
+
+/** Whether `source` reaches `name` with no import or declaration, or imports it from `#imports`. */
+function usesAutoImport(source: LoadedSource, name: string): boolean {
+  return [source.script, source.setup].some(
+    (scope) =>
+      scope?.scopeManager.globalScope?.through.some(
+        (reference) => reference.identifier.name === name && reference.isValueReference,
+      ) ||
+      (scope?.ast.body as Node[] | undefined)?.some(
+        (statement) =>
+          statement.type === "ImportDeclaration" &&
+          statement.source.value === NUXT_IMPORTS &&
+          statement.specifiers.some(
+            (specifier: Node) =>
+              specifier.type === "ImportSpecifier" && exportedName(specifier.imported) === name,
+          ),
+      ),
+  );
+}
+
+/** Direct writes through `this` in `fn`, outside nested functions that rebind it. */
+export function findThisWrites(
+  ctx: RuleContext,
+  file: string,
+  text: string,
+  scope: ScriptScope,
+  fn: Node,
+  collectionAt: CollectionAt,
+): SharedStateWrite[] {
+  const parentOf = parentIndex(scope);
+  const isGlobal = (id: Node) => !scope.references.get(id)?.resolved?.defs.length;
+  return thisExpressions(fn.body, scope.visitorKeys).flatMap((self) => {
+    const write = classifyWrite(self, parentOf, "reactive", false, collectionAt, isGlobal);
+    return write ? [toWrite(ctx, file, text, text, 0, write, "script")] : [];
+  });
 }
 
 /**
@@ -261,6 +324,7 @@ async function writesInFile(
   specifiers: ReadonlySet<string>,
   [exportName, ...members]: readonly string[],
   binding: SharedStateBinding,
+  autoImported = false,
 ): Promise<{ writes: SharedStateWrite[]; reExports: string[][] }> {
   const { script, setup, text, file } = source;
   const writes: SharedStateWrite[] = [];
@@ -318,6 +382,16 @@ async function writesInFile(
     for (const reference of variable.references)
       if (!reference.init) visitReference(reference.identifier, entry, scope);
   };
+
+  if (autoImported) {
+    for (const scope of [script, setup]) {
+      for (const reference of scope?.scopeManager.globalScope?.through ?? []) {
+        if (reference.identifier.name !== exportName || !reference.isValueReference) continue;
+        if (scope === setup && scriptNames.has(exportName)) continue;
+        visitReference(reference.identifier, { members, call }, scope!);
+      }
+    }
+  }
 
   for (const scope of [script, setup]) {
     if (!scope) continue;
@@ -527,6 +601,7 @@ interface ClassifiedWrite {
   kind: SharedStateWrite["kind"];
   node: Node;
   target: Node;
+  path: PropertyPath;
 }
 
 /**
@@ -562,20 +637,26 @@ function classifyWrite(
   }
   // A reactive object is written through its properties; a ref also through its own value.
   const writable = depth >= (shape === "reactive" ? 1 : 0);
+  const path = segments.slice(segments.length - depth);
   if (modelTarget && node === modelTarget && writable)
-    return { kind: "v-model", node, target: node };
+    return { kind: "v-model", node, target: node, path };
   const assignment = writable && assignmentOf(node, parentOf);
   if (assignment)
-    return { kind: "assignment", node: parent === assignment ? assignment : node, target: node };
+    return {
+      kind: "assignment",
+      node: parent === assignment ? assignment : node,
+      target: node,
+      path,
+    };
   if (parent?.type === "UpdateExpression" && parent.argument === node && writable)
-    return { kind: "update", node: parent, target: node };
+    return { kind: "update", node: parent, target: node, path };
   if (
     parent?.type === "UnaryExpression" &&
     parent.operator === "delete" &&
     parent.argument === node &&
     depth >= 1
   )
-    return { kind: "delete", node: parent, target: node };
+    return { kind: "delete", node: parent, target: node, path };
   if (parent?.type === "CallExpression" && parent.callee === node && segments.length) {
     const method = segments.at(-1);
     if (depth >= 1 && method) {
@@ -585,7 +666,12 @@ function classifyWrite(
         (collection === "map" && MAP_MUTATORS.has(method)) ||
         (collection === "set" && SET_MUTATORS.has(method))
       )
-        return { kind: "mutating-call", node: parent, target: unwrap(node).object };
+        return {
+          kind: "mutating-call",
+          node: parent,
+          target: unwrap(node).object,
+          path: path.slice(0, -1),
+        };
     }
   }
   if (
@@ -595,7 +681,7 @@ function classifyWrite(
     depth >= 0 &&
     isObjectAssign(parent.callee, isGlobal)
   )
-    return { kind: "mutating-call", node: parent, target: node };
+    return { kind: "mutating-call", node: parent, target: node, path };
   return undefined;
 }
 
@@ -656,6 +742,7 @@ function toWrite(
     kind: write.kind,
     in: location,
     target: parsed.slice(targetStart, targetEnd),
+    path: write.path,
   };
 }
 
