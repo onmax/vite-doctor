@@ -94,6 +94,7 @@ function componentFacts(value: unknown): boolean {
         strings(item.directives) &&
         strings(item.scope) &&
         typeof item.inFor === "boolean" &&
+        strings(item.wrappers) &&
         (item.parent === undefined ||
           (record(item.parent) &&
             typeof item.parent.tag === "string" &&

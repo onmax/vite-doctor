@@ -557,7 +557,7 @@ function walkComponentTemplate(
     facts.roots.push({ branches });
   }
   facts.rootNodes = facts.roots.length;
-  for (const child of root.children) walkChild(walk, child, [], false, undefined);
+  for (const child of root.children) walkChild(walk, child, [], false, undefined, []);
 }
 
 function rootBranch(element: TemplateElementNode, rangeOf: RangeOf): ComponentRootBranch {
@@ -578,6 +578,7 @@ function walkChild(
   scope: string[],
   inFor: boolean,
   parent: ComponentUsageFact["parent"],
+  wrappers: string[],
 ): void {
   if (node.type === TemplateNodeType.TEXT) {
     if (node.content.trim()) walk.facts.ownMarkup = true;
@@ -589,7 +590,7 @@ function walkChild(
     return;
   }
   if (node.type !== TemplateNodeType.ELEMENT) return;
-  walkElement(walk, node, scope, inFor, parent);
+  walkElement(walk, node, scope, inFor, parent, wrappers);
 }
 
 function walkElement(
@@ -598,6 +599,7 @@ function walkElement(
   scope: string[],
   inFor: boolean,
   parent: ComponentUsageFact["parent"],
+  wrappers: string[],
 ): void {
   let elementScope = scope;
   let childScope = scope;
@@ -620,7 +622,7 @@ function walkElement(
   if (kind === "markup") walk.facts.ownMarkup = true;
   const usage =
     kind === "component"
-      ? createUsage(walk, element, elementScope, elementInFor, parent)
+      ? createUsage(walk, element, elementScope, elementInFor, parent, wrappers)
       : undefined;
   for (const prop of element.props) {
     if (prop.type === TemplateNodeType.ATTRIBUTE) {
@@ -652,8 +654,10 @@ function walkElement(
   if (usage) walk.facts.usages.push(usage);
   const childParent =
     element.tagType === 3 ? parent : { tag: element.tag, element: element.tagType === 0 };
+  const childWrappers =
+    element.tagType === 1 || element.tagType === 2 ? [...wrappers, element.tag] : wrappers;
   for (const child of element.children)
-    walkChild(walk, child, childScope, elementInFor, childParent);
+    walkChild(walk, child, childScope, elementInFor, childParent, childWrappers);
 }
 
 function elementKind(element: TemplateElementNode): "component" | "markup" | "slot" | "template" {
@@ -671,6 +675,7 @@ function createUsage(
   scope: string[],
   inFor: boolean,
   parent: ComponentUsageFact["parent"],
+  wrappers: string[],
 ): ComponentUsageFact {
   const start = element.loc.start.offset + 1;
   return {
@@ -682,6 +687,7 @@ function createUsage(
     spreads: [],
     listeners: [],
     directives: [],
+    wrappers,
     scope,
     inFor,
   };

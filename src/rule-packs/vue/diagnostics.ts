@@ -52,6 +52,7 @@ export const vueDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0047", ruleId: "vue/attrs/require-explicit-emits" },
   { code: "VUE0048", ruleId: "vue/state/no-external-shared-state-mutation" },
   { code: "VUE0051", ruleId: "vue/attrs/no-multi-root-fallthrough" },
+  { code: "VUE0052", ruleId: "vue/ssr/no-invalid-root-nesting" },
 ]);
 
 export const diagnostics = vueDiagnosticRegistry.diagnostics;

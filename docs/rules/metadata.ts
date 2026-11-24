@@ -2711,6 +2711,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/ssr/no-invalid-root-nesting": {
+    description:
+      "Finds a component usage that sits directly inside an HTML element which cannot contain the component's root element, such as a component rendering `<div>` inside `<p>`, `<tr>` directly inside `<table>`, `<a>` inside `<a>`, or `<form>` inside `<form>`. Doctor uses the nesting table from Vue's own template compiler check and reports only pairs that the browser's HTML parser closes, drops, or moves. It checks every branch of a root `v-if` chain, and reports only usages resolved to one SFC whose parent and root tags are plain elements, not components, slots, `<template>` wrappers, or `<component :is>`. It reports only server-rendered code: a Nuxt app with `ssr` on and no route rule that may turn it off, or Vue code with SSR evidence. Usages inside `<ClientOnly>` and Nuxt client or server components are skipped.",
+    why: 'Vue\'s compiler warns about invalid nesting inside one template, but not when the invalid child is another component\'s root. During SSR, the server sends the nesting as HTML and the browser\'s parser rewrites it: a `<div>` closes the open `<p>`, a `<tr>` gets an implied `<tbody>`, a nested `<form>` is dropped. Vue then hydrates against DOM it did not render and logs "Hydration node mismatch" or "Hydration children mismatch", patching or recreating the subtree.',
+    recommendedReplacement:
+      "Change the parent element to one that can contain the component's root, such as a `<div>` instead of a `<p>`, add the missing `<tbody>`, or change the component's root element to one that is valid in that parent.",
+    examples: [
+      {
+        title: "Wrap block content in a block element",
+        language: "vue",
+        invalid:
+          '<!-- Card.vue -->\n<template>\n  <div class="card"><slot /></div>\n</template>\n\n<!-- Page.vue -->\n<template>\n  <p><Card>Hello</Card></p>\n</template>',
+        valid:
+          '<!-- Card.vue -->\n<template>\n  <div class="card"><slot /></div>\n</template>\n\n<!-- Page.vue -->\n<template>\n  <div><Card>Hello</Card></div>\n</template>',
+      },
+    ],
+  },
   "vue/ssr/no-random-or-local-time-render": {
     description:
       "Flags random numbers, the current time, and default-locale or local-time-zone formatting in server-rendered Vue output.",
