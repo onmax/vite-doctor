@@ -194,6 +194,34 @@ watchPostEffect(async () => { await Promise.resolve(); queue.value.push('ready')
   ).toEqual([]);
 });
 
+test.each(["watchEffect", "watchPostEffect", "watchSyncEffect"])(
+  "VUE0049 only counts tracked reads in %s",
+  async (watcher) => {
+    const script = `const buffer = shallowRef([]); const id = ref(1);
+function append() { buffer.value.push('click') }`;
+    const template = `<button @click="append">Append</button>`;
+    for (const body of [
+      `const item = await Promise.resolve(id.value); buffer.value.push(item);`,
+      `Promise.resolve(id.value).then(item => buffer.value.push(item));`,
+      `setTimeout(() => buffer.value.push('timer'), id.value);`,
+    ]) {
+      expect(
+        await run(component(`${script}\n${watcher}(async () => { ${body} });`, template)),
+      ).toEqual([]);
+    }
+    for (const body of [
+      `buffer.value.push(id.value); await Promise.resolve();`,
+      `await Promise.resolve(buffer.value.join(', '));`,
+      `(() => buffer.value.join(', '))(); await Promise.resolve();`,
+    ]) {
+      const diagnostics = await run(
+        component(`${script}\n${watcher}(async () => { ${body} });`, template),
+      );
+      expect(diagnostics.map(({ ruleId }) => ruleId)).toEqual([RULE_ID]);
+    }
+  },
+);
+
 test("VUE0049 stays quiet when a helper mutates only for the effect that reads the ref", async () => {
   expect(
     await run(

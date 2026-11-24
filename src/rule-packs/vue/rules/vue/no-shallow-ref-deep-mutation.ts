@@ -135,7 +135,7 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
         else if (use.kind === "watch-source") hasDirectWatchSource = true;
         else if (use.kind === "trigger" || use.kind === "other") mayTrigger = true;
         if (use.kind === "read" || use.kind === "mutation") {
-          const reader = reactiveReader(script, id);
+          const reader = trackedReader(script, id);
           if (reader) reactiveReaders.add(reader);
         }
       }
@@ -342,13 +342,31 @@ function plainKind(script: IndexedScript | undefined, node: AnyNode): string | u
   return { Map: "map", Set: "set", Array: "array" }[node.callee.name as string];
 }
 
-/** The registration whose computed getter, watch source, or effect reads `id`. */
-function reactiveReader(script: IndexedScript, id: AnyNode): AnyNode {
-  for (let fn = script.owner(id); fn; fn = script.owner(fn)) {
+function readerRegistration(script: IndexedScript, call: AnyNode, argument: AnyNode): boolean {
+  return (
+    call?.type === "CallExpression" &&
+    call.arguments[0] === argument &&
+    !!vueApiCall(script, call.callee, REACTIVE_READERS)
+  );
+}
+
+/** A read is evidence only while the getter or effect is executing synchronously. */
+function trackedReader(script: IndexedScript, at: AnyNode): AnyNode {
+  for (let fn = script.owner(at); fn; fn = script.owner(at)) {
+    if (fn.async && awaitsBefore(script, fn, at)) return undefined;
     const [call, child] = valueParent(script, fn);
-    if (call?.type !== "CallExpression") continue;
-    if (!vueApiCall(script, call.callee, REACTIVE_READERS)) continue;
-    if (call.arguments[0] === child) return call;
+    if (readerRegistration(script, call, child)) return call;
+    if (call?.type !== "CallExpression" || call.callee !== child) return undefined;
+    at = call;
+  }
+  return undefined;
+}
+
+/** Even after suspension, an effect is not an independent consumer of its own mutation. */
+function enclosingReader(script: IndexedScript, at: AnyNode): AnyNode {
+  for (let fn = script.owner(at); fn; fn = script.owner(fn)) {
+    const [call, child] = valueParent(script, fn);
+    if (readerRegistration(script, call, child)) return call;
   }
   return undefined;
 }
@@ -396,7 +414,7 @@ function runsLater(
 ): DeferredPath {
   const outsideEffect = readerEvidence(timing);
   if (!timing.asyncSetup && fn.async && awaitsBefore(script, fn, at))
-    return readerEvidence(timing, reactiveReader(script, at));
+    return readerEvidence(timing, enclosingReader(script, at));
   const [parent, child] = valueParent(script, fn);
   if (parent?.type === "CallExpression" && parent.arguments.includes(child))
     return deferredCallback(script, parent, child, timing);
