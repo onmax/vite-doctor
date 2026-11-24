@@ -214,6 +214,34 @@ export default defineCachedHandler((event) => event.req.headers.get('${header}')
     ).toEqual([]);
   });
 
+  test.each([
+    ["routesDir", "routes", "api"],
+    ["apiDir", "api", "routes"],
+  ])("reports an explicit GET handler outside the configured %s", async (option, dir, otherDir) => {
+    const cachedRead = `import { defineCachedHandler } from 'nitro/cache'
+export default defineCachedHandler((event) => event.req.headers.get('x-locale'))`;
+    const handler = `server/${dir}/page.post.ts`;
+    expect(
+      await run(
+        {
+          "vite.config.ts": `import { nitro } from 'nitro/vite'
+export default { plugins: [nitro({
+  serverDir: true,
+  ${option}: 'pages',
+  ${otherDir}Dir: './${otherDir}',
+  routes: { '/preview': { method: 'get', handler: './${handler}' } },
+})] }`,
+          [handler]: cachedRead,
+          [`server/${otherDir}/page.post.ts`]: cachedRead.replace("x-locale", "x-post"),
+        },
+        "nitro",
+        nitro3,
+      ),
+    ).toEqual([
+      expect.objectContaining({ code: "NITRO0029", why: expect.stringContaining("x-locale") }),
+    ]);
+  });
+
   test.each(["...viteSettings", "clearScreen: false"])(
     "keeps POST bypass evidence for a custom route suffix with %s",
     async (settings) => {

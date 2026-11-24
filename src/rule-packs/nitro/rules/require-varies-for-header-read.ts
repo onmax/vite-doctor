@@ -3,7 +3,7 @@ import { fileTextScope, type ScriptScope } from "../../../core/internal/script-s
 import { type AnyNode, createRule, report } from "./shared.js";
 import {
   hasUnresolvedNitroConfig,
-  nitro3RouteMethod,
+  nitro3ScannedRouteMethod,
   nitroServerFile,
   readStaticConfigOptions,
   type NitroServerFile,
@@ -105,7 +105,7 @@ function checkCachedHandler(
           statement.type === "ExportDefaultDeclaration" && unwrap(statement.declaration) === call,
       )
     ) {
-      const method = nitro3RouteMethod(serverFile);
+      const method = nitro3ScannedRouteMethod(ctx, serverFile);
       if (method && method !== "get" && method !== "head") return;
     }
   }

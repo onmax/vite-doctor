@@ -114,8 +114,27 @@ export function nitro3ScanPath(ctx: RuleContext, path: string, route: boolean) {
   return { name, method, env };
 }
 
-export function nitro3RouteMethod(file: NitroServerFile): string | undefined {
-  if (!ROUTE_DIRS.has(file.dir) || !SCANNED_SCRIPT.test(file.path)) return undefined;
+export function nitro3ScannedRouteMethod(
+  ctx: RuleContext,
+  file: NitroServerFile,
+): string | undefined {
+  if (
+    !ROUTE_DIRS.has(file.dir) ||
+    !file.path.includes("/") ||
+    !isNitroScannedScript(ctx, file.path)
+  )
+    return undefined;
+  const options = readStaticConfigOptions(ctx, ctx.project.framework === "nuxt" ? "nuxt" : "nitro");
+  const directoryOption = file.dir === "api" ? "apiDir" : "routesDir";
+  const directory = resolve(file.serverDir, file.dir);
+  if (
+    options.some(
+      ({ path, value }) =>
+        path.at(-1) === directoryOption &&
+        (typeof value !== "string" || resolve(file.serverDir, value) !== directory),
+    )
+  )
+    return undefined;
   return nitro3PathParts(file.path.slice(file.dir.length + 1), true).method;
 }
 
