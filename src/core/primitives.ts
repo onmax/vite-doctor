@@ -359,6 +359,13 @@ export interface NuxtAppRegistrationSnapshot {
   files: string[];
 }
 
+export interface NuxtAppRegistrationIgnore {
+  patterns: string[];
+  layerRoots: string[];
+  options?: { ignorecase?: boolean; ignoreCase?: boolean; allowRelativePaths?: boolean };
+  fileHash: string | null;
+}
+
 export interface NuxtDoctorManifest {
   scannedComposableFiles?: string[];
   autoRegisteredLayers?: string[];
@@ -380,6 +387,7 @@ export interface NuxtDoctorManifest {
   components: unknown[];
   resolvedComponents?: Array<{ name: string; file: string; mode: "client" | "server" | "all" }>;
   hasServerPageIslands?: boolean;
+  appRegistrationIgnore?: NuxtAppRegistrationIgnore;
   appRegistration?: Record<
     "components" | "pages" | "plugins",
     NuxtAppRegistrationSnapshot | undefined

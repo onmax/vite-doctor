@@ -1,7 +1,7 @@
 import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { snapshotNuxtAppRegistration } from "../../core/internal/nuxt-inventory.js";
+import { nuxtIgnoreFileHash } from "../../core/internal/nuxt-inventory.js";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
@@ -12,12 +12,15 @@ import {
   getLayerDirectories,
   importModule,
   resolveAlias,
+  resolveFiles,
+  resolveIgnorePatterns,
   resolvePath,
 } from "nuxt/kit";
 import type { Nuxt, NuxtModule } from "nuxt/schema";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
 import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
+import type { NuxtAppRegistrationDirectory } from "../../core/primitives.js";
 export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 
 export type NuxtDoctorModuleOptions = DoctorConfig;
@@ -52,6 +55,7 @@ type NuxtAutoImportContext = {
 
 type NuxtDoctorEvidence = {
   appRegistration?: NuxtDoctorManifest["appRegistration"];
+  appRegistrationIgnore?: NuxtDoctorManifest["appRegistrationIgnore"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
@@ -253,7 +257,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("app:templatesGenerated", async () => {
-    evidence.appRegistration = appRegistration(nuxt, evidence.componentDirs);
+    Object.assign(evidence, await appRegistration(nuxt, evidence.componentDirs));
     await writeManifest(nuxt, evidence);
   });
 
@@ -348,6 +352,7 @@ export async function writeManifest(
           ].sort(),
     autoImports,
     appRegistration: evidence?.appRegistration,
+    appRegistrationIgnore: evidence?.appRegistrationIgnore,
     hasServerPageIslands: evidence?.appRegistration?.pages
       ? Boolean(
           (app as Nuxt["apps"][string] | undefined)?.pages?.some(
@@ -527,12 +532,12 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
   return entries;
 }
 
-function appRegistration(
+async function appRegistration(
   nuxt: Nuxt,
   componentDirs: unknown[],
-): NuxtDoctorManifest["appRegistration"] {
+): Promise<Pick<NuxtDoctorEvidence, "appRegistration" | "appRegistrationIgnore">> {
   const app = nuxt.apps.default;
-  if (!app) return undefined;
+  if (!app) return {};
   const { rootDir, srcDir, alias, extensions, pages } = nuxt.options;
   const layers = getLayerDirectories(nuxt);
   const patterns = (prefix: string, exts = extensions) =>
@@ -540,9 +545,32 @@ function appRegistration(
   const pageOptions = typeof pages === "object" ? pages : undefined;
   const files = (paths: Array<string | undefined>, base = rootDir) =>
     paths.flatMap((path) => (path ? [resolve(base, path)] : []));
-  return {
+  const snapshot = async (directories: NuxtAppRegistrationDirectory[], paths: string[]) => {
+    try {
+      return {
+        directories: await Promise.all(
+          directories.map(async (dir) => ({
+            ...dir,
+            entries: (await resolveFiles(dir.path, dir.patterns, { ignore: dir.ignore }))
+              .map((file) => relative(dir.path, file))
+              .sort(),
+          })),
+        ),
+        files: [...new Set(paths.filter((file) => existsSync(file)))].sort(),
+      };
+    } catch {
+      return undefined;
+    }
+  };
+  const appRegistrationIgnore = {
+    patterns: resolveIgnorePatterns(),
+    layerRoots: layers.map(({ root }) => root).sort((left, right) => right.length - left.length),
+    options: nuxt.options.ignoreOptions,
+    fileHash: nuxtIgnoreFileHash(rootDir),
+  };
+  const appRegistration = {
     components: Array.isArray(app.components)
-      ? snapshotNuxtAppRegistration(
+      ? await snapshot(
           componentDirs.flatMap((entry) => {
             const dir =
               typeof entry === "string"
@@ -572,7 +600,7 @@ function appRegistration(
           ),
         )
       : undefined,
-    pages: snapshotNuxtAppRegistration(
+    pages: await snapshot(
       layers.map(({ appPages }) => ({
         path: appPages,
         patterns: pageOptions?.pattern ? [pageOptions.pattern].flat() : patterns("**/*"),
@@ -580,7 +608,7 @@ function appRegistration(
       files(flattenPages(app.pages ?? []).map(({ file }) => file)),
     ),
     plugins: Array.isArray(app.plugins)
-      ? snapshotNuxtAppRegistration(
+      ? await snapshot(
           layers.map(({ appPlugins }) => ({
             path: appPlugins,
             patterns: [...patterns("*"), ...patterns("*/index")],
@@ -589,6 +617,7 @@ function appRegistration(
         )
       : undefined,
   };
+  return { appRegistration, appRegistrationIgnore };
 }
 
 function flattenPages(pages: any[]): any[] {
