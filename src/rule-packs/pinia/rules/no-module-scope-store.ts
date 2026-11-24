@@ -110,6 +110,7 @@ export const noModuleScopeStore = createRule({
 
 const CLIENT_SUFFIX = /\.client(?:\.\w+)*$/;
 const SCRIPT_EXTENSION = /\.[cm]?[jt]sx?$/;
+const PLUGIN_EXTENSIONS = [".ts", ".js", ".mts", ".mjs", ".cts", ".cjs", ".tsx", ".jsx"];
 type Execution = "client" | "server" | "unknown";
 
 function nuxtExecution(ctx: RuleContext) {
@@ -144,73 +145,138 @@ function nuxtExecution(ctx: RuleContext) {
 }
 
 function nuxtEntryPoints(ctx: RuleContext, nuxt: NuxtProjectInfo) {
-  const registered = readPluginRegistrations(ctx, nuxt);
-  const appDirs = [nuxt.appDir, ...nuxt.layers.map((layer) => layer.srcDir ?? layer.root)];
+  const appRoot =
+    nuxt.appRoots
+      .filter((root) => nuxt.appDir === root || nuxt.appDir.startsWith(`${root}/`))
+      .sort((left, right) => right.length - left.length)[0] ?? nuxt.layers[0]?.root;
+  const roots = new Map(nuxt.layers.map((layer) => [layer.root, layer.srcDir]));
+  if (appRoot) roots.set(appRoot, nuxt.appDir);
+  const configs = [...roots].map(([root, fallbackDir]) => {
+    const fields = readNuxtFields(ctx, root);
+    const source = fields?.get("srcDir");
+    const srcDir =
+      nuxt.manifest?.isCurrent || !source
+        ? (fallbackDir ?? root)
+        : typeof source.value === "string"
+          ? resolve(root, source.value)
+          : undefined;
+    return { root, srcDir, fields };
+  });
+  const app = configs.find(({ root }) => root === appRoot);
+  const registered = new Map<string, Execution>();
+  let registrationsKnown = true;
+  const directories = configs.flatMap(({ root, srcDir, fields }) => {
+    if (!srcDir || !fields) {
+      registrationsKnown = false;
+      return [];
+    }
+    const plugins = readPluginRegistrations(ctx, root, srcDir, fields, nuxt);
+    if (!plugins) registrationsKnown = false;
+    for (const [file, mode] of plugins ?? []) {
+      const existing = registered.get(file);
+      registered.set(file, existing && existing !== mode ? "unknown" : mode);
+    }
+    const dir = fields.get("dir");
+    const paths = dir ? staticFields(dir) : new Map<string, AnyNode>();
+    const directory = (name: string) => {
+      const value = paths?.get(name);
+      if (!paths || (value && typeof value.value !== "string")) return undefined;
+      const path = value?.value || name;
+      return path.startsWith("~") || path.startsWith("@") ? undefined : resolve(srcDir, path);
+    };
+    return [{ srcDir, pages: directory("pages"), plugins: directory("plugins") }];
+  });
+  const pages = app?.fields?.get("pages");
+  const pageOptions = staticFields(pages);
+  const scanPages =
+    app?.fields &&
+    (!pages ||
+      pages.value === true ||
+      (pageOptions &&
+        !pageOptions.has("pattern") &&
+        (!pageOptions.has("enabled") || pageOptions.get("enabled")?.value === true)));
+  const resolvedPages =
+    nuxt.manifest?.isCurrent && nuxt.manifest.pages?.length && appRoot
+      ? new Set(nuxt.manifest.pages.flatMap(({ file }) => (file ? [resolve(appRoot, file)] : [])))
+      : undefined;
   const serverEntries = new Set(Object.values(nuxt.serverDirs).flat());
   return (path: string): Execution | undefined => {
     if (serverEntries.has(path)) return "server";
-    const registration =
-      registered?.get(path) ?? registered?.get(path.replace(SCRIPT_EXTENSION, ""));
-    if (registration) return registration;
-    for (const dir of appDirs) {
-      const local = relative(dir, path);
-      if (local === "app.vue" || local === "error.vue") return "server";
-      if (local.startsWith("pages/") && local.endsWith(".vue"))
-        return CLIENT_SUFFIX.test(local) ? "client" : "server";
-      if (SCRIPT_EXTENSION.test(local) && /^plugins\/(?:[^/]+|[^/]+\/index\.[^/]+)$/.test(local))
-        return registered ? (CLIENT_SUFFIX.test(local) ? "client" : "server") : "unknown";
+    if (
+      resolvedPages?.has(path) ||
+      (!resolvedPages &&
+        scanPages &&
+        path.endsWith(".vue") &&
+        directories.some(({ pages }) => pages && path.startsWith(`${pages}/`)))
+    )
+      return CLIENT_SUFFIX.test(path) ? "client" : "server";
+    if (
+      directories.some(
+        ({ srcDir }) => path === join(srcDir, "app.vue") || path === join(srcDir, "error.vue"),
+      )
+    )
+      return "server";
+    if (registered.has(path)) return registrationsKnown ? registered.get(path) : "unknown";
+    for (const { plugins } of directories) {
+      if (!plugins || !path.startsWith(`${plugins}/`) || !SCRIPT_EXTENSION.test(path)) continue;
+      if (/^(?:[^/]+|[^/]+\/index\.[^/]+)$/.test(relative(plugins, path)))
+        return registrationsKnown ? (CLIENT_SUFFIX.test(path) ? "client" : "server") : "unknown";
     }
   };
 }
 
-function readPluginRegistrations(ctx: RuleContext, nuxt: NuxtProjectInfo) {
-  const roots = new Map(nuxt.layers.map((layer) => [layer.root, layer.srcDir]));
-  const appRoot = nuxt.appRoots
-    .filter((root) => nuxt.appDir === root || nuxt.appDir.startsWith(`${root}/`))
-    .sort((left, right) => right.length - left.length)[0];
-  if (appRoot) roots.set(appRoot, nuxt.appDir);
+function readNuxtFields(ctx: RuleContext, root: string) {
+  for (const extension of ["ts", "js", "mjs", "mts", "cjs", "cts"]) {
+    const file = join(root, `nuxt.config.${extension}`);
+    const text = ctx.fs.readText(file);
+    if (text === undefined) continue;
+    const { ast, errors } = parseScriptResult(file, text);
+    if (!ast || errors.length) return null;
+    const body = ast.body as AnyNode[];
+    let config = unwrap(body.find((node) => node.type === "ExportDefaultDeclaration")?.declaration);
+    if (config?.type === "CallExpression" && config.callee.name === "defineNuxtConfig")
+      config = unwrap(config.arguments[0]);
+    const fields = staticFields(config);
+    return fields && ![...fields.keys()].some((key) => key.startsWith("$")) ? fields : null;
+  }
+  return new Map<string, AnyNode>();
+}
+
+function readPluginRegistrations(
+  ctx: RuleContext,
+  root: string,
+  srcDir: string,
+  fields: Map<string, AnyNode>,
+  nuxt: NuxtProjectInfo,
+) {
   const registrations = new Map<string, Execution>();
-  for (const [root, srcDir = root] of roots) {
-    for (const extension of ["ts", "js", "mjs", "mts", "cjs", "cts"]) {
-      const file = join(root, `nuxt.config.${extension}`);
-      const text = ctx.fs.readText(file);
-      if (text === undefined) continue;
-      const { ast, errors } = parseScriptResult(file, text);
-      if (!ast || errors.length) return null;
-      const body = ast.body as AnyNode[];
-      let config = unwrap(
-        body.find((node) => node.type === "ExportDefaultDeclaration")?.declaration,
-      );
-      if (config?.type === "CallExpression" && config.callee.name === "defineNuxtConfig")
-        config = unwrap(config.arguments[0]);
-      const fields = staticFields(config);
-      if (!fields || [...fields.keys()].some((key) => key.startsWith("$"))) return null;
-      const plugins = fields.get("plugins");
-      if (!plugins) continue;
-      if (plugins.type !== "ArrayExpression") return null;
-      for (const entry of plugins.elements.map(unwrap)) {
-        const options = staticFields(entry);
-        const source = options ? options.get("src") : entry;
-        if (typeof source?.value !== "string") return null;
-        const specifier: string = source.value;
-        const execution = pluginExecution(specifier, options);
-        const register = (path: string) => {
-          const existing = registrations.get(path);
-          registrations.set(path, existing && existing !== execution ? "unknown" : execution);
-        };
-        const alias = /^(~~|@@|~|@)\//.exec(specifier)?.[0];
-        if (alias) {
-          register(resolve(alias.length === 2 ? srcDir : root, specifier.slice(alias.length)));
-        } else {
-          register(resolve(root, specifier));
-          register(resolve(srcDir, specifier));
-          for (const [name, path] of Object.entries(nuxt.manifest?.aliases ?? {})) {
-            if (specifier.startsWith(`${name}/`))
-              register(resolve(root, path, specifier.slice(name.length + 1)));
-          }
-        }
-      }
-    }
+  const plugins = fields.get("plugins");
+  if (!plugins) return registrations;
+  if (plugins.type !== "ArrayExpression") return null;
+  const aliasField = fields.get("alias");
+  const aliases = aliasField ? staticFields(aliasField) : new Map<string, AnyNode>();
+  if (!aliases) return null;
+  for (const entry of plugins.elements.map(unwrap)) {
+    const options = staticFields(entry);
+    const source = options ? options.get("src") : entry;
+    if (typeof source?.value !== "string") return null;
+    const specifier: string = source.value;
+    const [name = "", ...rest] = specifier.split("/");
+    const alias = aliases.get(name);
+    if (alias && typeof alias.value !== "string") return null;
+    const base =
+      alias?.value ??
+      (nuxt.manifest?.isCurrent ? nuxt.manifest.aliases[name] : undefined) ??
+      (name === "~" || name === "@" ? srcDir : name === "~~" || name === "@@" ? root : undefined);
+    const path = typeof base === "string" ? resolve(root, base, ...rest) : resolve(root, specifier);
+    const candidates = ctx.fs.stat(path)?.isFile()
+      ? [path]
+      : PLUGIN_EXTENSIONS.flatMap((ext) => [path + ext, join(path, `index${ext}`)]).filter((file) =>
+          ctx.fs.stat(file)?.isFile(),
+        );
+    if (candidates.length !== 1) return null;
+    const file = candidates[0]!;
+    if (!registrations.has(file)) registrations.set(file, pluginExecution(file, options));
   }
   return registrations;
 }

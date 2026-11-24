@@ -178,6 +178,24 @@ export default defineNuxtPlugin(() => {})`,
     expect(result.diagnostics.map((item) => item.code)).toEqual(ssr ? ["PINIA0006"] : []);
   });
 
+  test("seeds SSR paths from the configured Nuxt directories", async () => {
+    const activatedStore = `import { useCounterStore } from '../../stores/counter'
+import { createPinia, setActivePinia } from 'pinia'
+setActivePinia(createPinia())
+export const counter = useCounterStore()`;
+    const result = await runNuxt(rule, {
+      "nuxt.config.ts": `export default defineNuxtConfig({ ssr: true, pages: false, dir: { plugins: 'boot' } })`,
+      "stores/counter.ts": counterSetup,
+      "app/pages/unused.vue": `<script lang="ts">${activatedStore}</script><template><div/></template>`,
+      "app/plugins/unused.ts": `${activatedStore}\nexport default defineNuxtPlugin(() => {})`,
+      "app/boot/start.ts": `${activatedStore}\nexport default defineNuxtPlugin(() => {})`,
+    });
+    expect(result.diagnostics.map((item) => item.file?.split("/").slice(-2).join("/"))).toEqual([
+      "boot/start.ts",
+    ]);
+    expect(result.diagnostics[0]!.why).toContain("every request shares the store");
+  });
+
   test.each([true, false])(
     "checks client-only plugin startup with prior activation: %s",
     async (active) => {
@@ -259,6 +277,30 @@ export const counter = useCounterStore()`,
       "an explicit client registration",
       "{ ssr: true, plugins: [{ src: '~/plugins/counter.client', mode: 'client' }] }",
       {},
+      false,
+    ],
+    ...["server", "client"].map((mode): [string, string, Record<string, string>, boolean] => [
+      `duplicate registrations with ${mode} first`,
+      `{ ssr: true, plugins: [
+        { src: '~/extra/start.ts', mode: '${mode}' },
+        { src: '~/extra/start.ts', mode: '${mode === "server" ? "client" : "server"}' }
+      ] }`,
+      {
+        "app/extra/start.ts":
+          "import '../plugins/counter.client'; export default defineNuxtPlugin(() => {})",
+      },
+      mode === "server",
+    ]),
+    [
+      "duplicate registrations using different paths to the same file",
+      `{ ssr: true, plugins: [
+        { src: '~/extra/start', mode: 'client' },
+        { src: './app/extra/start.ts', mode: 'server' }
+      ] }`,
+      {
+        "app/extra/start.ts":
+          "import '../plugins/counter.client'; export default defineNuxtPlugin(() => {})",
+      },
       false,
     ],
     ["an unknown plugins list", "{ ssr: true, plugins: configuredPlugins }", {}, false],
