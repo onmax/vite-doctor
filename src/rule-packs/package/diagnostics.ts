@@ -9,6 +9,7 @@ export const packageDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "PKG0006", ruleId: "package/no-pinned-singleton" },
   { code: "PKG0007", ruleId: "package/no-unforwarded-peer" },
   { code: "PKG0008", ruleId: "package/no-duplicate-singleton" },
+  { code: "PKG0009", ruleId: "package/no-condition-after-default" },
 ]);
 
 export const diagnostics = packageDiagnosticRegistry.diagnostics;

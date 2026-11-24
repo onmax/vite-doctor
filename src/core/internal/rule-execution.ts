@@ -28,8 +28,6 @@ import { workspaceNuxtRoots, workspaceProjectView, workspaceViewRoot } from "./w
 import { nuxtInventoryOwner, owningWorkspacePackage } from "./workspace-packages.js";
 import {
   buildWorkspaceGraph,
-  collectGraphAutoImports,
-  createGraphIndex,
   importGraphInventory,
   runDuplicationRules,
   runHealthRules,
@@ -305,9 +303,7 @@ export async function buildGraphPhase(session: ScanSession): Promise<void> {
   }
   session.facts = await sourceFacts(session);
   const frame = session.ruleInputs.frame();
-  const index = createGraphIndex(session, frame.fs);
-  await collectGraphAutoImports(session, index);
-  session.graph = buildWorkspaceGraph(session, frame.fs, index);
+  session.graph = buildWorkspaceGraph(session, frame.fs);
   session.graphSummary = summarizeGraph(session.graph);
   session.cache.recordGraph(key, session.graphSummary, frame.readInputs());
 }

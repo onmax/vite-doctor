@@ -8,11 +8,13 @@ import {
 } from "../../src/core/internal/shared-state-writes.ts";
 import { runRuleFixture } from "../../src/core/testkit.ts";
 
-function captureWrites(binding: Omit<SharedStateBinding, "file"> & { file: string }): {
+function captureWrites(binding: SharedStateBinding): {
   rule: DoctorRule;
   writes: () => SharedStateWrite[];
+  graphLookups: () => number;
 } {
   let captured: SharedStateWrite[] | undefined;
+  let graphLookups = 0;
   const rule = createRule({
     meta: {
       id: "test/shared-state-writes",
@@ -25,7 +27,19 @@ function captureWrites(binding: Omit<SharedStateBinding, "file"> & { file: strin
     create(ctx) {
       return {
         async onWorkspaceEnd() {
-          captured = await findSharedStateWrites(ctx, await ctx.inventory.importGraph(), {
+          const graph = await ctx.inventory.importGraph();
+          const measuredGraph = {
+            ...graph,
+            importersOf(file: string) {
+              graphLookups++;
+              return graph.importersOf(file);
+            },
+            importsOf(file: string) {
+              graphLookups++;
+              return graph.importsOf(file);
+            },
+          };
+          captured = await findSharedStateWrites(ctx, measuredGraph, {
             ...binding,
             file: join(ctx.project.root, binding.file),
           });
@@ -35,12 +49,41 @@ function captureWrites(binding: Omit<SharedStateBinding, "file"> & { file: strin
   });
   return {
     rule,
+    graphLookups: () => graphLookups,
     writes: () => {
       if (!captured) throw new Error("The capture Rule did not run.");
       return captured;
     },
   };
 }
+
+test("cyclic namespaces do not enumerate paths unused by consumers", async () => {
+  const capture = captureWrites({ file: "store.ts", exportName: "store", shape: "reactive" });
+  const features = Array.from({ length: 8 }, (_, index) => `feature${index}`);
+  const files = {
+    "store.ts": "export const store = { count: 0 }",
+    "index.ts": [
+      `export { store } from './store'`,
+      ...features.map((name) => `export * as ${name} from './${name}'`),
+    ].join("\n"),
+    ...Object.fromEntries(
+      features.map((name) => [`${name}.ts`, `export * as packageApi from './index'`]),
+    ),
+    "a.ts": `import { store } from './index'; store.count++`,
+    "b.ts": `import { store } from './index'; store.count = 2`,
+    "c.ts": `import * as api from './index';
+api.feature0.packageApi.feature0.packageApi.store.count--;
+api.feature0.packageApi.feature0.store.count++`,
+  };
+  await runRuleFixture({ rule: capture.rule, files });
+
+  expect(capture.writes().map(({ target }) => target)).toEqual([
+    "store.count",
+    "store.count",
+    "api.feature0.packageApi.feature0.packageApi.store.count",
+  ]);
+  expect(capture.graphLookups()).toBeLessThanOrEqual(2 * Object.keys(files).length);
+});
 
 test("call access finds writes to what importers get from calling the export", async () => {
   const capture = captureWrites({

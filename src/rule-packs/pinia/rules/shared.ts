@@ -27,7 +27,7 @@ export interface SetupStoreUse {
 
 const CLIENT = 1;
 const SERVER = 2;
-export const setupRuntimes = [CLIENT, SERVER];
+export const setupRuntimes = { client: CLIENT, server: SERVER } as const;
 
 export type SetupStoreUseTarget =
   /** A store defined in the same file under `name`. */

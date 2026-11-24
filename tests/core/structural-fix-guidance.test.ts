@@ -106,7 +106,7 @@ const cases: Record<string, StructuralCase> = {
           },
         })
       ).diagnostics,
-    fix: /Break the cycle at the edge where a lower layer/,
+    fix: /Remove the import that leads from src\/Page\.vue back into the cycle/,
     avoid: /Do not decline HMR with import\.meta\.hot\.decline\(\) or suppress this Diagnostic/,
   },
 };

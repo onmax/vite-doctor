@@ -40,12 +40,24 @@ export const resolvedBaselineDiagnosticMetadata = {
   category: "baseline",
 } as const satisfies DiagnosticMetadata;
 
+export const runtimeFrameworkDiagnosticMetadata = {
+  code: "DOC0040",
+  ruleId: "doctor/runtime/framework-diagnostic",
+  title: "Fix a diagnostic the framework reported at runtime",
+  description:
+    "While the Vite dev server ran, the framework reported a diagnostic from the browser through `nostics`, such as Nuxt's `NUXT_E3004`.",
+  why: "The framework saw the problem happen, so Doctor reports its code, message, fix, and docs link unchanged. Doctor places the Diagnostic at the call site only when the dev server's module graph and source map prove the source position; otherwise the Diagnostic stays at the project root and its evidence says the location is partial. Only browser reports reach Doctor: reports from server-side rendering print to the terminal but are never sent to the dev server. A report lasts until the dev server restarts, or until its file is saved.",
+  fix: "Follow the framework's fix and docs link in the Diagnostic, then reload the page that reported it. The Diagnostic's message starts with the framework's own code.",
+  severity: "warn",
+  category: "runtime",
+} as const satisfies DiagnosticMetadata;
+
 export const workspaceDiagnosticMetadata = [
   {
     code: "DOC0001",
     title: "Break a circular dependency",
     description: "Two or more source files belong to a cycle in the workspace dependency graph.",
-    why: "Doctor found a strongly connected group of files through static imports, re-exports, or Nuxt auto-imports and reports one shortest loop through it: each related entry is one edge, with the importing file, the import's range, the specifier, and the file it resolves to. An auto-import edge points at the first reference to the auto-imported identifier, since Nuxt adds the import at build time. When the group is larger than the loop, the files off the loop follow as cycle members. A change to one member can affect the others, and module initialization depends on evaluation order, so a value read during import can still be undefined. Type-only imports and re-exports are erased at build time and dynamic imports run later, so neither creates a cycle for this analysis.",
+    why: "Doctor found a strongly connected group of files through static imports or re-exports and reports one shortest loop through it: each related entry is one import edge, with the importing file, the import's range, the specifier, and the file it resolves to. When the group is larger than the loop, the files off the loop follow as cycle members. A change to one member can affect the others, and module initialization depends on evaluation order, so a value read during import can still be undefined. Type-only imports and re-exports are erased at build time and dynamic imports run later, so neither creates a cycle for this analysis.",
     fix: "Read every related import edge before changing code. Cut the edge that points from a lower layer to a higher one, such as a utility importing a component or a store importing a page: move what it needs into a module that imports neither side, or pass it in as an argument. Do not hide the cycle by turning the import into a dynamic import(); the dependency stays and only its timing changes. Rerun the graph analysis, since a larger group can still hold another loop.",
     ruleId: "workspace/dead-code/circular-dependency",
     severity: "warn",
@@ -170,6 +182,7 @@ const explainableMetadata: Array<DiagnosticMetadata & { analysis?: WorkspaceDiag
     ...workspaceDiagnosticMetadata,
     defaultConfigDiagnosticMetadata,
     resolvedBaselineDiagnosticMetadata,
+    runtimeFrameworkDiagnosticMetadata,
   ];
 
 export const diagnosticMetadataByCode = new Map(
