@@ -980,6 +980,17 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia", "https://pinia.vuejs.org/");
   }
 
+  if (rule.id === "vue/attrs/no-multi-root-fallthrough") {
+    add(
+      "Vue attribute inheritance on multiple root nodes",
+      "https://vuejs.org/guide/components/attrs.html#attribute-inheritance-on-multiple-root-nodes",
+    );
+    add(
+      "Vue disabling attribute inheritance",
+      "https://vuejs.org/guide/components/attrs.html#disabling-attribute-inheritance",
+    );
+  }
+
   if (rule.id === "vue/attrs/require-explicit-emits") {
     add(
       "Vue declaring emitted events",

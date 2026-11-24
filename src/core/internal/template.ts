@@ -2,12 +2,15 @@ import type {
   ScriptAstNode,
   TemplateAstNode,
   TemplateAttributeNode,
+  TemplateCommentNode,
   TemplateDirectiveNode,
   TemplateElementNode,
   TemplateExpressionNode,
+  TemplateInterpolationNode,
   TemplateNodeKind,
   TemplateParentNode,
   TemplateRootNode,
+  TemplateTextNode,
   TemplateVisitor,
 } from "../primitives.js";
 import { parseScriptSync } from "./script.js";
@@ -110,6 +113,46 @@ export function walkTemplate(
   if (node.type === TemplateNodeType.ROOT || node.type === TemplateNodeType.ELEMENT) {
     for (const child of node.children) walkTemplate(child, visit, node);
   }
+}
+
+/** A node a template renders at its root, grouped the way Vue's compiler groups it. */
+export type TemplateRoot =
+  | { type: "comment"; node: TemplateCommentNode }
+  | { type: "text"; node: TemplateTextNode | TemplateInterpolationNode }
+  /** One element, or every branch of a `v-if`/`v-else-if`/`v-else` chain in source order. */
+  | { type: "element"; branches: TemplateElementNode[] };
+
+/**
+ * The template's root nodes as compiler-core groups them. Whitespace-only text is dropped, and
+ * `processIf` removes each `v-else-if`/`v-else` sibling into the preceding `v-if` node, so a
+ * chain is one root. Comments between branches move into the next branch, so they are not roots.
+ * Other comments stay: development builds keep them and production builds strip them, so whether
+ * they count is up to the caller.
+ */
+export function templateRoots(root: TemplateRootNode): TemplateRoot[] {
+  const roots: TemplateRoot[] = [];
+  let pendingComments = 0;
+  for (const child of root.children) {
+    if (child.type === TemplateNodeType.TEXT && !child.content.trim()) continue;
+    if (child.type === TemplateNodeType.COMMENT) {
+      roots.push({ type: "comment", node: child });
+      pendingComments++;
+      continue;
+    }
+    if (child.type !== TemplateNodeType.ELEMENT) {
+      roots.push({ type: "text", node: child });
+      pendingComments = 0;
+      continue;
+    }
+    const chained = findTemplateDirective(child, "else-if") || findTemplateDirective(child, "else");
+    const previous = roots.at(-1 - pendingComments);
+    if (chained && previous?.type === "element") {
+      roots.splice(roots.length - pendingComments, pendingComments);
+      previous.branches.push(child);
+    } else roots.push({ type: "element", branches: [child] });
+    pendingComments = 0;
+  }
+  return roots;
 }
 
 /** The SFC offset just past the element's start tag, `>` or `/>` included. */

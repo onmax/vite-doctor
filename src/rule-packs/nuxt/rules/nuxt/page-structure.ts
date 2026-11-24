@@ -11,7 +11,11 @@ import { camelize } from "../../../../core/internal/component-facts.js";
 import { parseScript } from "../../../../core/internal/script.js";
 import type { NuxtAppInventoryKind } from "../../../../core/primitives.js";
 import { parseSfcFile } from "../../../../core/internal/sfc.js";
-import { TemplateNodeType } from "../../../../core/internal/template.js";
+import {
+  findTemplateDirective,
+  TemplateNodeType,
+  templateRoots,
+} from "../../../../core/internal/template.js";
 import { nuxtAppSources, toPosixPath, type NuxtAppSource } from "./file-classification.js";
 import {
   ENVIRONMENT_OVERRIDE_KEYS,
@@ -343,33 +347,24 @@ export function templateRootShape(root: TemplateRootNode): RootShape {
     start: number;
     end: number;
   }> = [];
-  let pendingComments = 0;
-  for (const child of root.children) {
-    const loc = { start: child.loc.start.offset, end: child.loc.end.offset };
-    if (child.type === TemplateNodeType.TEXT && !child.content.trim()) continue;
-    if (child.type === TemplateNodeType.COMMENT) {
-      roots.push({ type: "comment", ...loc });
-      pendingComments++;
+  for (const node of templateRoots(root)) {
+    if (node.type !== "element") {
+      const { start, end } = node.node.loc;
+      roots.push({ type: node.type, start: start.offset, end: end.offset });
       continue;
     }
-    if (child.type !== TemplateNodeType.ELEMENT) {
-      roots.push({ type: "text", ...loc });
-      pendingComments = 0;
-      continue;
+    for (const branch of node.branches) {
+      const loc = { start: branch.loc.start.offset, end: branch.loc.end.offset };
+      if (findTemplateDirective(branch, "for")) return { kind: "multiple", count: 2, node: loc };
+      if (branch.tagType === 3 && meaningfulChildren(branch) > 1)
+        return { kind: "multiple", count: meaningfulChildren(branch), node: loc };
     }
-    const element = child as TemplateElementNode;
-    if (hasDirective(element, "for"))
-      return { kind: "multiple", count: 2, node: { start: loc.start, end: loc.end } };
-    if (element.tagType === 3 && meaningfulChildren(element) > 1)
-      return { kind: "multiple", count: meaningfulChildren(element), node: loc };
-    if (hasDirective(element, "else-if") || hasDirective(element, "else")) {
-      // Vue moves comments between branches into the next branch.
-      roots.splice(roots.length - pendingComments, pendingComments);
-      pendingComments = 0;
-      continue;
-    }
-    roots.push({ type: element.tagType === 2 ? "slot" : "element", ...loc });
-    pendingComments = 0;
+    const [first] = node.branches;
+    roots.push({
+      type: node.branches.some((branch) => branch.tagType === 2) ? "slot" : "element",
+      start: first!.loc.start.offset,
+      end: first!.loc.end.offset,
+    });
   }
   const [first, second] = roots;
   if (!first) return { kind: "unknown" };
@@ -384,12 +379,6 @@ export function templateRootShape(root: TemplateRootNode): RootShape {
   if (content.length === 1 && content[0]!.type === "element")
     return { kind: "comment", node: roots.find((node) => node.type === "comment")! };
   return { kind: "multiple", count: roots.length, node: second };
-}
-
-function hasDirective(element: TemplateElementNode, name: string): boolean {
-  return element.props.some(
-    (prop) => prop.type === TemplateNodeType.DIRECTIVE && prop.name === name,
-  );
 }
 
 function meaningfulChildren(element: TemplateElementNode): number {

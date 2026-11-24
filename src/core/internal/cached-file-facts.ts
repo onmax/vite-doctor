@@ -66,6 +66,19 @@ function componentFacts(value: unknown): boolean {
     typeof value.ownLogic === "boolean" &&
     typeof value.ownMarkup === "boolean" &&
     integer(value.rootNodes) &&
+    Array.isArray(value.roots) &&
+    value.roots.every(
+      (root) =>
+        record(root) &&
+        facts(
+          root.branches,
+          (branch) =>
+            ["element", "component", "slot", "fragment", "text"].includes(branch.kind as string) &&
+            optionalString(branch.tag),
+        ),
+    ) &&
+    (value.inheritAttrs === undefined || typeof value.inheritAttrs === "boolean") &&
+    typeof value.readsAttrs === "boolean" &&
     Array.isArray(value.comparisons) &&
     value.comparisons.every(
       (item) => record(item) && typeof item.left === "string" && typeof item.right === "string",
@@ -80,7 +93,11 @@ function componentFacts(value: unknown): boolean {
         Array.isArray(item.listeners) &&
         strings(item.directives) &&
         strings(item.scope) &&
-        typeof item.inFor === "boolean",
+        typeof item.inFor === "boolean" &&
+        (item.parent === undefined ||
+          (record(item.parent) &&
+            typeof item.parent.tag === "string" &&
+            typeof item.parent.element === "boolean")),
     ) &&
     strings(value.bindingReferences)
   );
