@@ -1,3 +1,4 @@
+import mime from "mime";
 import { parseSync } from "oxc-parser";
 import { isAbsolute, relative, resolve } from "pathe";
 import type { ProjectInfo, RuleContext, RuleFileSystem } from "../../../core/index.js";
@@ -5,6 +6,7 @@ import type { ProjectInfo, RuleContext, RuleFileSystem } from "../../../core/ind
 export interface StaticConfigOption {
   path: string[];
   value: string | boolean | null;
+  strings?: string[];
 }
 
 export interface NitroServerFile {
@@ -35,18 +37,7 @@ const NITRO3_METHODS = new Set([
 ]);
 const NITRO3_ENVS = new Set(["dev", "prod", "prerender"]);
 const LAST_SUFFIX = /(?<=[^/])\.([a-z]+)$/;
-const NITRO3_ROUTE_EXTENSIONS = new Set([
-  "css",
-  "csv",
-  "html",
-  "ico",
-  "js",
-  "json",
-  "map",
-  "svg",
-  "txt",
-  "xml",
-]);
+const ORDER_PREFIX = /(?:^|\/)\d+$/;
 
 export function nitroServerDirs(ctx: RuleContext): string[] {
   const key = "nitro:server-dirs";
@@ -97,13 +88,17 @@ export function nitroScannedFile(
   if (!isNitroScannedScript(ctx, serverFile.path)) return null;
   if (
     (runtimeMajor(project, "nitro") ?? 2) >= 3 &&
-    !nitro3ScanPath(serverFile.path, ROUTE_DIRS.has(serverFile.dir))
+    !nitro3ScanPath(
+      ctx,
+      serverFile.path.slice(serverFile.dir.length + 1),
+      ROUTE_DIRS.has(serverFile.dir),
+    )
   )
     return null;
   return serverFile;
 }
 
-export function nitro3ScanPath(path: string, route: boolean) {
+export function nitro3ScanPath(ctx: RuleContext, path: string, route: boolean) {
   let name = path.replace(SCANNED_SCRIPT, "");
   let env: string | undefined;
   let method: string | undefined;
@@ -120,8 +115,30 @@ export function nitro3ScanPath(path: string, route: boolean) {
     }
   }
   const suffix = name.match(LAST_SUFFIX)?.[1];
-  if (suffix && !NITRO3_ROUTE_EXTENSIONS.has(suffix)) return undefined;
+  if (suffix) {
+    const reserved = NITRO3_METHODS.has(suffix) || NITRO3_ENVS.has(suffix);
+    if (
+      !(route && reserved) &&
+      !mime.getType(suffix) &&
+      !(!reserved && ORDER_PREFIX.test(name.slice(0, -suffix.length - 1))) &&
+      !hasStaticScanSuffix(ctx, suffix)
+    )
+      return undefined;
+  }
   return { name, method, env };
+}
+
+function hasStaticScanSuffix(ctx: RuleContext, suffix: string): boolean {
+  const nuxt = ctx.project.framework === "nuxt";
+  const options = readStaticConfigOptions(ctx, nuxt ? "nuxt" : "nitro");
+  const configured = options.filter(({ path }) =>
+    nuxt ? path.join(".") === "nitro.scanSuffixes" : path.at(-1) === "scanSuffixes",
+  );
+  return (
+    configured.length === 1 &&
+    configured[0]?.strings?.includes(suffix) === true &&
+    !hasUnresolvedNitroConfig(ctx, options)
+  );
 }
 
 /** Whether Nitro's directory scan keeps this server-relative path under default ignore patterns. */
@@ -438,7 +455,12 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
     )
       continue;
     const next = [...path, key];
-    options.push({ path: next, value: literalValue(property.value) });
+    const option: StaticConfigOption = { path: next, value: literalValue(property.value) };
+    if (key === "scanSuffixes" && property.kind === "init") {
+      const strings = literalStringArray(property.value);
+      if (strings) option.strings = strings;
+    }
+    options.push(option);
     if (key === "nitro") {
       const nested = unwrapConfig(property.value);
       if (nested) collectOptions(nested, next, options);
@@ -464,4 +486,17 @@ function literalValue(node: any): string | boolean | null {
   if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
     return node.quasis[0]?.value?.cooked ?? null;
   return null;
+}
+
+function literalStringArray(node: any): string[] | undefined {
+  while (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
+    node = node.expression;
+  if (node?.type !== "ArrayExpression") return undefined;
+  const values: string[] = [];
+  for (const element of node.elements) {
+    const value = literalValue(element);
+    if (typeof value !== "string") return undefined;
+    values.push(value);
+  }
+  return values;
 }

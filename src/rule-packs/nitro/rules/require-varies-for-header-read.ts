@@ -101,7 +101,7 @@ function checkCachedHandler(ctx: RuleContext, scope: ScriptScope, call: AnyNode,
     ) {
       const route = nitroRouteFile(ctx, ctx.file.path);
       if (route && !hasCustomScanIgnore(ctx)) {
-        const method = nitro3ScanPath(route.path, true)?.method;
+        const method = nitro3ScanPath(ctx, route.path.slice(route.dir.length + 1), true)?.method;
         if (method && method !== "get" && method !== "head") return;
       }
     }

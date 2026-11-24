@@ -94,6 +94,28 @@ describe("NITRO0030 middleware that returns an assigned value", () => {
     ).toEqual([]);
   });
 
+  test.each([
+    ["['custom']", "locale.custom.ts", ["NITRO0030:1"]],
+    ["['custom']", "locale.get.ts", []],
+    ["['custom']", "1.dev.ts", []],
+    ["[]", "nested/1.locale.ts", ["NITRO0030:1"]],
+  ])(
+    "checks Nitro 3 middleware suffixes with scanSuffixes: %s and file %s",
+    async (suffixes, file, expected) => {
+      expect(
+        await codes(
+          {
+            "nitro.config.ts": `export default defineConfig({ serverDir: true, scanSuffixes: ${suffixes} })`,
+            [`server/middleware/${file}`]:
+              "export default defineHandler(event => event.context.locale = 'en')",
+          },
+          "nitro",
+          nitro3,
+        ),
+      ).toEqual(expected);
+    },
+  );
+
   test("reports a returned assignment in a block body", async () => {
     expect(
       await codes(

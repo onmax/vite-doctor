@@ -85,6 +85,7 @@
     "eslint": "catalog:analysis",
     "eslint-plugin-vue": "catalog:analysis",
     "magic-string": "catalog:analysis",
+    "mime": "catalog:prod",
     "nostics": "catalog:analysis",
     "oxc-parser": "catalog:analysis",
     "pathe": "catalog:prod",

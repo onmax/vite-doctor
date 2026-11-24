@@ -109,6 +109,10 @@ describe("NITRO0031 route files that resolve to the same route", () => {
           ...routeFiles(
             "server/routes/(docs)/sitemap.xml.ts",
             "server/routes/sitemap.xml.ts",
+            "server/routes/(docs)/readme.md.ts",
+            "server/routes/readme.md.ts",
+            "server/routes/(docs)/page.get.get.ts",
+            "server/routes/page.get.get.ts",
             "server/routes/(docs)/page.custom.ts",
             "server/routes/page.custom.ts",
           ),
@@ -116,7 +120,31 @@ describe("NITRO0031 route files that resolve to the same route", () => {
         "nitro",
         nitro3,
       ),
-    ).toEqual(["server/routes/sitemap.xml.ts"]);
+    ).toEqual([
+      "server/routes/page.get.get.ts",
+      "server/routes/readme.md.ts",
+      "server/routes/sitemap.xml.ts",
+    ]);
+  });
+
+  test.each([
+    ["['custom']", ["server/routes/page.custom.get.ts"]],
+    ["suffixes", []],
+  ])("only treats a custom suffix as registered when proven by %s", async (suffixes, expected) => {
+    expect(
+      await shadowed(
+        {
+          "nitro.config.ts": `export default defineConfig({ serverDir: true, scanSuffixes: ${suffixes} })`,
+          ...routeFiles(
+            "server/routes/(docs)/page.custom.get.ts",
+            "server/routes/page.custom.get.ts",
+            "server/routes/page.get.ts",
+          ),
+        },
+        "nitro",
+        nitro3,
+      ),
+    ).toEqual(expected);
   });
 
   test("does not report a collision when an inherited ignore may exclude the winner", async () => {

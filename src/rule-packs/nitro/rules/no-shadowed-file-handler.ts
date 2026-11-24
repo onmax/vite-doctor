@@ -49,7 +49,7 @@ export const noShadowedFileHandler = createRule({
 /** The file in the same scan directory that Nitro keeps for this file's route, if any. */
 function shadowingFile(ctx: RuleContext, serverDir: string, dir: string, path: string) {
   const version = (runtimeMajor(ctx.project, "nitro") ?? 2) >= 3 ? 3 : 2;
-  const own = routeKey(path.slice(dir.length + 1), version);
+  const own = routeKey(ctx, path.slice(dir.length + 1), version);
   if (own === undefined) return undefined;
   const root = join(serverDir, dir);
   const cacheKey = `nitro:route-candidates:${version}:${root}`;
@@ -58,7 +58,7 @@ function shadowingFile(ctx: RuleContext, serverDir: string, dir: string, path: s
     candidates = new Map();
     for (const relativePath of ctx.fs.readDirRecursive(root) ?? []) {
       if (!isNitroScannedScript(ctx, `${dir}/${relativePath}`)) continue;
-      const key = routeKey(relativePath, version);
+      const key = routeKey(ctx, relativePath, version);
       if (key === undefined) continue;
       const files = candidates.get(key);
       if (files) files.push(relativePath);
@@ -77,8 +77,10 @@ function shadowingFile(ctx: RuleContext, serverDir: string, dir: string, path: s
 }
 
 /** Nitro's dedupe key for a scanned route file: route, method and env. */
-function routeKey(path: string, version: 2 | 3): string | undefined {
-  return version === 2 ? nitro2RouteKey(path.replace(/\.[A-Za-z]+$/, "")) : nitro3RouteKey(path);
+function routeKey(ctx: RuleContext, path: string, version: 2 | 3): string | undefined {
+  return version === 2
+    ? nitro2RouteKey(path.replace(/\.[A-Za-z]+$/, ""))
+    : nitro3RouteKey(ctx, path);
 }
 
 /** nitropack `scanServerRoutes`: params and groups first, then the method and env suffixes. */
@@ -96,8 +98,8 @@ function nitro2RouteKey(name: string) {
   return `${route}\0${method}\0${env}`;
 }
 
-function nitro3RouteKey(path: string) {
-  const scanned = nitro3ScanPath(path, true);
+function nitro3RouteKey(ctx: RuleContext, path: string) {
+  const scanned = nitro3ScanPath(ctx, path, true);
   if (!scanned) return undefined;
   const { name, method, env } = scanned;
   const route =
