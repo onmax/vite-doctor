@@ -49,6 +49,7 @@ export { requireExplicitEmits } from "./require-explicit-emits.js";
 export { noExternalSharedStateMutation } from "./no-external-shared-state-mutation.js";
 export { noShallowRefDeepMutation } from "./no-shallow-ref-deep-mutation.js";
 export { noPropertyReadWatchSource } from "./no-property-read-watch-source.js";
+export { noRedirectCycle } from "./no-redirect-cycle.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
 import { noRefAsOperand } from "./no-ref-as-operand.js";
@@ -101,6 +102,7 @@ import { requireExplicitEmits } from "./require-explicit-emits.js";
 import { noExternalSharedStateMutation } from "./no-external-shared-state-mutation.js";
 import { noShallowRefDeepMutation } from "./no-shallow-ref-deep-mutation.js";
 import { noPropertyReadWatchSource } from "./no-property-read-watch-source.js";
+import { noRedirectCycle } from "./no-redirect-cycle.js";
 
 import { defineRulePack } from "../../../../core/index.js";
 
@@ -157,6 +159,7 @@ const rules = [
   noExternalSharedStateMutation,
   noShallowRefDeepMutation,
   noPropertyReadWatchSource,
+  noRedirectCycle,
 ];
 
 // Recommended only holds rules whose hits identify a specific defect; style, naming,

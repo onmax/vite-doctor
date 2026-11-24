@@ -352,8 +352,7 @@ function staticValue(
     return staticValue(node.right, programBinding, depth + 1);
   }
   const binding = provenConstBinding(node, programBinding);
-  if (binding && binding.end <= node.start)
-    return staticValue(binding.init, programBinding, depth + 1);
+  if (binding) return staticValue(binding.init, programBinding, depth + 1);
   return UNKNOWN_VALUE;
 }
 
@@ -367,7 +366,8 @@ function provenConstBinding(
     : resolveLexicalBinding(node);
   return binding?.type === "VariableDeclarator" &&
     binding.id.type === "Identifier" &&
-    binding.__doctorParent?.kind === "const"
+    binding.__doctorParent?.kind === "const" &&
+    binding.end <= node.start
     ? binding
     : null;
 }

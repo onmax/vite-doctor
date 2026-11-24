@@ -514,21 +514,26 @@ function collectDeclarationExports(
   exports: ExportFact[],
 ) {
   if (!node || typeof node !== "object") return;
-  if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") {
+  if (
+    node.type === "FunctionDeclaration" ||
+    node.type === "ClassDeclaration" ||
+    node.type === "TSEnumDeclaration" ||
+    node.type === "TSModuleDeclaration"
+  ) {
     if (node.id?.name)
       exports.push({
         name: node.id.name,
         localName: node.id.name,
-        kind: "value",
+        kind: node.declare ? "type" : "value",
         range: nodeRange(session, file, text, node),
       });
   } else if (node.type === "VariableDeclaration") {
     for (const declaration of node.declarations ?? []) {
-      if (declaration.id?.name)
+      for (const name of bindingNames(declaration.id))
         exports.push({
-          name: declaration.id.name,
-          localName: declaration.id.name,
-          kind: node.kind === "type" ? "type" : "value",
+          name,
+          localName: name,
+          kind: node.declare ? "type" : "value",
           range: nodeRange(session, file, text, declaration),
         });
     }
@@ -540,6 +545,27 @@ function collectDeclarationExports(
         kind: "type",
         range: nodeRange(session, file, text, node),
       });
+  }
+}
+
+function* bindingNames(node: any): Generator<string> {
+  if (!node) return;
+  switch (node.type) {
+    case "Identifier":
+      yield node.name;
+      break;
+    case "ObjectPattern":
+      for (const property of node.properties)
+        yield* bindingNames(property.type === "RestElement" ? property : property.value);
+      break;
+    case "ArrayPattern":
+      for (const element of node.elements) yield* bindingNames(element);
+      break;
+    case "AssignmentPattern":
+      yield* bindingNames(node.left);
+      break;
+    case "RestElement":
+      yield* bindingNames(node.argument);
   }
 }
 

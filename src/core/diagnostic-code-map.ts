@@ -116,6 +116,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0048", ruleId: "vue/state/no-external-shared-state-mutation" },
   { code: "VUE0049", ruleId: "vue/reactivity/no-shallow-ref-deep-mutation" },
   { code: "VUE0050", ruleId: "vue/watch/no-property-read-source" },
+  { code: "VUE0053", ruleId: "vue/router/no-redirect-cycle" },
 
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },
@@ -309,6 +310,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0104", ruleId: "nuxt/plugins/no-island-disabled-dependency" },
   { code: "NUXT0105", ruleId: "nuxt/ssr/no-request-data-in-module-state" },
   { code: "NUXT0106", ruleId: "nuxt/ssr/no-request-state-in-cached-page" },
+  { code: "NUXT0107", ruleId: "nuxt/routing/no-global-middleware-redirect-loop" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
