@@ -203,7 +203,7 @@ export function settleDiagnosticIdentity(diagnostics: Diagnostic[]): Diagnostic[
       diagnostic.ruleId,
       diagnostic.code,
       diagnostic.file,
-      diagnostic.range?.start ?? "",
+      diagnostic.range?.start ?? (diagnostic.code === "DOC0040" ? diagnostic.fingerprint : ""),
       diagnostic.message,
     ].join("\0");
     if (seen.has(key)) return false;
