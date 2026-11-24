@@ -578,6 +578,7 @@ function sessionImportGraph(session: ScanSession, index?: GraphIndex): ImportGra
         specifier: edge.name,
         kind: "auto-import" as const,
         autoImportBundle: edge.autoImportBundle,
+        ...(edge.clientReachable && { clientReachable: true }),
         typeOnly: false,
         range: edge.range,
       })),
@@ -598,6 +599,7 @@ function reportImportCycle(session: ScanSession, cycle: ImportCycle, graph: Impo
     ? ` It is one loop in a group of ${cycle.files.length} files that import each other; ${others.length === 1 ? "the file off this loop is listed as a cycle member" : `the ${others.length} files off this loop are listed as cycle members`}.`
     : "";
   const locations = session.scopedReport ? cycleScopeLocations(cycle, graph) : undefined;
+  const bundle = cycle.path.find((edge) => edge.autoImportBundle)?.autoImportBundle;
   reportWorkspaceDiagnostic(session, {
     ruleId: "workspace/dead-code/circular-dependency",
     severity: "warn",
@@ -621,7 +623,7 @@ function reportImportCycle(session: ScanSession, cycle: ImportCycle, graph: Impo
     ...(locations?.length ? { [scopedReportLocations]: locations } : {}),
     // Keyed on the group rather than the loop, so reordering imports keeps baselined findings.
     fingerprint: sha256(
-      `workspace/dead-code/circular-dependency:${cycle.files.map(path).join("\n")}`,
+      `workspace/dead-code/circular-dependency:${cycle.files.map(path).join("\n")}${bundle ? `:${bundle}` : ""}`,
     ),
     confidence: "proven",
     evidence: [

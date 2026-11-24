@@ -807,6 +807,8 @@ export interface ImportGraphEdge {
   kind: "import" | "re-export" | "dynamic-import" | "auto-import";
   /** The transform that injects an auto-import. Written dependencies have no transform tag. */
   autoImportBundle?: "nuxt" | "nitro";
+  /** For auto-imports, whether the consumer is reachable from a Nuxt client entry. */
+  clientReachable?: boolean;
   /** Whether TypeScript erases the dependency: `import type` or `export type ... from`. */
   typeOnly: boolean;
   /**

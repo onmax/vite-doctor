@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -299,7 +300,8 @@ async function withNitroManifest(
     extraImportDirs?: string[];
     handler?: string;
     imports?: Record<string, unknown>;
-    appImports?: Record<string, string>;
+    appImports?: Record<string, string | { name: string; file: string }>;
+    appPlugins?: Array<{ file: string; mode: "server" | "all" }>;
     beforeInit?: (root: string) => void;
     afterInit?: (root: string) => void;
     scannerVersion?: string;
@@ -378,11 +380,18 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
     const hooks = new Map<string, (payload?: any) => unknown>();
     await nuxtDoctorModule({}, {
       _version: "4.4.6",
+      apps: options.appPlugins && {
+        default: {
+          plugins: options.appPlugins.map(({ file, mode }) => ({ src: join(root, file), mode })),
+        },
+      },
       options: {
         rootDir: root,
         srcDir: join(root, "app"),
         buildDir: ".nuxt",
         modules: [],
+        extensions: [".ts", ".vue"],
+        ...(options.appPlugins && { _layers: [] }),
         imports: { autoImport: options.appAutoImport ?? true },
       },
       hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
@@ -390,10 +399,14 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
     } as any);
     await hooks.get("imports:context")!(
       createUnimport({
-        imports: Object.entries({
+        imports: Object.entries<string | { name: string; file: string }>({
           useApp: "app/composables/useApp.ts",
           ...options.appImports,
-        }).map(([name, file]) => ({ name, from: join(root, file) })),
+        }).map(([alias, entry]) => ({
+          name: typeof entry === "string" ? alias : entry.name,
+          as: alias,
+          from: join(root, typeof entry === "string" ? entry : entry.file),
+        })),
       }),
     );
     const nitroHooks = new Map<string, () => Promise<void>>();
@@ -419,6 +432,7 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
     } finally {
       cwd?.mockRestore();
     }
+    if (options.appPlugins) await hooks.get("app:templatesGenerated")!();
     await check(root, nitroHooks.get("compiled")!);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -584,6 +598,84 @@ test("edges from different bundles cannot form a single cycle", () =>
       extraImportDirs: ["lib/shared.ts"],
     },
   ));
+
+test("a changed Nitro edge reports its loop even when Nuxt already cycles over the same files", () =>
+  withNitroManifest(
+    {
+      "app/app.vue": "<script setup>useShared()</script>",
+      "lib/a.ts": "export const useShared = () => useAppB()\n",
+      "lib/b.ts": "import './a'; export const useNitroB = () => 1\n",
+      "server/api/shared.ts": "export { useShared as default } from '../../lib/a'",
+      "server/utils/a.ts": "export const useA = () => 1",
+      "server/utils/b.ts": "export const useB = () => 2",
+    },
+    async (root) => {
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
+      git("init");
+      git("add", "lib", "app", "server", "package.json");
+      git(
+        "-c",
+        "user.name=Doctor",
+        "-c",
+        "user.email=doctor@example.test",
+        "commit",
+        "-m",
+        "fixture",
+      );
+      writeFileSync(
+        join(root, "lib/a.ts"),
+        "export const useShared = () => useAppB()\nuseNitroB()\n",
+      );
+      const { diagnostics } = await runViteDoctor({
+        root,
+        framework: "nuxt",
+        analyses: "graph",
+        cache: false,
+        since: "HEAD",
+      });
+      const cycles = diagnostics.filter((item) => item.code === "DOC0001");
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0]?.related?.[0]).toMatchObject({
+        message: "uses auto-imported `useNitroB` → lib/b.ts",
+        range: { line: 2 },
+      });
+    },
+    {
+      appImports: { useShared: "lib/a.ts", useAppB: { name: "useNitroB", file: "lib/b.ts" } },
+      extraImportDirs: ["lib/b.ts"],
+    },
+  ));
+
+test.each(["server", "all"] as const)("Nuxt HMR follows the resolved %s plugin mode", (mode) =>
+  withNitroManifest(
+    {
+      "app/app.vue": "<template><div /></template>",
+      "app/plugins/entry.ts": "import '../../lib/helper'; export default () => {}",
+      "lib/helper.ts": "useLoop(); if (import.meta.hot) import.meta.hot.accept()",
+      "app/composables/useLoop.ts": "import '../plugins/entry'; export const useLoop = () => 1",
+    },
+    async (root) => {
+      const { cycles, graph } = await analyze(root);
+      expect(cycles.some((cycle) => cycle.message.includes("lib/helper.ts"))).toBe(true);
+      expect(
+        graph.edges.find((edge) => edge.specifier === "useLoop")?.clientReachable === true,
+      ).toBe(mode === "all");
+      const { diagnostics } = await runViteDoctor({
+        root,
+        framework: "nuxt",
+        config: { extends: ["auto", "vite/strict"] },
+        cache: false,
+      });
+      expect(diagnostics.filter((item) => item.code === "VITE0029")).toHaveLength(
+        mode === "all" ? 1 : 0,
+      );
+    },
+    {
+      appImports: { useLoop: "app/composables/useLoop.ts" },
+      appPlugins: [{ file: "app/plugins/entry.ts", mode }],
+    },
+  ),
+);
 
 test.each([false, true])("Nuxt HMR sees the loop with an explicit import: %s", (explicit) =>
   withNitroManifest(

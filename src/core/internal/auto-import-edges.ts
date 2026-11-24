@@ -27,6 +27,7 @@ export interface AutoImportEdge {
   from: number;
   to: number;
   autoImportBundle: NonNullable<ImportGraphEdge["autoImportBundle"]>;
+  clientReachable?: boolean;
   /** The auto-imported identifier, such as `useCart`. */
   name: string;
   /** The file's first unshadowed reference to `name`. */
@@ -78,6 +79,8 @@ async function collect(
   const nitroQueue: FileFacts[] = [];
   const appFiles = new Set<number>();
   const appQueue: FileFacts[] = [];
+  const clientEntries = new Set<number>();
+  const appDependencies = new Map<number, number[]>();
   const scanTargets = new Map<NuxtProjectInfo, Set<number | undefined>>();
   const projectOf = (fact: FileFacts) => session.handlesByPath.get(fact.path)?.project.nuxt;
   const enqueue = (file: number | undefined, nuxt: NuxtProjectInfo, server: boolean) => {
@@ -99,13 +102,19 @@ async function collect(
           ...(nuxt.nitroAutoImports?.plugins ?? []),
         ])
           enqueue(index.resolveFile(file), nuxt, true);
-        for (const file of [
-          ...(nuxt.manifest.pages ?? []).map((page) => page.file),
-          ...(nuxt.manifest.resolvedComponents ?? []).map((component) => component.file),
-          ...nuxt.manifest.pluginFiles,
-          ...(nuxt.manifest.resolvedPlugins ?? []).map((plugin) => plugin.file),
-        ])
-          if (file) enqueue(index.resolveFile(file), nuxt, false);
+        const registrations = [
+          ...(nuxt.manifest.pages ?? []),
+          ...(nuxt.manifest.resolvedComponents ?? []),
+          ...(nuxt.manifest.resolvedPlugins ?? []),
+        ];
+        for (const file of nuxt.manifest.pluginFiles) enqueue(index.resolveFile(file), nuxt, false);
+        for (const { file, mode } of registrations) {
+          if (!file) continue;
+          const target = index.resolveFile(file);
+          enqueue(target, nuxt, false);
+          if (target !== undefined && mode !== "server" && appFiles.has(target))
+            clientEntries.add(target);
+        }
         scanTargets.set(
           nuxt,
           new Set(
@@ -117,7 +126,19 @@ async function collect(
       }
     }
     if (isServerFile(fact, nuxt)) enqueue(fact.fileId, nuxt, true);
-    else if (isAppEntry(fact, nuxt)) enqueue(fact.fileId, nuxt, false);
+    else if (isAppEntry(fact, nuxt)) {
+      enqueue(fact.fileId, nuxt, false);
+      clientEntries.add(fact.fileId);
+    }
+  }
+
+  function follow(fact: FileFacts, to: number | undefined, nuxt: NuxtProjectInfo, server: boolean) {
+    enqueue(to, nuxt, server);
+    if (server || to === undefined || !appFiles.has(to) || projectOf(factsById.get(to)!) !== nuxt)
+      return;
+    const dependencies = appDependencies.get(fact.fileId);
+    if (dependencies) dependencies.push(to);
+    else appDependencies.set(fact.fileId, [to]);
   }
 
   async function collectFile(fact: FileFacts, server: boolean, followDependencies: boolean) {
@@ -189,7 +210,7 @@ async function collect(
       const to = owned.get(name);
       if (to === undefined || to === fact.fileId || seen.has(name)) continue;
       seen.add(name);
-      if (followDependencies) enqueue(to, nuxt, server);
+      if (followDependencies) follow(fact, to, nuxt, server);
       const [start, end] = reference.identifier.range;
       edges.push({
         from: fact.fileId,
@@ -217,7 +238,8 @@ async function collect(
         const path = server
           ? sourcePath(item.source, Object.entries(nuxt.nitroAutoImports?.aliases ?? {}))
           : undefined;
-        enqueue(
+        follow(
+          fact,
           path ? index.resolveFile(path) : index.resolveImport(fact, item.source),
           nuxt,
           server,
@@ -225,6 +247,19 @@ async function collect(
       }
       await collectFile(fact, server, true);
     }
+  }
+
+  const clientFiles = new Set(clientEntries);
+  const clientQueue = [...clientEntries];
+  for (const file of clientQueue) {
+    for (const dependency of appDependencies.get(file) ?? []) {
+      if (clientFiles.has(dependency)) continue;
+      clientFiles.add(dependency);
+      clientQueue.push(dependency);
+    }
+  }
+  for (const edge of edges) {
+    if (edge.autoImportBundle === "nuxt" && clientFiles.has(edge.from)) edge.clientReachable = true;
   }
 
   for (const fact of session.facts) {

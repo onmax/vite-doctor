@@ -89,9 +89,19 @@ function bundleImportCycles(files: readonly string[], edges: readonly ImportGrap
   const cycles = new Map<string, ImportCycle>();
   for (const { edges: view, bundle } of importBundleViews(edges)) {
     for (const cycle of findImportCycles(files, view)) {
-      const key = JSON.stringify(cycle.files);
-      if (!cycles.has(key))
-        cycles.set(key, bundle ? { ...cycle, autoImportBundle: bundle } : cycle);
+      const key = JSON.stringify([
+        cycle.files,
+        cycle.path.map(({ from, to, kind, specifier, range }) => [
+          from,
+          to,
+          kind,
+          specifier,
+          range,
+        ]),
+      ]);
+      const previous = cycles.get(key);
+      if (previous) cycles.set(key, { files: previous.files, path: previous.path });
+      else cycles.set(key, bundle ? { ...cycle, autoImportBundle: bundle } : cycle);
     }
   }
   return [...cycles.values()].sort((left, right) =>
