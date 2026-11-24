@@ -272,6 +272,11 @@ test.each([
   ["namespace latest { export interface State {} }", true],
   ["namespace useRoute { export namespace Types { export type Query = string } }", true],
   ["namespace latest { export let value = '' }", false],
+  [
+    `namespace latest { export declare let value: string }
+latest.value = ''`,
+    false,
+  ],
   ["namespace useRoute { export const local = true }", false],
 ])("resolves plain-script bindings with setup declaration %s", async (namespace, reports) => {
   const file = "app/pages/index.vue";

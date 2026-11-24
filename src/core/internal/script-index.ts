@@ -95,7 +95,7 @@ export function findStatementBinding(scope: AnyNode, name: string): AnyNode {
       const declaration = statement.declaration ?? statement;
       const declared: [string, AnyNode][] = [];
       if (declaration.type === "TSModuleDeclaration") {
-        if (!declaration.declare && hasNamespaceRuntime(declaration.body)) {
+        if (!declaration.declare && !isErasedNamespaceBody(declaration.body)) {
           let id = declaration.id;
           while (id?.type === "TSQualifiedName") id = id.left;
           if (id?.type === "Identifier") declared.push([id.name, declaration]);
@@ -123,17 +123,16 @@ export function findStatementBinding(scope: AnyNode, name: string): AnyNode {
   return bindings.get(name) ?? null;
 }
 
-function hasNamespaceRuntime(body: AnyNode): boolean {
-  if (body?.type === "TSModuleDeclaration") return hasNamespaceRuntime(body.body);
+function isErasedNamespaceBody(body: AnyNode): boolean {
+  if (body?.type === "TSModuleDeclaration") return isErasedNamespaceBody(body.body);
   if (body?.type !== "TSModuleBlock") return false;
-  return body.body.some((statement: AnyNode) => {
-    if (statement.type === "ExportNamedDeclaration" && statement.exportKind === "type")
-      return false;
-    const declaration = statement.declaration ?? statement;
-    if (declaration.type === "TSModuleDeclaration") return hasNamespaceRuntime(declaration.body);
-    return (
-      declaration.type !== "TSInterfaceDeclaration" && declaration.type !== "TSTypeAliasDeclaration"
-    );
+  return body.body.every((statement: AnyNode) => {
+    const { declaration } = statement;
+    if (!declaration && statement.type === "ExportNamedDeclaration")
+      return statement.exportKind === "type";
+    const member = declaration ?? statement;
+    if (member.type === "TSModuleDeclaration") return isErasedNamespaceBody(member.body);
+    return member.type === "TSInterfaceDeclaration" || member.type === "TSTypeAliasDeclaration";
   });
 }
 

@@ -86,6 +86,11 @@ test.each([
   ["declare namespace Object { export function assign(...args: unknown[]): void }", true],
   ["namespace Object { export function assign(...args: unknown[]) {} }", false],
   ["namespace Object.Runtime { export const value = 'local' }", false],
+  [
+    `namespace Object { export declare let assign: (target: object, source: object) => object }
+Object.assign = target => target`,
+    false,
+  ],
 ])("resolves Object.assign with %s", async (namespace, reports) => {
   const file = "server/api/locale.get.ts";
   expect(
