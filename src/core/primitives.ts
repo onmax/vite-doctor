@@ -272,6 +272,8 @@ export interface NuxtProjectInfo {
   routeRules?: Record<string, unknown>;
   /** `false` when the Nuxt app disables server-side rendering. */
   ssr?: boolean;
+  /** Whether the resolved config or statically known defaults enable SSR for hydration rules. */
+  hydrationSsr?: boolean;
   runtimeConfig?: unknown;
   serverDirs: {
     api: string[];
@@ -652,12 +654,12 @@ export interface ComponentUsageFact {
    * `<Transition>`, or a `<slot>` outlet, whose rendered parent element is elsewhere. Absent at
    * the template root.
    */
-  parent?: { tag: string; element: boolean };
+  parent?: { tag: string; element: boolean; foreign?: true };
   /**
    * Tags of the components, built-ins such as `<Transition>`, and `<slot>` outlets that enclose
    * the usage in the same template, outermost first.
    */
-  wrappers: string[];
+  wrappers: Array<{ tag: string; defaultSlot: boolean; shadowed: boolean }>;
   /** Names that an enclosing `v-for` or `v-slot` introduces, or a `v-for` on this element. */
   scope: string[];
   /** Whether this element or an ancestor has `v-for`. */
@@ -690,6 +692,10 @@ export interface ComponentRootBranch {
 
 /** What a Vue SFC declares in `<script setup>` and renders in its template. */
 export interface ComponentFacts {
+  /** The script calls Nuxt's inline route rules macro. */
+  definesRouteRules?: true;
+  /** Names declared in a static Options API or defineOptions components registry. */
+  localComponents?: string[];
   /** Props `<script setup>` declares, or `undefined` when they cannot be read statically. */
   props?: ComponentPropFact[];
   /** The name `const props = defineProps()` binds. */
@@ -746,6 +752,10 @@ export interface ComponentUsageEdge {
   target?: string;
   /** How Doctor resolved `target`. */
   resolvedBy?: "import" | "nuxt-components";
+  /** Mode applied by Nuxt to this auto-import or `#components` binding, not to direct imports. */
+  nuxtMode?: "client" | "server" | "all";
+  /** This usage is inside a recognized client-only default slot. */
+  clientOnlySlot?: true;
 }
 
 export interface ComponentNode {

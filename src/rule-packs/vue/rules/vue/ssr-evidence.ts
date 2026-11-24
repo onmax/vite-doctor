@@ -37,12 +37,27 @@ export function vueSsrEvidence(
  * `ssr` is false, but a route rule can turn SSR off for routes Doctor cannot map to components, so
  * an app with route rules Doctor cannot read, or with one that sets `ssr: false`, has no evidence.
  */
-export function hydrationEvidence(ctx: RuleContext, relativePath: string): string | undefined {
-  const owner = owningPackage(ctx, relativePath);
-  const nuxt = nuxtAppOf(ctx, relativePath, owner?.root ?? ".");
+export function hydrationEvidence(
+  ctx: RuleContext,
+  relativePath: string,
+  appsWithInlineRules: ReadonlySet<NuxtProjectInfo>,
+): string | undefined {
+  const nuxt = hydrationNuxtApp(ctx, relativePath);
   if (!nuxt) return vueSsrEvidence(ctx, relativePath);
-  if (nuxt.ssr === false || !routeRulesKeepSsr(nuxt.routeRules)) return undefined;
-  return "the Nuxt app renders it on the server, since ssr is not false";
+  if (
+    nuxt.hydrationSsr !== true ||
+    appsWithInlineRules.has(nuxt) ||
+    !routeRulesKeepSsr(nuxt.routeRules)
+  )
+    return undefined;
+  return "the Nuxt app enables SSR and has no known route-level SSR opt-out";
+}
+
+export function hydrationNuxtApp(
+  ctx: RuleContext,
+  relativePath: string,
+): NuxtProjectInfo | undefined {
+  return nuxtAppOf(ctx, relativePath, owningPackage(ctx, relativePath)?.root ?? ".");
 }
 
 function routeRulesKeepSsr(rules: Record<string, unknown> | undefined): boolean {

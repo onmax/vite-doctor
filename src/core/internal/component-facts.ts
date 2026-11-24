@@ -80,6 +80,8 @@ export function createComponentFactsCollector(
   readScriptDeclarations(facts, descriptor, scriptAst, rangeOf);
   return {
     visitScript(node) {
+      if (node.type === "CallExpression" && node.callee?.name === "defineRouteRules")
+        facts.definesRouteRules = true;
       if (node.type === "ImportDeclaration") {
         importEnd = node.end;
         return;
@@ -187,6 +189,16 @@ function readScriptDeclarations(
       : fromSetup;
   };
   const inherit = option("inheritAttrs");
+  const components = option("components");
+  if (
+    components !== "absent" &&
+    components !== "unknown" &&
+    components.value?.type === "ObjectExpression"
+  ) {
+    facts.localComponents = components.value.properties
+      .map(propertyKey)
+      .filter((name: unknown): name is string => typeof name === "string");
+  }
   facts.inheritAttrs =
     inherit === "absent"
       ? true
@@ -627,7 +639,7 @@ function walkChild(
   scope: string[],
   inFor: boolean,
   parent: ComponentUsageFact["parent"],
-  wrappers: string[],
+  wrappers: ComponentUsageFact["wrappers"],
 ): void {
   if (node.type === TemplateNodeType.TEXT) {
     if (node.content.trim()) walk.facts.ownMarkup = true;
@@ -648,7 +660,7 @@ function walkElement(
   scope: string[],
   inFor: boolean,
   parent: ComponentUsageFact["parent"],
-  wrappers: string[],
+  wrappers: ComponentUsageFact["wrappers"],
 ): void {
   let elementScope = scope;
   let childScope = scope;
@@ -702,9 +714,30 @@ function walkElement(
   }
   if (usage) walk.facts.usages.push(usage);
   const childParent =
-    element.tagType === 3 ? parent : { tag: element.tag, element: element.tagType === 0 };
-  const childWrappers =
-    element.tagType === 1 || element.tagType === 2 ? [...wrappers, element.tag] : wrappers;
+    element.tagType === 3
+      ? parent
+      : {
+          tag: element.tag,
+          element: element.tagType === 0,
+          ...(element.ns !== 0 && { foreign: true as const }),
+        };
+  const slot = findTemplateDirective(element, "slot");
+  const defaultSlot = !slot?.arg || (slot.arg.isStatic && slot.arg.content === "default");
+  let childWrappers = wrappers;
+  if (element.tagType === 1 || element.tagType === 2) {
+    childWrappers = [
+      ...wrappers,
+      {
+        tag: element.tag,
+        defaultSlot,
+        shadowed: tagCandidates(element.tag).some((tag) => elementScope.includes(tag)),
+      },
+    ];
+  } else if (element.tagType === 3 && slot && !defaultSlot && !parent?.element) {
+    const wrapper = wrappers.at(-1);
+    if (wrapper && wrapper.tag === parent?.tag)
+      childWrappers = [...wrappers.slice(0, -1), { ...wrapper, defaultSlot: false }];
+  }
   for (const child of element.children)
     walkChild(walk, child, childScope, elementInFor, childParent, childWrappers);
 }
@@ -724,7 +757,7 @@ function createUsage(
   scope: string[],
   inFor: boolean,
   parent: ComponentUsageFact["parent"],
-  wrappers: string[],
+  wrappers: ComponentUsageFact["wrappers"],
 ): ComponentUsageFact {
   const start = element.loc.start.offset + 1;
   return {
@@ -834,4 +867,14 @@ function identifiers(content: string | undefined): string[] {
 /** Vue's prop name normalization: `active-id` and `activeId` name the same prop. */
 export function camelize(name: string): string {
   return name.replace(/-(\w)/g, (_, char: string) => char.toUpperCase());
+}
+
+export function pascalCase(tag: string): string {
+  const camel = camelize(tag);
+  return camel.charAt(0).toUpperCase() + camel.slice(1);
+}
+
+/** Names a `<script setup>` binding can have to render as `tag`. */
+export function tagCandidates(tag: string): string[] {
+  return [tag, camelize(tag), pascalCase(tag)];
 }

@@ -25,10 +25,13 @@ import { detectNuxtModuleDefinitions } from "./nuxt-module-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
 import { ProjectFileWalk, rememberProjectFileWalk, type ProjectEntry } from "./project-files.js";
 import { loadTypeScript } from "./lazy-parsers.js";
+import { pascalCase } from "./component-facts.js";
 import {
   applyRuntimeTarget,
+  autoRegisteredNuxtLayers,
   isNuxtManifestCurrent,
   readNuxtConfigGranularCachedData,
+  readNuxtConfigHydrationSsr,
   readNuxtConfigSsr,
   resolveNuxtCompatibility,
   resolveRuntimeGraph,
@@ -378,6 +381,9 @@ async function detectNuxt(
   { manifest, manifestPath, manifestCurrent, configs }: NuxtRunFacts,
 ): Promise<NuxtProjectInfo> {
   const config = readNuxtConfigText(root);
+  const manifestSsr = manifestCurrent ? manifest?.ssr : undefined;
+  const configSsr =
+    manifestSsr === undefined ? readNuxtConfigHydrationSsr(root, configs) : undefined;
   const autoImportEntries = (manifest?.autoImports ?? coreAutoImports()) as AutoImportEntry[];
   const detectedAppRoots = await detectNuxtAppRoots(root);
   const appRoots = [
@@ -392,9 +398,7 @@ async function detectNuxt(
     autoImportsAuthoritative: manifest?.autoImportEnabled !== undefined && manifestCurrent,
     autoImports: new Map(autoImportEntries.map((entry) => [entry.as ?? entry.name, entry])),
     autoImportEntries,
-    components: new Map(
-      (manifest?.components ?? []).map((component: any) => [component.name, component]),
-    ),
+    components: nuxtComponents(manifest?.components),
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
     productionBuildCache: manifestCurrent ? manifest?.productionBuildCache : undefined,
@@ -402,8 +406,12 @@ async function detectNuxt(
       manifestCurrent && typeof manifest?.granularCachedData === "boolean"
         ? { enabled: manifest.granularCachedData, source: "manifest" }
         : readNuxtConfigGranularCachedData(root, configs),
-    routeRules: manifest?.routeRules ?? readRouteRules(config.primary),
-    ssr: (manifestCurrent ? manifest?.ssr : undefined) ?? readNuxtConfigSsr(root, configs),
+    routeRules:
+      (manifestCurrent ? manifest?.routeRules : undefined) ?? readRouteRules(config.anyFormat),
+    ssr: manifestSsr ?? (configSsr === null ? readNuxtConfigSsr(root, configs) : configSsr),
+    hydrationSsr:
+      manifestSsr ??
+      (configSsr !== null && configSsr !== false && autoRegisteredNuxtLayers(root).length === 0),
     runtimeConfig: manifest?.runtimeConfig,
     serverDirs: await serverDirs(root),
     doctorConfig: manifest?.doctorConfig,
@@ -418,6 +426,26 @@ async function detectNuxt(
       manifestCurrent,
     ),
   };
+}
+
+function nuxtComponents(components: unknown[] | undefined): NuxtProjectInfo["components"] {
+  const registry: NuxtProjectInfo["components"] = new Map();
+  const ambiguous = new Set<string>();
+  for (const component of components ?? []) {
+    if (typeof component !== "object" || !component) continue;
+    const { name, file, mode } = component as Record<string, unknown>;
+    if (typeof name !== "string" || typeof file !== "string") continue;
+    const key = pascalCase(name);
+    const entry = registry.get(key);
+    if (entry && (entry.file !== file || entry.mode !== mode)) ambiguous.add(key);
+    registry.set(key, {
+      name,
+      file,
+      mode: mode === "client" || mode === "server" || mode === "all" ? mode : undefined,
+    });
+  }
+  for (const key of ambiguous) registry.delete(key);
+  return registry;
 }
 
 async function detectNuxtAppRoots(root: string): Promise<string[]> {

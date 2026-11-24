@@ -6,7 +6,7 @@ import type {
   FileFacts,
   ImportFact,
 } from "../primitives.js";
-import { camelize } from "./component-facts.js";
+import { pascalCase, tagCandidates } from "./component-facts.js";
 import { sourceFacts } from "./facts.js";
 import type { ScanSession } from "./scan-session.js";
 import { createGraphIndex, type GraphIndex } from "./workspace-graph.js";
@@ -47,18 +47,50 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
   for (const fact of facts) {
     const node = fact.component && components.get(fact.path);
     if (!node) continue;
-    const registry = nuxtComponentRegistry(session, fact.path);
+    const nuxt = session.handlesByPath.get(fact.path)?.project.nuxt;
+    const registry = nuxt?.components;
+    const findBinding = (tag: string) => {
+      const candidates = tagCandidates(tag);
+      return node.facts.imports.find((item) => candidates.includes(item.local));
+    };
     for (const usage of node.facts.usages) {
       const edge: ComponentUsageEdge = { from: fact.path, usage };
-      const binding = usage.tag.includes(".")
-        ? undefined
-        : node.facts.imports.find((item) => tagCandidates(usage.tag).includes(item.local));
-      if (binding) {
+      if (
+        usage.wrappers.some(({ tag, defaultSlot, shadowed }) => {
+          if (!defaultSlot || shadowed) return false;
+          const binding = findBinding(tag);
+          if (
+            !binding &&
+            node.facts.localComponents?.some((name) => tagCandidates(tag).includes(name))
+          )
+            return false;
+          const name = binding?.source === "#components" ? binding.imported : pascalCase(tag);
+          if (
+            binding?.source === "vue-client-only" ||
+            binding?.source === "#app/components/client-only"
+          )
+            return true;
+          if (!nuxt || name !== "ClientOnly" || (binding && binding.source !== "#components"))
+            return false;
+          const registered = registry?.get(name);
+          return (
+            !registered ||
+            /(?:^|\/)nuxt\/dist\/app\/components\/client-only(?:\.[^/]+)?$/.test(registered.file)
+          );
+        })
+      )
+        edge.clientOnlySlot = true;
+      const binding = usage.tag.includes(".") ? undefined : findBinding(usage.tag);
+      if (binding && binding.source !== "#components") {
         const target = resolveSfc(fact, binding.source, binding.imported);
         if (target) Object.assign(edge, { target, resolvedBy: "import" });
       } else {
-        const target = registry?.get(pascalCase(usage.tag).replace(/^Lazy(?=[A-Z])/, ""));
-        if (target) Object.assign(edge, { target, resolvedBy: "nuxt-components" });
+        const name = (binding?.imported ?? pascalCase(usage.tag)).replace(/^Lazy(?=[A-Z])/, "");
+        const entry = registry?.get(name);
+        if (typeof entry?.file === "string") {
+          const target = isAbsolute(entry.file) ? entry.file : resolve(session.root, entry.file);
+          Object.assign(edge, { target, resolvedBy: "nuxt-components", nuxtMode: entry.mode });
+        }
       }
       node.renders.push(edge);
       const callee = edge.target ? components.get(edge.target) : undefined;
@@ -66,6 +98,7 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       else {
         delete edge.target;
         delete edge.resolvedBy;
+        delete edge.nuxtMode;
         unresolved.push(edge);
       }
     }
@@ -138,33 +171,4 @@ function indirectSfcImports(
 
 function isSetupImport(item: ImportFact, setup: Array<{ local: string }>): boolean {
   return item.specifiers.every((name) => setup.some((binding) => binding.local === name));
-}
-
-/** Nuxt component registry entries the Project Inventory names with a file. */
-function nuxtComponentRegistry(
-  session: ScanSession,
-  file: string,
-): Map<string, string> | undefined {
-  const nuxt = session.handlesByPath.get(file)?.project.nuxt ?? session.project.nuxt;
-  if (!nuxt?.components?.size) return undefined;
-  const registry = new Map<string, string>();
-  for (const entry of nuxt.components.values()) {
-    if (typeof entry?.name !== "string" || typeof entry.file !== "string") continue;
-    registry.set(
-      pascalCase(entry.name),
-      isAbsolute(entry.file) ? entry.file : resolve(session.root, entry.file),
-    );
-  }
-  return registry.size ? registry : undefined;
-}
-
-/** Names a `<script setup>` binding can have to render as `tag`, as Vue's compiler resolves them. */
-function tagCandidates(tag: string): string[] {
-  const camel = camelize(tag);
-  return [tag, camel, camel.charAt(0).toUpperCase() + camel.slice(1)];
-}
-
-function pascalCase(tag: string): string {
-  const camel = camelize(tag);
-  return camel.charAt(0).toUpperCase() + camel.slice(1);
 }

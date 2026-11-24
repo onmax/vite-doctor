@@ -97,13 +97,22 @@ function componentFacts(value: unknown): boolean {
         strings(item.directives) &&
         strings(item.scope) &&
         typeof item.inFor === "boolean" &&
-        strings(item.wrappers) &&
+        facts(
+          item.wrappers,
+          (wrapper) =>
+            typeof wrapper.tag === "string" &&
+            typeof wrapper.defaultSlot === "boolean" &&
+            typeof wrapper.shadowed === "boolean",
+        ) &&
         (item.parent === undefined ||
           (record(item.parent) &&
             typeof item.parent.tag === "string" &&
-            typeof item.parent.element === "boolean")),
+            typeof item.parent.element === "boolean" &&
+            (item.parent.foreign === undefined || item.parent.foreign === true))),
     ) &&
-    strings(value.bindingReferences)
+    strings(value.bindingReferences) &&
+    (value.definesRouteRules === undefined || value.definesRouteRules === true) &&
+    (value.localComponents === undefined || strings(value.localComponents))
   );
 }
 

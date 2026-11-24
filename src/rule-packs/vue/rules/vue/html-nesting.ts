@@ -33,7 +33,7 @@ export function parserMovesChild(parent: string, child: string): boolean {
 const UNSETTLED_PARENTS = new Set(["head", "select", "optgroup", "option"]);
 const TABLE_PARENTS = new Set(["table", "tbody", "thead", "tfoot", "tr", "colgroup"]);
 // `<input type="hidden">` stays in a table too; Doctor does not read the type.
-const TABLE_KEPT_CHILDREN = new Set(["template", "script", "style", "input"]);
+const TABLE_KEPT_CHILDREN = new Set(["template", "script", "style", "input", "form"]);
 // The parser keeps these anywhere except under the open elements their start tag closes.
 const KEPT_OUTSIDE_CLOSERS: Record<string, Set<string>> = {
   dd: new Set(["p", "dd", "dt"]),

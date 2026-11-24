@@ -59,6 +59,7 @@ type NuxtDoctorEvidence = {
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
   pages?: NuxtDoctorManifest["pages"];
+  components?: NonNullable<NuxtApp["components"]>;
   resolvedApp?: NuxtDoctorManifest["resolvedApp"];
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
@@ -80,6 +81,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     serverInventory: undefined as Record<string, string[]> | undefined,
     serverHandlerMtimes: undefined as Record<string, number> | undefined,
     pages: undefined as NuxtDoctorManifest["pages"],
+    components: undefined as NuxtDoctorEvidence["components"],
     resolvedApp: undefined as NuxtDoctorManifest["resolvedApp"],
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
@@ -195,6 +197,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("app:templatesGenerated", async (app: NuxtApp) => {
+    evidence.components = app.components;
     const pagesResolved = Array.isArray(app.pages) || nuxt.options.pages?.enabled === false;
     evidence.pages = pagesResolved ? await flattenPages(app.pages, nuxt) : undefined;
     evidence.resolvedApp = {
@@ -391,7 +394,23 @@ export async function writeManifest(
             ),
           ].sort(),
     autoImports,
-    components: toArray(nuxt.options.components ?? nuxt._components),
+    components:
+      evidence?.components
+        ?.filter((component) => {
+          const file = relative(rootDir, component.filePath);
+          return (
+            component.pascalName === "ClientOnly" ||
+            (isAbsolute(component.filePath) &&
+              !isAbsolute(file) &&
+              !file.startsWith("../") &&
+              !file.split("/").includes("node_modules"))
+          );
+        })
+        .map((component) => ({
+          name: component.pascalName,
+          file: component.filePath,
+          mode: component._raw ? "all" : component.mode,
+        })) ?? toArray(nuxt.options.components ?? nuxt._components),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({
         root: resolve(layer.cwd ?? layer.config?.rootDir ?? rootDir),
