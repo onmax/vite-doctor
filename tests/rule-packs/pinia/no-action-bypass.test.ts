@@ -434,6 +434,34 @@ Object.assign(cart, { items: [] }, { total: 0 })`,
     },
   );
 
+  test.each([
+    { entry: null, count: 1 },
+    { entry: {}, count: 0 },
+    { entry: { module: "./entry.js" }, count: 0 },
+    { entry: { main: "./entry.js" }, count: 0 },
+    { entry: { exports: "./entry.js" }, count: 0 },
+  ])(
+    "resolves a Nuxt directory registration with package metadata $entry",
+    async ({ entry, count }) => {
+      const result = await runNuxt(
+        {
+          ...(entry && {
+            "stores/cart/package.json": JSON.stringify({ name: "fixture-cart", ...entry }),
+          }),
+          "stores/cart/index.ts": setupCart,
+          "stores/cart/index.js": "export const useCartStore = () => ({ items: [] })",
+          "stores/cart/entry.js": "export const useCartStore = () => ({ items: [] })",
+          "a.ts": nuxtWriter("useCartStore", "import { useCartStore } from '#imports'"),
+          "b.ts": nuxtWriter("useCartStore"),
+        },
+        [{ name: "useCartStore", from: "~/stores/cart" }],
+        { extensionOrders: [[".ts", ".js"]] },
+      );
+      expect(result.project.nuxt?.autoImportsAuthoritative).toBe(true);
+      expect(result.diagnostics).toHaveLength(count);
+    },
+  );
+
   test("does not guess an explicit #imports binding without a current manifest", async () => {
     const writer = nuxtWriter("useCartStore", "import { useCartStore } from '#imports'");
     const result = await runNuxt({ "a.ts": writer, "b.ts": writer }, null);

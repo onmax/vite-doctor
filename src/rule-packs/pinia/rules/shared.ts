@@ -741,6 +741,7 @@ export function storeResolver<S extends StoreDefinition>(
     if (ts !== base && isFile(ts)) return ts;
     const file = extensionFile(base, extensions, resolved, own);
     if (file !== undefined) return file;
+    if (ctx.fs.exists(`${base}/package.json`)) return null;
     return extensionFile(`${base}/index`, extensions, resolved, own);
   }
 
