@@ -61,6 +61,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0036", ruleId: "doctor/inline/unused-suppression" },
   { code: "DOC0037", ruleId: "doctor/inline/unknown-suppression-rule" },
   { code: "DOC0038", ruleId: "doctor/config/default-config-file" },
+  { code: "DOC0040", ruleId: "doctor/runtime/framework-diagnostic" },
   { code: "VUE0001", ruleId: "vue/i18n/no-untranslated-text" },
   { code: "VUE0002", ruleId: "vue/i18n/no-unused-translations" },
   { code: "VUE0003", ruleId: "vue/lifecycle/no-mutation-in-onupdated" },
@@ -144,6 +145,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0027", ruleId: "vite/config/no-url-pathname-as-fs-path" },
 
   { code: "VITE0028", ruleId: "vite/plugin/no-fragment-in-virtual-id" },
+
+  { code: "VITE0029", ruleId: "vite/hmr/no-circular-import-at-hmr-boundary" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
   { code: "TS0003", ruleId: "typescript/evidence/no-unknown-type-aliases" },

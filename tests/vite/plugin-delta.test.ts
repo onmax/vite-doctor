@@ -153,3 +153,18 @@ test("the log header names at most three changed files", () => {
     formatDelta(diffStates(previous, next), next, { ...options, changed })?.message.split("\n")[0],
   ).toBe("Vite Doctor: 1 new Diagnostic after changes to a.ts, b.ts, c.ts and 2 more");
 });
+
+test("the log header names a framework runtime report that started the run", () => {
+  const previous = stateFromRun(run({}));
+  const next = stateFromRun(run({ diagnostics: [diagnostic("A1", "warn", ["a.ts"])] }));
+  const header = (changed: string[]) =>
+    formatDelta(diffStates(previous, next), next, {
+      ...options,
+      changed,
+      reported: true,
+    })?.message.split("\n")[0];
+  expect(header([])).toBe("Vite Doctor: 1 new Diagnostic after a framework runtime report");
+  expect(header([`${root}/a.ts`])).toBe(
+    "Vite Doctor: 1 new Diagnostic after changes to a.ts and a framework runtime report",
+  );
+});

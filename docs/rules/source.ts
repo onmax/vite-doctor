@@ -6,6 +6,7 @@ import { ruleDocumentationMetadata } from "./metadata.js";
 import { ruleNavigationTitles } from "./navigation-titles.js";
 import {
   resolvedBaselineDiagnosticMetadata,
+  runtimeFrameworkDiagnosticMetadata,
   workspaceDiagnosticMetadata,
 } from "../../src/core/diagnostic-metadata.js";
 import { mcpRecommendedRuleIds } from "../../src/rule-packs/mcp/presets.js";
@@ -260,6 +261,20 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       examples: [],
       path: "/diagnostics/DOC0039",
       key: "diagnostics/DOC0039.md",
+    },
+    {
+      ...runtimeFrameworkDiagnosticMetadata,
+      title: `${runtimeFrameworkDiagnosticMetadata.code}: ${runtimeFrameworkDiagnosticMetadata.title}`,
+      docsUrl: "https://vite-doctor.onmax.me/vite",
+      pack: "vite-doctor/core",
+      framework: "vite",
+      source: "src/core/internal/runtime-diagnostics.ts",
+      sourceUrl: githubSourceUrl("src/core/internal/runtime-diagnostics.ts"),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0040",
+      key: "diagnostics/DOC0040.md",
     },
     {
       code: "DOC0022",
@@ -957,6 +972,15 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     );
     add("Vue slots", "https://vuejs.org/guide/components/slots.html");
     add("eslint-plugin-vue max-props", "https://eslint.vuejs.org/rules/max-props.html");
+  }
+
+  if (rule.id === "vite/hmr/no-circular-import-at-hmr-boundary") {
+    add("Vite HMR API", "https://vite.dev/guide/api-hmr.html");
+    add(
+      "Vue Router composition API",
+      "https://router.vuejs.org/guide/advanced/composition-api.html",
+    );
+    add("DOC0001: circular dependencies", "/diagnostics/DOC0001");
   }
 
   if (rule.id === "vue/props/no-unused-props") {

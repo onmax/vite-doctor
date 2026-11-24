@@ -17,6 +17,7 @@ import {
   type DiagnosticState,
 } from "./plugin-delta.js";
 import type { SurfaceRunInput, SurfaceRunOutcome } from "./plugin-run.js";
+import { RuntimeDiagnosticReports } from "./plugin-runtime-diagnostics.js";
 import type { BuildEnvironment, Plugin, ResolvedConfig, ViteDevServer } from "vite";
 
 type BuildTarget = Pick<BuildEnvironment, "name" | "config">;
@@ -64,7 +65,9 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
   const warningBudgets = new WeakMap<Plugin, Set<string>>();
 
   function sessionPlugin(resolved: ResolvedConfig) {
-    return resolved.plugins.find((candidate) => warningBudgets.has(candidate));
+    return (
+      resolved.environments && resolved.plugins.find((candidate) => warningBudgets.has(candidate))
+    );
   }
 
   async function checkBuild(
@@ -176,6 +179,9 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
  * report. Only the Diagnostics that changed are logged. The dev server watcher is
  * shared by every Vite environment and fires even with HMR off, so a save reruns Doctor once,
  * where `hotUpdate` would fire per environment.
+ *
+ * Framework diagnostics that browser clients report over the HMR channel join every later run as
+ * Runtime Evidence, and a new one reruns its file, or the whole project when it has no file.
  */
 class ServeDoctorRun {
   private closed = false;
@@ -184,11 +190,16 @@ class ServeDoctorRun {
   private pending = emptyChanges();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly onFileEvent = (file: string) => this.fileChanged(file);
+  private readonly runtimeDiagnostics: RuntimeDiagnosticReports;
 
   constructor(
     readonly server: ViteDevServer,
     private readonly options: ViteDoctorSurfaceOptions,
-  ) {}
+  ) {
+    this.runtimeDiagnostics = new RuntimeDiagnosticReports(server, (report) =>
+      this.runtimeDiagnosticReported(report.location?.file),
+    );
+  }
 
   startAfterListening() {
     const { middlewareMode } = this.server.config.server;
@@ -200,6 +211,7 @@ class ServeDoctorRun {
         if (this.closed) return;
         this.server.watcher.add(packageInputs(surfaceRoot(this.server.config, this.options)));
         for (const event of WATCHED_EVENTS) this.server.watcher.on(event, this.onFileEvent);
+        this.runtimeDiagnostics.listen();
         void this.execute({ changed: [] }, true);
       });
     if (host && !host.listening) host.once("listening", start);
@@ -210,20 +222,39 @@ class ServeDoctorRun {
     this.closed = true;
     clearTimeout(this.timer);
     for (const event of WATCHED_EVENTS) this.server.watcher.off(event, this.onFileEvent);
+    this.runtimeDiagnostics.close();
     this.active?.stop();
   }
 
   private fileChanged(path: string) {
     const file = resolve(path);
-    const kind = hotUpdateKind(
+    const forgot = this.runtimeDiagnostics.forget(file);
+    const kind = this.hotUpdateKind(file);
+    if (!kind) {
+      if (forgot) this.schedule(undefined);
+      return;
+    }
+    this.pending.changed.add(file);
+    this.schedule(kind === "source" ? file : undefined);
+  }
+
+  private runtimeDiagnosticReported(file: string | undefined) {
+    this.pending.reported = true;
+    this.schedule(file && this.hotUpdateKind(file) === "source" ? file : undefined);
+  }
+
+  private hotUpdateKind(file: string) {
+    return hotUpdateKind(
       surfaceRoot(this.server.config, this.options),
       surfaceConfig(this.server.config, this.options),
       file,
     );
-    if (!kind) return;
-    if (kind === "inventory") this.pending.full = true;
-    else this.pending.files.add(file);
-    this.pending.changed.add(file);
+  }
+
+  /** Queues a rerun of `file`, or of the whole project without one. */
+  private schedule(file: string | undefined) {
+    if (file) this.pending.files.add(file);
+    else this.pending.full = true;
     // A rerun that has not reported yet would miss this save, so it restarts with it.
     const active = this.active;
     if (active && !active.initial && !active.stale) {
@@ -231,6 +262,7 @@ class ServeDoctorRun {
         for (const affected of active.affected) this.pending.files.add(affected);
       } else this.pending.full = true;
       for (const changed of active.changed) this.pending.changed.add(changed);
+      if (active.reported) this.pending.reported = true;
       active.stop();
     }
     clearTimeout(this.timer);
@@ -242,12 +274,12 @@ class ServeDoctorRun {
     // A main-thread run cannot be interrupted, so the next run waits for it instead of stacking.
     if (this.active) await this.active.done;
     if (this.closed || this.timer || this.active) return;
-    const { files, full, changed } = this.pending;
+    const { files, full, changed, reported } = this.pending;
     this.pending = emptyChanges();
     // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files.
     const affected =
       full || !this.state || this.options.changed || this.options.since ? undefined : files;
-    await this.execute({ affected, changed: [...changed] });
+    await this.execute({ affected, changed: [...changed], reported });
   }
 
   private async execute(batch: RunBatch, initial = false) {
@@ -256,6 +288,7 @@ class ServeDoctorRun {
     const input: SurfaceRunInput = batch.affected
       ? { ...base, options: { ...base.options, affectedFiles: [...batch.affected] } }
       : base;
+    input.frameworkDiagnostics = this.runtimeDiagnostics.list();
     const extensions = surfaceExtensions(config, this.options);
     const done = Promise.withResolvers<void>();
     const run: ActiveRun = {
@@ -304,6 +337,7 @@ class ServeDoctorRun {
     const log = formatDelta(diffStates(previous, next), next, {
       root,
       changed: batch.changed,
+      reported: batch.reported,
       mode: this.options.mode ?? "error",
       maxWarnings: this.options.maxWarnings,
     });
@@ -339,6 +373,8 @@ interface RunBatch {
   affected?: ReadonlySet<string>;
   /** Files whose change started the run. */
   changed: string[];
+  /** A framework diagnostic reported at runtime started the run. */
+  reported?: boolean;
 }
 
 interface ActiveRun extends RunBatch {
@@ -355,6 +391,7 @@ function emptyChanges() {
     /** A changed file feeds Project Inventory for every file, so the next run is a full run. */
     full: false,
     changed: new Set<string>(),
+    reported: false,
   };
 }
 
@@ -509,6 +546,10 @@ function viteRuntimeEvidence(config: ResolvedConfig, targets?: BuildTarget[]) {
   }
   return {
     buildSsr: Boolean(config.build?.ssr),
+    clientHmr:
+      config.command === "serve" && config.server
+        ? { root: config.root, enabled: config.server.hmr !== false }
+        : undefined,
     ssrExternal: config.ssr?.external ?? [],
     ssrNoExternal: config.ssr?.noExternal ?? [],
     importResolution: {
