@@ -48,6 +48,8 @@ export interface RequestValueSources {
   maxDepth?: number;
   /** Trace the selected value, not evaluation of other fields in a local object initializer. */
   projectObjectMembers?: boolean;
+  /** Whether an operation is proven not to execute in the runtime being traced. */
+  isSkippedOperation?(node: AnyNode): boolean;
 }
 
 /** Whether evaluating `value` reads a request source, directly or through local bindings. */
@@ -243,6 +245,7 @@ function setupMemberWrite(
       if (operation.type === "UnaryExpression" && operation.operator !== "delete") continue;
       if (!affectsMember(operation.left ?? operation.argument)) continue;
     }
+    if (sources.isSkippedOperation?.(operation)) continue;
 
     latest = operation;
     const statement = enclosingExpression(operation).__doctorParent;

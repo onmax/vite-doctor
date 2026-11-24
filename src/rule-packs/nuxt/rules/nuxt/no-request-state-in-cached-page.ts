@@ -34,6 +34,12 @@ import { diagnostics } from "../../diagnostics.js";
 const RULE_ID = "nuxt/ssr/no-request-state-in-cached-page";
 const NUXT_SOURCES = /^(?:#app(?:\/.*)?|#imports|nuxt\/app)$/;
 const H3_SOURCES = /^(?:h3|nitro\/h3|nitropack\/runtime(?:\/.*)?|#imports)$/;
+const CLIENT_LIFECYCLE_HOOKS = new Set([
+  "onBeforeMount",
+  "onMounted",
+  "onBeforeUnmount",
+  "onUnmounted",
+]);
 const HEADER_COMPOSABLES = new Map([
   ["useRequestHeaders", "request headers"],
   ["useRequestHeader", "a request header"],
@@ -243,12 +249,66 @@ function renderedBinding(ctx: RuleContext, program: AnyNode, call: AnyNode) {
           programBinding: findStatementBinding,
           maxDepth: 8,
           projectObjectMembers: true,
+          isSkippedOperation: (node) => skipsSsrOperation(ctx, node),
         })
       )
         return id.name;
     }
   }
   return null;
+}
+
+function skipsSsrOperation(ctx: RuleContext, operation: AnyNode): boolean {
+  for (
+    let child = operation, parent = child.__doctorParent;
+    parent;
+    child = parent, parent = child.__doctorParent
+  ) {
+    if (parent.type === "IfStatement" || parent.type === "ConditionalExpression") {
+      const onServer = ssrFlagValue(parent.test);
+      if (
+        (onServer === false && child === parent.consequent) ||
+        (onServer === true && child === parent.alternate)
+      )
+        return true;
+    }
+    if (parent.type === "LogicalExpression" && child === parent.right) {
+      const onServer = ssrFlagValue(parent.left);
+      if (
+        (parent.operator === "&&" && onServer === false) ||
+        (parent.operator === "||" && onServer === true)
+      )
+        return true;
+    }
+    if (parent.type === "CallExpression") {
+      const callback = unwrapExpression(parent.arguments[0]);
+      if (callback?.type !== "ArrowFunctionExpression" && callback?.type !== "FunctionExpression")
+        continue;
+      if (unwrapExpression(child) !== callback) continue;
+      const hook = importedName(ctx, unwrapExpression(parent.callee), (source) => source === "vue");
+      if (hook && CLIENT_LIFECYCLE_HOOKS.has(hook)) return true;
+    }
+  }
+  return false;
+}
+
+function ssrFlagValue(expression: AnyNode): boolean | undefined {
+  const node = unwrapExpression(expression);
+  if (node?.type === "UnaryExpression" && node.operator === "!") {
+    const value = ssrFlagValue(node.argument);
+    return value === undefined ? undefined : !value;
+  }
+  if (node?.type !== "MemberExpression" || node.computed) return;
+  const object = unwrapExpression(node.object);
+  if (
+    object?.type !== "MetaProperty" ||
+    object.meta.name !== "import" ||
+    object.property.name !== "meta"
+  )
+    return;
+  const flag = node.property?.name;
+  if (flag === "client") return false;
+  if (flag === "server") return true;
 }
 
 function sources(ctx: RuleContext, composable: string) {

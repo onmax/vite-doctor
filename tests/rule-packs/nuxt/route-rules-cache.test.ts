@@ -199,6 +199,31 @@ test.each([
     0,
   ],
   [
+    "an overwrite in the client branch",
+    "preferences.theme = preferences.cookie.value; if (import.meta.client) preferences.theme = 'light'; const rendered = preferences.theme",
+    1,
+  ],
+  [
+    "an overwrite in onMounted",
+    "preferences.theme = preferences.cookie.value; onMounted(() => { preferences.theme = 'light' }); const rendered = preferences.theme",
+    1,
+  ],
+  [
+    "a client-only mutation call",
+    "preferences.theme = preferences.cookie.value; import.meta.client && Object.assign(preferences, { theme: 'light' }); const rendered = preferences.theme",
+    1,
+  ],
+  [
+    "an overwrite guarded by client or a runtime condition",
+    "preferences.theme = preferences.cookie.value; if (import.meta.client || runtimeFlag()) preferences.theme = 'light'; const rendered = preferences.theme",
+    0,
+  ],
+  [
+    "an overwrite in a local function named onMounted",
+    "const onMounted = (fn: () => void) => fn(); preferences.theme = preferences.cookie.value; onMounted(() => { preferences.theme = 'light' }); const rendered = preferences.theme",
+    0,
+  ],
+  [
     "a mutation call through an alias",
     "preferences.theme = preferences.cookie.value; const alias = preferences; Object.assign(alias, { theme: 'light' }); const rendered = preferences.theme",
     0,
