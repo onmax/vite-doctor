@@ -1,4 +1,4 @@
-import { walkScriptLocal, type AnyNode } from "../../../../core/rule-authoring.js";
+import { walkScriptLocal, type AnyNode } from "../rule-authoring.js";
 
 // Execution analysis resolves the same bindings and writes for every candidate node, so each root
 // is indexed once and reused. This relies on script ASTs staying immutable after parsing.

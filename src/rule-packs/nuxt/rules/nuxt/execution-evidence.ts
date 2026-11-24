@@ -20,7 +20,7 @@ import {
   findStatementBinding,
   memoizeAnalysis,
   scriptNodesOfType,
-} from "./script-index.js";
+} from "../../../../core/internal/script-index.js";
 
 export type NuxtExecutionEvidence =
   | "setup-time"
