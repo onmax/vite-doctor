@@ -1,11 +1,5 @@
-import type { RuleContext, TemplateExpressionNode } from "../../../../core/index.js";
-import {
-  templateDirectiveBindings,
-  templateExpressionReferences,
-  TemplateNodeType,
-  walkTemplate,
-} from "../../../../core/rule-authoring.js";
 import { AnyNode, createRule, report } from "./shared.js";
+import { renderTemplateReads } from "./template-reads.js";
 import { indexedScript, valueParent, vueApiCall } from "./vue-api.js";
 import { vueSsrEvidence } from "./ssr-evidence.js";
 import { createSsrValueTracer, unwrap, type SsrValue } from "./ssr-values.js";
@@ -93,48 +87,6 @@ export const noSetupStateFromBrowserRead = createRule({
     };
   },
 });
-
-function renderTemplateReads(ctx: RuleContext): Set<string> {
-  const reads = new Set<string>();
-  const root = ctx.file.templateAst;
-  if (!root) return reads;
-  const empty = new Set<string>();
-  const scopes = new WeakMap<
-    object,
-    { outer: Set<string>; loop: Set<string>; body: Set<string> }
-  >();
-  function collect(expression: TemplateExpressionNode | undefined, locals: Set<string>) {
-    const ast = expression && ctx.helpers.parseTemplateExpression(expression);
-    if (!ast) return;
-    for (const { id, mode } of templateExpressionReferences(ast)) {
-      if (mode !== "w" && !locals.has(id.name)) reads.add(id.name);
-    }
-  }
-  walkTemplate(root, (node, parent) => {
-    const scope = parent && scopes.get(parent);
-    const inherited = scope?.body ?? empty;
-    if (node.type === TemplateNodeType.ELEMENT) {
-      let loop = inherited;
-      let slotBindings: string[] = [];
-      for (const prop of node.props) {
-        if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
-        if (prop.name === "for") loop = new Set([...loop, ...templateDirectiveBindings(prop)]);
-        if (prop.name === "slot") slotBindings = templateDirectiveBindings(prop);
-      }
-      const body = slotBindings.length ? new Set([...loop, ...slotBindings]) : loop;
-      scopes.set(node, { outer: inherited, loop, body });
-    }
-    if (node.type === TemplateNodeType.INTERPOLATION) collect(node.content, inherited);
-    if (node.type !== TemplateNodeType.DIRECTIVE) return;
-    const outer = scope?.outer ?? empty;
-    const loop = scope?.loop ?? empty;
-    if (node.arg && !node.arg.isStatic) collect(node.arg, loop);
-    if (node.name === "for") collect(node.forParseResult?.source, outer);
-    else if (node.name === "if" || node.name === "else-if") collect(node.exp, outer);
-    else if (node.name !== "on" && node.name !== "slot") collect(node.exp, loop);
-  });
-  return reads;
-}
 
 function describe(value: SsrValue): string {
   return value.via.length

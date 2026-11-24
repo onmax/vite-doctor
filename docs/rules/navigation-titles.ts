@@ -228,6 +228,7 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "vue/reactivity/no-ref-as-operand": "Refs as operands",
   "vue/reactivity/no-setup-props-destructure": "Props destructuring",
+  "vue/reactivity/no-shallow-ref-deep-mutation": "shallowRef mutation",
   "vue/reactivity/prefer-composable-ref-return": "Composable refs",
   "vue/reactivity/no-constant-computed": "Constant computed",
   "vue/reactivity/prefer-computed-over-watch-assign": "Watcher-derived refs",
@@ -253,6 +254,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/template/require-v-for-key": "Missing v-for keys",
   "vue/watch/no-async-watcheffect-after-await-read": "Reads after await",
   "vue/watch/no-onwatchercleanup-after-await": "onWatcherCleanup",
+  "vue/watch/no-property-read-source": "Property sources",
   "vue/watch/require-post-flush-for-dom-read": "DOM reads",
   "vue/watch/require-side-effect-cleanup": "Watcher cleanup",
 };
