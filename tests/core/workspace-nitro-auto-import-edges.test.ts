@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { importModule } from "nuxt/kit";
+import { pathToFileURL } from "node:url";
 import { dirname, join, relative } from "pathe";
 import { expect, test } from "vite-plus/test";
 import {
@@ -46,6 +47,7 @@ async function manifestFor(root: string, options: ManifestOptions) {
     ],
     nitroAutoImportEnabled: options.nitroAutoImportEnabled ?? true,
     nitroAutoImportScan: await captureNitroAutoImportScan(
+      await import("unimport"),
       unimport.version,
       imports,
       await unimport.getImportMap(),
@@ -80,7 +82,7 @@ function writeFixture(root: string, files: Record<string, string>) {
   }
 }
 
-async function analyze(root: string) {
+async function analyze(root: string, hostExtensions = false) {
   let graph: ImportGraph | undefined;
   const capture = createRule({
     meta: {
@@ -105,6 +107,7 @@ async function analyze(root: string) {
     analyses: "graph",
     rules: `test/import-graph,${cycleRule}`,
     cache: false,
+    hostExtensions,
     extensions: [
       defineDoctorExtension({
         name: "capture",
@@ -290,6 +293,7 @@ async function withNitroManifest(
     imports?: Record<string, unknown>;
     beforeInit?: (root: string) => void;
     afterInit?: (root: string) => void;
+    scannerVersion?: string;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "doctor-nitro-auto-import-manifest-"));
@@ -302,9 +306,51 @@ async function withNitroManifest(
       "app/composables/useApp.ts": "export const useApp = () => 1\n",
       ...files,
     });
-    const { createUnimport } = await importModule<{
-      createUnimport: (options: unknown) => { init: () => Promise<void> };
-    }>("unimport", { url: new URL(import.meta.resolve("nuxt")) });
+    const nuxtPackage = createRequire(import.meta.url).resolve("nuxt/package.json");
+    mkdirSync(join(root, "node_modules"));
+    if (options.scannerVersion) {
+      const nuxt = "node_modules/nuxt";
+      const server = `${nuxt}/node_modules/@nuxt/nitro-server`;
+      const nitro = `${server}/node_modules/nitropack`;
+      const scanner = `${nitro}/node_modules/unimport`;
+      const version = options.scannerVersion;
+      const installed = pathToFileURL(createRequire(import.meta.url).resolve("unimport")).href;
+      writeFixture(root, {
+        [`${nuxt}/package.json`]: JSON.stringify({
+          name: "nuxt",
+          version: "4.5.2",
+          dependencies: { "@nuxt/nitro-server": "4.5.2" },
+        }),
+        [`${server}/package.json`]: JSON.stringify({
+          name: "@nuxt/nitro-server",
+          version: "4.5.2",
+          dependencies: { nitropack: "2.13.4" },
+        }),
+        [`${nitro}/package.json`]: JSON.stringify({
+          name: "nitropack",
+          version: "2.13.4",
+          dependencies: { unimport: "^6.2.0" },
+        }),
+        [`${scanner}/package.json`]: JSON.stringify({
+          name: "unimport",
+          version,
+          main: "index.mjs",
+        }),
+        [`${scanner}/index.mjs`]: `import { createUnimport as create } from ${JSON.stringify(installed)};
+export { scanDirExports } from ${JSON.stringify(installed)};
+export const version = ${JSON.stringify(version)};
+export const createUnimport = (options) => ({ ...create(options), version });`,
+      });
+    } else {
+      symlinkSync(dirname(nuxtPackage), join(root, "node_modules/nuxt"), "junction");
+    }
+    const projectRequire = createRequire(join(root, "package.json"));
+    const nuxtRequire = createRequire(projectRequire.resolve("nuxt/package.json"));
+    const serverRequire = createRequire(nuxtRequire.resolve("@nuxt/nitro-server/package.json"));
+    const nitroRequire = createRequire(serverRequire.resolve("nitropack/package.json"));
+    const { createUnimport: createNitroUnimport }: typeof import("unimport") = await import(
+      pathToFileURL(nitroRequire.resolve("unimport")).href
+    );
     const scanDirs = [join(root, "server"), ...(options.extraScanDir ? [join(root, "extra")] : [])];
     const imports = {
       autoImport: true,
@@ -312,7 +358,7 @@ async function withNitroManifest(
       imports: [{ name: "useA", as: "useServerA", from: "#server/utils/a" }],
       ...options.imports,
     };
-    const unimport = createUnimport(imports);
+    const unimport = createNitroUnimport(imports);
     options.beforeInit?.(root);
     await unimport.init();
     options.afterInit?.(root);
@@ -343,6 +389,26 @@ async function withNitroManifest(
     rmSync(root, { recursive: true, force: true });
   }
 }
+
+test("trusted analysis replays the scanner installed under Nitro, not Doctor's version", () =>
+  withNitroManifest(
+    {},
+    async (root) => {
+      const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
+      expect(manifest.nitroAutoImportScan?.version).toBe("6.5.0");
+      const trusted = await analyze(root, true);
+      expect(trusted.cycles).toHaveLength(1);
+      expect(trusted.gaps).toEqual([]);
+      const standalone = await analyze(root);
+      expect(standalone.cycles).toEqual([]);
+      expect(standalone.gaps).toEqual([expect.stringContaining("--host-extensions")]);
+      writeFixture(root, { "server/utils/b.ts": `${useB}\nexport const newUtil = 1\n` });
+      expect((await analyze(root, true)).gaps).toEqual([
+        expect.stringContaining("Nitro's auto-import scan inputs changed"),
+      ]);
+    },
+    { scannerVersion: "6.5.0" },
+  ));
 
 test("the Nuxt module records Nitro's resolved registry, which closes the server cycle", () =>
   withNitroManifest({}, async (root) => {

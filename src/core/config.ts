@@ -50,10 +50,8 @@ export interface DoctorRunOptions {
   maxWarnings?: number;
   extensions?: DoctorExtensionInput[];
   /**
-   * Load Doctor Extension entries that host integrations recorded in their Project Inventory,
-   * such as `doctor:extendExtensions` registrations in the Nuxt manifest. This executes code
-   * registered by the host, so CLI Surfaces only enable it through the host command or an
-   * explicit flag.
+   * Trust host code, such as `doctor:extendExtensions` registrations and Nitro's installed
+   * auto-import scanner. CLI Surfaces only enable this through the host command or an explicit flag.
    */
   hostExtensions?: boolean;
   runtimeTarget?: RuntimeTarget;

@@ -49,7 +49,7 @@ class CliConfigError extends Error {
 }
 
 export interface CliSurfaceOptions {
-  /** Trust Doctor Extension entries registered by the host, as the Nuxt Doctor Command does. */
+  /** Trust host code as the Nuxt Doctor Command does. */
   hostExtensions?: boolean;
 }
 
@@ -270,7 +270,7 @@ function doctorProcessEntry(): URL | undefined {
 }
 
 const hostExtensionsHelp =
-  "Load Doctor Extension entries registered by host integrations, such as Nuxt modules.";
+  "Trust host Doctor Extensions and the project's Nitro auto-import scanner.";
 
 function applyHostExtensions(
   options: DoctorRunOptions,

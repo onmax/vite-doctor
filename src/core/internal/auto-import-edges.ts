@@ -10,7 +10,7 @@ import type {
 } from "../primitives.js";
 import type { ScanSession } from "./scan-session.js";
 import { loadSourceFile, walkAstFacts } from "./facts.js";
-import { isNitroAutoImportScanCurrent } from "./nitro-auto-import-scan.js";
+import { verifyNitroAutoImportScan } from "./nitro-auto-import-scan.js";
 import {
   analyzeScript,
   scopeDialect,
@@ -107,9 +107,16 @@ async function collect(
     let registry = registries.get(key);
     if (!registry) {
       const scan = server ? nitro?.scan : undefined;
-      if (scan && !(await isNitroAutoImportScanCurrent(scan))) {
-        gaps.set(key, unprovenNitroAutoImportsGap(session, nuxt, true));
-        continue;
+      if (scan) {
+        const verification = await verifyNitroAutoImportScan(
+          scan,
+          handle.project.runtimeGraph?.packages.nitro?.packageJsonPath,
+          session.options.hostExtensions === true,
+        );
+        if (verification !== "current") {
+          gaps.set(key, unprovenNitroAutoImportsGap(session, nuxt, verification));
+          continue;
+        }
       }
       const aliases = server ? [] : appAliases(nuxt);
       registry = projectOwnedAutoImports(entries, aliases, resolveFile, factsById);
@@ -343,19 +350,26 @@ function unprovenAutoImportsGap(session: ScanSession, nuxt: NuxtProjectInfo): Ev
 function unprovenNitroAutoImportsGap(
   session: ScanSession,
   nuxt: NuxtProjectInfo,
-  scanChanged = false,
+  verification?: "stale" | "requires-trust",
 ): EvidenceGap {
   const manifest = manifestFile(session, nuxt);
-  const reason = scanChanged
-    ? `Nitro's auto-import scan inputs changed or could not be read after ${manifest} captured them`
-    : nuxt.nitroAutoImports?.entries === undefined
-      ? `${manifest} does not record Nitro's auto-imports`
-      : nuxt.nitroAutoImports.authoritative
-        ? `${manifest} does not record verified evidence for Nitro's auto-import scan or transform`
-        : `${manifest} is stale`;
+  let reason: string;
+  if (verification === "requires-trust")
+    reason = `Verifying ${manifest} requires the project's Nitro auto-import scanner`;
+  else if (verification === "stale")
+    reason = `Nitro's auto-import scan inputs changed or could not be read after ${manifest} captured them`;
+  else if (nuxt.nitroAutoImports?.entries === undefined)
+    reason = `${manifest} does not record Nitro's auto-imports`;
+  else if (nuxt.nitroAutoImports.authoritative)
+    reason = `${manifest} does not record verified evidence for Nitro's auto-import scan or transform`;
+  else reason = `${manifest} is stale`;
+  const recovery =
+    verification === "requires-trust"
+      ? "Use the Nuxt Doctor command, or pass --host-extensions if you trust the project."
+      : "Update vite-doctor and run nuxt prepare, then rerun Doctor.";
   return {
     source: "vite-doctor/nuxt",
-    message: `${reason}, so Doctor cannot prove which names Nitro auto-imports into server files, and the import graph has no server auto-import edges. Cycles through server utils that call each other without an import go unreported. Update vite-doctor and run nuxt prepare, then rerun Doctor.`,
+    message: `${reason}, so Doctor cannot prove which names Nitro auto-imports into server files, and the import graph has no server auto-import edges. Cycles through server utils that call each other without an import go unreported. ${recovery}`,
     files: [manifest],
   };
 }

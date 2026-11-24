@@ -1,9 +1,36 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Import, UnimportOptions } from "unimport";
 import type { NuxtDoctorManifest } from "../primitives.js";
 
 type Scan = NonNullable<NuxtDoctorManifest["nitroAutoImportScan"]>;
+type Scanner = Pick<typeof import("unimport"), "createUnimport" | "scanDirExports" | "version">;
+
+export function resolveNitroScanner(nitroPackage: string | undefined) {
+  if (!nitroPackage) return;
+  try {
+    const require = createRequire(nitroPackage);
+    const { name, version } = JSON.parse(
+      readFileSync(require.resolve("unimport/package.json"), "utf8"),
+    );
+    if (name === "unimport" && typeof version === "string")
+      return { entry: pathToFileURL(require.resolve("unimport")).href, version };
+  } catch {
+    return undefined;
+  }
+}
+
+export async function loadNitroScanner(entry: string): Promise<Scanner | undefined> {
+  try {
+    return await import(entry);
+  } catch {
+    return undefined;
+  }
+}
+
 function fingerprint(entries: unknown) {
   return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
 }
@@ -22,13 +49,14 @@ function runtimeFingerprint(map: Map<string, Import>) {
 }
 
 export async function captureNitroAutoImportScan(
+  scanner: Scanner | undefined,
   nitroVersion: string,
   options: Partial<UnimportOptions>,
   map: Map<string, Import>,
 ): Promise<Scan | undefined> {
   try {
-    const { createUnimport, version } = await import("unimport");
-    if (nitroVersion !== version) return;
+    if (!scanner || nitroVersion !== scanner.version) return;
+    const { createUnimport, version } = scanner;
     const dirs = options.dirs?.map((dir) => (typeof dir === "string" ? dir : { ...dir })) ?? [];
     const { cwd = process.cwd(), types, filePatterns, fileFilter } = options.dirsScanOptions ?? {};
     const scanOptions = { cwd: resolve(cwd), types, filePatterns: filePatterns?.slice() };
@@ -62,13 +90,21 @@ export async function captureNitroAutoImportScan(
   }
 }
 
-export async function isNitroAutoImportScanCurrent(scan: Scan): Promise<boolean> {
+export async function verifyNitroAutoImportScan(
+  scan: Scan,
+  nitroPackage: string | undefined,
+  trustHost: boolean,
+): Promise<"current" | "stale" | "requires-trust"> {
   try {
-    const { scanDirExports, version } = await import("unimport");
-    if (scan.version !== version) return false;
+    const installed = resolveNitroScanner(nitroPackage);
+    if (nitroPackage && installed?.version !== scan.version) return "stale";
+    const scanner =
+      installed && trustHost ? await loadNitroScanner(installed.entry) : await import("unimport");
+    if (scanner?.version !== scan.version)
+      return installed && !trustHost ? "requires-trust" : "stale";
     const decisions = scan.decisions && new Map(scan.decisions);
     const entries = scan.dirs.length
-      ? await scanDirExports(scan.dirs, {
+      ? await scanner.scanDirExports(scan.dirs, {
           ...scan.options,
           fileFilter:
             decisions &&
@@ -79,8 +115,8 @@ export async function isNitroAutoImportScanCurrent(scan: Scan): Promise<boolean>
             }),
         })
       : [];
-    return scanFingerprint(entries) === scan.fingerprint;
+    return scanFingerprint(entries) === scan.fingerprint ? "current" : "stale";
   } catch {
-    return false;
+    return "stale";
   }
 }

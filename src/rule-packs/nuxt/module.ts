@@ -4,8 +4,13 @@ import { fileURLToPath } from "node:url";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
+  resolveRuntimeGraph,
 } from "../../core/internal/runtime-graph.js";
-import { captureNitroAutoImportScan } from "../../core/internal/nitro-auto-import-scan.js";
+import {
+  captureNitroAutoImportScan,
+  loadNitroScanner,
+  resolveNitroScanner,
+} from "../../core/internal/nitro-auto-import-scan.js";
 import {
   createIsIgnored,
   defineNuxtModule,
@@ -104,7 +109,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
-    evidence.nitroAutoImports = await captureNitroAutoImports(nitro);
+    evidence.nitroAutoImports = await captureNitroAutoImports(nitro, nuxt.options.rootDir);
     const captureHandlers = async () => {
       const environments = new Set([
         nitro.options.dev ? "dev" : "prod",
@@ -548,7 +553,7 @@ function autoImportIdentity(entry: {
   return JSON.stringify([entry.name, entry.as, entry.from, entry.type === true, entry.priority]);
 }
 
-async function captureNitroAutoImports(nitro: any): Promise<NitroAutoImportEvidence> {
+async function captureNitroAutoImports(nitro: any, root: string): Promise<NitroAutoImportEvidence> {
   const imports = nitro.options.imports;
   const enabled = Boolean(imports) && imports.autoImport !== false;
   const evidence: NitroAutoImportEvidence = {
@@ -562,11 +567,16 @@ async function captureNitroAutoImports(nitro: any): Promise<NitroAutoImportEvide
     ...entry,
     from: resolveAlias(entry.from, nitro.options.alias ?? {}),
   }));
-  evidence.nitroAutoImportScan = await captureNitroAutoImportScan(
-    nitro.unimport.version,
-    imports,
-    map,
-  );
+  const nitroPackage = resolveRuntimeGraph(root, "nuxt").packages.nitro?.packageJsonPath;
+  const installed = resolveNitroScanner(nitroPackage);
+  if (installed && installed.version === nitro.unimport.version) {
+    evidence.nitroAutoImportScan = await captureNitroAutoImportScan(
+      await loadNitroScanner(installed.entry),
+      installed.version,
+      imports,
+      map,
+    );
+  }
 
   const serialize = (value: string | RegExp | Array<string | RegExp> | undefined) =>
     (Array.isArray(value) ? value : value === undefined ? [] : [value]).map((pattern) => {
