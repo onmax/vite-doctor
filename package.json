@@ -93,6 +93,7 @@
     "semver": "catalog:prod",
     "std-env": "catalog:prod",
     "typescript": "catalog:analysis",
+    "unimport": "catalog:prod",
     "vue-eslint-parser": "catalog:analysis",
     "yaml": "catalog:prod"
   },

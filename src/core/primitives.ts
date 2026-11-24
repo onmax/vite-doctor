@@ -380,7 +380,13 @@ export interface NuxtDoctorManifest {
   nitroAutoImports?: unknown[];
   /** Resolved Nitro scan roots, separate from the server handler freshness inventory. */
   nitroScanDirs?: string[];
-  nitroAutoImportScan?: { patterns: string[]; fingerprint: string };
+  nitroAutoImportScan?: {
+    version: string;
+    dirs: Array<string | { glob: string; types?: boolean }>;
+    options: { cwd: string; types?: boolean; filePatterns?: string[] };
+    decisions?: Array<[file: string, included: boolean]>;
+    fingerprint: string;
+  };
   nitroAutoImportTransform?: {
     include: Array<{ glob: string } | { source: string; flags: string }>;
     exclude: Array<{ glob: string } | { source: string; flags: string }>;

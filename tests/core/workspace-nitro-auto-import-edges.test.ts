@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { importModule } from "nuxt/kit";
 import { dirname, join, relative } from "pathe";
@@ -10,7 +10,8 @@ import {
   type ImportGraph,
 } from "../../src/core/index.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
-import { nitroAutoImportScanFingerprint } from "../../src/core/internal/nitro-auto-import-scan.ts";
+import { captureNitroAutoImportScan } from "../../src/core/internal/nitro-auto-import-scan.ts";
+import { createUnimport } from "unimport";
 import nuxtDoctorModule from "../../src/rule-packs/nuxt/module.ts";
 
 const cycleRule = "workspace/dead-code/circular-dependency";
@@ -24,9 +25,11 @@ interface ManifestOptions {
   nitroAutoImports?: ((root: string) => unknown[]) | false;
 }
 
-function manifestFor(root: string, options: ManifestOptions) {
+async function manifestFor(root: string, options: ManifestOptions) {
   const serverDir = join(root, options.serverDir ?? "server");
-  const patterns = [join(serverDir, "utils/**/*")];
+  const imports = { dirs: [join(serverDir, "utils/**/*")] };
+  const unimport = createUnimport(imports);
+  await unimport.init();
   const nitroAutoImports = options.nitroAutoImports ?? (() => []);
   return JSON.stringify({
     nuxtVersion: "4.4.6",
@@ -42,7 +45,11 @@ function manifestFor(root: string, options: ManifestOptions) {
       { name: "useApp", from: join(root, "app/composables/useApp.ts"), kind: "app" },
     ],
     nitroAutoImportEnabled: options.nitroAutoImportEnabled ?? true,
-    nitroAutoImportScan: { patterns, fingerprint: nitroAutoImportScanFingerprint(patterns) },
+    nitroAutoImportScan: await captureNitroAutoImportScan(
+      unimport.version,
+      imports,
+      await unimport.getImportMap(),
+    ),
     nitroAutoImportTransform: {
       include: [{ source: String.raw`\.[jt]sx?$`, flags: "" }],
       exclude: [],
@@ -142,7 +149,7 @@ async function run(files: Record<string, string>, options: ManifestOptions = {})
       "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "4.4.6" } }),
       ...files,
     });
-    writeFixture(root, { ".nuxt/doctor.manifest.json": manifestFor(root, options) });
+    writeFixture(root, { ".nuxt/doctor.manifest.json": await manifestFor(root, options) });
     return await analyze(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -281,6 +288,8 @@ async function withNitroManifest(
     appAutoImport?: boolean;
     extraScanDir?: boolean;
     imports?: Record<string, unknown>;
+    beforeInit?: (root: string) => void;
+    afterInit?: (root: string) => void;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "doctor-nitro-auto-import-manifest-"));
@@ -304,7 +313,9 @@ async function withNitroManifest(
       ...options.imports,
     };
     const unimport = createUnimport(imports);
+    options.beforeInit?.(root);
     await unimport.init();
+    options.afterInit?.(root);
     const hooks = new Map<string, (payload?: any) => unknown>();
     await nuxtDoctorModule({}, {
       _version: "4.4.6",
@@ -412,4 +423,60 @@ test("adding an export to an existing Nitro scan input invalidates the captured 
       expect(cycles).toEqual([]);
       expect(gaps).toEqual([expect.stringContaining("Nitro's auto-import scan inputs changed")]);
     },
+  ));
+
+test("Nitro's cached registry cannot certify files edited by an earlier init hook", () =>
+  withNitroManifest(
+    { "server/utils/b.ts": "export const other = 1\n" },
+    async (root) => {
+      const { autoImportEdges, gaps } = await analyze(root);
+      expect(autoImportEdges).toEqual([]);
+      expect(gaps).toEqual([expect.stringContaining("Nitro's auto-import scan")]);
+    },
+    {
+      afterInit: (root) =>
+        writeFixture(root, { "server/utils/b.ts": `export const other = 1\n${useB}` }),
+    },
+  ));
+
+test.each(["star re-exports", "symlinked directories"])("Nitro scan evidence follows %s", (kind) =>
+  withNitroManifest(
+    {
+      "server/utils/b.ts": "export const other = 1\n",
+      "server/lib/b.ts": "export const yetAnother = 2\n",
+      ...(kind === "star re-exports"
+        ? { "server/utils/barrel.ts": 'export * from "../lib/b"\n' }
+        : {}),
+    },
+    async (root) => {
+      expect((await analyze(root)).gaps).toEqual([]);
+      writeFixture(root, { "server/lib/b.ts": `export const yetAnother = 2\n${useB}` });
+      const { autoImportEdges, gaps } = await analyze(root);
+      expect(autoImportEdges).toEqual([]);
+      expect(gaps).toEqual([expect.stringContaining("Nitro's auto-import scan inputs changed")]);
+    },
+    {
+      beforeInit: (root) => {
+        if (kind === "symlinked directories")
+          symlinkSync(join(root, "server/lib"), join(root, "server/utils/linked"), "junction");
+      },
+    },
+  ),
+);
+
+test("editing a file excluded by Nitro's scan filter does not invalidate the cycle", () =>
+  withNitroManifest(
+    { "server/utils/helper.test.ts": "export const helper = 1\n" },
+    async (root, rewriteManifest) => {
+      writeFixture(root, { "server/utils/helper.test.ts": "export const helper = 2\n" });
+      const { cycles, gaps } = await analyze(root);
+      expect(cycles).toHaveLength(1);
+      expect(gaps).toEqual([]);
+      writeFixture(root, { "server/utils/new.ts": "export const newUtil = 1\n" });
+      await rewriteManifest();
+      expect((await analyze(root)).gaps).toEqual([
+        expect.stringContaining("Nitro's auto-import scan inputs changed"),
+      ]);
+    },
+    { imports: { dirsScanOptions: { fileFilter: (file: string) => !file.endsWith(".test.ts") } } },
   ));

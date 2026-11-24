@@ -10,7 +10,7 @@ import type {
 } from "../primitives.js";
 import type { ScanSession } from "./scan-session.js";
 import { loadSourceFile, walkAstFacts } from "./facts.js";
-import { nitroAutoImportScanFingerprint } from "./nitro-auto-import-scan.js";
+import { isNitroAutoImportScanCurrent } from "./nitro-auto-import-scan.js";
 import {
   analyzeScript,
   scopeDialect,
@@ -107,7 +107,7 @@ async function collect(
     let registry = registries.get(key);
     if (!registry) {
       const scan = server ? nitro?.scan : undefined;
-      if (scan && nitroAutoImportScanFingerprint(scan.patterns) !== scan.fingerprint) {
+      if (scan && !(await isNitroAutoImportScanCurrent(scan))) {
         gaps.set(key, unprovenNitroAutoImportsGap(session, nuxt, true));
         continue;
       }
@@ -351,7 +351,7 @@ function unprovenNitroAutoImportsGap(
     : nuxt.nitroAutoImports?.entries === undefined
       ? `${manifest} does not record Nitro's auto-imports`
       : nuxt.nitroAutoImports.authoritative
-        ? `${manifest} does not record Nitro's auto-import scan or transform evidence`
+        ? `${manifest} does not record verified evidence for Nitro's auto-import scan or transform`
         : `${manifest} is stale`;
   return {
     source: "vite-doctor/nuxt",

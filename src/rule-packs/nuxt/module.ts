@@ -5,7 +5,7 @@ import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
 } from "../../core/internal/runtime-graph.js";
-import { nitroAutoImportScanFingerprint } from "../../core/internal/nitro-auto-import-scan.js";
+import { captureNitroAutoImportScan } from "../../core/internal/nitro-auto-import-scan.js";
 import {
   createIsIgnored,
   defineNuxtModule,
@@ -557,19 +557,16 @@ async function captureNitroAutoImports(nitro: any): Promise<NitroAutoImportEvide
   };
   if (!enabled || !nitro.unimport?.getImportMap) return evidence;
 
-  const map: Map<string, unknown> = await nitro.unimport.getImportMap();
+  const map = await nitro.unimport.getImportMap();
   evidence.nitroAutoImports = normalizeAutoImports([...map.values()]).map((entry) => ({
     ...entry,
     from: resolveAlias(entry.from, nitro.options.alias ?? {}),
   }));
-  const { normalizeScanDirs } = await importModule<{
-    normalizeScanDirs: (dirs: unknown[], options: unknown) => Array<{ glob: string }>;
-  }>("unimport", { url: new URL(import.meta.resolve("nuxt")) });
-  const patterns = normalizeScanDirs(imports.dirs ?? [], imports.dirsScanOptions).map(
-    ({ glob }) => glob,
+  evidence.nitroAutoImportScan = await captureNitroAutoImportScan(
+    nitro.unimport.version,
+    imports,
+    map,
   );
-  const fingerprint = nitroAutoImportScanFingerprint(patterns);
-  if (fingerprint !== undefined) evidence.nitroAutoImportScan = { patterns, fingerprint };
 
   const serialize = (value: string | RegExp | Array<string | RegExp> | undefined) =>
     (Array.isArray(value) ? value : value === undefined ? [] : [value]).map((pattern) => {
