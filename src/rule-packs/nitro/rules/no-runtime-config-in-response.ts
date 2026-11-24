@@ -2,7 +2,6 @@ import type { RuleContext } from "../../../core/index.js";
 import { fileTextScope, type ScriptScope } from "../../../core/internal/script-scope.js";
 import { isNitroHandlerFile } from "./nitro-config.js";
 import {
-  constInitializer,
   nitroHandlerFunctions,
   reportNode,
   resolvedVariable,
@@ -88,23 +87,21 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
     isConfigCall(node) ||
     (node?.type === "Identifier" && configs.has(resolvedVariable(scope, node)));
   const leaks: AnyNode[] = [];
-  const expanding = new Set<AnyNode>();
   const leak = (value: AnyNode, directResponse = false): void => {
     const node = stripAwait(value);
     if (!node) return;
     if (isWholeConfig(node)) return void leaks.push(node);
     if (node.type === "ObjectExpression") {
-      const visitProperties = (object: AnyNode, overwritten: Set<string>) => {
-        if (expanding.has(object)) return;
-        expanding.add(object);
+      const visitProperties = (object: AnyNode, overwritten: Set<string>): boolean => {
         for (const property of [...object.properties].reverse()) {
           if (property.type === "SpreadElement") {
             const argument = stripAwait(property.argument);
-            const initializer = stripAwait(constInitializer(scope, argument));
-            if (argument?.type === "ObjectExpression") visitProperties(argument, overwritten);
-            else if (initializer?.type === "ObjectExpression")
-              visitProperties(initializer, new Set(overwritten));
-            else leak(argument);
+            if (argument?.type === "ObjectExpression") {
+              if (!visitProperties(argument, overwritten)) return false;
+            } else {
+              if (isWholeConfig(argument)) leaks.push(argument);
+              return false;
+            }
             continue;
           }
           const key = property.computed
@@ -112,10 +109,11 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
               ? propertyKey(property.key)
               : null
             : propertyKey(property.key);
-          if (key === null || !overwritten.has(key)) leak(property.value);
-          if (key !== null) overwritten.add(key);
+          if (key === null) return false;
+          if (!overwritten.has(key)) leak(property.value);
+          overwritten.add(key);
         }
-        expanding.delete(object);
+        return true;
       };
       visitProperties(node, new Set());
       return;
@@ -164,15 +162,13 @@ function isSerializer(scope: ScriptScope, call: AnyNode, directResponse: boolean
   if (callee?.type !== "MemberExpression" || callee.computed) return false;
   const method = callee.property?.name;
   const replacer = unwrapExpression(call.arguments[1]);
-  const hasStaticAllowlist =
-    replacer?.type === "ArrayExpression" &&
-    replacer.elements.every(
-      (element: AnyNode) =>
-        element?.type === "Literal" &&
-        (typeof element.value === "string" || typeof element.value === "number"),
-    );
+  const unfiltered =
+    !replacer ||
+    replacer.type === "Literal" ||
+    (replacer.type === "UnaryExpression" && replacer.operator === "void") ||
+    isGlobal(scope, replacer, "undefined");
   return (
-    (method === "stringify" && isGlobal(scope, callee.object, "JSON") && !hasStaticAllowlist) ||
+    (method === "stringify" && isGlobal(scope, callee.object, "JSON") && unfiltered) ||
     (directResponse && method === "json" && isGlobal(scope, callee.object, "Response"))
   );
 }

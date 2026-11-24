@@ -58,13 +58,37 @@ test.each([
 });
 
 test.each([
+  "const keys = ['public', 'siteUrl']; return JSON.stringify(config, keys)",
+  "return JSON.stringify(config, (_, value) => ({ public: value.public }))",
   "return JSON.stringify(config, (_, value) => value)",
   "const keys = ['public']; keys.push(...Object.keys(config)); return JSON.stringify(config, keys)",
   "return JSON.stringify(config, [...Object.keys(config)])",
+  "const override = { debug: false }; return { debug: config, ...override }",
   "const override = { debug: false }; Reflect.deleteProperty(override, 'debug'); return { debug: config, ...override }",
   "const override = { debug: false }; Reflect.deleteProperty(override, 'debug'); return { ...{ debug: config }, ...override }",
+  "const override = { debug: false }; return { debug: config, ...{ ...override } }",
+  "return { debug: config, [String('debug')]: false }",
+  "return { ...config, ...config.public }",
+])("does not report when the whole-config flow is unknown: %s", async (body) => {
+  expect(
+    await run({
+      "server/api/config.ts": `export default defineEventHandler(() => {
+    const config = useRuntimeConfig()
+    ${body}
+  })`,
+    }),
+  ).toEqual([]);
+});
+
+test.each([
+  "return JSON.stringify(config)",
+  "return JSON.stringify(config, null, 2)",
+  "return new Response(JSON.stringify(config, undefined, 2))",
+  "return { ...{ debug: config } }",
+  "const override = { debug: false }; return { ...override, debug: config }",
+  "const override = { debug: false }; return { debug: config, ...override, cfg: config }",
   "const response = { previous: false ? { ...response } : null }; return { ...response, cfg: config }",
-])("reports config despite uncertain filtering or recursive spreads: %s", async (body) => {
+])("reports proven whole-config flows: %s", async (body) => {
   expect(
     await run({
       "server/api/config.ts": `export default defineEventHandler(() => {
