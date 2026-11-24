@@ -1030,6 +1030,11 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");
   }
 
+  if (rule.id === "nuxt/state/no-diverging-usestate-init") {
+    add("Nuxt clearNuxtState", "https://nuxt.com/docs/4.x/api/utils/clear-nuxt-state");
+    add("Nuxt state management", "https://nuxt.com/docs/4.x/getting-started/state-management");
+  }
+
   if (rule.id === "nuxt/hydration/no-time-dependent-render-without-nuxttime-or-clientonly") {
     add("NuxtTime", "https://nuxt.com/docs/4.x/api/components/nuxt-time");
     add("ClientOnly", "https://nuxt.com/docs/4.x/api/components/client-only");
