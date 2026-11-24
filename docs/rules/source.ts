@@ -959,6 +959,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("eslint-plugin-vue max-props", "https://eslint.vuejs.org/rules/max-props.html");
   }
 
+  if (rule.id === "vite/build/no-node-builtin-in-client-chunk") {
+    add(
+      "Vite: module externalized for browser compatibility",
+      "https://vite.dev/guide/troubleshooting.html#module-externalized-for-browser-compatibility",
+    );
+    add("Vite Environment API", "https://vite.dev/guide/api-environment.html");
+  }
+
   if (rule.id === "vite/hmr/no-circular-import-at-hmr-boundary") {
     add("Vite HMR API", "https://vite.dev/guide/api-hmr.html");
     add(

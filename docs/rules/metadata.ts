@@ -1801,6 +1801,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/build/no-node-builtin-in-client-chunk": {
+    description:
+      "Reports project modules that import a Node built-in and end up in a chunk of a client environment of vite build, with the import chain from the client entry.",
+    why: "In an environment whose consumer is client, Vite resolves Node built-ins such as node:fs to its empty __vite-browser-external module instead of failing the build, so readFileSync or exec are undefined in the browser and the server code around them ships to every visitor. Doctor reads Build Evidence that the Vite Plugin Surface collects in generateBundle: the modules of each output chunk, Vite's importers for each module, and the consumer Vite resolved for each environment. It reports a module only when all of these hold: the environment's consumer is client, the module's rendered code in the chunk still reads the stub, and the module's own source imports a Node built-in at runtime. An import.meta.env.SSR branch that the bundler removes from the client chunk does not count, and neither does a package that maps itself to false in its browser field. An environment without a consumer, such as a host build that predates the Environment API, gives no client proof, so Doctor stays quiet. The import chain comes from Vite's module graph; when it has no path from an entry, the Diagnostic says the evidence is partial. The rule runs only in vite build with the doctor() plugin; the CLI Surface has no Build Evidence.",
+    recommendedReplacement:
+      "Import the module only from server entries or server routes. Move the values the client needs into a module that imports no Node built-in, or load the server code behind an import.meta.env.SSR branch with a dynamic import() so the client build drops it.",
+    examples: [
+      {
+        title: "Keep server-only helpers out of client imports",
+        language: "ts",
+        invalid:
+          "// src/db.ts\nimport { readFileSync } from 'node:fs'\nexport const loadUsers = () => JSON.parse(readFileSync('users.json', 'utf8'))\n\n// src/main.ts (client entry)\nimport { loadUsers } from './db'\nrender(loadUsers())",
+        valid:
+          "// src/server.ts (server entry)\nimport { loadUsers } from './db'\nexport const users = loadUsers()\n\n// src/main.ts (client entry)\nconst users = await fetch('/api/users').then((response) => response.json())\nrender(users)",
+      },
+    ],
+  },
   "vite/config/no-url-pathname-as-fs-path": {
     description:
       "Reports new URL(..., import.meta.url).pathname used as a file path in Vite and Vitest config files and Node-side plugin code.",
