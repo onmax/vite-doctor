@@ -46,6 +46,16 @@ const REQUEST_READERS = new Set([
   "useSession",
   "toWebRequest",
 ]);
+const SCALAR_REQUEST_READERS = new Set([
+  "getRouterParam",
+  "getHeader",
+  "getRequestHeader",
+  "getCookie",
+  "getRequestIP",
+  "getRequestHost",
+  "getRequestProtocol",
+  "getRequestPath",
+]);
 const HANDLER_FACTORIES = new Set([
   "defineEventHandler",
   "eventHandler",
@@ -173,7 +183,7 @@ function writtenValues(reference: AnyNode, shape: Shape): AnyNode[] {
     isObjectAssign(parent.callee)
   ) {
     const slots = new Map<string, AnyNode>();
-    for (const source of parent.arguments.slice(1)) collectFixedProperties(source, slots, parent);
+    for (const source of parent.arguments.slice(1)) collectFixedProperties(source, slots, [parent]);
     return [...slots.values()];
   }
   return [];
@@ -182,8 +192,9 @@ function writtenValues(reference: AnyNode, shape: Shape): AnyNode[] {
 function collectFixedProperties(
   source: AnyNode,
   slots: Map<string, AnyNode>,
-  snapshot: AnyNode,
+  copyPath: AnyNode[],
   depth = 0,
+  evidence: "inline" | "fresh" | "scalar" = "inline",
 ): void {
   let object = unwrapExpression(source);
   let declaration: AnyNode;
@@ -194,6 +205,7 @@ function collectFixedProperties(
     object = unwrapExpression(binding.init);
     depth++;
   }
+  const snapshot = copyPath[0];
   if (
     depth > 5 ||
     object?.type !== "ObjectExpression" ||
@@ -202,17 +214,64 @@ function collectFixedProperties(
     slots.clear();
     return;
   }
+  if (declaration && evidence !== "scalar")
+    evidence = keepsSourceSlots(declaration, object, snapshot, copyPath) ? "fresh" : "scalar";
   for (const property of object.properties) {
     if (property.type === "SpreadElement") {
-      collectFixedProperties(property.argument, slots, property, depth + 1);
+      collectFixedProperties(
+        property.argument,
+        slots,
+        [property, ...copyPath],
+        depth + 1,
+        evidence,
+      );
       continue;
     }
     const key = staticPropertyKey(property.key, property.computed);
     if (key === undefined) slots.clear();
     else if (property.kind !== "init") slots.delete(key);
-    else if (key !== "__proto__" || property.computed || property.shorthand || property.method)
-      slots.set(key, property.value);
+    else if (key !== "__proto__" || property.computed || property.shorthand || property.method) {
+      if (
+        evidence === "inline" ||
+        (evidence === "fresh"
+          ? isFreshCopyValue(property.value)
+          : isScalarCopyValue(property.value))
+      )
+        slots.set(key, property.value);
+      else slots.delete(key);
+    }
   }
+}
+
+function isScalarCopyValue(input: AnyNode, depth = 0): boolean {
+  const value = unwrapExpression(input);
+  if (!value || depth > 5) return false;
+  if (value.type === "Literal") return !value.regex;
+  if (value.type === "TemplateLiteral") return true;
+  if (value.type === "CallExpression")
+    return SCALAR_REQUEST_READERS.has(h3Name(unwrapExpression(value.callee)) ?? "");
+  if (value.type !== "Identifier") return false;
+  const binding = resolveLexicalBinding(value);
+  return isLocalConst(binding) && isScalarCopyValue(binding.init, depth + 1);
+}
+
+function isFreshCopyValue(input: AnyNode, depth = 0): boolean {
+  if (depth > 5) return false;
+  if (isScalarCopyValue(input)) return true;
+  const value = unwrapExpression(input);
+  if (value?.type === "ArrayExpression")
+    return value.elements.every(
+      (element: AnyNode) => !element || isFreshCopyValue(element, depth + 1),
+    );
+  if (value?.type !== "ObjectExpression") return false;
+  const keys = new Set<string>();
+  return value.properties.every((property: AnyNode) => {
+    if (property.type !== "Property" || property.kind !== "init") return false;
+    const key = staticPropertyKey(property.key, property.computed);
+    if (key === undefined || key === "__proto__" || keys.has(key)) return false;
+    keys.add(key);
+    return isFreshCopyValue(property.value, depth + 1);
+  });
 }
 
 function isLocalConst(binding: AnyNode) {
@@ -228,6 +287,7 @@ function keepsSourceSlots(
   binding: AnyNode,
   object: AnyNode,
   snapshot: AnyNode,
+  copyPath?: AnyNode[],
   allocation = binding,
   depth = 0,
 ): boolean {
@@ -245,7 +305,7 @@ function keepsSourceSlots(
     if (resolveLexicalBinding(node) !== binding) return true;
 
     if (parent?.type === "VariableDeclarator" && parent.init === use)
-      return keepsSourceSlots(parent, object, snapshot, allocation, depth + 1);
+      return keepsSourceSlots(parent, object, snapshot, copyPath, allocation, depth + 1);
     if (parent?.type === "MemberExpression" && parent.object === use) {
       const member = outerExpression(parent);
       const access = member.__doctorParent;
@@ -255,8 +315,9 @@ function keepsSourceSlots(
         isLaterStatement(access, snapshot, allocation)
       )
         return true;
-      return isPlainPropertyRead(parent, access, object);
+      return !copyPath && isPlainPropertyRead(parent, access, object);
     }
+    if (copyPath && !copyPath.includes(parent)) return false;
     if (parent?.type === "SpreadElement") return parent.__doctorParent?.type === "ObjectExpression";
     return (
       parent?.type === "CallExpression" &&

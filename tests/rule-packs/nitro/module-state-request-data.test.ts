@@ -353,3 +353,50 @@ export default defineEventHandler((event) => {
     }),
   ).toEqual([]);
 });
+
+test.each([
+  ["a nested write", "patch.current.sort = 'default'; Object.assign(shared, patch)", false],
+  [
+    "a nested alias escape",
+    "const current = patch.current; rewrite(current); Object.assign(shared, patch)",
+    false,
+  ],
+  [
+    "a nested write after a shallow snapshot",
+    "const snapshot = { ...patch }; patch.current.sort = 'default'; Object.assign(shared, snapshot)",
+    false,
+  ],
+  [
+    "a write through a different shallow copy",
+    "const other = { ...patch }; other.current.sort = 'default'; Object.assign(shared, patch)",
+    false,
+  ],
+  ["an unexposed source", "Object.assign(shared, patch)", true],
+  ["an unexposed snapshot", "Object.assign(shared, { ...patch })", true],
+])("checks nested Object.assign values with %s", async (_, copy, reports) => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const shared = {}
+const rewrite = (value) => { value.sort = 'default' }
+export default defineEventHandler((event) => {
+  const patch = { current: { sort: getCookie(event, 'sort') } }
+  ${copy}
+})`,
+    }),
+  ).toEqual(reports ? [{ code: "NITRO0035", file, line: 1 }] : []);
+});
+
+test("keeps scalar copy evidence when a sibling nested value escapes", async () => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const shared = {}
+export default defineEventHandler((event) => {
+  const patch = { current: { sort: getQuery(event).sort }, session: getCookie(event, 'session') }
+  patch.current.sort = 'default'
+  Object.assign(shared, { ...patch })
+})`,
+    }),
+  ).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+});
