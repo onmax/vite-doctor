@@ -161,6 +161,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/cache/require-varies-for-header-read": {
+    description:
+      "Reports request headers and cookies read inside a cached event handler when Nitro strips them from the request it passes to that handler. Covers getHeader, getRequestHeader, getCookie, parseCookies, event.headers.get, event.req.headers.get, and event.node.req.headers with a literal name. Nitro 2 handlers are defineCachedEventHandler and cachedEventHandler; Nitro 3 handlers are defineCachedHandler from nitro/cache. Dynamic options, spreads, headersOnly, Nitro 3 shouldBypassCache, and unresolved Nitro 3 cache defaults are evidence gaps and stay quiet.",
+    why: "Nitro narrows the request to the headers listed in varies. Nitro 3 also keeps host, keeps authorization when allowAuthorization is true, and filters cookies to the names in a nonempty allowCookies list, even if varies includes cookie. Nitro 3 uses the live request when it bypasses the cache, for example for non-GET/HEAD methods or requests with a Range header. Without a varying input in the cache key, requests for different tenants, languages, or users can share one response.",
+    recommendedReplacement:
+      "Add each header the handler reads to varies to pass it through to the cached handler. Nitro's default cache key varies by these headers. If you supply a custom getKey, include the inputs the response varies on in that key, or remove it to use Nitro's default key. In Nitro 3, use allowCookies to pass through named cookies instead of varying on the whole cookie header.",
+    examples: [
+      {
+        title: "List the header in varies",
+        language: "ts",
+        invalid:
+          "export default defineCachedEventHandler((event) => {\n  const tenant = getHeader(event, 'x-tenant')\n  return loadDashboard(tenant)\n}, { maxAge: 60 })",
+        valid:
+          "export default defineCachedEventHandler((event) => {\n  const tenant = getHeader(event, 'x-tenant')\n  return loadDashboard(tenant)\n}, { maxAge: 60, varies: ['x-tenant'] })",
+      },
+    ],
+  },
   "nitro/config/require-absolute-generated-paths": {
     description:
       "Finds Nitro handlers and plugins that Vite plugins, Nuxt modules or Nitro modules register with relative paths.",
@@ -330,6 +347,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/middleware/no-implicit-response": {
+    description:
+      "Reports server middleware whose default-exported handler returns the result of an assignment, such as an arrow body `event.context.user = user`, `Object.assign(event.context, ...)`, or `return event.context.x = value`. Only files Nitro scans from middleware/ are checked. Explicit return values, such as createError() or sendRedirect(), are left alone. Unresolved layers, environment overrides, custom scan suffixes, ignore options, and .nuxtignore are evidence gaps.",
+    why: "Nitro runs every middleware before the route handler and treats any value a middleware returns, other than undefined, as the response. An arrow function with an assignment body returns the assigned value, so a middleware that only meant to set event.context ends every request with that value and the route handler never runs.",
+    recommendedReplacement:
+      "For an arrow expression body, use a block body that performs the assignment without returning a value. For a return statement, evaluate the assignment and then use a bare return on the same branch to preserve the early exit.",
+    examples: [
+      {
+        title: "Use a block body for context assignments",
+        language: "ts",
+        invalid:
+          "export default defineEventHandler((event) => event.context.user = getUser(event))",
+        valid:
+          "export default defineEventHandler((event) => {\n  event.context.user = getUser(event)\n})",
+      },
+    ],
+  },
   "nitro/routes/require-default-handler": {
     description:
       "Requires every file in a statically resolved Nitro api/ or routes/ directory to default-export an event handler and keep helpers out of the route tree. Default exports that can never serve an event, such as plain objects, constants, classes, or functions that take data instead of an event, count as missing handlers. List exports a build step reads on purpose, such as route metadata, in the allowedExports option. The rule stays disabled for ambiguous configs or configured scanDirs, apiDir, or routesDir until resolved Runtime Evidence is available.",
@@ -344,6 +378,23 @@ export const ruleDocumentationMetadata = {
           "// server/api/_db.ts\nexport function getDb() {\n  return drizzle(useRuntimeConfig().databaseUrl)\n}",
         valid:
           "// server/utils/db.ts\nexport function getDb() {\n  return drizzle(useRuntimeConfig().databaseUrl)\n}\n\n// server/api/users.get.ts\nexport default defineEventHandler(() => getDb().select().from(users))",
+      },
+    ],
+  },
+  "nitro/routes/no-shadowed-file-handler": {
+    description:
+      "Reports a route file when another file in the same api/ or routes/ directory resolves to the same route, method, and environment, and Nitro keeps the other one. A method-less handler next to a method handler is not reported, and neither are overrides across Nuxt layers. Unresolved layers, environment overrides, custom scan directories or suffixes, and ignore options are evidence gaps.",
+    why: "Nitro registers the first scanned file for each route, method, and environment and silently drops the rest. Two files such as api/users.ts and api/users/index.ts both serve /api/users, so one of them never runs and edits to it have no effect.",
+    recommendedReplacement:
+      "Delete or rename one of the files. Keep one handler per route, or give each file a method suffix when they handle different methods.",
+    examples: [
+      {
+        title: "Keep one file per route",
+        language: "ts",
+        invalid:
+          "// server/api/users.ts\nexport default defineEventHandler(() => listUsers())\n\n// server/api/users/index.ts\nexport default defineEventHandler(() => listActiveUsers())",
+        valid:
+          "// server/api/users.get.ts\nexport default defineEventHandler(() => listUsers())\n\n// server/api/users.post.ts\nexport default defineEventHandler((event) => createUser(event))",
       },
     ],
   },
@@ -860,6 +911,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/fetch/handler-must-return": {
+    description: "Finds a useAsyncData or useLazyAsyncData handler that never returns a value.",
+    why: "A handler that resolves to undefined leaves no data in the payload. During hydration, Nuxt skips the fetch if the payload contains data or an error; otherwise the handler can run again and Nuxt warns in development (NUXT_E3006). Arrow functions with an expression body count as returning, and handlers that always throw are not reported. Doctor skips client-only calls, apps with ssr: false, calls with server: false, immediate: false, enabled: false, a transform, pick, default, or getCachedData option, and options it cannot read. Side effects inside the handler are reported separately by nuxt/async-data-handler-pure (NUXT0017).",
+    recommendedReplacement:
+      "Return the data the page renders. If the handler only runs side effects, return null, or move the side effects out of useAsyncData.",
+    examples: [
+      {
+        title: "Return the fetched data",
+        language: "ts",
+        invalid:
+          "const store = useCartStore()\nawait useAsyncData('cart', async () => {\n  store.items = await $fetch('/api/cart')\n})",
+        valid: "const { data: items } = await useAsyncData('cart', () => $fetch('/api/cart'))",
+      },
+    ],
+  },
   "nuxt/fetch/keyed-composable-registration-required": {
     description:
       "Finds Nuxt fetch code that can be written with a clearer framework-supported pattern.",
@@ -1246,6 +1312,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/plugins/no-island-disabled-dependency": {
+    description:
+      "Finds a plugin whose dependsOn names a plugin that sets env: { islands: false }, in an app that renders server component islands.",
+    why: "When Nuxt renders an island it skips plugins with env: { islands: false }, but a plugin that depends on one still waits for it. The dependency never resolves, so the dependent plugin silently never runs in island renders, and whatever it provides is missing there. Doctor reports only object-syntax plugins with unique literal names, and only when experimental.componentIslands is not turned off and the app has an island component or a top-level server page that Nuxt registers as an island. Doctor requires current registrations from nuxt prepare with vite-doctor/nuxt and records an evidence gap when it cannot verify them. Client-only plugins are not reported because islands render on the server.",
+    recommendedReplacement:
+      "Drop the dependency if the plugin can run without it, or set env: { islands: false } on the dependent plugin too.",
+    examples: [
+      {
+        title: "Opt the dependent plugin out of islands too",
+        language: "ts",
+        invalid:
+          "// app/plugins/auth.ts\nexport default defineNuxtPlugin({\n  name: 'auth',\n  env: { islands: false },\n  setup() {},\n})\n\n// app/plugins/api.ts\nexport default defineNuxtPlugin({\n  name: 'api',\n  dependsOn: ['auth'],\n  setup() {},\n})",
+        valid:
+          "// app/plugins/api.ts\nexport default defineNuxtPlugin({\n  name: 'api',\n  dependsOn: ['auth'],\n  env: { islands: false },\n  setup() {},\n})",
+      },
+    ],
+  },
   "nuxt/plugins/no-subdir-auto-registration-assumption": {
     description:
       "Flags subdir auto registration assumption in Nuxt plugins code before it leaks into runtime behavior.",
@@ -1459,6 +1542,23 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: "const apiBase = process.env.NUXT_PUBLIC_API_BASE",
         valid: "const apiBase = useRuntimeConfig().public.apiBase",
+      },
+    ],
+  },
+  "nuxt/runtime/no-private-runtime-config-in-client": {
+    description:
+      "Finds client code that reads a private runtimeConfig key from useRuntimeConfig().",
+    why: 'Nuxt sends only runtimeConfig.public and runtimeConfig.app to the browser, so any other top-level key is undefined there even though its type says string. In development Nuxt warns "Could not access `key`" (NUXT_E1003). Doctor checks components, pages, layouts, client plugins, and route middleware, using the private keys in the Doctor manifest. It skips server-only branches and plugins. It also skips server-registered components and conventional islands unless the import graph shows a raw file import that can bypass the registration. Component reports use heuristic-medium confidence because Doctor does not prove which parents render them. Without runtimeConfig evidence Doctor records an evidence gap instead.',
+    recommendedReplacement:
+      "Move the key under runtimeConfig.public if it is safe to expose. Otherwise read it in a server route and fetch the result, or guard the read with import.meta.server.",
+    examples: [
+      {
+        title: "Keep private config on the server",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nconst config = useRuntimeConfig()\nconst { data } = await useFetch('https://api.example.com/items', {\n  headers: { Authorization: config.apiSecret },\n})\n</script>",
+        valid:
+          "<script setup lang=\"ts\">\nconst { data } = await useFetch('/api/items')\n</script>",
       },
     ],
   },
@@ -3149,6 +3249,40 @@ export const ruleDocumentationMetadata = {
           '<!-- store.ts -->\n<script lang="ts">\nexport const store = reactive({ count: 0 })\nexport function increment() {\n  store.count++\n}\n</script>\n\n<!-- Counter.vue and ResetButton.vue -->\n<script setup lang="ts">\nimport { store } from \'./store\'\n</script>\n\n<template>\n  <button @click="store.count++">{{ store.count }}</button>\n  <button @click="store.count = 0">Reset</button>\n</template>',
         valid:
           '<!-- store.ts -->\n<script lang="ts">\nexport const store = reactive({ count: 0 })\nexport function increment() {\n  store.count++\n}\nexport function reset() {\n  store.count = 0\n}\n</script>\n\n<!-- Counter.vue and ResetButton.vue -->\n<script setup lang="ts">\nimport { increment, reset, store } from \'./store\'\n</script>\n\n<template>\n  <button @click="increment()">{{ store.count }}</button>\n  <button @click="reset()">Reset</button>\n</template>',
+      },
+    ],
+  },
+  "vue/reactivity/no-shallow-ref-deep-mutation": {
+    description:
+      "Finds in-place changes to a plain object, array, `Map`, or `Set` inside a `const` `shallowRef()`, such as `list.value.push(item)`. Doctor looks for a template, `computed()`, or watcher in the same file that reads the ref, and for a change that can run after setup, such as one in a mounted hook, a post-flush watcher, a timer, or a template event handler. It leaves synchronous setup writes, accessors, and receivers that may have been replaced with reactive values alone. A `triggerRef()` call for the ref, a `.value` assignment in the same function, a template that replaces the ref's value, or passing the ref to code Doctor cannot follow keeps it quiet. Refs imported from another file are not followed.",
+    why: "A `shallowRef()` tracks only its `.value` property: the getter tracks `value` and only the `.value` setter or `triggerRef()` triggers. The object inside stays a plain object, so pushing to an array or setting a property in it notifies nothing. The template, `computed()` values, and watchers that read the ref keep showing the old contents until something unrelated re-runs them, and a `computed()` keeps returning its cached result.",
+    recommendedReplacement:
+      "Call `triggerRef(ref)` after changing the value in place, or assign a new object or array to `.value`, such as `list.value = [...list.value, item]`. Use `ref()` when the value should track nested changes.",
+    examples: [
+      {
+        title: "Replace the value or trigger the ref",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nimport { shallowRef } from 'vue'\n\nconst todos = shallowRef<string[]>([])\n\nfunction add(todo: string) {\n  todos.value.push(todo)\n}\n</script>\n\n<template>\n  <button @click=\"add('Write docs')\">Add</button>\n  <p>{{ todos.length }} todos</p>\n</template>",
+        valid:
+          "<script setup lang=\"ts\">\nimport { shallowRef } from 'vue'\n\nconst todos = shallowRef<string[]>([])\n\nfunction add(todo: string) {\n  todos.value = [...todos.value, todo]\n}\n</script>\n\n<template>\n  <button @click=\"add('Write docs')\">Add</button>\n  <p>{{ todos.length }} todos</p>\n</template>",
+      },
+    ],
+  },
+  "vue/watch/no-property-read-source": {
+    description:
+      "Finds direct property reads passed as a `watch()` source or as an entry in a source array, when the property is known to hold a primitive. Doctor looks at `defineProps()` declarations and local `const` objects initialized with `reactive()` and a literal. It leaves refs, getter functions, intentional deep watches of reactive objects, and unresolved values alone. Destructured props are covered by `vue/reactivity/defineprops-watch-getter`.",
+    why: "`watch(props.userId, cb)` evaluates `props.userId` once and passes its current value. A primitive is not a valid watch source, so Vue cannot subscribe to changes to the property. A getter lets Vue track the property read and run the callback when the value changes.",
+    recommendedReplacement:
+      "Pass a getter, `watch(() => props.userId, cb)`. In a source array, wrap only the primitive property read: `watch([() => props.userId, otherSource], cb)`.",
+    examples: [
+      {
+        title: "Watch a prop through a getter",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nimport { watch } from 'vue'\n\nconst props = defineProps<{ userId: string }>()\n\nwatch(props.userId, (id) => loadUser(id))\n</script>",
+        valid:
+          "<script setup lang=\"ts\">\nimport { watch } from 'vue'\n\nconst props = defineProps<{ userId: string }>()\n\nwatch(() => props.userId, (id) => loadUser(id))\n</script>",
       },
     ],
   },

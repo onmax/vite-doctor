@@ -33,13 +33,16 @@ export const noCircularImportAtHmrBoundary = createRule({
         // and literal import() that survives TypeScript's type erasure.
         const successors = new Map<string, HmrImportEdge[]>();
         for (const edge of graph.edges) {
-          const { kind } = edge;
-          if (kind === "auto-import" || !edge.to || edge.to === edge.from || edge.typeOnly)
+          if (
+            edge.autoImportBundle === "nitro" ||
+            !edge.to ||
+            edge.to === edge.from ||
+            edge.typeOnly
+          )
             continue;
-          const writtenEdge = { ...edge, kind };
           const list = successors.get(edge.from);
-          if (list) list.push(writtenEdge);
-          else successors.set(edge.from, [writtenEdge]);
+          if (list) list.push(edge);
+          else successors.set(edge.from, [edge]);
         }
         const groups = computeSccs(graph.files, (file) =>
           (successors.get(file) ?? []).map((edge) => edge.to!),
@@ -66,7 +69,7 @@ export const noCircularImportAtHmrBoundary = createRule({
           ctx.report(
             diagnostics.VITE0029({
               why: `Circular import through the HMR boundary ${path(boundary)}: ${steps}. ${path(boundary)} is ${kind}. When an edit inside this cycle reaches it, Vite marks the update as within a circular import, and the browser re-imports ${path(boundary)}, which can re-run modules of the cycle. If that re-import throws, for example because a module reads a binding of the cycle before it is initialized, Vite reloads the whole page instead of applying the update.`,
-              fix: `Remove the import that leads from ${path(boundary)} back into the cycle: ${backAt} imports '${back.specifier}'. Move what ${path(boundary)} needs from ${path(back.to!)} into a module that imports neither, or read it at runtime instead of importing it, such as useRouter() in a component instead of the router module. Loading ${path(boundary)} lazily with import() does not help: Vite records dynamic imports as importers for HMR, so the loop stays. Do not decline HMR with import.meta.hot.decline() or suppress this Diagnostic to hide the cycle.`,
+              fix: `Remove the dependency that leads from ${path(boundary)} back into the cycle: ${backAt} ${back.kind === "auto-import" ? EDGE_VERB[back.kind] : "imports"} '${back.specifier}'. Move what ${path(boundary)} needs from ${path(back.to!)} into a module that imports neither, or read it at runtime instead of importing it, such as useRouter() in a component instead of the router module. Loading ${path(boundary)} lazily with import() does not help: Vite records dynamic imports as importers for HMR, so the loop stays. Do not decline HMR with import.meta.hot.decline() or suppress this Diagnostic to hide the cycle.`,
               sources: edge.range
                 ? [`${edge.from}:${edge.range.line}:${edge.range.column}`]
                 : undefined,
@@ -100,12 +103,13 @@ export const noCircularImportAtHmrBoundary = createRule({
   },
 });
 
-type HmrImportEdge = ImportGraphEdge & { kind: Exclude<ImportGraphEdge["kind"], "auto-import"> };
+type HmrImportEdge = ImportGraphEdge;
 
 const EDGE_VERB: Record<HmrImportEdge["kind"], string> = {
   import: "imports",
   "re-export": "re-exports",
   "dynamic-import": "lazily imports",
+  "auto-import": "uses auto-imported",
 };
 
 /**

@@ -145,6 +145,7 @@ async function analyze(root: string, hostExtensions = false, runtimeTarget?: Run
       .filter((edge) => edge.kind === "auto-import")
       .map((edge) => `${rel(edge.from)} -${edge.specifier}-> ${rel(edge.to)}`),
     graph,
+    summary: result.graph,
     rel,
     gaps: (result.project.evidenceGaps ?? []).map((gap) => gap.message),
   };
@@ -298,6 +299,7 @@ async function withNitroManifest(
     extraImportDirs?: string[];
     handler?: string;
     imports?: Record<string, unknown>;
+    appImports?: Record<string, string>;
     beforeInit?: (root: string) => void;
     afterInit?: (root: string) => void;
     scannerVersion?: string;
@@ -388,7 +390,10 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
     } as any);
     await hooks.get("imports:context")!(
       createUnimport({
-        imports: [{ name: "useApp", from: join(root, "app/composables/useApp.ts") }],
+        imports: Object.entries({
+          useApp: "app/composables/useApp.ts",
+          ...options.appImports,
+        }).map(([name, file]) => ({ name, from: join(root, file) })),
       }),
     );
     const nitroHooks = new Map<string, () => Promise<void>>();
@@ -527,6 +532,80 @@ test("custom import dirs do not make unreachable files Nitro consumers", () =>
     },
     { extraImportDirs: ["lib/**/*", "app/utils/**/*"] },
   ));
+
+test("a shared consumer resolves auto-imports independently in Nuxt and Nitro", () =>
+  withNitroManifest(
+    {
+      "app/app.vue": "<script setup>useShared()</script>",
+      "lib/shared.ts": "export const useShared = () => useValue()",
+      "lib/app-value.ts":
+        "import { useShared } from './shared'; export const useValue = () => useShared()",
+      "server/utils/value.ts": "export const useValue = () => 42",
+      "server/api/shared.ts": "export { useShared as default } from '../../lib/shared'",
+      "server/utils/a.ts": "export const useA = () => 1",
+      "server/utils/b.ts": "export const useB = () => 2",
+    },
+    async (root) => {
+      const { autoImportEdges, cycles } = await analyze(root);
+      expect(autoImportEdges).toContain("lib/shared.ts -useValue-> lib/app-value.ts");
+      expect(autoImportEdges).toContain("lib/shared.ts -useValue-> server/utils/value.ts");
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0]?.message).toContain("lib/app-value.ts → lib/shared.ts → lib/app-value.ts");
+    },
+    { appImports: { useShared: "lib/shared.ts", useValue: "lib/app-value.ts" } },
+  ));
+
+test("edges from different bundles cannot form a single cycle", () =>
+  withNitroManifest(
+    {
+      "app/app.vue": "<script setup>useShared()</script>",
+      "lib/shared.ts":
+        "export const useShared = () => useValue(); export const useNitroShared = useShared",
+      "lib/app-value.ts": "export const useValue = () => useNitroShared()",
+      "server/api/shared.ts": "export { useValue as default } from '../../lib/app-value'",
+      "server/utils/a.ts": "export const useA = () => 1",
+      "server/utils/b.ts": "export const useB = () => 2",
+    },
+    async (root) => {
+      const { graph, rel, cycles, summary } = await analyze(root);
+      const edges = graph.edges
+        .filter((edge) => edge.kind === "auto-import" && rel(edge.from)?.startsWith("lib/"))
+        .map((edge) => [rel(edge.from), rel(edge.to), edge.autoImportBundle]);
+      expect(edges).toEqual([
+        ["lib/app-value.ts", "lib/shared.ts", "nitro"],
+        ["lib/shared.ts", "lib/app-value.ts", "nuxt"],
+      ]);
+      expect(graph.cycles).toEqual([]);
+      expect(cycles).toEqual([]);
+      expect(summary?.cycles).toBe(0);
+    },
+    {
+      appImports: { useShared: "lib/shared.ts", useValue: "lib/app-value.ts" },
+      extraImportDirs: ["lib/shared.ts"],
+    },
+  ));
+
+test.each([false, true])("Nuxt HMR sees the loop with an explicit import: %s", (explicit) =>
+  withNitroManifest(
+    {
+      "app/app.vue": `<script setup>${explicit ? "import { useLoop } from './utils/loop';" : ""} useLoop()</script>`,
+      "app/utils/loop.ts": "import App from '../app.vue'; export const useLoop = () => App",
+      "server/utils/a.ts": "export const useA = () => useB(); import.meta.hot.accept()",
+    },
+    async (root) => {
+      const { diagnostics } = await runViteDoctor({
+        root,
+        framework: "nuxt",
+        config: { extends: ["auto", "vite/strict"] },
+        cache: false,
+      });
+      const hmr = diagnostics.filter((item) => item.code === "VITE0029");
+      expect(hmr).toHaveLength(1);
+      expect(hmr[0]?.message).toContain("app/utils/loop.ts → app/app.vue → app/utils/loop.ts");
+    },
+    { appImports: { useLoop: "app/utils/loop.ts" } },
+  ),
+);
 
 test("Nitro's custom resolver withholds unproven injection targets even in trusted runs", () =>
   withNitroManifest(

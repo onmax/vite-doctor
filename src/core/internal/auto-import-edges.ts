@@ -4,6 +4,7 @@ import picomatch from "picomatch";
 import type {
   AutoImportEntry,
   FileFacts,
+  ImportGraphEdge,
   NuxtProjectInfo,
   SourceFileHandle,
   SourceRange,
@@ -25,6 +26,7 @@ import { createVueScriptForParsing } from "./sfc.js";
 export interface AutoImportEdge {
   from: number;
   to: number;
+  autoImportBundle: NonNullable<ImportGraphEdge["autoImportBundle"]>;
   /** The auto-imported identifier, such as `useCart`. */
   name: string;
   /** The file's first unshadowed reference to `name`. */
@@ -41,8 +43,8 @@ export function sessionAutoImportEdges(session: ScanSession): readonly AutoImpor
 
 /**
  * Collects edges for unshadowed runtime reads of auto-imports whose source is a file of the run.
- * Server files and their dependencies resolve against Nitro's registry, matching the
- * transform each bundle runs. Auto-imports from packages (`ref`, `useFetch`) never become edges.
+ * Files reachable from both entry graphs resolve independently against both registries.
+ * Auto-imports from packages (`ref`, `useFetch`) never become edges.
  * Template references are left out: rendered components are Component Usage, and template
  * expressions are not scope-analyzed. Only a current Nuxt manifest proves which names are
  * auto-imported, so a registry that is missing, or that lists an export its file no longer has,
@@ -74,13 +76,16 @@ async function collect(
   const ids = new Map<NuxtProjectInfo, number>();
   const serverFiles = new Set<number>();
   const nitroQueue: FileFacts[] = [];
+  const appFiles = new Set<number>();
+  const appQueue: FileFacts[] = [];
   const scanTargets = new Map<NuxtProjectInfo, Set<number | undefined>>();
   const projectOf = (fact: FileFacts) => session.handlesByPath.get(fact.path)?.project.nuxt;
-  const enqueue = (file: number | undefined, nuxt: NuxtProjectInfo) => {
+  const enqueue = (file: number | undefined, nuxt: NuxtProjectInfo, server: boolean) => {
     const fact = file === undefined ? undefined : factsById.get(file);
-    if (fact && !serverFiles.has(fact.fileId) && projectOf(fact) === nuxt) {
-      serverFiles.add(fact.fileId);
-      nitroQueue.push(fact);
+    const visited = server ? serverFiles : appFiles;
+    if (fact && !visited.has(fact.fileId) && projectOf(fact) === nuxt) {
+      visited.add(fact.fileId);
+      (server ? nitroQueue : appQueue).push(fact);
     }
   };
   for (const fact of session.facts) {
@@ -93,7 +98,14 @@ async function collect(
           ...(nuxt.manifest.resolvedServerHandlers ?? []).map((handler) => handler.file),
           ...(nuxt.nitroAutoImports?.plugins ?? []),
         ])
-          enqueue(index.resolveFile(file), nuxt);
+          enqueue(index.resolveFile(file), nuxt, true);
+        for (const file of [
+          ...(nuxt.manifest.pages ?? []).map((page) => page.file),
+          ...(nuxt.manifest.resolvedComponents ?? []).map((component) => component.file),
+          ...nuxt.manifest.pluginFiles,
+          ...(nuxt.manifest.resolvedPlugins ?? []).map((plugin) => plugin.file),
+        ])
+          if (file) enqueue(index.resolveFile(file), nuxt, false);
         scanTargets.set(
           nuxt,
           new Set(
@@ -104,10 +116,11 @@ async function collect(
         );
       }
     }
-    if (isServerFile(fact, nuxt)) enqueue(fact.fileId, nuxt);
+    if (isServerFile(fact, nuxt)) enqueue(fact.fileId, nuxt, true);
+    else if (isAppEntry(fact, nuxt)) enqueue(fact.fileId, nuxt, false);
   }
 
-  async function collectFile(fact: FileFacts, server: boolean) {
+  async function collectFile(fact: FileFacts, server: boolean, followDependencies: boolean) {
     const handle = session.handlesByPath.get(fact.path);
     const nuxt = handle?.project.nuxt;
     if (!handle || !nuxt) return;
@@ -176,34 +189,46 @@ async function collect(
       const to = owned.get(name);
       if (to === undefined || to === fact.fileId || seen.has(name)) continue;
       seen.add(name);
-      if (server) enqueue(to, nuxt);
+      if (followDependencies) enqueue(to, nuxt, server);
       const [start, end] = reference.identifier.range;
       edges.push({
         from: fact.fileId,
         to,
+        autoImportBundle: server ? "nitro" : "nuxt",
         name,
         range: session.helpers.rangeFromOffsets(fact.path, text, start, end),
       });
     }
   }
 
-  for (const fact of nitroQueue) {
-    const nuxt = projectOf(fact)!;
-    for (const item of [...fact.imports, ...fact.reExports, ...fact.dynamicImports]) {
-      if (
-        item.source === null ||
-        ("kind" in item && item.kind === "type") ||
-        ("typeOnly" in item && item.typeOnly)
-      )
-        continue;
-      const path = sourcePath(item.source, Object.entries(nuxt.nitroAutoImports?.aliases ?? {}));
-      enqueue(path ? index.resolveFile(path) : index.resolveImport(fact, item.source), nuxt);
+  for (const [queue, server] of [
+    [nitroQueue, true],
+    [appQueue, false],
+  ] as const) {
+    for (const fact of queue) {
+      const nuxt = projectOf(fact)!;
+      for (const item of [...fact.imports, ...fact.reExports, ...fact.dynamicImports]) {
+        if (
+          item.source === null ||
+          ("kind" in item && item.kind === "type") ||
+          ("typeOnly" in item && item.typeOnly)
+        )
+          continue;
+        const path = server
+          ? sourcePath(item.source, Object.entries(nuxt.nitroAutoImports?.aliases ?? {}))
+          : undefined;
+        enqueue(
+          path ? index.resolveFile(path) : index.resolveImport(fact, item.source),
+          nuxt,
+          server,
+        );
+      }
+      await collectFile(fact, server, true);
     }
-    await collectFile(fact, true);
   }
 
   for (const fact of session.facts) {
-    if (serverFiles.has(fact.fileId)) continue;
+    if (appFiles.has(fact.fileId) || serverFiles.has(fact.fileId)) continue;
     const nuxt = projectOf(fact);
     if (!nuxt) continue;
     if (hasUncertainRuntime(fact, nuxt, scanTargets.get(nuxt))) {
@@ -219,7 +244,7 @@ async function collect(
         });
       continue;
     }
-    await collectFile(fact, false);
+    await collectFile(fact, false, false);
   }
 
   if (gaps.size)
@@ -362,6 +387,13 @@ function isServerFile(fact: FileFacts, nuxt: NuxtProjectInfo): boolean {
   return nuxt.layers.some((layer) =>
     fact.path.startsWith(`${resolve(layer.root, layer.serverDir ?? "server")}/`),
   );
+}
+
+function isAppEntry(fact: FileFacts, nuxt: NuxtProjectInfo): boolean {
+  return [
+    nuxt.appDir,
+    ...nuxt.layers.flatMap((layer) => (layer.srcDir ? [layer.srcDir] : [])),
+  ].some((dir) => /^(?:(?:app|error)\.vue$|layouts\/.*\.vue$)/.test(relative(dir, fact.path)));
 }
 
 function hasUncertainRuntime(

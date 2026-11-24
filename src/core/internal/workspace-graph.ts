@@ -16,7 +16,12 @@ import type { ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
 import { pushDiagnostic, scopedReportLocations } from "./diagnostics.js";
 import { sourceFacts, walkAstFacts } from "./facts.js";
-import { buildImportGraph, computeSccs, isRuntimeImportEdge } from "./import-graph.js";
+import {
+  buildImportGraph,
+  computeSccs,
+  importBundleViews,
+  isRuntimeImportEdge,
+} from "./import-graph.js";
 import {
   collectAutoImportEdges,
   sessionAutoImportEdges,
@@ -97,7 +102,13 @@ export function buildWorkspaceGraph(
   }
   // An auto-import resolves to one file, so it is not a name reference to every export of it.
   for (const edge of autoImports)
-    importEdges.push({ from: edge.from, to: edge.to, specifier: edge.name, kind: "auto-import" });
+    importEdges.push({
+      from: edge.from,
+      to: edge.to,
+      specifier: edge.name,
+      kind: "auto-import",
+      autoImportBundle: edge.autoImportBundle,
+    });
 
   for (const edge of [...importEdges, ...exportEdges]) {
     if (edge.to === undefined) continue;
@@ -517,6 +528,19 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph, index: Gr
 }
 
 function runtimeSccs(nodes: number[], edges: GraphEdge[]): number[][] {
+  const views = importBundleViews(edges);
+  if (views.length === 1) return computeRuntimeSccs(nodes, edges);
+  const seen = new Map<string, number[]>();
+  for (const { edges: view } of views) {
+    for (const group of computeRuntimeSccs(nodes, view)) {
+      const key = group.toSorted((left, right) => left - right).join(",");
+      seen.set(key, group);
+    }
+  }
+  return [...seen.values()];
+}
+
+function computeRuntimeSccs(nodes: number[], edges: readonly GraphEdge[]): number[][] {
   const successors = new Map<number, number[]>();
   for (const edge of edges) {
     if (edge.to === undefined || edge.from === edge.to) continue;
@@ -553,6 +577,7 @@ function sessionImportGraph(session: ScanSession, index?: GraphIndex): ImportGra
         to: paths.get(edge.to)!,
         specifier: edge.name,
         kind: "auto-import" as const,
+        autoImportBundle: edge.autoImportBundle,
         typeOnly: false,
         range: edge.range,
       })),
@@ -621,6 +646,9 @@ function cycleScopeLocations(cycle: ImportCycle, graph: ImportGraph) {
         members.has(edge.to) &&
         edge.range &&
         isRuntimeImportEdge(edge) &&
+        (!cycle.autoImportBundle ||
+          !edge.autoImportBundle ||
+          cycle.autoImportBundle === edge.autoImportBundle) &&
         !onLoop.has(edge)
           ? [{ file, range: edge.range }]
           : [],

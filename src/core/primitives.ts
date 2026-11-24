@@ -304,6 +304,10 @@ export interface NuxtProjectInfo {
     scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
+    resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
+    resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
+    hasServerPageIslands?: boolean;
+    componentIslands?: NuxtDoctorManifest["componentIslands"];
     keyedComposables: NuxtKeyedComposable[];
     aliases: Record<string, string>;
     autoImportTransform?: {
@@ -316,7 +320,7 @@ export interface NuxtProjectInfo {
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
-    pages?: Array<{ path?: string; file?: string; name?: string }>;
+    pages?: NuxtDoctorManifest["pages"];
     prerenderRoutes?: string[];
     buildManifest?: {
       hasBuildManifest: boolean;
@@ -361,6 +365,24 @@ export interface NuxtKeyedComposable {
   source?: string;
 }
 
+export interface NuxtAppRegistrationDirectory {
+  path: string;
+  patterns: string[];
+  ignore?: string[];
+}
+
+export interface NuxtAppRegistrationSnapshot {
+  directories: Array<NuxtAppRegistrationDirectory & { entries: string[] }>;
+  files: string[];
+}
+
+export interface NuxtAppRegistrationIgnore {
+  patterns: string[];
+  layerRoots: string[];
+  options?: { ignorecase?: boolean; ignoreCase?: boolean; allowRelativePaths?: boolean };
+  fileHash: string | null;
+}
+
 export interface NuxtDoctorManifest {
   scannedComposableFiles?: string[];
   autoRegisteredLayers?: string[];
@@ -403,6 +425,14 @@ export interface NuxtDoctorManifest {
     commentsDisable: string[];
   };
   components: unknown[];
+  resolvedComponents?: Array<{ name: string; file: string; mode: "client" | "server" | "all" }>;
+  hasServerPageIslands?: boolean;
+  appRegistrationIgnore?: NuxtAppRegistrationIgnore;
+  appRegistration?: Record<
+    "components" | "pages" | "plugins",
+    NuxtAppRegistrationSnapshot | undefined
+  >;
+  componentIslands?: boolean | "auto";
   layers: Array<{
     root: string;
     nuxtConfigMtimeMs?: number | null;
@@ -426,7 +456,7 @@ export interface NuxtDoctorManifest {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
-  pages?: Array<{ path?: string; file?: string; name?: string }>;
+  pages?: Array<{ path?: string; file?: string; name?: string; mode?: "client" | "server" }>;
   prerenderRoutes?: string[];
   buildManifest?: {
     hasBuildManifest: boolean;
@@ -441,6 +471,7 @@ export interface NuxtDoctorManifest {
   keyedComposables?: unknown[];
   importsDirs?: string[];
   pluginFiles?: string[];
+  resolvedPlugins?: Array<{ file: string; mode: "client" | "server" | "all" }>;
   appScanRoots?: string[];
   sharedScanRoots?: string[];
 }
@@ -468,6 +499,25 @@ export interface ProjectInfo {
   evidenceGaps?: Array<{ source: string; message: string; files: string[] }>;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
+}
+
+/**
+ * A diagnostic a framework reported at runtime, such as a `nostics` report from the browser
+ * during dev. A Plugin Surface contributes them as `{ reports }` under the `frameworkDiagnostics`
+ * Runtime Evidence.
+ */
+export interface RuntimeFrameworkDiagnostic {
+  /** The framework's own Diagnostic Code, such as `NUXT_E3004`. */
+  code: string;
+  why: string;
+  fix?: string;
+  docs?: string;
+  /** Call sites exactly as the runtime reported them. */
+  sources: string[];
+  /** The source file, and the 1-based position when a source map proves it. */
+  location?: { file: string; line?: number; column?: number };
+  /** Why the location is missing or has no position. */
+  locationGap?: string;
 }
 
 export interface WorkspacePackage {
@@ -755,6 +805,8 @@ export interface ImportGraphEdge {
    * script reference to a Nuxt auto-import whose source is a file of the run.
    */
   kind: "import" | "re-export" | "dynamic-import" | "auto-import";
+  /** The transform that injects an auto-import. Written dependencies have no transform tag. */
+  autoImportBundle?: "nuxt" | "nitro";
   /** Whether TypeScript erases the dependency: `import type` or `export type ... from`. */
   typeOnly: boolean;
   /**
@@ -766,6 +818,8 @@ export interface ImportGraphEdge {
 
 /** Files that evaluate each other through static runtime imports and Nuxt auto-imports. */
 export interface ImportCycle {
+  /** When the graph has both transforms, the bundle used to find this group. */
+  autoImportBundle?: ImportGraphEdge["autoImportBundle"];
   /** Every file in the strongly connected group, as sorted absolute paths. */
   files: readonly string[];
   /**
@@ -791,8 +845,8 @@ export interface ImportGraph {
   importersOf(file: string): readonly ImportGraphEdge[];
   /**
    * Groups of two or more files joined by static imports, re-exports, and auto-imports, which Nuxt
-   * compiles to static imports. Type-only edges are erased and dynamic imports run later, so
-   * neither forms a cycle.
+   * compiles to static imports. Nuxt app and Nitro auto-imports are analyzed independently.
+   * Type-only edges are erased and dynamic imports run later, so neither forms a cycle.
    */
   cycles: readonly ImportCycle[];
 }
@@ -801,7 +855,7 @@ export interface ImportGraph {
 export interface RuleInventory {
   /** Available to `workspace` and `manifest` Rules, which see the whole project. */
   componentUsage(): Promise<ComponentUsageGraph>;
-  /** Available to `workspace` and `manifest` Rules, which see the whole project. */
+  /** Also available to uncached file Rules that require cross-file context. */
   importGraph(): Promise<ImportGraph>;
   /** Authored files selected by the run, including HTML when requested separately. */
   sourcePaths(kind?: "html"): Promise<readonly string[]>;
@@ -811,6 +865,7 @@ export interface GraphEdge {
   from: number;
   to?: number;
   specifier?: string;
+  autoImportBundle?: ImportGraphEdge["autoImportBundle"];
   kind:
     | "import"
     | "type-import"

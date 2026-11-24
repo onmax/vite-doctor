@@ -478,9 +478,9 @@ function createRuleRun(
         return componentUsageGraph(session);
       },
       importGraph() {
-        if (phase === "file")
+        if (phase === "file" && (!rule.meta.requires?.crossFile || rule.meta.cacheScope !== "none"))
           throw new Error(
-            `Rule ${rule.meta.id} read the import graph from a file Rule. It covers every source file, so set meta.execution to "workspace".`,
+            `Rule ${rule.meta.id} must use workspace execution or declare uncached cross-file execution to read the import graph.`,
           );
         readsInventory = true;
         return importGraphInventory(session);

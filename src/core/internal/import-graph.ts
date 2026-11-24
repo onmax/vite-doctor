@@ -64,13 +64,39 @@ export function buildImportGraph(
     edges,
     importsOf: (file) => importsByFile.get(resolve(root, file)) ?? [],
     importersOf: (file) => importersByFile.get(resolve(root, file)) ?? [],
-    cycles: findImportCycles(files, edges),
+    cycles: bundleImportCycles(files, edges),
   };
 }
 
 /** Whether the edge makes its target evaluate before the importing module. */
 export function isRuntimeImportEdge(edge: ImportGraphEdge): boolean {
   return !edge.typeOnly && edge.kind !== "dynamic-import";
+}
+
+export function importBundleViews<Edge extends Pick<ImportGraphEdge, "autoImportBundle">>(
+  edges: readonly Edge[],
+) {
+  const bundles = new Set<NonNullable<Edge["autoImportBundle"]>>();
+  for (const edge of edges) if (edge.autoImportBundle) bundles.add(edge.autoImportBundle);
+  if (bundles.size < 2) return [{ edges, bundle: undefined }];
+  return (["nuxt", "nitro"] as const).map((bundle) => ({
+    edges: edges.filter((edge) => !edge.autoImportBundle || edge.autoImportBundle === bundle),
+    bundle,
+  }));
+}
+
+function bundleImportCycles(files: readonly string[], edges: readonly ImportGraphEdge[]) {
+  const cycles = new Map<string, ImportCycle>();
+  for (const { edges: view, bundle } of importBundleViews(edges)) {
+    for (const cycle of findImportCycles(files, view)) {
+      const key = JSON.stringify(cycle.files);
+      if (!cycles.has(key))
+        cycles.set(key, bundle ? { ...cycle, autoImportBundle: bundle } : cycle);
+    }
+  }
+  return [...cycles.values()].sort((left, right) =>
+    left.files[0]! < right.files[0]! ? -1 : left.files[0] === right.files[0] ? 0 : 1,
+  );
 }
 
 function findImportCycles(
