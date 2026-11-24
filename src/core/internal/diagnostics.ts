@@ -93,11 +93,13 @@ export async function applyPolicyFilters(session: ScanSession): Promise<void> {
   reportDefaultDeclarativeConfig(session);
   await applyReportEligibility(session);
   applySeverityFilter(session);
+  const beforeOverlapSelection = session.diagnostics;
   const result = applyDiagnosticPolicy(session, preferModuleStateDiagnostics);
   session.diagnostics = result.diagnostics;
   session.suppressedDiagnostics = result.suppressedDiagnostics;
   if (result.staleBaseline) reportStaleBaseline(session, result.staleBaseline);
-  if (result.baseline) reportResolvedBaselineEntries(session, result.baseline);
+  if (result.baseline)
+    reportResolvedBaselineEntries(session, result.baseline, beforeOverlapSelection);
 }
 
 const moduleStateReplacements = new Map([
@@ -160,6 +162,7 @@ function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): voi
 function reportResolvedBaselineEntries(
   session: ScanSession,
   baseline: { file: string; entries: BaselineEntry[] },
+  emittedDiagnostics: Diagnostic[],
 ): void {
   const { options, root } = session;
   if (session.scopedReport || options.rules || options.analyses) return;
@@ -168,11 +171,7 @@ function reportResolvedBaselineEntries(
   const ruleId = "doctor/baseline/resolved-entries";
   const severity = configuredDiagnosticSeverity(session, ruleId, baseline.file, "info");
   if (!severity) return;
-  const reported = new Set(
-    [...session.diagnostics, ...session.suppressedDiagnostics].map(
-      (diagnostic) => diagnostic.fingerprint,
-    ),
-  );
+  const reported = new Set(emittedDiagnostics.map((diagnostic) => diagnostic.fingerprint));
   const coverage = ruleCoverage(session);
   const fileRules = new Map(
     session.enabledRules

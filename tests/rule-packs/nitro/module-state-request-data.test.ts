@@ -230,6 +230,15 @@ test("uses the same overlapping finding in reports and baselines", async () => {
     expect(JSON.parse(await readFile(baseline, "utf8")).diagnostics).toMatchObject([
       { fingerprint: result.diagnostics[0]!.fingerprint },
     ]);
+
+    const previous = await fixture.run({
+      rules,
+      config: { rules: { [noModuleScopeResponseCache.meta.id]: "error" } },
+    });
+    expect(previous.diagnostics).toMatchObject([{ code: "NITRO0023" }]);
+    await writeFile(baseline, createJsonReport(previous));
+    const changedWinner = await fixture.run({ rules, run: { baseline, newOnly: true } });
+    expect(changedWinner.diagnostics.map(({ code }) => code)).toEqual(["NITRO0035"]);
   } finally {
     await fixture.dispose();
     await rm(dir, { recursive: true, force: true });
@@ -274,10 +283,36 @@ export default defineEventHandler((event) => {
   const patch = { current: getCookie(event, 'session') }
   const alias = patch
   const byId = { [getQuery(event).id]: event.context.user }
-  Object.assign(aliased, alias)
+  Object.assign(aliased, alias, { other: 'public' })
   Object.assign(spread, { ...patch, ...{ current: event.context.user } })
   Object.assign(keyed, { ...byId })
 })`,
     }),
   ).toEqual([1, 2].map((line) => ({ code: "NITRO0035", file, line })));
+});
+
+test.each([
+  ["a later property", "Object.assign(shared, { ...patch, ['current']: 'public' })"],
+  ["a later spread", "Object.assign(shared, { ...patch, ...{ current: 'public' } })"],
+  ["a later source", "Object.assign(shared, patch, { current: 'public' })"],
+  ["a direct mutation", "patch.current = 'public'; Object.assign(shared, patch)"],
+  [
+    "a mutation through an alias",
+    "const alias = patch; alias.current = 'public'; Object.assign(shared, patch)",
+  ],
+  ["a possible mutation in another function", "rewrite(patch); Object.assign(shared, patch)"],
+  [
+    "a call to a shadowed Object.assign",
+    "{ const Object = { assign: (_, value) => { value.current = 'public' } }; Object.assign({}, patch) }; Object.assign(shared, patch)",
+  ],
+])("does not report overwritten Object.assign data after %s", async (_, copy) => {
+  expect(
+    await run({
+      "server/api/session.get.ts": `const shared = {}
+export default defineEventHandler((event) => {
+  const patch = { current: getCookie(event, 'session') }
+  ${copy}
+})`,
+    }),
+  ).toEqual([]);
 });
