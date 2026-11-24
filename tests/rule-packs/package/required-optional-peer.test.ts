@@ -624,12 +624,11 @@ test("follows nested package self-references rather than root exports", async ()
 });
 
 test("ignores peers behind a blocked default export target", async () => {
-  expect(
-    await diagnose(
-      { exports: { ".": { default: null, node: "./index.js" } }, ...optionalPeer },
-      { "index.js": 'require("peer");' },
-    ),
-  ).toEqual([]);
+  const diagnostics = await diagnose(
+    { exports: { ".": { default: null, node: "./index.js" } }, ...optionalPeer },
+    { "index.js": 'require("peer");' },
+  );
+  expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["PKG0009"]);
 });
 
 test.each([
