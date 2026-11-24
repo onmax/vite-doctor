@@ -124,6 +124,45 @@ test.each([
 });
 
 test.each([
+  ["watchPostEffect", ""],
+  ["watchEffect", ", { flush: 'post' }"],
+])("VUE0049 requires a consumer outside the mutating effect: %s", async (watcher, options) => {
+  const effect = `${watcher}(() => {
+    todos.value.push(id.value);
+    localStorage.setItem('todos', JSON.stringify(todos.value));
+  }${options});`;
+  const script = `const todos = shallowRef([]); const id = ref(1); ${effect}`;
+  expect(await run(component(`${script}\nawait Promise.resolve();`, "<p>History</p>"))).toEqual([]);
+  expect(
+    (await run(component(`${script}\nawait Promise.resolve();`))).map(({ ruleId }) => ruleId),
+  ).toEqual([RULE_ID]);
+  expect(
+    (
+      await run(
+        component(
+          `${script}\nconst size = computed(() => todos.value.length);\nawait Promise.resolve();`,
+          "<p>{{ size }}</p>",
+        ),
+      )
+    ).map(({ ruleId }) => ruleId),
+  ).toEqual([RULE_ID]);
+});
+
+test("VUE0049 stays quiet when a helper mutates only for the effect that reads the ref", async () => {
+  expect(
+    await run(
+      component(
+        `const todos = shallowRef([]); const id = ref(1);
+function append(item) { todos.value.push(item) }
+watchPostEffect(() => { append(id.value); localStorage.setItem('todos', JSON.stringify(todos.value)) });
+await Promise.resolve();`,
+        "<p>History</p>",
+      ),
+    ),
+  ).toEqual([]);
+});
+
+test.each([
   `watch(ref(0), () => todos.value.push('seed'), { flush: 'post', immediate: true });`,
   `const count = ref(0); watch(count, () => todos.value.push('seed')); count.value++;`,
   `Promise.resolve().then(() => watchPostEffect(() => todos.value.push('seed')));`,

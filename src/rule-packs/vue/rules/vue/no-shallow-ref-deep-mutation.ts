@@ -120,7 +120,8 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
       const mutations: Mutation[] = [];
       const assignedIn = new Set<AnyNode>();
       const declarationOwner = script.owner(declarator);
-      let readReactively = false;
+      let hasDirectWatchSource = false;
+      const reactiveReaders = new Set<AnyNode>();
       // A triggerRef() anywhere, or a use the rule cannot follow, may notify subscribers.
       let mayTrigger = false;
       for (const reference of variable.references) {
@@ -131,17 +132,27 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
           values.push(use.value);
           assignedIn.add(script.owner(id));
         } else if (use.kind === "mutation") mutations.push(use);
-        else if (use.kind === "watch-source") readReactively = true;
+        else if (use.kind === "watch-source") hasDirectWatchSource = true;
         else if (use.kind === "trigger" || use.kind === "other") mayTrigger = true;
-        if (!readReactively && insideReactiveReader(script, id)) readReactively = true;
+        else if (use.kind === "read") {
+          const reader = reactiveReader(script, id);
+          if (reader) reactiveReaders.add(reader);
+        }
       }
       if (mayTrigger || !mutations.length) continue;
       const name = declarator.id.name;
       const templateScope = !declarationOwner && !!setup;
-      const timing = { declarationOwner, asyncSetup: templateScope ? asyncSetup : undefined };
+      const independentReader =
+        hasDirectWatchSource || (templateScope && renderTemplateReads(ctx).has(name));
+      if (!independentReader && !reactiveReaders.size) continue;
+      const timing: SetupTiming = {
+        declarationOwner,
+        asyncSetup: templateScope ? asyncSetup : undefined,
+        hasReaderOutside: (effect) =>
+          independentReader || reactiveReaders.size > Number(reactiveReaders.has(effect)),
+      };
       const writes = templateScope ? templateWrites(ctx, name) : [];
       if (writes.some((write) => !write.path.length)) continue;
-      if (!readReactively && !(templateScope && renderTemplateReads(ctx).has(name))) continue;
       for (const mutation of mutations) {
         if (assignedIn.has(script.owner(mutation.node))) continue;
         if (
@@ -157,7 +168,7 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
         )
           continue;
         if (!values.every((value) => mutatesPlainValue(script, value, mutation))) continue;
-        if (!laterPath(script, mutation.node, timing, new Set())) continue;
+        if (laterPath(script, mutation.node, timing, new Set()) !== "with-reader") continue;
         result.push({
           node: mutation.node,
           ref: name,
@@ -331,21 +342,24 @@ function plainKind(script: IndexedScript | undefined, node: AnyNode): string | u
   return { Map: "map", Set: "set", Array: "array" }[node.callee.name as string];
 }
 
-/** Whether `id` is read inside a computed() getter or a watcher's source or effect. */
-function insideReactiveReader(script: IndexedScript, id: AnyNode): boolean {
+/** The registration whose computed getter, watch source, or effect reads `id`. */
+function reactiveReader(script: IndexedScript, id: AnyNode): AnyNode {
   for (let fn = script.owner(id); fn; fn = script.owner(fn)) {
     const [call, child] = valueParent(script, fn);
     if (call?.type !== "CallExpression") continue;
     if (!vueApiCall(script, call.callee, REACTIVE_READERS)) continue;
-    if (call.arguments[0] === child) return true;
+    if (call.arguments[0] === child) return call;
   }
-  return false;
+  return undefined;
 }
 
 interface SetupTiming {
   declarationOwner: AnyNode;
   asyncSetup: NonNullable<SFCDescriptor["scriptSetup"]> | undefined;
+  hasReaderOutside: (effect?: AnyNode) => boolean;
 }
+
+type DeferredPath = "with-reader" | "without-reader" | undefined;
 
 function inTopLevelSetup(
   script: IndexedScript,
@@ -359,17 +373,18 @@ function inTopLevelSetup(
   );
 }
 
-/** Whether the mutation runs after setup returned, when something may already have read the ref. */
+/** Whether the mutation runs after setup and has a consumer outside its own execution. */
 function laterPath(
   script: IndexedScript,
   node: AnyNode,
   timing: SetupTiming,
   seen: Set<AnyNode>,
-): boolean {
+): DeferredPath {
   for (let fn = script.owner(node); fn && fn !== timing.declarationOwner; fn = script.owner(fn)) {
-    if (runsLater(script, fn, node, timing, seen)) return true;
+    const deferred = runsLater(script, fn, node, timing, seen);
+    if (deferred) return deferred;
   }
-  return false;
+  return undefined;
 }
 
 function runsLater(
@@ -378,28 +393,47 @@ function runsLater(
   at: AnyNode,
   timing: SetupTiming,
   seen: Set<AnyNode>,
-): boolean {
-  if (!timing.asyncSetup && fn.async && awaitsBefore(script, fn, at)) return true;
+): DeferredPath {
+  const outsideEffect = readerEvidence(timing);
+  if (!timing.asyncSetup && fn.async && awaitsBefore(script, fn, at)) return outsideEffect;
   const [parent, child] = valueParent(script, fn);
   if (parent?.type === "CallExpression" && parent.arguments.includes(child))
-    return callsLater(script, parent, child, timing.asyncSetup);
+    return deferredCallback(script, parent, child, timing);
   const binding = functionBinding(script, fn, parent);
-  if (!binding || seen.has(fn)) return false;
+  if (!binding || seen.has(fn)) return undefined;
   seen.add(fn);
   try {
+    let deferred: DeferredPath;
     for (const reference of binding.references) {
       if (reference.init) continue;
       const [use, used] = valueParent(script, reference.identifier);
+      let path: DeferredPath;
       if (use?.type === "CallExpression" && use.callee === used) {
-        if (!laterPath(script, use, timing, seen)) return false;
+        path = laterPath(script, use, timing, seen);
       } else if (use?.type === "CallExpression" && use.arguments.includes(used)) {
-        if (!callsLater(script, use, used, timing.asyncSetup)) return false;
-      } else if (!isHandlerUse(script, use, used)) return false;
+        path = deferredCallback(script, use, used, timing);
+      } else if (isHandlerUse(script, use, used)) path = outsideEffect;
+      if (!path) return undefined;
+      if (path === "with-reader" || !deferred) deferred = path;
     }
-    return true;
+    return deferred ?? outsideEffect;
   } finally {
     seen.delete(fn);
   }
+}
+
+function readerEvidence(timing: SetupTiming, effect?: AnyNode): DeferredPath {
+  return timing.hasReaderOutside(effect) ? "with-reader" : "without-reader";
+}
+
+function deferredCallback(
+  script: IndexedScript,
+  call: AnyNode,
+  argument: AnyNode,
+  timing: SetupTiming,
+): DeferredPath {
+  if (!callsLater(script, call, argument, timing.asyncSetup)) return undefined;
+  return readerEvidence(timing, call.arguments[0] === argument ? call : undefined);
 }
 
 function awaitsBefore(script: IndexedScript, fn: AnyNode, at: AnyNode): boolean {
