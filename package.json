@@ -72,6 +72,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "catalog:prod",
     "@shadcn/lint": "catalog:analysis",
     "@typescript-eslint/parser": "catalog:analysis",
     "@typescript-eslint/scope-manager": "catalog:analysis",

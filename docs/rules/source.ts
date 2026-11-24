@@ -6,6 +6,7 @@ import { ruleDocumentationMetadata } from "./metadata.js";
 import { ruleNavigationTitles } from "./navigation-titles.js";
 import {
   resolvedBaselineDiagnosticMetadata,
+  runtimeFrameworkDiagnosticMetadata,
   workspaceDiagnosticMetadata,
 } from "../../src/core/diagnostic-metadata.js";
 import { mcpRecommendedRuleIds } from "../../src/rule-packs/mcp/presets.js";
@@ -260,6 +261,20 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       examples: [],
       path: "/diagnostics/DOC0039",
       key: "diagnostics/DOC0039.md",
+    },
+    {
+      ...runtimeFrameworkDiagnosticMetadata,
+      title: `${runtimeFrameworkDiagnosticMetadata.code}: ${runtimeFrameworkDiagnosticMetadata.title}`,
+      docsUrl: "https://vite-doctor.onmax.me/vite",
+      pack: "vite-doctor/core",
+      framework: "vite",
+      source: "src/core/internal/runtime-diagnostics.ts",
+      sourceUrl: githubSourceUrl("src/core/internal/runtime-diagnostics.ts"),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0040",
+      key: "diagnostics/DOC0040.md",
     },
     {
       code: "DOC0022",

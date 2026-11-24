@@ -168,6 +168,15 @@ test("resolved baseline entries have a public diagnostic reference", async () =>
   expect(await diagnosticsCollectionSource.getItem(diagnostic!.key)).toContain("Changed-file runs");
 });
 
+test("framework runtime reports have a public diagnostic reference", async () => {
+  const diagnostic = getDiagnosticDocuments().find((item) => item.code === "DOC0040");
+
+  expect(diagnostic?.ruleId).toBe("doctor/runtime/framework-diagnostic");
+  expect(await diagnosticsCollectionSource.getItem(diagnostic!.key)).toContain(
+    "Only browser reports reach Doctor",
+  );
+});
+
 test("unresolved runtime inventory has a public diagnostic reference", async () => {
   const diagnostic = getDiagnosticDocuments().find((item) => item.code === "DOC0022");
 
