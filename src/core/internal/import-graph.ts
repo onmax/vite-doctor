@@ -94,9 +94,16 @@ function shortestLoop(
 ): ImportGraphEdge[] {
   const inGroup = new Set(members);
   let best: ImportGraphEdge[] | undefined;
-  const isRing = members.every(
-    (file) => successors.get(file)?.filter((edge) => inGroup.has(edge.to!)).length === 1,
-  );
+  const isRing = members.every((file) => {
+    let next: string | undefined;
+    for (const edge of successors.get(file) ?? []) {
+      const target = edge.to!;
+      if (!inGroup.has(target)) continue;
+      if (next !== undefined && next !== target) return false;
+      next = target;
+    }
+    return next !== undefined;
+  });
   for (const start of members) {
     const loop = shortestLoopThrough(start, inGroup, successors, best?.length);
     if (loop && (!best || loop.length < best.length)) best = loop;

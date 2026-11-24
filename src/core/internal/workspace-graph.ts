@@ -39,15 +39,18 @@ export function buildWorkspaceGraph(session: ScanSession, fs: RuleFileSystem): W
 
   for (const fact of session.facts) {
     for (const item of fact.exports) {
-      exportEdges.push({
-        from: fact.fileId,
-        to: item.source ? index.resolveImport(fact, item.source) : undefined,
-        specifier: item.source,
-        kind: item.source ? (item.kind === "type" ? "type-re-export" : "re-export") : "export",
-      });
+      if (item.source === undefined) exportEdges.push({ from: fact.fileId, kind: "export" });
       const exports = exportsByName.get(item.name) ?? [];
       exports.push(item);
       exportsByName.set(item.name, exports);
+    }
+    for (const item of fact.reExports) {
+      exportEdges.push({
+        from: fact.fileId,
+        to: index.resolveImport(fact, item.source),
+        specifier: item.source,
+        kind: item.typeOnly ? "type-re-export" : "re-export",
+      });
     }
     for (const item of fact.imports) {
       const target = index.resolveImport(fact, item.source);

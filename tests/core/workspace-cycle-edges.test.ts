@@ -254,6 +254,22 @@ test("an empty re-export can close a runtime cycle", async () => {
   ).toHaveLength(1);
 });
 
+test("parallel declarations preserve both edges and use the earliest one in the loop", async () => {
+  const { rule, graph } = captureImportGraph();
+  await runRuleFixture({
+    rule,
+    files: {
+      "src/a.ts": 'import "./b";\nexport {} from "./b";',
+      "src/b.ts": 'import "./a";',
+    },
+  });
+  const imports = graph();
+  const declarations = imports.importsOf("src/a.ts");
+  expect(declarations.map((edge) => edge.kind)).toEqual(["import", "re-export"]);
+  expect(imports.cycles[0]?.path).toHaveLength(2);
+  expect(imports.cycles[0]?.path[0]).toBe(declarations[0]);
+});
+
 test("a change to a runtime edge off the loop qualifies the cycle, but an unrelated edit does not", async () => {
   const files = {
     "src/a.ts": 'import "./b";\n',
