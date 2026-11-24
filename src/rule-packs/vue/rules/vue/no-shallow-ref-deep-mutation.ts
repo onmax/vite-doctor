@@ -142,15 +142,17 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
       const descriptor = ctx.file.sfc?.descriptor as SFCDescriptor | undefined;
       const templateScope = !declarationOwner && !!descriptor?.scriptSetup;
       const writes = templateScope ? templateWrites(ctx, name) : [];
-      if (writes.some((path) => !path.length)) continue;
+      if (writes.some((write) => !write.path.length)) continue;
       if (!readReactively && !(templateScope && renderTemplateReads(ctx).has(name))) continue;
       for (const mutation of mutations) {
         if (assignedIn.has(script.owner(mutation.node))) continue;
-        const receiver = mutation.method ? [...mutation.path, mutation.method] : mutation.path;
-        if (writes.some((path) => matchesPrefix(path, receiver))) continue;
+        if (writes.some((write) => changesReceiver(script, mutation, write.path, write.operation)))
+          continue;
         if (
           mutations.some(
-            (write) => !write.method && matchesPrefix([...write.path, write.key], receiver),
+            (write) =>
+              !write.method &&
+              changesReceiver(script, mutation, [...write.path, write.key], write.node),
           )
         )
           continue;
@@ -176,6 +178,25 @@ interface Mutation {
   key?: string;
   method?: string;
   target: AnyNode;
+}
+
+function changesReceiver(
+  script: IndexedScript,
+  mutation: Mutation,
+  path: PropertyPath,
+  operation: AnyNode,
+): boolean {
+  const target = mutation.method ? [...mutation.path, mutation.method] : mutation.path;
+  if (!matchesPrefix(path, target)) return false;
+  if (path.length > mutation.path.length || path.includes(undefined)) return true;
+  return (
+    operation?.type !== "AssignmentExpression" ||
+    operation.operator !== "=" ||
+    !mutatesPlainValue(script, operation.right, {
+      ...mutation,
+      path: mutation.path.slice(path.length),
+    })
+  );
 }
 
 type Use =

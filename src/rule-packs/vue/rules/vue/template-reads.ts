@@ -12,6 +12,11 @@ import { memberName, unwrapTs } from "./vue-api.js";
 
 export type PropertyPath = ReadonlyArray<string | undefined>;
 
+export interface TemplateWrite {
+  path: PropertyPath;
+  operation?: AnyNode;
+}
+
 export function matchesPrefix(prefix: PropertyPath, path: PropertyPath): boolean {
   return (
     prefix.length <= path.length &&
@@ -25,7 +30,7 @@ interface TemplateNames {
   /** Read while the template renders, outside `v-for` and slot locals. */
   reads: Set<string>;
   /** Paths assigned anywhere in the template; an empty path replaces the binding. */
-  writes: Map<string, PropertyPath[]>;
+  writes: Map<string, TemplateWrite[]>;
 }
 
 /**
@@ -37,7 +42,7 @@ export function renderTemplateReads(ctx: RuleContext): Set<string> {
 }
 
 /** Names the template assigns, as in `@click="items = []"` or `v-model="items"`. */
-export function templateWrites(ctx: RuleContext, name: string): readonly PropertyPath[] {
+export function templateWrites(ctx: RuleContext, name: string): readonly TemplateWrite[] {
   return templateNames(ctx).writes.get(name) ?? [];
 }
 
@@ -47,7 +52,7 @@ function templateNames(ctx: RuleContext): TemplateNames {
 
 function collectTemplateNames(ctx: RuleContext): TemplateNames {
   const reads = new Set<string>();
-  const writes = new Map<string, PropertyPath[]>();
+  const writes = new Map<string, TemplateWrite[]>();
   const root = ctx.file.templateAst;
   if (!root) return { reads, writes };
   const empty = new Set<string>();
@@ -69,12 +74,13 @@ function collectTemplateNames(ctx: RuleContext): TemplateNames {
     for (const { id, mode: access } of templateExpressionReferences(ast)) {
       if (locals.has(id.name)) continue;
       if (mode !== "handler" && access !== "w") reads.add(id.name);
-      const path =
-        access !== "r" ? [] : templateWritePath(id, mode === "model" ? unwrapTs(ast) : undefined);
-      if (!path) continue;
-      let paths = writes.get(id.name);
-      if (!paths) writes.set(id.name, (paths = []));
-      paths.push(path);
+      const write =
+        templateWrite(id, mode === "model" ? unwrapTs(ast) : undefined) ??
+        (access !== "r" ? { path: [] } : undefined);
+      if (!write) continue;
+      let bindingWrites = writes.get(id.name);
+      if (!bindingWrites) writes.set(id.name, (bindingWrites = []));
+      bindingWrites.push(write);
     }
   }
   walkTemplate(root, (node, parent) => {
@@ -105,7 +111,7 @@ function collectTemplateNames(ctx: RuleContext): TemplateNames {
   return { reads, writes };
 }
 
-function templateWritePath(id: AnyNode, model: AnyNode): PropertyPath | undefined {
+function templateWrite(id: AnyNode, model: AnyNode): TemplateWrite | undefined {
   const path: (string | undefined)[] = [];
   let node = id;
   for (let parent = node.__doctorParent; parent; parent = node.__doctorParent) {
@@ -125,8 +131,8 @@ function templateWritePath(id: AnyNode, model: AnyNode): PropertyPath | undefine
         parent.operator === "delete" &&
         parent.argument === node)
     )
-      return path;
+      return { path, operation: parent };
     break;
   }
-  return unwrapTs(node) === model ? path : undefined;
+  return unwrapTs(node) === model ? { path } : undefined;
 }

@@ -185,6 +185,10 @@ function isPrimitiveLiteral(node: AnyNode): boolean {
   node = unwrapTs(node);
   return (
     node?.type === "TemplateLiteral" ||
+    (node?.type === "UnaryExpression" &&
+      (node.operator === "-" || node.operator === "+") &&
+      node.argument.type === "Literal" &&
+      typeof node.argument.value === "number") ||
     (node?.type === "Literal" &&
       (node.value === null ||
         ["boolean", "bigint", "number", "string"].includes(typeof node.value)))
@@ -205,6 +209,15 @@ function dataProperties(node: AnyNode): Map<string, AnyNode> | undefined {
   return properties;
 }
 
+function writesPrimitive(node: AnyNode): boolean {
+  return (
+    node?.type === "UpdateExpression" ||
+    (node?.type === "AssignmentExpression" &&
+      node.operator === "=" &&
+      isPrimitiveLiteral(node.right))
+  );
+}
+
 function stableProperty(
   ctx: RuleContext,
   script: IndexedScript,
@@ -212,7 +225,14 @@ function stableProperty(
   name: string,
   path: PropertyPath,
 ): boolean {
-  if (templateWrites(ctx, name).some((write) => matchesPrefix(write, path))) return false;
+  if (
+    templateWrites(ctx, name).some(
+      (write) =>
+        matchesPrefix(write.path, path) &&
+        (write.path.length !== path.length || !writesPrimitive(write.operation)),
+    )
+  )
+    return false;
   for (const reference of variable.references) {
     if (reference.init) continue;
     const used: (string | undefined)[] = [];
@@ -224,7 +244,10 @@ function stableProperty(
         if (used.length < path.length) return false;
         if (
           (parent?.type === "AssignmentExpression" && parent.left === child) ||
-          (parent?.type === "UpdateExpression" && parent.argument === child) ||
+          (parent?.type === "UpdateExpression" && parent.argument === child)
+        ) {
+          if (!writesPrimitive(parent)) return false;
+        } else if (
           (parent?.type === "UnaryExpression" &&
             parent.operator === "delete" &&
             parent.argument === child) ||

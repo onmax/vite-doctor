@@ -6,13 +6,13 @@ import { noPropertyReadWatchSource } from "../../../src/rule-packs/vue/rules/vue
 
 const RULE_ID = "vue/watch/no-property-read-source";
 
-async function run(script: string) {
+async function run(script: string, template = "") {
   const result = await runVueSfcRuleFixture(
     noPropertyReadWatchSource,
     `<script setup lang="ts">
 import { reactive, ref, shallowReactive, watch, type Ref } from 'vue'
 ${script}
-</script>`,
+</script>${template ? `<template>${template}</template>` : ""}`,
   );
   return result.diagnostics;
 }
@@ -40,12 +40,39 @@ test.each([
     ["state.filters.query"],
   ],
   ["const state = reactive({ page: 1 })", "watch(state.page as number, cb)", ["state.page"]],
+  ["const state = reactive({ index: -1 })", "watch(state.index, cb)", ["state.index"]],
+  ["const props = defineProps<{ index: -1 | 0 | 1 }>()", "watch(props.index, cb)", ["props.index"]],
+  [
+    "const props = withDefaults(defineProps<{ index?: number }>(), { index: -1 })",
+    "watch(props.index, cb)",
+    ["props.index"],
+  ],
 ])("VUE0050 reports %s with %s", async (declaration, call, sources) => {
   const diagnostics = await run(`${declaration}\n${call}`);
   expect(diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual(sources.map(() => RULE_ID));
   for (const [index, source] of sources.entries())
     expect(diagnostics[index]!.why).toContain(`watch(${source}, ...) reads the property once`);
 });
+
+test.each([true, false])(
+  "VUE0050 reports a counter with a reset and increment (template: %s)",
+  async (template) => {
+    const script = "const state = reactive({ count: 0 }); watch(state.count, cb)";
+    const diagnostics = template
+      ? await run(script, '<button @click="state.count++; if (state.count > 5) state.count = 0" />')
+      : await run(`${script}; function update() { state.count++; state.count = 0 }`);
+    expect(diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([RULE_ID]);
+  },
+);
+
+test.each(['<button @click="state.count = source" />', '<input v-model="state.count" />'])(
+  "VUE0050 stays quiet for unknown template writes: %s",
+  async (template) => {
+    expect(
+      await run("const state = reactive({ count: 0 }); watch(state.count, cb)", template),
+    ).toEqual([]);
+  },
+);
 
 test("VUE0050 suggests a getter that Vue's compiler accepts", async () => {
   const source = `<script setup lang="ts">

@@ -68,6 +68,18 @@ test.each([
     `const todos = shallowRef({ items: [], other: [] }); todos.value.other = reactive([])\nfunction add() { todos.value.items.push('a') }`,
     "todos.value.items",
   ],
+  [
+    "a nested receiver is replaced with a plain array during setup",
+    `const todos = shallowRef({ items: [] }); todos.value.items = []
+function add() { todos.value.items.push('a') }`,
+    "todos.value.items",
+  ],
+  [
+    "a receiver ancestor is replaced with a plain object during setup",
+    `const todos = shallowRef({ group: { items: [] } }); todos.value.group = { items: [] }
+function add() { todos.value.group.items.push('a') }`,
+    "todos.value.group.items",
+  ],
 ])("VUE0049 reports when %s", async (_name, script, target) => {
   const diagnostics = await run(component(script));
   expect(diagnostics).toHaveLength(1);
@@ -201,6 +213,16 @@ test.each([`@click="todos.items = replacement; add()"`, `v-model="todos.items"`]
     ).toEqual([]);
   },
 );
+
+test("VUE0049 reports after a template replaces the receiver with a plain array", async () => {
+  const diagnostics = await run(
+    component(
+      `const todos = shallowRef({ items: [] }); function add() { todos.value.items.push('a') }`,
+      `<p>{{ todos.items.length }}</p><button @click="todos.items = []; add()">Reset</button>`,
+    ),
+  );
+  expect(diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([RULE_ID]);
+});
 
 test("VUE0049 ignores a handler assignment to a template local", async () => {
   const diagnostics = await run(
