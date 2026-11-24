@@ -961,7 +961,10 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
 
   if (rule.id === "vite/hmr/no-circular-import-at-hmr-boundary") {
     add("Vite HMR API", "https://vite.dev/guide/api-hmr.html");
-    add("Vue Router lazy loading", "https://router.vuejs.org/guide/advanced/lazy-loading.html");
+    add(
+      "Vue Router composition API",
+      "https://router.vuejs.org/guide/advanced/composition-api.html",
+    );
     add("DOC0001: circular dependencies", "/diagnostics/DOC0001");
   }
 

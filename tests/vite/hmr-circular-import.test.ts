@@ -37,6 +37,8 @@ async function run(files: Record<string, string>) {
       file: relative(result.project.root, item.file),
       line: item.range?.line,
       message: item.message,
+      fix: item.diagnostic.fix,
+      evidence: item.evidence?.map((entry) => entry.summary),
       related: item.related?.map((entry) => ({
         file: relative(result.project.root, entry.file),
         line: entry.range?.line,
@@ -71,14 +73,73 @@ test("reports a cycle through a module that calls import.meta.hot.accept", async
   expect(diagnostics).toMatchObject([{ file: "src/store.ts", line: 1 }]);
 });
 
-test("a lazy route component breaks the cycle", async () => {
+test("a lazy route component still forms a cycle in Vite's HMR importer graph", async () => {
+  const diagnostics = await run({
+    ...app,
+    "src/router.ts":
+      'export const router = { routes: [{ path: "/", component: () => import("./Page.vue") }], push(path: string) {}, start() {} };\n',
+  });
+  expect(diagnostics).toMatchObject([
+    {
+      code: "VITE0029",
+      file: "src/router.ts",
+      line: 1,
+      related: [
+        { file: "src/router.ts", line: 1, message: "lazily imports './Page.vue' → src/Page.vue" },
+        { file: "src/Page.vue", line: 2, message: "imports './router' → src/router.ts" },
+      ],
+    },
+  ]);
+  expect(diagnostics[0]!.fix).toContain("src/Page.vue:2 imports './router'");
+  expect(diagnostics[0]!.fix).not.toContain("component: () => import");
+});
+
+const plainCycle = {
+  "src/a.js": 'import { b } from "./b.js";\nexport const a = () => b;\n',
+  "src/b.js": 'import { a } from "./a.js";\nexport const b = () => a;\n',
+};
+
+test("import.meta.hot.accept in a comment or string is not an HMR boundary", async () => {
+  expect(
+    await run({
+      ...plainCycle,
+      "src/b.js": `${plainCycle["src/b.js"]}// import.meta.hot.accept()\nexport const note = "import.meta.hot.accept()";\n`,
+    }),
+  ).toEqual([]);
+});
+
+test("accepting a dependency does not make the module a self-accepting boundary", async () => {
+  expect(
+    await run({
+      ...plainCycle,
+      "src/other.js": "export const other = 1;\n",
+      "src/b.js": `${plainCycle["src/b.js"]}import "./other.js";\nif (import.meta.hot) import.meta.hot.accept("./other.js", () => {});\n`,
+    }),
+  ).toEqual([]);
+});
+
+test("a callback-only accept call makes the module a boundary", async () => {
+  expect(
+    await run({
+      ...plainCycle,
+      "src/b.js": `${plainCycle["src/b.js"]}import.meta.hot?.accept((mod) => {});\n`,
+    }),
+  ).toMatchObject([{ file: "src/a.js", line: 1 }]);
+});
+
+test("Vue SFCs are not boundaries when the Vite config sets server.hmr to false", async () => {
   expect(
     await run({
       ...app,
-      "src/router.ts":
-        'export const router = { routes: [{ path: "/", component: () => import("./Page.vue") }], push(path: string) {}, start() {} };\n',
+      "vite.config.ts":
+        'import vue from "@vitejs/plugin-vue";\nexport default { plugins: [vue()], server: { hmr: false } };\n',
     }),
   ).toEqual([]);
+});
+
+test("says it assumes client HMR when the Vite config does not decide it", async () => {
+  const diagnostics = await run(app);
+  expect(diagnostics[0]!.evidence?.[0]).toContain("server.hmr");
 });
 
 test("a cycle between plain modules with no HMR boundary is left to DOC0001", async () => {
