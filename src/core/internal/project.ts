@@ -399,6 +399,9 @@ async function detectNuxt(
     autoImports: new Map(autoImportEntries.map((entry) => [entry.as ?? entry.name, entry])),
     autoImportEntries,
     components: nuxtComponents(manifest?.components, manifestCurrent),
+    componentTransformExclude: manifestCurrent
+      ? readComponentTransformExclude(manifest?.componentTransformExclude)
+      : undefined,
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
     productionBuildCache: manifestCurrent ? manifest?.productionBuildCache : undefined,
@@ -426,6 +429,17 @@ async function detectNuxt(
       manifestCurrent,
     ),
   };
+}
+
+function readComponentTransformExclude(
+  patterns: NuxtDoctorManifest["componentTransformExclude"],
+): RegExp[] | undefined {
+  if (!Array.isArray(patterns)) return undefined;
+  try {
+    return patterns.map(({ source, flags }) => new RegExp(source, flags));
+  } catch {
+    return undefined;
+  }
 }
 
 function nuxtComponents(

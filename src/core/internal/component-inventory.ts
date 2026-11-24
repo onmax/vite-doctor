@@ -51,6 +51,11 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
     if (!node) continue;
     const nuxt = session.handlesByPath.get(fact.path)?.project.nuxt;
     const registry = nuxt?.components;
+    const transformExclude = nuxt?.componentTransformExclude;
+    const excludedFromComponentTransform = transformExclude?.some((pattern) => {
+      pattern.lastIndex = 0;
+      return pattern.test(fact.path);
+    });
     const findBinding = (tag: string) => {
       const candidates = tagCandidates(tag);
       return node.facts.imports.find((item) => candidates.includes(item.local));
@@ -67,15 +72,17 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
           return true;
         if (!nuxt || name !== "ClientOnly" || (binding && binding.source !== "#components"))
           return false;
+        if (!binding && excludedFromComponentTransform) return false;
         const registered = registry?.get(name);
+        const locallyRegistered = node.facts.localComponents?.some((localName) =>
+          tagCandidates(tag).includes(localName),
+        );
+        if (!binding && locallyRegistered && excludedFromComponentTransform !== false) return false;
         if (registered)
           return /(?:^|\/)nuxt\/dist\/app\/components\/client-only(?:\.[^/]+)?$/.test(
             registered.file,
           );
-        return (
-          !!binding ||
-          !node.facts.localComponents?.some((name) => tagCandidates(tag).includes(name))
-        );
+        return !!binding || !locallyRegistered;
       });
     for (const render of node.facts.dynamicRenders) {
       const clientOnly = inClientOnlySlot(render.wrappers);

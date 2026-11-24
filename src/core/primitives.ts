@@ -255,6 +255,8 @@ export interface NuxtProjectInfo {
       sourceLayer?: string;
     }
   >;
+  /** Resolved Nuxt component loader exclusions from a current manifest. */
+  componentTransformExclude?: RegExp[];
   layers: Array<{
     name?: string;
     root: string;
@@ -386,6 +388,7 @@ export interface NuxtDoctorManifest {
   };
   autoImports: unknown[];
   components: unknown[];
+  componentTransformExclude?: Array<{ source: string; flags: string }>;
   layers: Array<{
     root: string;
     nuxtConfigMtimeMs?: number | null;

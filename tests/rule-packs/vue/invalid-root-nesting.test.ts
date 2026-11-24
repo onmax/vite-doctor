@@ -295,7 +295,10 @@ test(
       );
       for (const [path, contents] of Object.entries({
         "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }),
-        "nuxt.config.ts": "export default { routeRules: { '/': { prerender: true } } }",
+        "nuxt.config.ts": `export default {
+  components: { dirs: ['~/components'], transform: { exclude: [/excluded\\.vue/] } },
+  routeRules: { '/': { prerender: true }, '/excluded': { prerender: true } },
+}`,
         "app/components/Card.vue": component("<div>card</div>"),
         "app/components/Wrapper.vue": component("<section><slot /></section>"),
         "app/pages/index.vue": `<script>
@@ -309,6 +312,17 @@ import Card from '../components/Card.vue'
 <template>
   <ClientOnly><p><Card />static-default-marker</p></ClientOnly>
   <component is="ClientOnly"><p><Card />literal-is-marker</p></component>
+</template>`,
+        "app/pages/excluded.vue": `<script>
+import Wrapper from '../components/Wrapper.vue'
+export default { components: { ClientOnly: Wrapper } }
+</script>
+<script setup>
+import Card from '../components/Card.vue'
+const ready = true
+</script>
+<template>
+  <ClientOnly><template v-if="ready" #default><p><Card />excluded-marker</p></template></ClientOnly>
 </template>`,
       })) {
         const file = join(root, path);
@@ -328,6 +342,8 @@ import Card from '../components/Card.vue'
       const html = readFileSync(join(root, ".output/public/index.html"), "utf8");
       expect(html).not.toContain("static-default-marker");
       expect(html).toContain("<p><div>card</div>literal-is-marker</p>");
+      const excluded = readFileSync(join(root, ".output/public/excluded/index.html"), "utf8");
+      expect(excluded).toContain("<p><div>card</div>excluded-marker</p>");
       const result = await runDoctor({
         root,
         framework: "nuxt",
@@ -335,7 +351,10 @@ import Card from '../components/Card.vue'
         rules: noInvalidRootNesting.meta.id,
         extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
       });
-      expect(located(result)).toEqual([["VUE0052", "app/pages/index.vue", 11]]);
+      expect(located(result)).toEqual([
+        ["VUE0052", "app/pages/excluded.vue", 10],
+        ["VUE0052", "app/pages/index.vue", 11],
+      ]);
     } finally {
       process.chdir(cwd);
       rmSync(root, { recursive: true, force: true });

@@ -383,6 +383,7 @@ export async function writeManifest(
     buildDir,
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
+    componentTransformExclude: serializeImportTransform(nuxt.options.components?.transform).exclude,
     scannedComposableFiles:
       scannedAutoImportEntries === undefined
         ? undefined
