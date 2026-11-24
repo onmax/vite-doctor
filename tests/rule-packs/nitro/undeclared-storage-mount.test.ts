@@ -262,6 +262,26 @@ test("inspects a registered Nitro 2 plugin relative to srcDir", async () => {
   expect(result.diagnostics).toHaveLength(1);
 });
 
+test.each(["~~", "@@"])(
+  "does not resolve %s from Doctor's root when Nitro changes rootDir",
+  async (alias) => {
+    const result = await run(
+      {
+        "nitro.config.ts": `export default { rootDir: './deployment', srcDir: '../src', plugins: ['${alias}/extras/storage.ts'] }`,
+        "src/api/track.ts": sessionsRoute,
+        "deployment/extras/storage.ts":
+          "export default () => useStorage().mount('sessions', driver)",
+        "extras/storage.ts": "export default () => console.log('ready')",
+      },
+      "nitro",
+      { nitropack: "^2.13.4" },
+      ["src/api/**"],
+    );
+    expect(result.diagnostics).toEqual([]);
+    expect(result.inventory?.complete).toBe(false);
+  },
+);
+
 test("ignores comments and Vue mounts and skips only dev routes", async () => {
   const result = await run(
     {

@@ -88,6 +88,9 @@ export function nitroStorageInventory(ctx: RuleContext): NitroStorageInventory {
       gaps.push(file);
       continue;
     }
+    const unknownRoot =
+      major === 2 && project.framework === "nitro" && !usesDoctorRoot(project.root, source.nitro);
+    if (unknownRoot) gaps.push(file);
     const keys = major === 2 ? (["storage", "devStorage"] as const) : (["kv", "storage"] as const);
     if (major === 3 && keys.every((name) => findProperty(source.nitro, name) !== undefined)) {
       gaps.push(file);
@@ -115,7 +118,7 @@ export function nitroStorageInventory(ctx: RuleContext): NitroStorageInventory {
           mounts.push({ base: normalizeBase(base), source: "bundledStorage", file });
     }
     const plugins = findProperty(source.nitro, "plugins");
-    if (plugins !== undefined) {
+    if (plugins !== undefined && !unknownRoot) {
       const entries = literalStringArray(plugins);
       if (!entries) gaps.push(file);
       else
@@ -161,6 +164,13 @@ function nitro2NodeOption(ctx: RuleContext, sources: ReturnType<typeof nitroConf
   if (!preset) return undefined;
   if (NITRO_2_NODE.has(preset)) return true;
   if (NITRO_2_NON_NODE.test(preset)) return false;
+}
+
+function usesDoctorRoot(root: string, options: any): boolean {
+  const option = findProperty(options, "rootDir");
+  if (option === undefined) return true;
+  const rootDir = literalValue(option);
+  return typeof rootDir === "string" && resolve(root, rootDir) === root;
 }
 
 function runtimePluginPath(
