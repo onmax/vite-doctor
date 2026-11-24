@@ -3,11 +3,12 @@ import { statSync } from "node:fs";
 import ignore from "ignore";
 import { relative, resolve } from "pathe";
 import { globSync } from "tinyglobby";
-import type { NuxtDoctorManifest } from "../primitives.js";
+import type { NuxtAppInventoryInputs } from "../primitives.js";
 
-type AppInputs = NonNullable<NonNullable<NuxtDoctorManifest["resolvedApp"]>["inputs"]>;
-
-export function nuxtAppInputSignature(root: string, inputs: Omit<AppInputs, "signature">) {
+export function nuxtAppInputSignature(
+  root: string,
+  inputs: Omit<NuxtAppInventoryInputs, "signature">,
+) {
   const entries = new Map<string, string>();
   function record(path: string) {
     try {

@@ -301,7 +301,7 @@ export interface NuxtProjectInfo {
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
     pages?: NuxtDoctorManifest["pages"];
     resolvedApp?: NuxtDoctorManifest["resolvedApp"];
-    resolvedAppCurrent?: boolean;
+    resolvedAppCurrent?: Record<NuxtAppInventoryKind, boolean>;
     prerenderRoutes?: string[];
     buildManifest?: {
       hasBuildManifest: boolean;
@@ -344,6 +344,19 @@ export interface NuxtModuleDefinition {
 export interface NuxtKeyedComposable {
   name: string;
   source?: string;
+}
+
+export type NuxtAppInventoryKind = "pages" | "layouts" | "mainComponent";
+
+export interface NuxtAppInventoryInputs {
+  directories: Array<{ directory: string; patterns: string[] }>;
+  files: string[];
+  ignore: {
+    roots: string[];
+    patterns: string[];
+    options?: { ignorecase?: boolean; ignoreCase?: boolean; allowRelativePaths?: boolean };
+  };
+  signature: string;
 }
 
 export interface NuxtDoctorManifest {
@@ -399,16 +412,7 @@ export interface NuxtDoctorManifest {
     mainComponent?: string;
     layouts: Record<string, string>;
     pagesResolved?: boolean;
-    inputs?: {
-      directories: Array<{ directory: string; patterns: string[] }>;
-      files: string[];
-      ignore: {
-        roots: string[];
-        patterns: string[];
-        options?: { ignorecase?: boolean; ignoreCase?: boolean; allowRelativePaths?: boolean };
-      };
-      signature: string;
-    };
+    inputs?: Partial<Record<NuxtAppInventoryKind, NuxtAppInventoryInputs>>;
   };
   prerenderRoutes?: string[];
   buildManifest?: {

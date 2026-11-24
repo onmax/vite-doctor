@@ -1,7 +1,12 @@
 import { relative, resolve } from "pathe";
 import { isNuxtManifestCurrent } from "./runtime-graph.js";
 import { nuxtAppInputSignature } from "./nuxt-app-inputs.js";
-import type { NuxtDoctorManifest, NuxtKeyedComposable, NuxtModuleSource } from "../primitives.js";
+import type {
+  NuxtAppInventoryKind,
+  NuxtDoctorManifest,
+  NuxtKeyedComposable,
+  NuxtModuleSource,
+} from "../primitives.js";
 
 export interface NuxtProjectInventory {
   scannedComposableFiles?: string[];
@@ -21,7 +26,7 @@ export interface NuxtProjectInventory {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   pages: NonNullable<NuxtDoctorManifest["pages"]>;
   resolvedApp?: NuxtDoctorManifest["resolvedApp"];
-  resolvedAppCurrent: boolean;
+  resolvedAppCurrent: Record<NuxtAppInventoryKind, boolean>;
   prerenderRoutes: string[];
   buildManifest?: {
     hasBuildManifest: boolean;
@@ -43,6 +48,12 @@ export function createNuxtProjectInventory(
   isCurrent = isNuxtManifestCurrent(root, manifest),
 ): NuxtProjectInventory {
   const inputs = manifest?.resolvedApp?.inputs;
+  const current = (kind: NuxtAppInventoryKind) => {
+    const input = inputs?.[kind];
+    return Boolean(
+      isCurrent && input?.signature && input.signature === nuxtAppInputSignature(root, input),
+    );
+  };
   return {
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
@@ -68,9 +79,11 @@ export function createNuxtProjectInventory(
     })),
     pages: manifest?.pages ?? [],
     resolvedApp: manifest?.resolvedApp,
-    resolvedAppCurrent: Boolean(
-      isCurrent && inputs?.signature && inputs.signature === nuxtAppInputSignature(root, inputs),
-    ),
+    resolvedAppCurrent: {
+      pages: current("pages"),
+      layouts: current("layouts"),
+      mainComponent: current("mainComponent"),
+    },
     prerenderRoutes: manifest?.prerenderRoutes ?? [],
     buildManifest: manifest?.buildManifest,
     evidence: {

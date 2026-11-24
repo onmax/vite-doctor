@@ -123,19 +123,24 @@ function routeParams(
   metaPath: AnyNode,
 ): RouteParams | null {
   const manifest = ctx.project.nuxt?.manifest;
-  const current = manifest?.resolvedApp ? manifest.resolvedAppCurrent : manifest?.isCurrent;
-  if (current && manifest?.pages?.length) {
-    const routes = manifest.pages.filter(
-      (page) =>
-        page.file &&
-        (page.fullPath || page.path) &&
-        resolveSameFile(
-          resolve(ctx.project.root, page.file),
-          resolve(ctx.project.root, ctx.file.path),
-        ),
-    );
-    if (!routes.length) return null;
-    const paths = [...new Set(routes.map((route) => route.fullPath ?? route.path!))];
+  if (manifest?.resolvedApp || (manifest?.isCurrent && manifest.pages?.length)) {
+    if (
+      manifest.resolvedApp &&
+      (!manifest.resolvedApp.pagesResolved || !manifest.resolvedAppCurrent?.pages)
+    )
+      return null;
+    const file = resolve(ctx.project.root, ctx.file.path);
+    const paths = [
+      ...new Set(
+        (manifest.pages ?? []).flatMap((page) => {
+          const path = manifest.resolvedApp ? page.fullPath : (page.fullPath ?? page.path);
+          return path && page.file && resolveSameFile(resolve(ctx.project.root, page.file), file)
+            ? [path]
+            : [];
+        }),
+      ),
+    ];
+    if (!paths.length) return null;
     return {
       names: [...new Set(paths.flatMap((path) => matches(path, ROUTE_PARAM_RE)))],
       evidence: {

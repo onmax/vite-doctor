@@ -9,6 +9,7 @@ import type {
 } from "../../../../core/index.js";
 import { camelize } from "../../../../core/internal/component-facts.js";
 import { parseScript } from "../../../../core/internal/script.js";
+import type { NuxtAppInventoryKind } from "../../../../core/primitives.js";
 import { parseSfcFile } from "../../../../core/internal/sfc.js";
 import { TemplateNodeType } from "../../../../core/internal/template.js";
 import { nuxtAppSources, toPosixPath, type NuxtAppSource } from "./file-classification.js";
@@ -413,9 +414,9 @@ function scanIsReliable(ctx: RuleContext, layer: NuxtAppSource, kind: "pages" | 
   );
 }
 
-function currentManifest(ctx: RuleContext, layers: NuxtAppSource[]) {
+function currentManifest(ctx: RuleContext, layers: NuxtAppSource[], kind: NuxtAppInventoryKind) {
   const manifest = ctx.project.nuxt?.manifest;
-  return manifest?.resolvedAppCurrent && layers[0]?.root === ctx.project.root
+  return manifest?.resolvedAppCurrent?.[kind] && layers[0]?.root === ctx.project.root
     ? manifest
     : undefined;
 }
@@ -427,7 +428,7 @@ export interface PageRoute {
 }
 
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
-  const manifest = currentManifest(ctx, layers);
+  const manifest = currentManifest(ctx, layers, "pages");
   const pages = manifest?.pages ?? [];
   if (manifest?.resolvedApp?.pagesResolved)
     return pages.flatMap((page): PageRoute[] =>
@@ -468,7 +469,7 @@ export function registeredLayouts(
   layers: NuxtAppSource[],
   sources: readonly string[],
 ) {
-  const app = currentManifest(ctx, layers)?.resolvedApp;
+  const app = currentManifest(ctx, layers, "layouts")?.resolvedApp;
   if (app)
     return Object.entries(app.layouts).map(([name, file]) => ({
       name,
@@ -497,7 +498,7 @@ export function registeredLayouts(
 
 /** Undefined is Nuxt's built-in app; null means the selected app cannot be established. */
 export function mainApp(ctx: RuleContext, layers: NuxtAppSource[]): string | null | undefined {
-  const component = currentManifest(ctx, layers)?.resolvedApp?.mainComponent;
+  const component = currentManifest(ctx, layers, "mainComponent")?.resolvedApp?.mainComponent;
   if (component) {
     const file = resolve(ctx.project.root, component);
     if (/\/nuxt\/dist\/(?:pages\/runtime\/app|app\/components\/welcome)\.vue$/.test(file))
