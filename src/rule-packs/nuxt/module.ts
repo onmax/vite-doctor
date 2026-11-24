@@ -168,7 +168,11 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
       await writeManifest(nuxt, evidence);
     };
     await captureHandlers();
-    nitro.hooks.hook("rollup:before", captureHandlers);
+    // Nitro 3 renamed `rollup:before` to `build:config`, and skips the old name for builders other than Rollup and Vite.
+    nitro.hooks.hook(
+      (nitro.meta?.majorVersion ?? 2) >= 3 ? "build:config" : "rollup:before",
+      captureHandlers,
+    );
     nitro.hooks.hook("compiled", captureHandlers);
   });
 
