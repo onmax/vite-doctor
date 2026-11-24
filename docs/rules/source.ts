@@ -1074,6 +1074,20 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");
   }
 
+  if (rule.id === "nuxt/runtime/no-private-runtime-config-in-client") {
+    add("Nuxt runtime config", "https://nuxt.com/docs/4.x/guide/going-further/runtime-config");
+  }
+
+  if (rule.id === "nuxt/fetch/handler-must-return") {
+    add("Nuxt useAsyncData", "https://nuxt.com/docs/4.x/api/composables/use-async-data");
+    add("Nuxt data fetching", "https://nuxt.com/docs/4.x/getting-started/data-fetching");
+  }
+
+  if (rule.id === "nuxt/plugins/no-island-disabled-dependency") {
+    add("Nuxt plugins", "https://nuxt.com/docs/4.x/guide/directory-structure/app/plugins");
+    add("NuxtIsland", "https://nuxt.com/docs/4.x/api/components/nuxt-island");
+  }
+
   if (rule.id === "nuxt/state/no-diverging-usestate-init") {
     add("Nuxt clearNuxtState", "https://nuxt.com/docs/4.x/api/utils/clear-nuxt-state");
     add("Nuxt state management", "https://nuxt.com/docs/4.x/getting-started/state-management");
