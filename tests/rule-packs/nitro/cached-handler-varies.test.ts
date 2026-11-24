@@ -215,6 +215,72 @@ export default defineCachedHandler((event) => event.req.headers.get('${header}')
   });
 
   test.each([
+    ["routesDir: 'routes/pages'", "routes/pages"],
+    ["routesDir: ''", "routes"],
+    ["routesDir: 'api', apiDir: 'routes'", "routes"],
+    ["routesDir: 'pages'", "pages"],
+  ])("uses the registered method with %s", async (config, dir) => {
+    const cachedRead = (header: string) => `import { defineCachedHandler } from 'nitro/cache'
+export default defineCachedHandler((event) => event.req.headers.get('${header}'))`;
+    expect(
+      await run(
+        {
+          "vite.config.ts": `import { nitro } from 'nitro/vite'
+export default { plugins: [nitro({ serverDir: true, ${config} })] }`,
+          [`server/${dir}/page.post.ts`]: cachedRead("x-post"),
+          [`server/${dir}/page.get.ts`]: cachedRead("x-get"),
+        },
+        "nitro",
+        nitro3,
+      ),
+    ).toEqual([
+      expect.objectContaining({ code: "NITRO0029", why: expect.stringContaining("x-get") }),
+    ]);
+  });
+
+  test("requires registration evidence when a scan root is unknown", async () => {
+    const cachedRead = (header: string) => `import { defineCachedHandler } from 'nitro/cache'
+export default defineCachedHandler((event) => event.req.headers.get('${header}'))`;
+    expect(
+      await run(
+        {
+          "nitro.config.ts": `const pages = 'pages'
+export default defineConfig({ serverDir: true, routesDir: pages,
+  routes: { '/preview': { method: 'get', handler: './server/pages/preview.post.ts' } },
+})`,
+          "server/pages/page.post.ts": cachedRead("x-post"),
+          "server/pages/preview.post.ts": cachedRead("x-preview"),
+        },
+        "nitro",
+        nitro3,
+      ),
+    ).toEqual([
+      expect.objectContaining({ code: "NITRO0029", why: expect.stringContaining("x-preview") }),
+    ]);
+  });
+
+  test("uses explicit methods even when they disagree with the filename", async () => {
+    const cachedRead = (header: string) => `import { defineCachedHandler } from 'nitro/cache'
+export default defineCachedHandler((event) => event.req.headers.get('${header}'))`;
+    expect(
+      await run(
+        {
+          "nitro.config.ts": `export default defineConfig({ serverDir: true, routes: {
+  '/preview': { method: 'get', handler: './server/routes/page.post.ts' },
+  '/submit': { method: 'post', handler: './server/handlers/form.get.ts' },
+} })`,
+          "server/routes/page.post.ts": cachedRead("x-preview"),
+          "server/handlers/form.get.ts": cachedRead("x-submit"),
+        },
+        "nitro",
+        nitro3,
+      ),
+    ).toEqual([
+      expect.objectContaining({ code: "NITRO0029", why: expect.stringContaining("x-preview") }),
+    ]);
+  });
+
+  test.each([
     ["routesDir", "routes", "api"],
     ["apiDir", "api", "routes"],
   ])("reports an explicit GET handler outside the configured %s", async (option, dir, otherDir) => {

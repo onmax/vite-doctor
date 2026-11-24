@@ -3,7 +3,7 @@ import { fileTextScope, type ScriptScope } from "../../../core/internal/script-s
 import { type AnyNode, createRule, report } from "./shared.js";
 import {
   hasUnresolvedNitroConfig,
-  nitro3ScannedRouteMethod,
+  nitro3DefaultHandlerMayUseCache,
   nitroServerFile,
   readStaticConfigOptions,
   type NitroServerFile,
@@ -103,11 +103,10 @@ function checkCachedHandler(
       scope.ast.body.some(
         (statement: AnyNode) =>
           statement.type === "ExportDefaultDeclaration" && unwrap(statement.declaration) === call,
-      )
-    ) {
-      const method = nitro3ScannedRouteMethod(ctx, serverFile);
-      if (method && method !== "get" && method !== "head") return;
-    }
+      ) &&
+      !nitro3DefaultHandlerMayUseCache(ctx, serverFile)
+    )
+      return;
   }
   const kept = keptHeaders(call.arguments?.[1], version);
   if (!kept) return;

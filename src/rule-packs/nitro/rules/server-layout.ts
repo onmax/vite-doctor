@@ -7,6 +7,7 @@ export interface StaticConfigOption {
   path: string[];
   value: string | boolean | null;
   strings?: string[];
+  routes?: { handler: string; method: string }[];
 }
 
 export interface NitroServerFile {
@@ -114,28 +115,55 @@ export function nitro3ScanPath(ctx: RuleContext, path: string, route: boolean) {
   return { name, method, env };
 }
 
-export function nitro3ScannedRouteMethod(
-  ctx: RuleContext,
-  file: NitroServerFile,
-): string | undefined {
-  if (
-    !ROUTE_DIRS.has(file.dir) ||
-    !file.path.includes("/") ||
-    !isNitroScannedScript(ctx, file.path)
-  )
-    return undefined;
+export function nitro3DefaultHandlerMayUseCache(ctx: RuleContext, file: NitroServerFile): boolean {
   const options = readStaticConfigOptions(ctx, ctx.project.framework === "nuxt" ? "nuxt" : "nitro");
-  const directoryOption = file.dir === "api" ? "apiDir" : "routesDir";
-  const directory = resolve(file.serverDir, file.dir);
-  if (
-    options.some(
-      ({ path, value }) =>
-        path.at(-1) === directoryOption &&
-        (typeof value !== "string" || resolve(file.serverDir, value) !== directory),
-    )
-  )
-    return undefined;
-  return nitro3PathParts(file.path.slice(file.dir.length + 1), true).method;
+  const filename = resolve(file.serverDir, file.path);
+  const routeOptions = options.filter(({ path }) => path.at(-1) === "routes");
+  let uncertain = options.some(({ path }) => path.at(-1) === "handlers");
+  let bypassesCache = false;
+  for (const { routes } of routeOptions) {
+    if (!routes) {
+      uncertain = true;
+      continue;
+    }
+    for (const { handler, method } of routes) {
+      if (resolve(ctx.project.root, handler) !== filename) continue;
+      if (nitro3CacheableMethod(method)) return true;
+      bypassesCache = true;
+    }
+  }
+  if (options.some(({ path }) => path.at(-1) === "scanDirs")) return false;
+  for (const dir of ROUTE_DIRS) {
+    const overrides = options.filter(({ path }) => path.at(-1) === `${dir}Dir`);
+    const roots = overrides.length
+      ? new Set(
+          overrides.map(({ value }) =>
+            typeof value === "string" || value === false
+              ? resolve(file.serverDir, value || dir)
+              : undefined,
+          ),
+        )
+      : new Set([resolve(file.serverDir, dir)]);
+    const [root] = roots;
+    if (roots.size !== 1 || root === undefined) {
+      uncertain = true;
+      continue;
+    }
+    const path = relative(root, filename);
+    if (!path || path === ".." || path.startsWith("../") || isAbsolute(path)) continue;
+    if (!isNitroScannedScript(ctx, path)) continue;
+    const { method } = nitro3PathParts(path, true);
+    if (nitro3CacheableMethod(method)) {
+      if (nitro3ScanPath(ctx, path, true)) return true;
+    } else {
+      bypassesCache = true;
+    }
+  }
+  return !bypassesCache && !uncertain;
+}
+
+function nitro3CacheableMethod(method: string | undefined): boolean {
+  return !method || method === "get" || method === "head";
 }
 
 function nitro3PathParts(path: string, route: boolean) {
@@ -483,6 +511,8 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
         "scanDirs",
         "apiDir",
         "routesDir",
+        "routes",
+        "handlers",
         "middlewareDir",
         "scanSuffixes",
         "nitro",
@@ -500,6 +530,10 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
       const strings = literalStringArray(property.value);
       if (strings) option.strings = strings;
     }
+    if (key === "routes" && property.kind === "init") {
+      const routes = staticRoutes(property.value);
+      if (routes) option.routes = routes;
+    }
     options.push(option);
     if (key === "nitro") {
       const nested = unwrapConfig(property.value);
@@ -507,6 +541,37 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
       else options.push({ path: [], value: null });
     }
   }
+}
+
+function staticRoutes(node: any): StaticConfigOption["routes"] {
+  const config = unwrapConfig(node);
+  if (!config) return undefined;
+  const routes = new Map<string, NonNullable<StaticConfigOption["routes"]>[number]>();
+  for (const route of config.properties) {
+    const key = vitePropertyKey(route);
+    if (key === null || route.kind !== "init") return undefined;
+    const options = unwrapConfig(route.value);
+    if (options?.properties.some((property: any) => vitePropertyKey(property) === null))
+      return undefined;
+    const handler = literalValue(
+      options
+        ? options.properties.findLast((property: any) => vitePropertyKey(property) === "handler")
+            ?.value
+        : route.value,
+    );
+    const methodOption = options?.properties.findLast(
+      (property: any) => vitePropertyKey(property) === "method",
+    );
+    const method = methodOption ? literalValue(methodOption.value) : "";
+    if (
+      typeof handler !== "string" ||
+      (!handler.startsWith("./") && !isAbsolute(handler)) ||
+      typeof method !== "string"
+    )
+      return undefined;
+    routes.set(key, { handler, method: method.toLowerCase() });
+  }
+  return [...routes.values()];
 }
 
 function propertyKey(node: any): string | null {
