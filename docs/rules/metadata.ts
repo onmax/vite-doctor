@@ -3152,4 +3152,38 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/reactivity/no-shallow-ref-deep-mutation": {
+    description:
+      "Finds code that changes something inside a `shallowRef()` value after setup, such as `list.value.push(item)`, `form.value.name = name`, or `state.value.count++`, without calling `triggerRef()` or replacing `.value`. Doctor reports it only when the ref is a `const` initialized, and only ever assigned, with plain object, array, `Map`, or `Set` literals, when a template, `computed()`, or watcher in the same file reads the ref, and when the change runs later than setup: in a lifecycle hook, a watcher, a timer, a promise callback, an event listener, after an `await`, or in a function that setup does not call. A `triggerRef()` call anywhere in the file, a `.value` assignment in the same function, a template that assigns the ref, or passing the ref to another function keeps it quiet. Refs imported from another file are not followed.",
+    why: "A `shallowRef()` tracks only its `.value` property: the getter tracks `value` and only the `.value` setter or `triggerRef()` triggers. The object inside stays a plain object, so pushing to an array or setting a property in it notifies nothing. The template, `computed()` values, and watchers that read the ref keep showing the old contents until something unrelated re-runs them, and a `computed()` keeps returning its cached result.",
+    recommendedReplacement:
+      "Call `triggerRef(ref)` after changing the value in place, or assign a new object or array to `.value`, such as `list.value = [...list.value, item]`. Use `ref()` when the value should track nested changes.",
+    examples: [
+      {
+        title: "Replace the value or trigger the ref",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nimport { shallowRef } from 'vue'\n\nconst todos = shallowRef<string[]>([])\n\nfunction add(todo: string) {\n  todos.value.push(todo)\n}\n</script>\n\n<template>\n  <button @click=\"add('Write docs')\">Add</button>\n  <p>{{ todos.length }} todos</p>\n</template>",
+        valid:
+          "<script setup lang=\"ts\">\nimport { shallowRef } from 'vue'\n\nconst todos = shallowRef<string[]>([])\n\nfunction add(todo: string) {\n  todos.value = [...todos.value, todo]\n}\n</script>\n\n<template>\n  <button @click=\"add('Write docs')\">Add</button>\n  <p>{{ todos.length }} todos</p>\n</template>",
+      },
+    ],
+  },
+  "vue/watch/no-property-read-source": {
+    description:
+      "Finds `watch()` sources that read a property of the `defineProps()` object or of a `const` `reactive()` object, such as `watch(props.user, cb)` or `watch(state.filters.query, cb)`, directly or inside a source array. Destructured props are covered by `vue/reactivity/defineprops-watch-getter`. Properties of other objects, including `setup(props)` parameters and `shallowReactive()` objects, are not reported.",
+    why: '`watch(props.user, cb)` evaluates `props.user` once and passes its value. `watch()` accepts a ref, a reactive object, a getter, or an array of those. A primitive or a plain object makes Vue warn "Invalid watch source" and the callback never runs. A reactive object is watched deeply as that one object, so assigning a new object to the property, as a parent does when it passes a new prop value, never runs the callback.',
+    recommendedReplacement:
+      "Pass a getter, `watch(() => props.user, cb)`. Add `{ deep: true }` when the callback should also run for changes inside the value, which the original call watched when the value was a reactive object. The fix is offered as a suggestion because of that difference.",
+    examples: [
+      {
+        title: "Watch a prop through a getter",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nimport { watch } from 'vue'\n\nconst props = defineProps<{ userId: string }>()\n\nwatch(props.userId, (id) => loadUser(id))\n</script>",
+        valid:
+          "<script setup lang=\"ts\">\nimport { watch } from 'vue'\n\nconst props = defineProps<{ userId: string }>()\n\nwatch(() => props.userId, (id) => loadUser(id))\n</script>",
+      },
+    ],
+  },
 } satisfies Record<string, RuleDocumentationMetadata>;

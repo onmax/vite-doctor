@@ -980,6 +980,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia", "https://pinia.vuejs.org/");
   }
 
+  if (rule.id === "vue/reactivity/no-shallow-ref-deep-mutation") {
+    add(
+      "Vue reducing reactivity overhead for large immutable structures",
+      "https://vuejs.org/guide/best-practices/performance.html#reduce-reactivity-overhead-for-large-immutable-structures",
+    );
+    add("Vue triggerRef()", "https://vuejs.org/api/reactivity-advanced.html#triggerref");
+  }
+
+  if (rule.id === "vue/watch/no-property-read-source") {
+    add("Vue watch()", "https://vuejs.org/api/reactivity-core.html#watch");
+  }
+
   if (rule.id === "vue/attrs/require-explicit-emits") {
     add(
       "Vue declaring emitted events",
