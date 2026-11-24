@@ -150,6 +150,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0028", ruleId: "vite/plugin/no-fragment-in-virtual-id" },
 
   { code: "VITE0029", ruleId: "vite/hmr/no-circular-import-at-hmr-boundary" },
+
+  { code: "VITE0033", ruleId: "vite/build/no-node-builtin-in-client-chunk" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
   { code: "TS0003", ruleId: "typescript/evidence/no-unknown-type-aliases" },

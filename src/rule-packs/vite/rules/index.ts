@@ -28,6 +28,8 @@ export { noUrlPathnameAsFsPath } from "./config-paths.js";
 export { noFragmentInVirtualId } from "./virtual-ids.js";
 
 export { noCircularImportAtHmrBoundary } from "./hmr-cycles.js";
+
+export { noNodeBuiltinInClientChunk } from "./build.js";
 export {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -65,6 +67,8 @@ import { noUrlPathnameAsFsPath } from "./config-paths.js";
 import { noFragmentInVirtualId } from "./virtual-ids.js";
 
 import { noCircularImportAtHmrBoundary } from "./hmr-cycles.js";
+
+import { noNodeBuiltinInClientChunk } from "./build.js";
 import {
   requireDisposeForSideEffects,
   requirePluginName,
@@ -106,6 +110,8 @@ const rules = [
   noFragmentInVirtualId,
 
   noCircularImportAtHmrBoundary,
+
+  noNodeBuiltinInClientChunk,
 ];
 
 const recommended = [
@@ -132,6 +138,8 @@ const recommended = [
   noUrlPathnameAsFsPath,
 
   noFragmentInVirtualId,
+
+  noNodeBuiltinInClientChunk,
 ].map((rule) => rule.meta.id);
 
 const viteRulePack = defineRulePack({
