@@ -126,9 +126,11 @@ export function importedName(
   };
   const setup = blockRange(ctx, "scriptSetup");
   const script = moduleScriptRange(ctx);
+  const setupDeclaration = setupBinding(program, callee.name, setup);
   const binding = ctx.file.relativePath.endsWith(".vue")
-    ? ((inRange(callee, setup) ? setupBinding(program, callee.name, setup) : null) ??
-      (script ? bindingInRange(program, callee.name, script) : null))
+    ? ((inRange(callee, setup) || setupDeclaration?.__doctorParent?.type === "ImportDeclaration"
+        ? setupDeclaration
+        : null) ?? (script ? bindingInRange(program, callee.name, script) : null))
     : findStatementBinding(program, callee.name);
   if (binding) {
     if (binding.type !== "ImportSpecifier" || binding.importKind === "type") return null;

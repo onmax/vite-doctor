@@ -268,6 +268,24 @@ filter.value = useRoute().fullPath
   ).toEqual([]);
 });
 
+test.each([
+  ["import { ref as createRef } from 'vue'", "createRef", true],
+  ["import { ref } from './project-factory'", "ref", false],
+  ["const ref = () => ({ value: '' })", "ref", true],
+])("resolves plain-script factories with setup binding %s", async (binding, factory, reports) => {
+  const file = "app/pages/index.vue";
+  const result = await run({
+    [file]: `<script>
+const shared = ${factory}('')
+</script>
+<script setup>
+${binding}
+shared.value = useRoute().fullPath
+</script>`,
+  });
+  expect(result).toEqual(reports ? [{ code: "NUXT0105", file, line: 2 }] : []);
+});
+
 test("only SSR-running watchers can write request data during setup", async () => {
   const file = "app/pages/index.vue";
   expect(

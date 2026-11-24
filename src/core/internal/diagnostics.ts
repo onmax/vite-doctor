@@ -93,12 +93,11 @@ export async function applyPolicyFilters(session: ScanSession): Promise<void> {
   reportDefaultDeclarativeConfig(session);
   await applyReportEligibility(session);
   applySeverityFilter(session);
-  const result = applyDiagnosticPolicy(session);
+  const result = applyDiagnosticPolicy(session, preferModuleStateDiagnostics);
   session.diagnostics = result.diagnostics;
   session.suppressedDiagnostics = result.suppressedDiagnostics;
   if (result.staleBaseline) reportStaleBaseline(session, result.staleBaseline);
   if (result.baseline) reportResolvedBaselineEntries(session, result.baseline);
-  session.diagnostics = preferModuleStateDiagnostics(session.diagnostics);
 }
 
 const moduleStateReplacements = new Map([
@@ -107,17 +106,29 @@ const moduleStateReplacements = new Map([
 ]);
 
 function preferModuleStateDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
-  const location = ({ file, range }: Diagnostic, code: string) =>
-    JSON.stringify([code, file, range?.start, range?.end]);
-  const preferred = new Set(
-    diagnostics
-      .filter(({ code, range }) => range && (code === "NUXT0084" || code === "NITRO0035"))
-      .map((diagnostic) => location(diagnostic, diagnostic.code)),
-  );
-  if (!preferred.size) return diagnostics;
+  const overlapKey = ({ code, file, range }: Diagnostic) => {
+    if (!range) return undefined;
+    const preferred = moduleStateReplacements.get(code) ?? code;
+    if (preferred !== "NUXT0084" && preferred !== "NITRO0035") return undefined;
+    return JSON.stringify([preferred, file, range.start, range.end]);
+  };
+  const winners = new Map<string, Diagnostic>();
+  for (const diagnostic of diagnostics) {
+    const key = overlapKey(diagnostic);
+    if (!key) continue;
+    const winner = winners.get(key);
+    const rank = severityRank(diagnostic.severity);
+    if (
+      !winner ||
+      rank > severityRank(winner.severity) ||
+      (rank === severityRank(winner.severity) && !moduleStateReplacements.has(diagnostic.code))
+    )
+      winners.set(key, diagnostic);
+  }
+  if (!winners.size) return diagnostics;
   return diagnostics.filter((diagnostic) => {
-    const replacement = moduleStateReplacements.get(diagnostic.code);
-    return !replacement || !preferred.has(location(diagnostic, replacement));
+    const key = overlapKey(diagnostic);
+    return !key || winners.get(key)?.code === diagnostic.code;
   });
 }
 

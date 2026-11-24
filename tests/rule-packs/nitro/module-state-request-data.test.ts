@@ -1,5 +1,9 @@
 import { expect, test } from "vite-plus/test";
-import { runProjectFixture } from "../../../src/core/testkit.ts";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "pathe";
+import { createProjectFixture, runProjectFixture } from "../../../src/core/testkit.ts";
+import { createJsonReport } from "../../../src/core/reports.ts";
 import type { DoctorConfig } from "../../../src/core/index.ts";
 import {
   nitroRulePack,
@@ -170,17 +174,21 @@ export default defineEventHandler((event) => {
   expect(await run({ [file]: source })).toEqual([]);
 });
 
-test("reports a hand-rolled cache once next to NITRO0023", async () => {
-  const file = "server/api/me.get.ts";
-  const files = {
-    [file]: `let cached: { user: unknown, expiresAt: number } | null = null
+const cacheFile = "server/api/me.get.ts";
+const cacheFiles = {
+  [cacheFile]: `let cached: { user: unknown, expiresAt: number } | null = null
 export default defineEventHandler(async (event) => {
   if (cached && cached.expiresAt > Date.now()) return cached.user
   cached = { user: await $fetch('/users/me', { headers: getRequestHeaders(event) }), expiresAt: Date.now() + 60_000 }
   return cached.user
 })`,
-  };
-  const both = [noRequestDataInModuleState, noModuleScopeResponseCache];
+};
+const cacheRules = [noRequestDataInModuleState, noModuleScopeResponseCache];
+
+test("reports a hand-rolled cache once next to NITRO0023", async () => {
+  const file = cacheFile;
+  const files = cacheFiles;
+  const both = cacheRules;
   const fallback = [{ code: "NITRO0023", file, line: 1 }];
   expect(await run(files, "nuxt", both)).toEqual([{ code: "NITRO0035", file, line: 1 }]);
   expect(await run(files, "nuxt", [noModuleScopeResponseCache])).toEqual(fallback);
@@ -189,6 +197,43 @@ export default defineEventHandler(async (event) => {
   expect(await run(files, "nuxt", both, { overrides: [{ files: [file], rules: off }] })).toEqual(
     fallback,
   );
+});
+
+test("retains the highest configured severity for an overlapping cache finding", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: cacheFiles,
+    rules: cacheRules,
+    config: {
+      rules: {
+        [noModuleScopeResponseCache.meta.id]: "error",
+        [noRequestDataInModuleState.meta.id]: "warn",
+      },
+    },
+  });
+  expect(result.diagnostics).toMatchObject([{ code: "NITRO0023", severity: "error" }]);
+});
+
+test("uses the same overlapping finding in reports and baselines", async () => {
+  const fixture = createProjectFixture({ framework: "nuxt", files: cacheFiles });
+  const dir = await mkdtemp(join(tmpdir(), "doctor-module-state-baseline-"));
+  const baseline = join(dir, "baseline.json");
+  const rules = cacheRules;
+  try {
+    const result = await fixture.run({ rules });
+    expect(result.diagnostics).toMatchObject([{ code: "NITRO0035" }]);
+    await writeFile(baseline, createJsonReport(result));
+    const filtered = await fixture.run({ rules, run: { baseline, newOnly: true } });
+    expect(filtered.diagnostics).toEqual([]);
+    expect(filtered.suppressedDiagnostics).toMatchObject([{ code: "NITRO0035" }]);
+    await fixture.run({ rules, run: { baseline, updateBaseline: true } });
+    expect(JSON.parse(await readFile(baseline, "utf8")).diagnostics).toMatchObject([
+      { fingerprint: result.diagnostics[0]!.fingerprint },
+    ]);
+  } finally {
+    await fixture.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("reports only fixed-key writes, including const aliases and direct event storage", async () => {
@@ -216,4 +261,23 @@ export default defineEventHandler(async (event) => {
 
 test("ships in the Recommended Preset", () => {
   expect(nitroRulePack.presets.recommended).toContain(noRequestDataInModuleState.meta.id);
+});
+
+test("finds fixed keys in locally declared Object.assign sources and object spreads", async () => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const aliased = {}
+const spread = {}
+const keyed = {}
+export default defineEventHandler((event) => {
+  const patch = { current: getCookie(event, 'session') }
+  const alias = patch
+  const byId = { [getQuery(event).id]: event.context.user }
+  Object.assign(aliased, alias)
+  Object.assign(spread, { ...patch, ...{ current: event.context.user } })
+  Object.assign(keyed, { ...byId })
+})`,
+    }),
+  ).toEqual([1, 2].map((line) => ({ code: "NITRO0035", file, line })));
 });

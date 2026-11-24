@@ -171,18 +171,28 @@ function writtenValues(reference: AnyNode, shape: Shape): AnyNode[] {
     parent.arguments?.[0] === reference &&
     isObjectAssign(parent.callee)
   )
-    return parent.arguments.slice(1).flatMap(fixedProperties);
+    return parent.arguments.slice(1).flatMap((source: AnyNode) => fixedProperties(source));
   return [];
 }
 
-function fixedProperties(source: AnyNode): AnyNode[] {
+function fixedProperties(source: AnyNode, depth = 0): AnyNode[] {
+  if (depth > 5) return [];
   const object = unwrapExpression(source);
+  if (object?.type === "Identifier") {
+    const binding = resolveLexicalBinding(object);
+    return binding?.type === "VariableDeclarator" &&
+      binding.id?.type === "Identifier" &&
+      binding.__doctorParent?.kind === "const"
+      ? fixedProperties(binding.init, depth + 1)
+      : [];
+  }
   if (object?.type !== "ObjectExpression") return [];
-  return object.properties.flatMap((property: AnyNode) =>
-    property.type === "Property" && (!property.computed || isConstantKey(property.key))
+  return object.properties.flatMap((property: AnyNode) => {
+    if (property.type === "SpreadElement") return fixedProperties(property.argument, depth + 1);
+    return property.type === "Property" && (!property.computed || isConstantKey(property.key))
       ? [property.value]
-      : [],
-  );
+      : [];
+  });
 }
 
 function isConstantKey(node: AnyNode, depth = 0): boolean {
