@@ -61,18 +61,23 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
   let ran = false;
   let serveRun: ServeDoctorRun | undefined;
   let checkedTargets = new WeakSet<BuildTarget>();
+  const buildWarnings = new WeakMap<ResolvedConfig["inlineConfig"], Set<string>>();
 
   async function checkBuild(
     resolved: ResolvedConfig,
     fail: (message: string) => never,
     targets?: BuildTarget[],
   ) {
+    const warnings = buildWarnings.get(resolved.inlineConfig);
     const { runSurfaceDoctor } = await import("./plugin-run.js");
     const outcome = await runSurfaceDoctor(
       surfaceRunInput(resolved, options, targets),
       surfaceExtensions(resolved, options),
     );
-    if (outcome.shouldFail && (options.mode ?? "error") === "error") {
+    const maxWarnings = options.maxWarnings;
+    if (warnings) for (const warning of outcome.warningKeys) warnings.add(warning);
+    const overBudget = warnings && maxWarnings !== undefined && warnings.size > maxWarnings;
+    if ((outcome.shouldFail || overBudget) && (options.mode ?? "error") === "error") {
       fail(outcome.report || "Vite Doctor checks failed.");
     } else if (outcome.report) {
       if (outcome.hasFindings) resolved.logger.warn(outcome.report);
@@ -98,10 +103,14 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
 
   const plugin: Plugin = {
     name: "vite-doctor",
+    sharedDuringBuild: options.maxWarnings !== undefined,
     configResolved(resolved) {
       config = resolved;
       ran = false;
       checkedTargets = new WeakSet();
+      if (resolved.command === "build" && options.maxWarnings !== undefined) {
+        buildWarnings.set(resolved.inlineConfig, new Set());
+      }
     },
     configureServer(server) {
       if (options.enabled === false || !shouldRun(options.run ?? "build", "serve")) return;

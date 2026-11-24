@@ -142,6 +142,71 @@ export const useYStore = defineStore('y', () => ({ name: useXStore().name }))
   });
 });
 
+test("an application shares its warning limit across the environments it builds", async () => {
+  await withProject(async (root) => {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0" } }),
+    );
+    const cycle = (name: string, condition: string) => `
+const use${name}A = defineStore('${name}-a', () => ({ name: ${condition} ? use${name}B().name : 'a' }))
+const use${name}B = defineStore('${name}-b', () => ({ name: use${name}A().name }))
+export { use${name}A }
+`;
+    const common = `import { defineStore } from 'pinia'\n${cycle("Client", "!import.meta.env.SSR")}`;
+    const config = {
+      root,
+      configFile: false as const,
+      logLevel: "silent" as const,
+      plugins: [
+        doctor({
+          rules: "pinia/stores/no-circular-setup-state-read",
+          config: { rules: { "pinia/stores/no-circular-setup-state-read": "warn" } },
+          cache: false,
+          maxWarnings: 1,
+        }),
+        { name: "fixture/noop-build-app", buildApp() {} },
+      ],
+      build: {
+        write: false,
+        lib: { entry: join(root, "entry.ts"), formats: ["es" as const] },
+        rolldownOptions: { external: ["pinia"] },
+      },
+      environments: { client: {}, ssr: { consumer: "server" as const } },
+    };
+    await writeFile(join(root, "entry.ts"), common + cycle("Server", "import.meta.env.SSR"));
+    await build(config);
+    const app = await createBuilder({ ...config, builder: { sharedPlugins: true } });
+    await expect(app.buildApp()).rejects.toThrow(/PINIA0003/);
+
+    const customApp = await createBuilder({
+      ...config,
+      builder: {
+        async buildApp(builder) {
+          await Promise.all(Object.values(builder.environments).map((env) => builder.build(env)));
+        },
+      },
+    });
+    const clientApp = await createBuilder({
+      ...config,
+      builder: {
+        async buildApp(builder) {
+          await builder.build(builder.environments.client!);
+        },
+      },
+    });
+    await expect(customApp.buildApp()).rejects.toThrow(/PINIA0003/);
+    await clientApp.buildApp();
+
+    await writeFile(
+      join(root, "entry.ts"),
+      `import { defineStore } from 'pinia'\n${cycle("Shared", "true")}`,
+    );
+    const sharedWarning = await createBuilder({ ...config, builder: { sharedPlugins: true } });
+    await sharedWarning.buildApp();
+  });
+});
+
 test("a shared Plugin Surface runs once across a Vite application's environments", async () => {
   await withProject(async (root) => {
     let runs = 0;
