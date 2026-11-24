@@ -1,0 +1,391 @@
+import { basename, dirname, join, relative, resolve } from "pathe";
+import type {
+  ComponentUsageGraph,
+  RuleContext,
+  SourceRange,
+  TemplateElementNode,
+  TemplateRootNode,
+} from "../../../../core/index.js";
+import { camelize } from "../../../../core/internal/component-facts.js";
+import { parseScript } from "../../../../core/internal/script.js";
+import { parseSfcFile } from "../../../../core/internal/sfc.js";
+import { TemplateNodeType } from "../../../../core/internal/template.js";
+import { nuxtAppSources, toPosixPath, type NuxtAppSource } from "./file-classification.js";
+import {
+  ENVIRONMENT_OVERRIDE_KEYS,
+  exportedConfigObject,
+  objectExpression,
+  propertyName,
+  topLevelBindings,
+  unwrap,
+} from "./nuxt-config-ast.js";
+import type { AnyNode } from "./shared.js";
+
+// nuxt.options.extensions, which Nuxt scans pages/ and layouts/ with.
+const NUXT_EXTENSIONS = /\.(?:vue|[cm]?[jt]sx?)$/;
+// Nuxt's default `ignore` drops declarations, tests, stories, and `ignorePrefix` (`-`) files.
+const NUXT_IGNORED = /(?:\.d\.(?:vue\.)?[cm]?ts|\.(?:spec|test|stories)\.[cm]?[jt]sx?)$/;
+const NUXT_CONFIG_FILES = ["ts", "mts", "js", "mjs", "cjs", "cts"].map(
+  (extension) => `nuxt.config.${extension}`,
+);
+
+/** A file Nuxt registers as a page or layout from its directory. */
+export function isScannedNuxtFile(file: string): boolean {
+  return NUXT_EXTENSIONS.test(file) && !NUXT_IGNORED.test(file) && !basename(file).startsWith("-");
+}
+
+export function isInsideDir(file: string, dir: string): boolean {
+  return file.startsWith(`${dir}/`);
+}
+
+export function displayPath(ctx: RuleContext, file: string): string {
+  return toPosixPath(relative(ctx.project.root, file));
+}
+
+/** Nuxt layers of the Doctor Run's main app, highest priority first, then other Nuxt apps. */
+export function nuxtLayerSources(ctx: RuleContext): NuxtAppSource[][] {
+  const sources = nuxtAppSources(ctx);
+  const byRoot = new Map(sources.map((source) => [source.root, source]));
+  const layers = [...(ctx.project.nuxt?.layers ?? [])]
+    .sort((left, right) => left.priority - right.priority)
+    .map((layer) => byRoot.get(toPosixPath(resolve(ctx.project.root, layer.root))))
+    .filter((source): source is NuxtAppSource => !!source);
+  const apps = layers.length ? [layers] : [];
+  for (const source of sources) if (!layers.includes(source)) apps.push([source]);
+  return apps;
+}
+
+export function pascalTag(tag: string): string {
+  const camel = camelize(tag);
+  return (camel.charAt(0).toUpperCase() + camel.slice(1)).replace(/^Lazy(?=[A-Z])/, "");
+}
+
+export type OutletSearch =
+  | { state: "renders" }
+  | { state: "unknown"; reason: string }
+  | { state: "absent" };
+
+/**
+ * Whether the SFC renders one of `outlets` itself or through components it renders. An outlet
+ * Doctor could reach only through a guess, such as an auto-imported tag it cannot resolve or a
+ * render function, makes the answer `unknown`.
+ */
+export function findOutlet(
+  ctx: RuleContext,
+  graph: ComponentUsageGraph,
+  start: string,
+  outlets: ReadonlySet<string>,
+  mention: RegExp,
+): OutletSearch {
+  const byName = componentsByName(graph);
+  const registry = ctx.project.nuxt?.components;
+  const queue: Array<{ file: string; certain: boolean }> = [{ file: start, certain: true }];
+  const seen = new Set<string>();
+  let unknown: string | undefined;
+  while (queue.length) {
+    const { file, certain } = queue.shift()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const node = graph.components.get(file);
+    const text = ctx.fs.readText(file);
+    const name = displayPath(ctx, file);
+    if (!node || !text) {
+      unknown ??= `Doctor has no component facts for ${name}.`;
+      continue;
+    }
+    if (node.facts.usages.some((usage) => outlets.has(pascalTag(usage.tag)))) {
+      if (certain) return { state: "renders" };
+      unknown ??= `An auto-imported tag may resolve to ${name}, which renders the outlet.`;
+      continue;
+    }
+    if (!/<template[\s>]/.test(text)) {
+      unknown ??= `${name} has no <template>, so it may render through a render function.`;
+      continue;
+    }
+    if (mention.test(text)) unknown ??= `${name} names the outlet outside a template tag.`;
+    if (/<component[\s>/]/.test(text))
+      unknown ??= `${name} renders a dynamic <component :is>, which Doctor cannot resolve.`;
+    for (const edge of node.renders) {
+      if (edge.target) {
+        queue.push({ file: edge.target, certain });
+        continue;
+      }
+      const tag = pascalTag(edge.usage.tag);
+      const entry = registry?.get(tag) ?? registry?.get(edge.usage.tag);
+      if (entry?.file && !graph.components.has(resolve(ctx.project.root, entry.file))) {
+        const source = ctx.fs.readText(resolve(ctx.project.root, entry.file));
+        if (source === undefined || mention.test(source))
+          unknown ??= `<${edge.usage.tag}> resolves to ${entry.file}, which Doctor does not analyze.`;
+      }
+      for (const candidate of tagCandidates(tag, byName))
+        queue.push({ file: candidate, certain: false });
+    }
+  }
+  return unknown ? { state: "unknown", reason: unknown } : { state: "absent" };
+}
+
+function componentsByName(graph: ComponentUsageGraph): Map<string, string[]> {
+  const byName = new Map<string, string[]>();
+  for (const file of graph.components.keys()) {
+    const base = basename(file).replace(/\.vue$/, "");
+    const name = pascalTag(base === "index" ? basename(dirname(file)) : base);
+    const files = byName.get(name);
+    if (files) files.push(file);
+    else byName.set(name, [file]);
+  }
+  return byName;
+}
+
+// Nuxt prefixes auto-imported component names with their directories, so `UsersShell` can be
+// `components/users/Shell.vue`: any PascalCase suffix of the tag can name the file.
+function tagCandidates(tag: string, byName: Map<string, string[]>): string[] {
+  const files: string[] = [];
+  for (let index = 0; index < tag.length; index++) {
+    if (index && !/[A-Z]/.test(tag[index]!)) continue;
+    files.push(...(byName.get(tag.slice(index)) ?? []));
+  }
+  return files;
+}
+
+export function templateTagRange(ctx: RuleContext, file: string, text: string): SourceRange {
+  const start = Math.max(text.search(/<template[\s>]/), 0);
+  return ctx.helpers.rangeFromOffsets(file, text, start, start + "<template".length);
+}
+
+export type ConfigFlag =
+  | { state: "on"; file: string }
+  | { state: "off"; file: string }
+  | { state: "unknown"; reason: string };
+
+/**
+ * `app.<key>` as the app's nuxt.config files set it statically, the highest-priority layer first.
+ * Undefined when no config sets it, so Nuxt's default applies.
+ */
+export function readAppConfigFlag(
+  ctx: RuleContext,
+  layers: NuxtAppSource[],
+  key: "pageTransition" | "layoutTransition",
+): ConfigFlag | undefined {
+  for (const layer of layers) {
+    const flag = readLayerConfigFlag(ctx, layer.root, key);
+    if (flag) return flag;
+  }
+  const unread = unreadLayers(ctx, layers);
+  if (unread) return { state: "unknown", reason: unread };
+  return undefined;
+}
+
+/**
+ * Why some layers of the app are missing from `layers`, or undefined when Doctor reads them all.
+ * Without a Nuxt manifest Doctor only sees the root layer, so `extends` hides the others.
+ */
+export function unreadLayers(ctx: RuleContext, layers: NuxtAppSource[]): string | undefined {
+  const known = ctx.project.nuxt?.layers.length ?? 0;
+  if (known > layers.length)
+    return `${known - layers.length} Nuxt layer(s) of the app are outside the Doctor Run.`;
+  if (layers.length !== 1 || ctx.project.nuxt?.manifest?.hasManifest) return undefined;
+  const config = configFile(ctx, layers[0]!.root);
+  if (config && /\bextends\s*:/.test(config.text))
+    return `${displayPath(ctx, config.file)} extends layers Doctor cannot read without a Nuxt manifest.`;
+  return undefined;
+}
+
+function configFile(ctx: RuleContext, root: string) {
+  for (const name of NUXT_CONFIG_FILES) {
+    const file = join(root, name);
+    const text = ctx.fs.readText(file);
+    if (text !== undefined) return { file, text };
+  }
+  return undefined;
+}
+
+function readLayerConfigFlag(
+  ctx: RuleContext,
+  root: string,
+  key: "pageTransition" | "layoutTransition",
+): ConfigFlag | undefined {
+  const config = configFile(ctx, root);
+  if (!config) return undefined;
+  const { file, text } = config;
+  const mentioned = new RegExp(`\\b${key}\\b`).test(text);
+  const unknown = (why: string): ConfigFlag => ({
+    state: "unknown",
+    reason: `${displayPath(ctx, file)} ${why}`,
+  });
+  const program = parseScript(file, text) as AnyNode;
+  const bindings = program ? topLevelBindings(program) : new Map();
+  const object = program ? exportedConfigObject(program, bindings) : null;
+  if (!object)
+    return mentioned ? unknown(`sets app.${key} in a config Doctor cannot read.`) : undefined;
+  for (const property of object.properties ?? []) {
+    if (property.type !== "Property") {
+      if (mentioned) return unknown(`spreads values that may set app.${key}.`);
+      continue;
+    }
+    const name = propertyName(property);
+    if (
+      name &&
+      (ENVIRONMENT_OVERRIDE_KEYS.has(name) || name === "$env") &&
+      new RegExp(`\\b${key}\\b`).test(text.slice(property.start, property.end))
+    )
+      return unknown(`sets app.${key} for one environment only.`);
+  }
+  const appProperty = (object.properties ?? []).find(
+    (property: AnyNode) => property.type === "Property" && propertyName(property) === "app",
+  );
+  if (!appProperty) return undefined;
+  const app = objectExpression(appProperty.value, bindings);
+  if (!app) return mentioned ? unknown(`computes app, which may set app.${key}.`) : undefined;
+  let value: AnyNode;
+  for (const property of app.properties ?? []) {
+    if (property.type !== "Property") {
+      if (mentioned) return unknown(`spreads values into app that may set ${key}.`);
+      continue;
+    }
+    if (propertyName(property) === key) value = unwrap(property.value);
+  }
+  if (!value) return undefined;
+  if (value.type === "ObjectExpression") return { state: "on", file };
+  if (value.type === "Literal" && typeof value.value === "boolean")
+    return { state: value.value ? "on" : "off", file };
+  return unknown(`computes app.${key}.`);
+}
+
+export interface ParsedSfc {
+  text: string;
+  template: TemplateRootNode | null;
+  /** `<script setup>` and `<script>` top-level statements. */
+  script: AnyNode;
+}
+
+export async function readSfc(ctx: RuleContext, file: string): Promise<ParsedSfc | undefined> {
+  const text = ctx.fs.readText(file);
+  if (text === undefined) return undefined;
+  const sfc = await parseSfcFile(file, text);
+  return {
+    text,
+    template: sfc.getTemplateAst(),
+    script: sfc.getScriptAst() as AnyNode,
+  };
+}
+
+export type MetaFlag = "on" | "off" | "unknown" | undefined;
+
+/** A `definePageMeta()` key as the page sets it statically; undefined when it does not set it. */
+export function pageMetaFlag(script: AnyNode, key: string): MetaFlag {
+  let flag: MetaFlag;
+  for (const statement of script?.body ?? []) {
+    const call = unwrap(statement.type === "ExpressionStatement" ? statement.expression : null);
+    if (call?.type !== "CallExpression" || call.callee?.name !== "definePageMeta") continue;
+    const meta = unwrap(call.arguments?.[0]);
+    if (meta?.type !== "ObjectExpression") return "unknown";
+    for (const property of meta.properties ?? []) {
+      if (property.type !== "Property") return "unknown";
+      if (propertyName(property) !== key) continue;
+      const value = unwrap(property.value);
+      if (value?.type === "ObjectExpression") flag = "on";
+      else if (value?.type === "Literal" && typeof value.value === "boolean")
+        flag = value.value ? "on" : "off";
+      else return "unknown";
+    }
+  }
+  return flag;
+}
+
+export type RootShape =
+  | { kind: "single" }
+  | { kind: "unknown" }
+  | { kind: "multiple"; count: number; node: { start: number; end: number } }
+  | { kind: "comment"; node: { start: number; end: number } }
+  | { kind: "text"; node: { start: number; end: number } };
+
+/**
+ * How many nodes the template renders at its root, as Vue compiles it in development: a
+ * `v-if`/`v-else-if`/`v-else` chain is one root, a root `v-for` or a `<template>` branch with
+ * several children is a fragment, and comments stay in the output.
+ */
+export function templateRootShape(root: TemplateRootNode): RootShape {
+  const roots: Array<{
+    type: "element" | "slot" | "comment" | "text";
+    start: number;
+    end: number;
+  }> = [];
+  let pendingComments = 0;
+  for (const child of root.children) {
+    const loc = { start: child.loc.start.offset, end: child.loc.end.offset };
+    if (child.type === TemplateNodeType.TEXT && !child.content.trim()) continue;
+    if (child.type === TemplateNodeType.COMMENT) {
+      roots.push({ type: "comment", ...loc });
+      pendingComments++;
+      continue;
+    }
+    if (child.type !== TemplateNodeType.ELEMENT) {
+      roots.push({ type: "text", ...loc });
+      pendingComments = 0;
+      continue;
+    }
+    const element = child as TemplateElementNode;
+    if (hasDirective(element, "for"))
+      return { kind: "multiple", count: 2, node: { start: loc.start, end: loc.end } };
+    if (element.tagType === 3 && meaningfulChildren(element) > 1)
+      return { kind: "multiple", count: meaningfulChildren(element), node: loc };
+    if (hasDirective(element, "else-if") || hasDirective(element, "else")) {
+      // Vue moves comments between branches into the next branch.
+      roots.splice(roots.length - pendingComments, pendingComments);
+      pendingComments = 0;
+      continue;
+    }
+    roots.push({ type: element.tagType === 2 ? "slot" : "element", ...loc });
+    pendingComments = 0;
+  }
+  const [first, second] = roots;
+  if (!first) return { kind: "unknown" };
+  if (!second) {
+    if (first.type === "element") return { kind: "single" };
+    // A lone <slot> renders whatever its caller passes, which may be one element.
+    if (first.type === "slot") return { kind: "unknown" };
+    return first.type === "text" ? { kind: "text", node: first } : { kind: "comment", node: first };
+  }
+  const content = roots.filter((node) => node.type !== "comment");
+  if (content.length === 1 && content[0]!.type === "slot") return { kind: "unknown" };
+  if (content.length === 1 && content[0]!.type === "element")
+    return { kind: "comment", node: roots.find((node) => node.type === "comment")! };
+  return { kind: "multiple", count: roots.length, node: second };
+}
+
+function hasDirective(element: TemplateElementNode, name: string): boolean {
+  return element.props.some(
+    (prop) => prop.type === TemplateNodeType.DIRECTIVE && prop.name === name,
+  );
+}
+
+function meaningfulChildren(element: TemplateElementNode): number {
+  return element.children.filter(
+    (child) => !(child.type === TemplateNodeType.TEXT && !child.content.trim()),
+  ).length;
+}
+
+/**
+ * Without a current Nuxt manifest, Doctor reads routes from the pages/ directory. Config that
+ * changes which files are pages, such as `ignore`, `pages.pattern`, or `.nuxtignore`, makes that
+ * reading unreliable.
+ */
+export function routesAreKnown(ctx: RuleContext, root: string): boolean {
+  if (ctx.project.nuxt?.manifest?.isCurrent && ctx.project.nuxt.manifest.pages?.length) return true;
+  if (ctx.fs.exists(join(root, ".nuxtignore"))) return false;
+  for (const extension of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
+    const text = ctx.fs.readText(join(root, `nuxt.config.${extension}`));
+    if (text === undefined) continue;
+    return !/\b(?:ignore|ignorePrefix|dir)\s*:|\bpages\s*:\s*(?!true\b)|pages:extend/.test(text);
+  }
+  return true;
+}
+
+// The manifest lists the routes Nuxt resolved, children included.
+export function isManifestRoute(ctx: RuleContext, file: string): boolean {
+  const manifest = ctx.project.nuxt?.manifest;
+  if (!manifest?.isCurrent || !manifest.pages?.length) return true;
+  return manifest.pages.some(
+    (page) => !!page.file && resolve(ctx.project.root, page.file) === file,
+  );
+}

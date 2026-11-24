@@ -1123,6 +1123,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/layouts/app-renders-nuxtlayout": {
+    description:
+      "Finds an app.vue that never renders `<NuxtLayout>` while the app has files in layouts/. Doctor follows the components app.vue renders and stays quiet when any other component renders `<NuxtLayout>`, when no layer has an app.vue (Nuxt's default app renders the layout), or when the app component comes from a layer it cannot read. Render functions and components it cannot resolve are treated as possibly rendering the layout.",
+    why: "Nuxt renders layouts only through `<NuxtLayout>`. Without it, layouts/default.vue and every layout a page selects with `definePageMeta({ layout })` are ignored, so pages render without their header, navigation, or wrapper. Nuxt reports this in development as NUXT_E4007: its check-if-layout-used plugin warns when layouts exist but no `<NuxtLayout>` was rendered.",
+    recommendedReplacement:
+      "Wrap `<NuxtPage />` in `<NuxtLayout>` in app.vue. If the app does not use layouts, delete the layouts/ directory.",
+    examples: [
+      {
+        title: "Render layouts from app.vue",
+        language: "vue",
+        invalid: "<!-- app/layouts/default.vue exists -->\n<template>\n  <NuxtPage />\n</template>",
+        valid: "<template>\n  <NuxtLayout>\n    <NuxtPage />\n  </NuxtLayout>\n</template>",
+      },
+    ],
+  },
   "nuxt/middleware/no-route-middleware-api-security": {
     description:
       'Reports auth-sensitive server handlers, such as server/api/admin/** or server/api/me.get.ts, in projects whose auth route middleware suggests the API is protected, when the handler has no visible server guard. A handler counts as guarded when its defineEventHandler, eventHandler, defineHandler, defineValidatedHandler (including the handler method of its options object), or cached handler awaits a guard with the event before any control flow, either as a statement or as const user = await guard(event). Built-in guard names are requireUserSession, requireAuth, requireMcpAdminToken, authGuard, and protectRoute. Doctor also follows imported and auto-imported app guards into server/utils and accepts a function that throws a 401 or 403 HTTPError or createError on a failing branch, or that first awaits another guard, and never returns nothing, null, or false. Name guards Doctor cannot follow, such as ones from a package, in the guards option under rules in doctor.config.json or the doctor key of nuxt.config: "nuxt/middleware/no-route-middleware-api-security": ["warn", { "guards": ["requireAdmin"] }]. Named guards still have to be awaited with the event before any control flow. An auth catch-all route that only re-exports a default handler from an installed auth package that depends on Better Auth, such as export { default } from "vite-hub/auth/server", counts as the provider mount. A handler that is public on purpose, such as a public count or a list of tools that check access on their own routes, says so with a comment line that starts with nuxt-doctor: public-route, followed by -- and the reason. The marker must start its own comment line, so a string or an inline comment does not count.',
@@ -1246,6 +1261,22 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/pages/single-root-node": {
+    description:
+      "Finds pages, and layouts, that have more than one root node, or a text or comment root, while a route transition applies to them. Doctor reports a page only when a page transition is proven: the `transition` prop on every `<NuxtPage>`, the page's `definePageMeta({ pageTransition })`, or `app.pageTransition` in nuxt.config. It reports a layout only when `app.layoutTransition` is on. A `v-if`/`v-else-if`/`v-else` chain counts as one root. Pages whose transition depends on runtime values, or whose root is a `<slot>`, are not reported.",
+    why: "Nuxt wraps pages in a `<Transition>` when a page transition is on, and layouts when a layout transition is on. A `<Transition>` can only animate a single element, so a page with several root nodes, or a text root, does not animate when you navigate to or from it. Vue keeps template comments in development, so a comment next to the root element also turns the page into a fragment there. Nuxt reports this in development as NUXT_E4004 for pages and NUXT_E4002 for layouts. Both are off by default (`app.pageTransition` and `app.layoutTransition` default to false), so pages without a transition are not reported.",
+    recommendedReplacement:
+      "Wrap the template in a single root element, such as a `<div>`, and move comments inside it.",
+    examples: [
+      {
+        title: "Give a transitioned page one root element",
+        language: "vue",
+        invalid:
+          "<!-- nuxt.config.ts sets app: { pageTransition: { name: 'page' } } -->\n<template>\n  <h1>Users</h1>\n  <UserList />\n</template>",
+        valid: "<template>\n  <div>\n    <h1>Users</h1>\n    <UserList />\n  </div>\n</template>",
+      },
+    ],
+  },
   "nuxt/plugins/no-subdir-auto-registration-assumption": {
     description:
       "Flags subdir auto registration assumption in Nuxt plugins code before it leaks into runtime behavior.",
@@ -1323,6 +1354,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/routing/navigate-to-external": {
+    description:
+      "Finds `navigateTo()` calls whose target is a string literal with a protocol, such as `https://` or `mailto:`, or a protocol-relative `//` URL, and no `{ external: true }`. Template literals and `+` concatenations count when their leading literal text already makes the URL external. Calls with `open`, spread options, or a computed `external` value are not reported, nor are `navigateTo` bindings that do not come from Nuxt.",
+    why: '`navigateTo` treats a target as external when ufo\'s `hasProtocol(toPath, { acceptRelative: true })` matches it, and throws instead of navigating unless the options set `external: true`. The call fails at runtime with NUXT_E2001, "Navigating to external URL is not allowed by default", on the server and in the browser.',
+    recommendedReplacement:
+      "Pass `{ external: true }` as the second argument. To open the URL in a new tab, pass `{ open: { target: '_blank' } }` instead.",
+    examples: [
+      {
+        title: "Allow the external navigation",
+        language: "ts",
+        invalid: "await navigateTo('https://example.com/login')",
+        valid: "await navigateTo('https://example.com/login', { external: true })",
+      },
+    ],
+  },
   "nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup": {
     description:
       "Flags hash sensitive route fullpath in SSR markup in Nuxt routing code before it leaks into runtime behavior.",
@@ -1387,6 +1433,23 @@ export const ruleDocumentationMetadata = {
           "export default defineNuxtRouteMiddleware(() => {\n  const route = useRoute()\n  if (!route.meta.auth) return\n})",
         valid:
           "export default defineNuxtRouteMiddleware((to) => {\n  if (!to.meta.auth) return\n})",
+      },
+    ],
+  },
+  "nuxt/routing/parent-page-requires-nuxtpage": {
+    description:
+      "Finds a page such as pages/users.vue that has a sibling pages/users/ directory, which makes it the parent route of the pages inside, but never renders `<NuxtPage>`. Doctor follows the components the page renders and accepts `<NuxtPage>` or `<RouterView>` anywhere among them. When the page uses a render function, a dynamic `<component :is>`, or an auto-imported component Doctor cannot resolve, it treats the page as possibly rendering the outlet. Without a Nuxt manifest, apps that change which files are pages through `ignore`, `pages` options, or .nuxtignore are skipped.",
+    why: 'Nuxt turns pages/users.vue next to pages/users/[id].vue into a parent route with a child route. The child renders inside the parent\'s `<NuxtPage>`, so without one, navigating to /users/1 shows only the parent page. Nuxt reports this in development as NUXT_E4016, "the parent page does not render `<NuxtPage />`, so the nested page cannot be displayed", or as NUXT_E4011 when no page renders `<NuxtPage>` at all.',
+    recommendedReplacement:
+      "Render `<NuxtPage />` in the parent page where the child should appear. If the pages are not meant to nest, move pages/users.vue to pages/users/index.vue.",
+    examples: [
+      {
+        title: "Render the child route in the parent page",
+        language: "vue",
+        invalid:
+          "<!-- app/pages/users.vue, next to app/pages/users/[id].vue -->\n<template>\n  <h1>Users</h1>\n</template>",
+        valid:
+          "<!-- app/pages/users.vue -->\n<template>\n  <div>\n    <h1>Users</h1>\n    <NuxtPage />\n  </div>\n</template>",
       },
     ],
   },

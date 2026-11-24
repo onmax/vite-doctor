@@ -1047,6 +1047,28 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");
   }
 
+  if (rule.id === "nuxt/routing/parent-page-requires-nuxtpage") {
+    add(
+      "Nuxt nested routes",
+      "https://nuxt.com/docs/4.x/guide/directory-structure/app/pages#nested-routes",
+    );
+    add("NuxtPage", "https://nuxt.com/docs/4.x/api/components/nuxt-page");
+  }
+
+  if (rule.id === "nuxt/layouts/app-renders-nuxtlayout") {
+    add("Nuxt layouts", "https://nuxt.com/docs/4.x/guide/directory-structure/app/layouts");
+    add("NuxtLayout", "https://nuxt.com/docs/4.x/api/components/nuxt-layout");
+  }
+
+  if (rule.id === "nuxt/pages/single-root-node") {
+    add("Nuxt transitions", "https://nuxt.com/docs/4.x/getting-started/transitions");
+    add("Vue Transition", "https://vuejs.org/guide/built-ins/transition.html");
+  }
+
+  if (rule.id === "nuxt/routing/navigate-to-external") {
+    add("Nuxt navigateTo", "https://nuxt.com/docs/4.x/api/utils/navigate-to");
+  }
+
   if (rule.id === "nuxt/state/no-diverging-usestate-init") {
     add("Nuxt clearNuxtState", "https://nuxt.com/docs/4.x/api/utils/clear-nuxt-state");
     add("Nuxt state management", "https://nuxt.com/docs/4.x/getting-started/state-management");

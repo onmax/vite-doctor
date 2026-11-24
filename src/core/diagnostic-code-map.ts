@@ -285,6 +285,10 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0095", ruleId: "nuxt/fetch/no-ssr-refetch-of-shared-key" },
   { code: "NUXT0096", ruleId: "nuxt/imports/prefer-alias-over-relative-parent" },
   { code: "NUXT0097", ruleId: "nuxt/state/no-diverging-usestate-init" },
+  { code: "NUXT0098", ruleId: "nuxt/routing/parent-page-requires-nuxtpage" },
+  { code: "NUXT0099", ruleId: "nuxt/layouts/app-renders-nuxtlayout" },
+  { code: "NUXT0100", ruleId: "nuxt/pages/single-root-node" },
+  { code: "NUXT0101", ruleId: "nuxt/routing/navigate-to-external" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;

@@ -28,7 +28,7 @@ export type NuxtFileClass =
   | "external-package"
   | "unknown";
 
-interface NuxtAppSource {
+export interface NuxtAppSource {
   root: string;
   srcDir: string;
   serverDir: string;
@@ -213,7 +213,7 @@ function owningNuxtAppSource(ctx: RuleContext, file: string) {
 
 // Nuxt roots come from manifest layers or every detected nuxt.config, so nested apps such as
 // docs/ each get their own srcDir instead of treating the whole app root as app code.
-function nuxtAppSources(ctx: RuleContext): NuxtAppSource[] {
+export function nuxtAppSources(ctx: RuleContext): NuxtAppSource[] {
   const key = "nuxt:app-sources";
   const cached = ctx.cache.get<NuxtAppSource[]>(key);
   if (cached) return cached;
