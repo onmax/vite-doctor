@@ -63,6 +63,8 @@ export function createComponentFactsCollector(
   rangeOf: RangeOf,
 ): ComponentFactsCollector {
   const facts: ComponentFacts = {
+    inlineRouteRulesMayDisableSsr: false,
+    dynamicComponentWrappers: [],
     models: [],
     imports: [],
     ownLogic: false,
@@ -80,8 +82,12 @@ export function createComponentFactsCollector(
   readScriptDeclarations(facts, descriptor, scriptAst, rangeOf);
   return {
     visitScript(node) {
-      if (node.type === "CallExpression" && node.callee?.name === "defineRouteRules")
-        facts.definesRouteRules = true;
+      if (
+        node.type === "CallExpression" &&
+        node.callee?.name === "defineRouteRules" &&
+        inlineRouteRulesMayDisableSsr(node.arguments?.[0])
+      )
+        facts.inlineRouteRulesMayDisableSsr = true;
       if (node.type === "ImportDeclaration") {
         importEnd = node.end;
         return;
@@ -104,6 +110,21 @@ export function createComponentFactsCollector(
       return facts;
     },
   };
+}
+
+function inlineRouteRulesMayDisableSsr(argument: AnyNode): boolean {
+  while (
+    ["TSAsExpression", "TSSatisfiesExpression", "ParenthesizedExpression"].includes(argument?.type)
+  )
+    argument = argument.expression;
+  if (argument?.type !== "ObjectExpression") return true;
+  for (let index = argument.properties.length - 1; index >= 0; index--) {
+    const property = argument.properties[index];
+    const key = property.key;
+    if (!key || (property.computed && key.type !== "Literal")) return true;
+    if ((key.name ?? key.value) === "ssr") return property.value?.value !== true;
+  }
+  return false;
 }
 
 function referencesVueAttrsReader(program: AnyNode): boolean {
@@ -681,6 +702,17 @@ function walkElement(
   }
   const kind = elementKind(element);
   if (kind === "markup") walk.facts.ownMarkup = true;
+  if (
+    element.tagType === 1 &&
+    element.tag.toLowerCase() === "component" &&
+    element.props.some(
+      (prop) =>
+        prop.type === TemplateNodeType.DIRECTIVE &&
+        prop.name === "bind" &&
+        (!prop.arg?.isStatic || prop.arg.content === "is"),
+    )
+  )
+    walk.facts.dynamicComponentWrappers.push(wrappers);
   const usage =
     kind === "component"
       ? createUsage(walk, element, elementScope, elementInFor, parent, wrappers)

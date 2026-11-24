@@ -97,13 +97,7 @@ function componentFacts(value: unknown): boolean {
         strings(item.directives) &&
         strings(item.scope) &&
         typeof item.inFor === "boolean" &&
-        facts(
-          item.wrappers,
-          (wrapper) =>
-            typeof wrapper.tag === "string" &&
-            typeof wrapper.defaultSlot === "boolean" &&
-            typeof wrapper.shadowed === "boolean",
-        ) &&
+        componentWrappers(item.wrappers) &&
         (item.parent === undefined ||
           (record(item.parent) &&
             typeof item.parent.tag === "string" &&
@@ -111,8 +105,20 @@ function componentFacts(value: unknown): boolean {
             (item.parent.foreign === undefined || item.parent.foreign === true))),
     ) &&
     strings(value.bindingReferences) &&
-    (value.definesRouteRules === undefined || value.definesRouteRules === true) &&
+    typeof value.inlineRouteRulesMayDisableSsr === "boolean" &&
+    Array.isArray(value.dynamicComponentWrappers) &&
+    value.dynamicComponentWrappers.every(componentWrappers) &&
     (value.localComponents === undefined || strings(value.localComponents))
+  );
+}
+
+function componentWrappers(value: unknown): boolean {
+  return facts(
+    value,
+    (wrapper) =>
+      typeof wrapper.tag === "string" &&
+      typeof wrapper.defaultSlot === "boolean" &&
+      typeof wrapper.shadowed === "boolean",
   );
 }
 

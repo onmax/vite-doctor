@@ -165,6 +165,81 @@ import Card from '../components/Card.vue'
   },
 );
 
+test.each([
+  { argument: "{ prerender: true }", reports: true },
+  { argument: "{ prerender: true }", prepared: true, reports: true },
+  { argument: "{ ['ssr']: true }", reports: true },
+  { argument: "{ ...options, ssr: true }", reports: true },
+  { argument: "{ ssr: true, ...options }", reports: false },
+  { argument: "{ ssr: true, [key]: false }", reports: false },
+  { argument: "{ ssr: enabled }", reports: false },
+  { argument: "options", reports: false },
+])(
+  "VUE0052 checks whether an inline route rule may turn off SSR: $argument",
+  async ({ argument, prepared, reports }) => {
+    const result = await runRuleFixture({
+      rule: noInvalidRootNesting,
+      framework: "nuxt",
+      files: {
+        ...(prepared && {
+          ".nuxt/doctor.manifest.json": JSON.stringify({
+            generatedAt: new Date(Date.now() + 10000).toISOString(),
+            routeRules: { "/about": { prerender: true } },
+            ssr: true,
+          }),
+        }),
+        "nuxt.config.ts":
+          "export default defineNuxtConfig({ experimental: { inlineRouteRules: true } })",
+        "app/components/Card.vue": component("<div />"),
+        "app/pages/index.vue": caller(["Card"], "<p><Card /></p>", "../components"),
+        "app/pages/about.vue": `<script setup>defineRouteRules(${argument})</script><template><div /></template>`,
+      },
+    });
+    expect(located(result)).toEqual(reports ? [["VUE0052", "app/pages/index.vue", 5]] : []);
+  },
+);
+
+test.each([
+  { prepared: false, usage: "<Panel />", reports: true },
+  { prepared: false, usage: "<DashboardPanel />", reports: true },
+  { prepared: true, usage: "<Panel />", reports: true },
+  { prepared: true, usage: '<component :is="Panel" />', reports: true },
+  {
+    prepared: true,
+    usage: '<ClientOnly><template #fallback><component :is="Panel" /></template></ClientOnly>',
+    reports: true,
+  },
+  { prepared: true, usage: '<ClientOnly><component :is="Panel" /></ClientOnly>', reports: false },
+  { prepared: false, usage: "<Unrelated />", reports: false },
+])(
+  "VUE0052 keeps possible SSR callers (prepared: $prepared, usage: $usage)",
+  async ({ prepared, usage, reports }) => {
+    const result = await runRuleFixture({
+      rule: noInvalidRootNesting,
+      framework: "nuxt",
+      files: {
+        ...(prepared && {
+          ".nuxt/doctor.manifest.json": JSON.stringify({
+            generatedAt: new Date(Date.now() + 10000).toISOString(),
+            components: [{ name: "Panel", file: "app/components/dashboard/Panel.vue" }],
+          }),
+        }),
+        "app/components/Card.vue": component("<div />"),
+        "app/components/dashboard/Panel.vue": caller(["Card"], "<p><Card /></p>", ".."),
+        "app/pages/index.vue": caller(
+          ["Panel"],
+          "<ClientOnly><Panel /></ClientOnly>",
+          "../components/dashboard",
+        ),
+        "app/pages/about.vue": `<script setup>const Panel = resolveComponent('Panel')</script>${component(usage)}`,
+      },
+    });
+    expect(located(result)).toEqual(
+      reports ? [["VUE0052", "app/components/dashboard/Panel.vue", 5]] : [],
+    );
+  },
+);
+
 test.each([false, true])(
   "VUE0052 applies Nuxt component mode per usage (mixed: %s)",
   async (mixed) => {

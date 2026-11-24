@@ -40,13 +40,13 @@ export function vueSsrEvidence(
 export function hydrationEvidence(
   ctx: RuleContext,
   relativePath: string,
-  appsWithInlineRules: ReadonlySet<NuxtProjectInfo>,
+  appsWithPossibleInlineSsrOptOut: ReadonlySet<NuxtProjectInfo>,
 ): string | undefined {
   const nuxt = hydrationNuxtApp(ctx, relativePath);
   if (!nuxt) return vueSsrEvidence(ctx, relativePath);
   if (
     nuxt.hydrationSsr !== true ||
-    appsWithInlineRules.has(nuxt) ||
+    appsWithPossibleInlineSsrOptOut.has(nuxt) ||
     !routeRulesKeepSsr(nuxt.routeRules)
   )
     return undefined;

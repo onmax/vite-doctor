@@ -7,6 +7,7 @@ import type {
   NuxtProjectInfo,
   RuleContext,
 } from "../../../../core/index.js";
+import { pascalCase } from "../../../../core/internal/component-facts.js";
 import { diagnostics } from "../../diagnostics.js";
 import { displayName } from "./component-usage.js";
 import { parserMovesChild } from "./html-nesting.js";
@@ -35,12 +36,12 @@ export const noInvalidRootNesting = createRule({
       async onWorkspaceEnd() {
         const graph = await ctx.inventory.componentUsage();
         const apps = new Map<string, NuxtProjectInfo>();
-        const appsWithInlineRules = new Set<NuxtProjectInfo>();
+        const appsWithPossibleInlineSsrOptOut = new Set<NuxtProjectInfo>();
         for (const node of graph.components.values()) {
           const app = hydrationNuxtApp(ctx, node.relativePath);
           if (!app) continue;
           apps.set(node.file, app);
-          if (node.facts.definesRouteRules) appsWithInlineRules.add(app);
+          if (node.facts.inlineRouteRulesMayDisableSsr) appsWithPossibleInlineSsrOptOut.add(app);
         }
         const withoutHydration = componentsWithoutHydration(ctx, graph, apps);
         const evidenceByFile = new Map<string, string | undefined>();
@@ -59,7 +60,11 @@ export const noInvalidRootNesting = createRule({
             if (!evidenceByFile.has(edge.from))
               evidenceByFile.set(
                 edge.from,
-                hydrationEvidence(ctx, relative(ctx.project.root, edge.from), appsWithInlineRules),
+                hydrationEvidence(
+                  ctx,
+                  relative(ctx.project.root, edge.from),
+                  appsWithPossibleInlineSsrOptOut,
+                ),
               );
             const evidence = evidenceByFile.get(edge.from);
             if (!evidence) continue;
@@ -108,24 +113,78 @@ function componentsWithoutHydration(
     )
       potentialEntries.add(node.file);
   }
-  const reachable = reachComponents(graph, potentialEntries, (edge) => !skipsHydration(edge));
+  const reachable = reachComponents(
+    graph,
+    potentialEntries,
+    (edge) => !skipsHydration(edge),
+    possibleSsrTargets(graph, apps, behindBoundary),
+  );
   return new Set([...behindBoundary].filter((file) => !reachable.has(file)));
+}
+
+function possibleSsrTargets(
+  graph: ComponentUsageGraph,
+  apps: ReadonlyMap<string, NuxtProjectInfo>,
+  behindBoundary: ReadonlySet<string>,
+): (node: ComponentNode) => Iterable<string> {
+  const candidates = new Map<NuxtProjectInfo | undefined, string[]>();
+  const named = new Map<NuxtProjectInfo, Map<string, string[]>>();
+  for (const file of behindBoundary) {
+    const app = apps.get(file);
+    const files = candidates.get(app) ?? [];
+    if (!candidates.has(app)) candidates.set(app, files);
+    files.push(file);
+    if (!app) continue;
+    const names = named.get(app) ?? new Map<string, string[]>();
+    if (!named.has(app)) named.set(app, names);
+    const segments = graph.components
+      .get(file)!
+      .relativePath.replace(/(?:\.(?:client|server))?\.vue$/, "")
+      .split("/");
+    let name = "";
+    for (const segment of segments.reverse()) {
+      const part = pascalCase(segment);
+      if (name.startsWith(part)) continue;
+      name = part + name;
+      const targets = names.get(name) ?? [];
+      if (!names.has(name)) names.set(name, targets);
+      targets.push(file);
+    }
+  }
+
+  return function* (node) {
+    const app = apps.get(node.file);
+    if (node.hasUnresolvedDynamicRender) {
+      yield* candidates.get(app) ?? [];
+      candidates.delete(app);
+    }
+    const names = app && named.get(app);
+    if (!names) return;
+    for (const edge of node.renders) {
+      if (edge.unresolvedNuxtName && !skipsHydration(edge))
+        yield* names.get(edge.unresolvedNuxtName) ?? [];
+    }
+  };
 }
 
 function reachComponents(
   graph: ComponentUsageGraph,
   starts: ReadonlySet<string>,
   follows: (edge: ComponentUsageEdge) => boolean,
+  possibleTargets?: (node: ComponentNode) => Iterable<string>,
 ): Set<string> {
   const seen = new Set(starts);
   const remaining = [...starts];
+  const enqueue = (target: string) => {
+    if (seen.has(target)) return;
+    seen.add(target);
+    remaining.push(target);
+  };
   while (remaining.length) {
     const node = graph.components.get(remaining.pop()!);
-    for (const edge of node?.renders ?? []) {
-      if (!edge.target || seen.has(edge.target) || !follows(edge)) continue;
-      seen.add(edge.target);
-      remaining.push(edge.target);
-    }
+    if (!node) continue;
+    for (const edge of node.renders) if (edge.target && follows(edge)) enqueue(edge.target);
+    if (possibleTargets) for (const target of possibleTargets(node)) enqueue(target);
   }
   return seen;
 }

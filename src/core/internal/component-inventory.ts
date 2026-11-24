@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from "pathe";
 import type {
   ComponentNode,
   ComponentUsageEdge,
+  ComponentUsageFact,
   ComponentUsageGraph,
   FileFacts,
   ImportFact,
@@ -53,33 +54,34 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       const candidates = tagCandidates(tag);
       return node.facts.imports.find((item) => candidates.includes(item.local));
     };
+    const inClientOnlySlot = (wrappers: ComponentUsageFact["wrappers"]) =>
+      wrappers.some(({ tag, defaultSlot, shadowed }) => {
+        if (!defaultSlot || shadowed) return false;
+        const binding = findBinding(tag);
+        if (
+          !binding &&
+          node.facts.localComponents?.some((name) => tagCandidates(tag).includes(name))
+        )
+          return false;
+        const name = binding?.source === "#components" ? binding.imported : pascalCase(tag);
+        if (
+          binding?.source === "vue-client-only" ||
+          binding?.source === "#app/components/client-only"
+        )
+          return true;
+        if (!nuxt || name !== "ClientOnly" || (binding && binding.source !== "#components"))
+          return false;
+        const registered = registry?.get(name);
+        return (
+          !registered ||
+          /(?:^|\/)nuxt\/dist\/app\/components\/client-only(?:\.[^/]+)?$/.test(registered.file)
+        );
+      });
+    if (node.facts.dynamicComponentWrappers.some((wrappers) => !inClientOnlySlot(wrappers)))
+      node.hasUnresolvedDynamicRender = true;
     for (const usage of node.facts.usages) {
       const edge: ComponentUsageEdge = { from: fact.path, usage };
-      if (
-        usage.wrappers.some(({ tag, defaultSlot, shadowed }) => {
-          if (!defaultSlot || shadowed) return false;
-          const binding = findBinding(tag);
-          if (
-            !binding &&
-            node.facts.localComponents?.some((name) => tagCandidates(tag).includes(name))
-          )
-            return false;
-          const name = binding?.source === "#components" ? binding.imported : pascalCase(tag);
-          if (
-            binding?.source === "vue-client-only" ||
-            binding?.source === "#app/components/client-only"
-          )
-            return true;
-          if (!nuxt || name !== "ClientOnly" || (binding && binding.source !== "#components"))
-            return false;
-          const registered = registry?.get(name);
-          return (
-            !registered ||
-            /(?:^|\/)nuxt\/dist\/app\/components\/client-only(?:\.[^/]+)?$/.test(registered.file)
-          );
-        })
-      )
-        edge.clientOnlySlot = true;
+      if (inClientOnlySlot(usage.wrappers)) edge.clientOnlySlot = true;
       const binding = usage.tag.includes(".") ? undefined : findBinding(usage.tag);
       if (binding && binding.source !== "#components") {
         const target = resolveSfc(fact, binding.source, binding.imported);
@@ -90,6 +92,14 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
         if (typeof entry?.file === "string") {
           const target = isAbsolute(entry.file) ? entry.file : resolve(session.root, entry.file);
           Object.assign(edge, { target, resolvedBy: "nuxt-components", nuxtMode: entry.mode });
+        } else if (
+          nuxt &&
+          !usage.tag.includes(".") &&
+          !tagCandidates(usage.tag).some(
+            (tag) => usage.scope.includes(tag) || node.facts.localComponents?.includes(tag),
+          )
+        ) {
+          edge.unresolvedNuxtName = name;
         }
       }
       node.renders.push(edge);

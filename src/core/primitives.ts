@@ -692,8 +692,10 @@ export interface ComponentRootBranch {
 
 /** What a Vue SFC declares in `<script setup>` and renders in its template. */
 export interface ComponentFacts {
-  /** The script calls Nuxt's inline route rules macro. */
-  definesRouteRules?: true;
+  /** A Nuxt inline route rule might disable SSR. */
+  inlineRouteRulesMayDisableSsr: boolean;
+  /** Enclosing wrappers of dynamic component renders with an unknown target. */
+  dynamicComponentWrappers: ComponentUsageFact["wrappers"][];
   /** Names declared in a static Options API or defineOptions components registry. */
   localComponents?: string[];
   /** Props `<script setup>` declares, or `undefined` when they cannot be read statically. */
@@ -756,6 +758,8 @@ export interface ComponentUsageEdge {
   nuxtMode?: "client" | "server" | "all";
   /** This usage is inside a recognized client-only default slot. */
   clientOnlySlot?: true;
+  /** A Nuxt auto-import name that could not be resolved to an SFC. */
+  unresolvedNuxtName?: string;
 }
 
 export interface ComponentNode {
@@ -767,6 +771,8 @@ export interface ComponentNode {
   renders: ComponentUsageEdge[];
   /** Resolved usages of this component in other templates. */
   callers: ComponentUsageEdge[];
+  /** A dynamic component outside a recognized client-only default slot may render other SFCs. */
+  hasUnresolvedDynamicRender?: true;
   /**
    * Files that import this SFC other than as a `<script setup>` tag binding: script modules,
    * re-exports, dynamic imports, Options API `<script>` imports, or SFCs that also reference the
