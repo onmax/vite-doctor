@@ -10,13 +10,13 @@ import { diagnostics } from "../../../diagnostics.js";
 import {
   buildModuleFile,
   buildDiagnosticFingerprint,
-  BUILD_EVIDENCE_RULE,
   readBuildEvidence,
   type ViteBuildEnvironment,
   type ViteBuildEvidence,
 } from "./build-evidence.js";
 
-const RULE_ID = BUILD_EVIDENCE_RULE;
+// A literal so docs/rules/source.ts can read the Rule id; it must match BUILD_EVIDENCE_RULE.
+const RULE_ID = "vite/build/no-node-builtin-in-client-chunk";
 
 interface ClientModule {
   file: string;
