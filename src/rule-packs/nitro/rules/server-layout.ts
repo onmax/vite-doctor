@@ -295,13 +295,11 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
   if (!config) return [];
   const { properties, pluginsProperty, pluginNames, namespaceNames } = config;
   const nitroProperty = properties.findLast(
-    (property: any) =>
-      property.type === "Property" && !property.computed && propertyKey(property.key) === "nitro",
+    (property: any) => vitePropertyKey(property) === "nitro",
   );
   const options: StaticConfigOption[] = [];
   for (const property of properties) {
-    if (property.type !== "Property" || property.computed) continue;
-    const key = propertyKey(property.key);
+    const key = vitePropertyKey(property);
     if (key === "nitro" && property === nitroProperty) {
       const nested = unwrapConfig(property.value);
       if (nested) collectOptions(nested, ["nitro"], options);
@@ -310,7 +308,21 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
     if (key !== "plugins" || property !== pluginsProperty) continue;
     collectNitroPluginOptions(property.value, pluginNames, namespaceNames, options);
   }
+  const earliestConfig = Math.min(
+    properties.indexOf(nitroProperty),
+    properties.indexOf(pluginsProperty),
+  );
+  if (
+    properties.slice(earliestConfig + 1).some((property: any) => vitePropertyKey(property) === null)
+  )
+    options.push({ path: ["nitro", "scanSuffixes"], value: null });
   return options;
+}
+
+function vitePropertyKey(property: any): string | null {
+  if (property.type !== "Property") return null;
+  if (property.computed && property.key.type !== "Literal") return null;
+  return propertyKey(property.key);
 }
 
 export function hasViteNitroPlugin(program: Record<string, unknown>): boolean {
@@ -343,8 +355,7 @@ function viteNitroConfig(program: any) {
   const config = unwrapConfig(expression);
   if (!config) return undefined;
   const pluginsProperty = config.properties.findLast(
-    (property: any) =>
-      property.type === "Property" && !property.computed && propertyKey(property.key) === "plugins",
+    (property: any) => vitePropertyKey(property) === "plugins",
   );
   const plugins = pluginsProperty?.value;
   if (!hasNitroPlugin(plugins, pluginNames, namespaceNames)) return undefined;
