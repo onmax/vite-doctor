@@ -33,12 +33,7 @@ export const noCircularImportAtHmrBoundary = createRule({
         // and literal import() that survives TypeScript's type erasure.
         const successors = new Map<string, HmrImportEdge[]>();
         for (const edge of graph.edges) {
-          if (
-            (edge.kind === "auto-import" && !edge.clientReachable) ||
-            !edge.to ||
-            edge.to === edge.from ||
-            edge.typeOnly
-          )
+          if (edge.clientReachable === false || !edge.to || edge.to === edge.from || edge.typeOnly)
             continue;
           const list = successors.get(edge.from);
           if (list) list.push(edge);
@@ -60,6 +55,8 @@ export const noCircularImportAtHmrBoundary = createRule({
           const loop = loopThroughBoundary(files, boundaries, successors);
           if (!loop) continue;
           const [edge, back] = [loop[0]!, loop[1]!];
+          const clientUnverified =
+            ctx.project.nuxt && loop.some((item) => item.clientReachable === undefined);
           const boundary = edge.to!;
           const steps = [...loop.map((item) => path(item.from)), path(edge.from)].join(" → ");
           const kind = boundary.endsWith(".vue")
@@ -73,7 +70,7 @@ export const noCircularImportAtHmrBoundary = createRule({
               : "read it at runtime instead of importing it, such as useRouter() in a component instead of the router module";
           ctx.report(
             diagnostics.VITE0029({
-              why: `Circular import through the HMR boundary ${path(boundary)}: ${steps}. ${path(boundary)} is ${kind}. When an edit inside this cycle reaches it, Vite marks the update as within a circular import, and the browser re-imports ${path(boundary)}, which can re-run modules of the cycle. If that re-import throws, for example because a module reads a binding of the cycle before it is initialized, Vite reloads the whole page instead of applying the update.`,
+              why: `Circular import through the HMR boundary ${path(boundary)}: ${steps}. ${path(boundary)} is ${kind}. ${clientUnverified ? "The source graph does not establish that this whole loop runs in the browser. If it does, an edit that reaches this boundary can trigger a circular HMR update." : `When an edit inside this cycle reaches it, Vite marks the update as within a circular import, and the browser re-imports ${path(boundary)}, which can re-run modules of the cycle.`} If that re-import throws, for example because a module reads a binding of the cycle before it is initialized, Vite reloads the whole page instead of applying the update.`,
               fix: `Remove the ${dependency} that leads from ${path(boundary)} back into the cycle: ${backAt} ${back.kind === "auto-import" ? EDGE_VERB[back.kind] : "imports"} '${back.specifier}'. Move what ${path(boundary)} needs from ${path(back.to!)} into a module that imports neither, or ${alternative}. Loading ${path(boundary)} lazily with import() does not help: Vite records dynamic imports as importers for HMR, so the loop stays. Do not decline HMR with import.meta.hot.decline() or suppress this Diagnostic to hide the cycle.`,
               sources: edge.range
                 ? [`${edge.from}:${edge.range.line}:${edge.range.column}`]

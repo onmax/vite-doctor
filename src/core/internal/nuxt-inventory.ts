@@ -17,6 +17,8 @@ export interface NuxtProjectInventory {
   importsDirs: string[];
   pluginFiles: string[];
   resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
+  resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
+  clientBuildFiles?: NuxtDoctorManifest["clientBuildFiles"];
   resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
   hasServerPageIslands?: boolean;
   componentIslands?: NuxtDoctorManifest["componentIslands"];
@@ -67,6 +69,8 @@ export function createNuxtProjectInventory(
         }))
       : undefined,
     resolvedComponents: current("components") ? manifest?.resolvedComponents : undefined,
+    resolvedMiddleware: isCurrent ? manifest?.resolvedMiddleware : undefined,
+    clientBuildFiles: isCurrent ? manifest?.clientBuildFiles : undefined,
     hasServerPageIslands: current("pages") ? manifest?.hasServerPageIslands : undefined,
     componentIslands: isCurrent ? manifest?.componentIslands : undefined,
     keyedComposables: keyedComposables(root, manifest?.keyedComposables),

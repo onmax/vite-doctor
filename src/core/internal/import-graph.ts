@@ -6,6 +6,7 @@ export function buildImportGraph(
   facts: readonly FileFacts[],
   resolveImport: (from: FileFacts, specifier: string) => number | undefined,
   autoImports: readonly ImportGraphEdge[] = [],
+  clientParticipation?: (from: number, to: number) => boolean | undefined,
 ): ImportGraph {
   const pathsById = new Map(facts.map((fact) => [fact.fileId, fact.path]));
   const edges: ImportGraphEdge[] = [];
@@ -45,7 +46,14 @@ export function buildImportGraph(
     for (const declaration of declarations) {
       const target = resolveImport(fact, declaration.specifier);
       const to = target === undefined ? undefined : pathsById.get(target);
-      const edge: ImportGraphEdge = { from: fact.path, ...(to ? { to } : {}), ...declaration };
+      const clientReachable =
+        target === undefined ? undefined : clientParticipation?.(fact.fileId, target);
+      const edge: ImportGraphEdge = {
+        from: fact.path,
+        ...(to ? { to } : {}),
+        ...(clientReachable !== undefined && { clientReachable }),
+        ...declaration,
+      };
       edges.push(edge);
       push(importsByFile, fact.path, edge);
       if (to) push(importersByFile, to, edge);
@@ -78,7 +86,7 @@ export function importBundleViews<Edge extends Pick<ImportGraphEdge, "autoImport
 ) {
   const bundles = new Set<NonNullable<Edge["autoImportBundle"]>>();
   for (const edge of edges) if (edge.autoImportBundle) bundles.add(edge.autoImportBundle);
-  if (bundles.size < 2) return [{ edges, bundle: undefined }];
+  if (bundles.size < 2) return [{ edges, bundle: bundles.values().next().value }];
   return (["nuxt", "nitro"] as const).map((bundle) => ({
     edges: edges.filter((edge) => !edge.autoImportBundle || edge.autoImportBundle === bundle),
     bundle,
@@ -88,17 +96,8 @@ export function importBundleViews<Edge extends Pick<ImportGraphEdge, "autoImport
 function bundleImportCycles(files: readonly string[], edges: readonly ImportGraphEdge[]) {
   const cycles = new Map<string, ImportCycle>();
   for (const { edges: view, bundle } of importBundleViews(edges)) {
-    for (const cycle of findImportCycles(files, view)) {
-      const key = JSON.stringify([
-        cycle.files,
-        cycle.path.map(({ from, to, kind, specifier, range }) => [
-          from,
-          to,
-          kind,
-          specifier,
-          range,
-        ]),
-      ]);
+    for (const { cycle, injected } of findImportCycles(files, view)) {
+      const key = JSON.stringify([cycle.files, injected]);
       const previous = cycles.get(key);
       if (previous) cycles.set(key, { files: previous.files, path: previous.path });
       else cycles.set(key, bundle ? { ...cycle, autoImportBundle: bundle } : cycle);
@@ -109,10 +108,7 @@ function bundleImportCycles(files: readonly string[], edges: readonly ImportGrap
   );
 }
 
-function findImportCycles(
-  files: readonly string[],
-  edges: readonly ImportGraphEdge[],
-): ImportCycle[] {
+function findImportCycles(files: readonly string[], edges: readonly ImportGraphEdge[]) {
   const successors = new Map<string, ImportGraphEdge[]>();
   for (const edge of edges) {
     if (!edge.to || edge.to === edge.from || !isRuntimeImportEdge(edge)) continue;
@@ -121,13 +117,21 @@ function findImportCycles(
   const components = computeSccs(files, (file) =>
     (successors.get(file) ?? []).map((edge) => edge.to!),
   );
-  const cycles: ImportCycle[] = [];
+  const cycles = [];
   for (const component of components) {
     if (component.length < 2) continue;
     const members = [...component].sort();
-    cycles.push({ files: members, path: shortestLoop(members, successors) });
+    const group = new Set(members);
+    const injected = members.flatMap((member) =>
+      (successors.get(member) ?? [])
+        .filter((edge) => edge.kind === "auto-import" && group.has(edge.to!))
+        .map(({ to, specifier, range }) => JSON.stringify([to, specifier, range]))
+        .sort()
+        .map((edge) => [member, edge]),
+    );
+    cycles.push({ cycle: { files: members, path: shortestLoop(members, successors) }, injected });
   }
-  return cycles.sort((a, b) => (a.files[0]! < b.files[0]! ? -1 : 1));
+  return cycles;
 }
 
 /** The shortest loop in a strongly connected group, starting at the earliest file that lies on one. */

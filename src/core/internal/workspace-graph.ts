@@ -25,6 +25,7 @@ import {
 import {
   collectAutoImportEdges,
   sessionAutoImportEdges,
+  sessionClientParticipation,
   type AutoImportEdge,
 } from "./auto-import-edges.js";
 import { projectNuxtInventories } from "./workspace-nuxt.js";
@@ -568,20 +569,26 @@ function sessionImportGraph(session: ScanSession, index?: GraphIndex): ImportGra
   if (!graph) {
     const resolver = index ?? createGraphIndex(session, session.ruleInputs.frame().fs);
     const paths = new Map(session.facts.map((fact) => [fact.fileId, fact.path]));
+    const clientParticipation = sessionClientParticipation(session);
     graph = buildImportGraph(
       session.root,
       session.facts,
       (from, specifier) => resolver.resolveImport(from, specifier),
-      sessionAutoImportEdges(session).map((edge) => ({
-        from: paths.get(edge.from)!,
-        to: paths.get(edge.to)!,
-        specifier: edge.name,
-        kind: "auto-import" as const,
-        autoImportBundle: edge.autoImportBundle,
-        ...(edge.clientReachable && { clientReachable: true }),
-        typeOnly: false,
-        range: edge.range,
-      })),
+      sessionAutoImportEdges(session).map((edge) => {
+        const clientReachable =
+          edge.autoImportBundle === "nitro" ? false : clientParticipation?.(edge.from, edge.to);
+        return {
+          from: paths.get(edge.from)!,
+          to: paths.get(edge.to)!,
+          specifier: edge.name,
+          kind: "auto-import" as const,
+          autoImportBundle: edge.autoImportBundle,
+          ...(clientReachable !== undefined && { clientReachable }),
+          typeOnly: false,
+          range: edge.range,
+        };
+      }),
+      clientParticipation,
     );
     importGraphs.set(session, graph);
   }
@@ -599,7 +606,14 @@ function reportImportCycle(session: ScanSession, cycle: ImportCycle, graph: Impo
     ? ` It is one loop in a group of ${cycle.files.length} files that import each other; ${others.length === 1 ? "the file off this loop is listed as a cycle member" : `the ${others.length} files off this loop are listed as cycle members`}.`
     : "";
   const locations = session.scopedReport ? cycleScopeLocations(cycle, graph) : undefined;
-  const bundle = cycle.path.find((edge) => edge.autoImportBundle)?.autoImportBundle;
+  const members = new Set(cycle.files);
+  const nitro =
+    cycle.autoImportBundle === "nitro" &&
+    cycle.files.some((file) =>
+      graph
+        .importsOf(file)
+        .some((edge) => edge.autoImportBundle === "nitro" && edge.to && members.has(edge.to)),
+    );
   reportWorkspaceDiagnostic(session, {
     ruleId: "workspace/dead-code/circular-dependency",
     severity: "warn",
@@ -623,7 +637,7 @@ function reportImportCycle(session: ScanSession, cycle: ImportCycle, graph: Impo
     ...(locations?.length ? { [scopedReportLocations]: locations } : {}),
     // Keyed on the group rather than the loop, so reordering imports keeps baselined findings.
     fingerprint: sha256(
-      `workspace/dead-code/circular-dependency:${cycle.files.map(path).join("\n")}${bundle ? `:${bundle}` : ""}`,
+      `workspace/dead-code/circular-dependency:${cycle.files.map(path).join("\n")}${nitro ? ":nitro" : ""}`,
     ),
     confidence: "proven",
     evidence: [

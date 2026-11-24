@@ -305,6 +305,8 @@ export interface NuxtProjectInfo {
     importsDirs: string[];
     pluginFiles: string[];
     resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
+    resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
+    clientBuildFiles?: NuxtDoctorManifest["clientBuildFiles"];
     resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
     hasServerPageIslands?: boolean;
     componentIslands?: NuxtDoctorManifest["componentIslands"];
@@ -472,6 +474,8 @@ export interface NuxtDoctorManifest {
   importsDirs?: string[];
   pluginFiles?: string[];
   resolvedPlugins?: Array<{ file: string; mode: "client" | "server" | "all" }>;
+  resolvedMiddleware?: string[];
+  clientBuildFiles?: string[];
   appScanRoots?: string[];
   sharedScanRoots?: string[];
 }
@@ -807,7 +811,7 @@ export interface ImportGraphEdge {
   kind: "import" | "re-export" | "dynamic-import" | "auto-import";
   /** The transform that injects an auto-import. Written dependencies have no transform tag. */
   autoImportBundle?: "nuxt" | "nitro";
-  /** For auto-imports, whether the consumer is reachable from a Nuxt client entry. */
+  /** Nuxt client participation; absent when unknown or not applicable. */
   clientReachable?: boolean;
   /** Whether TypeScript erases the dependency: `import type` or `export type ... from`. */
   typeOnly: boolean;
@@ -820,7 +824,7 @@ export interface ImportGraphEdge {
 
 /** Files that evaluate each other through static runtime imports and Nuxt auto-imports. */
 export interface ImportCycle {
-  /** When the graph has both transforms, the bundle used to find this group. */
+  /** The bundle view used to find this group, when not shared across views. */
   autoImportBundle?: ImportGraphEdge["autoImportBundle"];
   /** Every file in the strongly connected group, as sorted absolute paths. */
   files: readonly string[];

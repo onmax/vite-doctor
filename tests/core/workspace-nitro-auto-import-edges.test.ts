@@ -302,6 +302,7 @@ async function withNitroManifest(
     imports?: Record<string, unknown>;
     appImports?: Record<string, string | { name: string; file: string }>;
     appPlugins?: Array<{ file: string; mode: "server" | "all" }>;
+    appMiddleware?: string[];
     beforeInit?: (root: string) => void;
     afterInit?: (root: string) => void;
     scannerVersion?: string;
@@ -380,9 +381,10 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
     const hooks = new Map<string, (payload?: any) => unknown>();
     await nuxtDoctorModule({}, {
       _version: "4.4.6",
-      apps: options.appPlugins && {
+      apps: (options.appPlugins || options.appMiddleware) && {
         default: {
-          plugins: options.appPlugins.map(({ file, mode }) => ({ src: join(root, file), mode })),
+          plugins: options.appPlugins?.map(({ file, mode }) => ({ src: join(root, file), mode })),
+          middleware: options.appMiddleware?.map((file) => ({ path: join(root, file) })),
         },
       },
       options: {
@@ -391,7 +393,7 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
         buildDir: ".nuxt",
         modules: [],
         extensions: [".ts", ".vue"],
-        ...(options.appPlugins && { _layers: [] }),
+        ...((options.appPlugins || options.appMiddleware) && { _layers: [] }),
         imports: { autoImport: options.appAutoImport ?? true },
       },
       hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
@@ -432,7 +434,7 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
     } finally {
       cwd?.mockRestore();
     }
-    if (options.appPlugins) await hooks.get("app:templatesGenerated")!();
+    if (options.appPlugins || options.appMiddleware) await hooks.get("app:templatesGenerated")!();
     await check(root, nitroHooks.get("compiled")!);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -646,35 +648,111 @@ test("a changed Nitro edge reports its loop even when Nuxt already cycles over t
     },
   ));
 
-test.each(["server", "all"] as const)("Nuxt HMR follows the resolved %s plugin mode", (mode) =>
+test("reordering written imports does not make a mixed cycle new to the baseline", () =>
   withNitroManifest(
     {
-      "app/app.vue": "<template><div /></template>",
-      "app/plugins/entry.ts": "import '../../lib/helper'; export default () => {}",
-      "lib/helper.ts": "useLoop(); if (import.meta.hot) import.meta.hot.accept()",
-      "app/composables/useLoop.ts": "import '../plugins/entry'; export const useLoop = () => 1",
+      "app/app.vue": "<script setup>import './a'</script>",
+      "app/a.ts": "import './b'; import './c'; export const useA = () => 1",
+      "app/b.ts": "import './a'",
+      "app/c.ts": "useA()",
+      "server/utils/a.ts": "export const useA = () => 1",
+      "server/utils/b.ts": "export const useB = () => 1",
     },
     async (root) => {
-      const { cycles, graph } = await analyze(root);
-      expect(cycles.some((cycle) => cycle.message.includes("lib/helper.ts"))).toBe(true);
-      expect(
-        graph.edges.find((edge) => edge.specifier === "useLoop")?.clientReachable === true,
-      ).toBe(mode === "all");
-      const { diagnostics } = await runViteDoctor({
+      const options = {
         root,
         framework: "nuxt",
-        config: { extends: ["auto", "vite/strict"] },
+        analyses: "graph",
+        rules: cycleRule,
+        baseline: "doctor-baseline.json",
         cache: false,
+      } as const;
+      const first = await runViteDoctor({ ...options, updateBaseline: true });
+      expect(first.diagnostics).toHaveLength(1);
+      expect(first.diagnostics[0]?.message).toContain("app/a.ts → app/b.ts → app/a.ts");
+      writeFixture(root, {
+        "app/a.ts": "import './c'; import './b'; export const useA = () => 1",
       });
-      expect(diagnostics.filter((item) => item.code === "VITE0029")).toHaveLength(
-        mode === "all" ? 1 : 0,
+      const second = await runViteDoctor({ ...options, newOnly: true });
+      expect(second.diagnostics).toHaveLength(0);
+      expect(second.suppressedDiagnostics?.[0]?.message).toContain(
+        "app/a.ts → app/c.ts → app/a.ts",
       );
     },
-    {
-      appImports: { useLoop: "app/composables/useLoop.ts" },
-      appPlugins: [{ file: "app/plugins/entry.ts", mode }],
-    },
-  ),
+    { appImports: { useA: "app/a.ts" } },
+  ));
+
+test.each([
+  { registered: true, explicit: false },
+  { registered: true, explicit: true },
+  { registered: false, explicit: false },
+  { registered: false, explicit: true },
+])(
+  "Nuxt middleware HMR with registration $registered and explicit import $explicit",
+  ({ registered, explicit }) =>
+    withNitroManifest(
+      {
+        "app/middleware/probe.global.ts": `${explicit ? "import { useLoop } from '../composables/loop';" : ""} export default () => useLoop()`,
+        "app/composables/loop.ts":
+          "import '../middleware/probe.global'; export const useLoop = () => 1; if (import.meta.hot) import.meta.hot.accept()",
+      },
+      async (root) => {
+        const { diagnostics } = await runViteDoctor({
+          root,
+          framework: "nuxt",
+          config: { extends: ["auto", "vite/strict"] },
+          cache: false,
+        });
+        const hmr = diagnostics.filter((item) => item.code === "VITE0029");
+        expect(hmr).toHaveLength(1);
+        expect(hmr[0]?.message).toContain("app/middleware/probe.global.ts");
+        expect(
+          hmr[0]?.message.includes("does not establish that this whole loop runs in the browser"),
+        ).toBe(!registered);
+      },
+      {
+        appImports: { useLoop: "app/composables/loop.ts" },
+        appMiddleware: registered ? ["app/middleware/probe.global.ts"] : undefined,
+      },
+    ),
+);
+
+test.each([
+  { mode: "server", explicit: false },
+  { mode: "server", explicit: true },
+  { mode: "all", explicit: false },
+] as const)(
+  "Nuxt HMR follows $mode plugin mode with explicit import: $explicit",
+  ({ mode, explicit }) =>
+    withNitroManifest(
+      {
+        "app/app.vue": "<template><div /></template>",
+        "app/plugins/entry.ts": "import '../../lib/helper'; export default () => {}",
+        "lib/helper.ts": `${explicit ? "import { useLoop } from '../app/composables/useLoop';" : ""} useLoop(); if (import.meta.hot) import.meta.hot.accept()`,
+        "app/composables/useLoop.ts": "import '../plugins/entry'; export const useLoop = () => 1",
+      },
+      async (root) => {
+        const { cycles, graph } = await analyze(root);
+        expect(cycles.some((cycle) => cycle.message.includes("lib/helper.ts"))).toBe(true);
+        expect(
+          graph.edges.find((edge) => edge.from.endsWith("/lib/helper.ts"))?.clientReachable ===
+            true,
+        ).toBe(mode === "all");
+        const { diagnostics } = await runViteDoctor({
+          root,
+          framework: "nuxt",
+          config: { extends: ["auto", "vite/strict"] },
+          cache: false,
+        });
+        expect(diagnostics.filter((item) => item.code === "VITE0029")).toHaveLength(
+          mode === "all" ? 1 : 0,
+        );
+      },
+      {
+        appImports: { useLoop: "app/composables/useLoop.ts" },
+        appPlugins: [{ file: "app/plugins/entry.ts", mode }],
+      },
+    ),
 );
 
 test.each([false, true])("Nuxt HMR sees the loop with an explicit import: %s", (explicit) =>

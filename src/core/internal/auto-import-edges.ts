@@ -27,7 +27,6 @@ export interface AutoImportEdge {
   from: number;
   to: number;
   autoImportBundle: NonNullable<ImportGraphEdge["autoImportBundle"]>;
-  clientReachable?: boolean;
   /** The auto-imported identifier, such as `useCart`. */
   name: string;
   /** The file's first unshadowed reference to `name`. */
@@ -36,6 +35,14 @@ export interface AutoImportEdge {
 
 const edgesBySession = new WeakMap<ScanSession, Promise<readonly AutoImportEdge[]>>();
 const completedEdges = new WeakMap<ScanSession, readonly AutoImportEdge[]>();
+const clientParticipation = new WeakMap<
+  ScanSession,
+  (from: number, to: number) => boolean | undefined
+>();
+
+export function sessionClientParticipation(session: ScanSession) {
+  return clientParticipation.get(session);
+}
 
 /** Auto-import edges collected for this run, or none when nothing asked for them. */
 export function sessionAutoImportEdges(session: ScanSession): readonly AutoImportEdge[] {
@@ -80,6 +87,8 @@ async function collect(
   const appFiles = new Set<number>();
   const appQueue: FileFacts[] = [];
   const clientEntries = new Set<number>();
+  const serverEntries = new Set<number>();
+  const observedClientFiles = new Set<number>();
   const appDependencies = new Map<number, number[]>();
   const scanTargets = new Map<NuxtProjectInfo, Set<number | undefined>>();
   const projectOf = (fact: FileFacts) => session.handlesByPath.get(fact.path)?.project.nuxt;
@@ -106,14 +115,19 @@ async function collect(
           ...(nuxt.manifest.pages ?? []),
           ...(nuxt.manifest.resolvedComponents ?? []),
           ...(nuxt.manifest.resolvedPlugins ?? []),
+          ...(nuxt.manifest.resolvedMiddleware ?? []).map((file) => ({ file, mode: "all" })),
         ];
+        for (const file of nuxt.manifest.clientBuildFiles ?? []) {
+          const target = index.resolveFile(file);
+          if (target !== undefined) observedClientFiles.add(target);
+        }
         for (const file of nuxt.manifest.pluginFiles) enqueue(index.resolveFile(file), nuxt, false);
         for (const { file, mode } of registrations) {
           if (!file) continue;
           const target = index.resolveFile(file);
           enqueue(target, nuxt, false);
-          if (target !== undefined && mode !== "server" && appFiles.has(target))
-            clientEntries.add(target);
+          if (target !== undefined && appFiles.has(target))
+            (mode === "server" ? serverEntries : clientEntries).add(target);
         }
         scanTargets.set(
           nuxt,
@@ -258,9 +272,13 @@ async function collect(
       clientQueue.push(dependency);
     }
   }
-  for (const edge of edges) {
-    if (edge.autoImportBundle === "nuxt" && clientFiles.has(edge.from)) edge.clientReachable = true;
-  }
+  const inClient = (file: number) => observedClientFiles.has(file) || clientFiles.has(file);
+  clientParticipation.set(session, (from, to) => {
+    if (inClient(from) && inClient(to)) return true;
+    if ((serverEntries.has(from) && !inClient(from)) || (serverEntries.has(to) && !inClient(to)))
+      return false;
+    return undefined;
+  });
 
   for (const fact of session.facts) {
     if (appFiles.has(fact.fileId) || serverFiles.has(fact.fileId)) continue;
