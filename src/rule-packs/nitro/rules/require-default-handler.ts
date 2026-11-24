@@ -2,7 +2,12 @@ import { relative } from "pathe";
 import type { ProjectInfo, RuleContext } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { type AnyNode, createRule } from "./shared.js";
-import { type NitroServerFile, nitroRouteFile, runtimeMajor } from "./server-layout.js";
+import {
+  nitro3ScanPath,
+  type NitroServerFile,
+  nitroRouteFile,
+  runtimeMajor,
+} from "./server-layout.js";
 
 const RULE_ID = "nitro/routes/require-default-handler";
 const METHOD_OR_ENV_SUFFIX =
@@ -81,14 +86,15 @@ function reportMissingHandler(
     : "has no default export";
   const handler =
     (runtimeMajor(ctx.project, "nitro") ?? 2) >= 3 ? "defineHandler" : "defineEventHandler";
+  const path = routePath(ctx, route);
   ctx.helpers.report(
     ctx,
     null,
     diagnostics.NITRO0019({
-      why: `Nitro registers this file as the ${routePath(route)} route, but it ${exported}. The route has no working handler.`,
+      why: `Nitro registers this file as the ${path} route, but it ${exported}. The route has no working handler.`,
       fix: names.length
-        ? `Move ${formatNames(names)} to ${utilsDir(ctx.project, route)}/ and import them where needed, or default-export a ${handler}() if this file should serve ${routePath(route)}.`
-        : `Default-export a ${handler}() if this file should serve ${routePath(route)}; otherwise move it out of ${route.dir}/.`,
+        ? `Move ${formatNames(names)} to ${utilsDir(ctx.project, route)}/ and import them where needed, or default-export a ${handler}() if this file should serve ${path}.`
+        : `Default-export a ${handler}() if this file should serve ${path}; otherwise move it out of ${route.dir}/.`,
     }),
     {
       ruleId: RULE_ID,
@@ -108,12 +114,13 @@ function reportNonHandlerDefault(
   const handler =
     (runtimeMajor(ctx.project, "nitro") ?? 2) >= 3 ? "defineHandler" : "defineEventHandler";
   const moved = description.name ?? "this module";
+  const path = routePath(ctx, route);
   ctx.helpers.report(
     ctx,
     node,
     diagnostics.NITRO0019({
-      why: `Nitro registers this file as the ${routePath(route)} route, but its default export is ${description.label}, not an event handler. The route has no working handler.`,
-      fix: `Move ${moved} to ${utilsDir(ctx.project, route)}/ and import it where needed, or default-export a ${handler}() if this file should serve ${routePath(route)}.`,
+      why: `Nitro registers this file as the ${path} route, but its default export is ${description.label}, not an event handler. The route has no working handler.`,
+      fix: `Move ${moved} to ${utilsDir(ctx.project, route)}/ and import it where needed, or default-export a ${handler}() if this file should serve ${path}.`,
     }),
     { ruleId: RULE_ID, severity: "error", category: "routing" },
   );
@@ -129,7 +136,7 @@ function reportExtraExports(
     ctx,
     node,
     diagnostics.NITRO0020({
-      why: `This ${routePath(route)} route module also exports ${formatNames(names)}. Nitro only uses the default export, so these exports are only reachable by importing the route module, which also loads its handler and dependencies.`,
+      why: `This ${routePath(ctx, route)} route module also exports ${formatNames(names)}. Nitro only uses the default export, so these exports are only reachable by importing the route module, which also loads its handler and dependencies.`,
       fix: `Move ${formatNames(names)} to ${utilsDir(ctx.project, route)}/ and keep the handler as this file's only runtime export. Type-only exports can stay. If a build step reads these exports intentionally, list them in this rule's allowedExports option.`,
     }),
     { ruleId: RULE_ID, severity: "warn", category: "routing" },
@@ -388,17 +395,22 @@ function moduleExportName(node: AnyNode): string | undefined {
   return undefined;
 }
 
-function routePath(route: NitroServerFile) {
+function routePath(ctx: RuleContext, route: NitroServerFile) {
   const prefix = route.dir === "api" ? "/api" : "";
-  const path = route.path
-    .slice(route.dir.length + 1)
-    .replace(/\.[A-Za-z]+$/, "")
+  const file = route.path.slice(route.dir.length + 1);
+  const scanned =
+    (runtimeMajor(ctx.project, "nitro") ?? 2) >= 3 ? nitro3ScanPath(ctx, file, true) : undefined;
+  const path = (scanned?.name ?? file.replace(/\.[A-Za-z]+$/, ""))
     .replace(/\(([^(/\\]+)\)[/\\]/g, "")
     .replace(/\[\.{3}]/g, "**")
     .replace(/\[\.{3}(\w+)]/g, "**:$1")
-    .replace(/\[([^/\]]+)]/g, ":$1")
-    .replace(METHOD_OR_ENV_SUFFIX, "");
-  return `${prefix}/${path}`.replace(/\/index$/, "") || "/";
+    .replace(/\[([^/\]]+)]/g, ":$1");
+  return (
+    `${prefix}/${scanned ? path : path.replace(METHOD_OR_ENV_SUFFIX, "")}`.replace(
+      /\/index$/,
+      "",
+    ) || "/"
+  );
 }
 
 function utilsDir(project: ProjectInfo, route: NitroServerFile) {

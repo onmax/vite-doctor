@@ -25,6 +25,96 @@ async function run(
   }));
 }
 
+test("uses only reachable logical operands as copy evidence", async () => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const and = {}
+const or = {}
+const nullish = {}
+const inline = {}
+const spread = {}
+const live = {}
+const fallback = {}
+export default defineEventHandler((event) => {
+  const useCookieLocale = false
+  const localeOverride = 'en'
+  const skipped = { current: useCookieLocale && getCookie(event, 'locale') }
+  Object.assign(and, skipped)
+  Object.assign(or, { ...{ current: localeOverride || getCookie(event, 'locale') } })
+  const patch = { current: localeOverride ?? getCookie(event, 'locale') }
+  Object.assign(nullish, patch)
+  Object.assign(inline, { current: false && getCookie(event, 'locale') })
+  Object.assign(spread, { ...skipped })
+  const enabled = (useCookieLocale && event.context) || true
+  const livePatch = { current: enabled && getCookie(event, 'locale') }
+  Object.assign(live, livePatch)
+  const cookiePatch = { current: getCookie(event, 'locale') ?? 'en' }
+  Object.assign(fallback, { ...cookiePatch })
+})`,
+    }),
+  ).toEqual([6, 7].map((line) => ({ code: "NITRO0035", file, line })));
+});
+
+const cookie = "getCookie(event, 'locale')";
+test.each([
+  [
+    "a static block",
+    false,
+    `class Handler { static { const enabled = true; latest = enabled && ${cookie} } }`,
+    true,
+  ],
+  [
+    "a class expression",
+    false,
+    `const Handler = class enabled { static { latest = enabled && ${cookie} } }`,
+    true,
+  ],
+  ["a TypeScript enum", false, `enum enabled { On }; latest = enabled && ${cookie}`, true],
+  [
+    "a switch discriminant",
+    true,
+    `switch (latest = enabled && ${cookie}) { default: const enabled = false }`,
+    true,
+  ],
+  [
+    "a switch case",
+    true,
+    `switch (0) { default: const enabled = false; latest = enabled && ${cookie} }`,
+    false,
+  ],
+])("uses the runtime binding for a logical write in %s", async (_, outer, source, reports) => {
+  const file = "server/api/locale.get.ts";
+  expect(
+    await run({
+      [file]: `let latest
+const enabled = ${outer}
+export default defineEventHandler((event) => {
+  ${source}
+})`,
+    }),
+  ).toEqual(reports ? [{ code: "NITRO0035", file, line: 1 }] : []);
+});
+
+test("keeps the reachable scalar copy inside a shadowing static block", async () => {
+  const file = "server/api/locale.get.ts";
+  expect(
+    await run({
+      [file]: `const latest = {}
+const enabled = false
+export default defineEventHandler((event) => {
+  class Handler {
+    static {
+      const enabled = true
+      const patch = { current: enabled && ${cookie} }
+      Object.assign(latest, patch)
+    }
+  }
+})`,
+    }),
+  ).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+});
+
 test.each([
   [
     "a module let assigned from the request query in a route",
@@ -291,6 +381,51 @@ export default defineEventHandler((event) => {
   ).toEqual([1, 2].map((line) => ({ code: "NITRO0035", file, line })));
 });
 
+test("finds the same scalar fallback in inline, named, and spread copy sources", async () => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const inline = {}
+const named = {}
+const spread = {}
+export default defineEventHandler((event) => {
+  const patch = { current: getCookie(event, 'sort') ?? 'default' }
+  Object.assign(inline, { current: getCookie(event, 'sort') ?? 'default' })
+  Object.assign(named, patch)
+  Object.assign(spread, { ...patch })
+})`,
+    }),
+  ).toEqual([1, 2, 3].map((line) => ({ code: "NITRO0035", file, line })));
+});
+
+test.each([
+  [
+    "a property read before the copy",
+    "const current = patch.current; Object.assign(shared, patch); return current",
+  ],
+  ["a property read after the copy", "Object.assign(shared, patch); return patch.current"],
+  ["an overwrite after the copy", "Object.assign(shared, patch); patch.current = 'public'"],
+  [
+    "an overwrite through an alias after the copy",
+    "const alias = patch; Object.assign(shared, alias); patch.current = 'public'",
+  ],
+  [
+    "an overwrite after a spread snapshot",
+    "const snapshot = { ...patch }; patch.current = 'public'; Object.assign(shared, snapshot)",
+  ],
+])("reports request data copied by Object.assign with %s", async (_, copy) => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const shared = {}
+export default defineEventHandler((event) => {
+  const patch = { current: getCookie(event, 'session') }
+  ${copy}
+})`,
+    }),
+  ).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+});
+
 test.each([
   ["a later property", "Object.assign(shared, { ...patch, ['current']: 'public' })"],
   ["a later spread", "Object.assign(shared, { ...patch, ...{ current: 'public' } })"],
@@ -302,6 +437,15 @@ test.each([
   ],
   ["a possible mutation in another function", "rewrite(patch); Object.assign(shared, patch)"],
   [
+    "a called closure declared after the copy",
+    "rewrite(); Object.assign(shared, patch); function rewrite() { patch.current = 'public' }",
+  ],
+  ["a method that overwrites its receiver", "patch.clear(); Object.assign(shared, patch)"],
+  [
+    "an overwrite in another source argument",
+    "Object.assign(shared, patch, (patch.current = 'public', {}))",
+  ],
+  [
     "a call to a shadowed Object.assign",
     "{ const Object = { assign: (_, value) => { value.current = 'public' } }; Object.assign({}, patch) }; Object.assign(shared, patch)",
   ],
@@ -310,8 +454,69 @@ test.each([
     await run({
       "server/api/session.get.ts": `const shared = {}
 export default defineEventHandler((event) => {
-  const patch = { current: getCookie(event, 'session') }
+  const patch = { current: getCookie(event, 'session'), clear() { this.current = 'public' } }
   ${copy}
+})`,
+    }),
+  ).toEqual([]);
+});
+
+test.each([
+  ["a nested write", "patch.current.sort = 'default'; Object.assign(shared, patch)", false],
+  [
+    "a nested alias escape",
+    "const current = patch.current; rewrite(current); Object.assign(shared, patch)",
+    false,
+  ],
+  [
+    "a nested write after a shallow snapshot",
+    "const snapshot = { ...patch }; patch.current.sort = 'default'; Object.assign(shared, snapshot)",
+    false,
+  ],
+  [
+    "a write through a different shallow copy",
+    "const other = { ...patch }; other.current.sort = 'default'; Object.assign(shared, patch)",
+    false,
+  ],
+  ["an unexposed source", "Object.assign(shared, patch)", true],
+  ["an unexposed snapshot", "Object.assign(shared, { ...patch })", true],
+])("checks nested Object.assign values with %s", async (_, copy, reports) => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const shared = {}
+const rewrite = (value) => { value.sort = 'default' }
+export default defineEventHandler((event) => {
+  const patch = { current: { sort: getCookie(event, 'sort') } }
+  ${copy}
+})`,
+    }),
+  ).toEqual(reports ? [{ code: "NITRO0035", file, line: 1 }] : []);
+});
+
+test("keeps scalar copy evidence when a sibling nested value escapes", async () => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const shared = {}
+export default defineEventHandler((event) => {
+  const patch = { current: { sort: getQuery(event).sort }, session: getCookie(event, 'session') ?? 'public' }
+  patch.current.sort = 'default'
+  Object.assign(shared, { ...patch })
+})`,
+    }),
+  ).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+});
+
+test("does not treat a fallback that can return a mutable value as scalar", async () => {
+  expect(
+    await run({
+      "server/api/session.get.ts": `const shared = {}
+export default defineEventHandler((event) => {
+  const fallback = { sort: getQuery(event).sort }
+  const patch = { current: getCookie(event, 'sort') ?? fallback }
+  fallback.sort = 'default'
+  if (typeof patch.current === 'object') Object.assign(shared, { ...patch })
 })`,
     }),
   ).toEqual([]);

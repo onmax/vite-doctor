@@ -73,9 +73,9 @@ function hasMeaningfulCacheControl(node: AnyNode, read: EventRequestRead) {
   if (read.kind === "headers") {
     const varies = controls.get("varies");
     if (
-      !controls.has("getKey") &&
+      (!controls.has("getKey") || usesDefaultKey(controls.get("getKey"))) &&
       varies?.type === "ArrayExpression" &&
-      variesOnHeaders(varies.elements.map(staticRequestString), read.headers)
+      variesOnHeaders(knownVariesHeaders(varies), read.headers)
     )
       return true;
   }
@@ -116,6 +116,36 @@ function hasMeaningfulCacheControl(node: AnyNode, read: EventRequestRead) {
 
 function isUndefinedOption(node: AnyNode): boolean {
   return node?.type === "Identifier" && node.name === "undefined";
+}
+
+function knownVariesHeaders(array: AnyNode): string[] {
+  return array.elements.flatMap((element: AnyNode) => {
+    const value = unwrap(element);
+    if (value?.type === "SpreadElement") {
+      const spread = unwrap(value.argument);
+      return spread?.type === "ArrayExpression" ? knownVariesHeaders(spread) : [];
+    }
+    const header = staticRequestString(value);
+    return header === undefined ? [] : [header];
+  });
+}
+
+function usesDefaultKey(callback: AnyNode): boolean {
+  if (callback?.type === "Literal" && callback.value === null) return true;
+  if (!FUNCTION_TYPES.has(callback?.type) || callback.generator) return false;
+  let result = callback.body;
+  if (result.type === "BlockStatement") {
+    if (!result.body.length) return true;
+    if (result.body.length !== 1 || result.body[0].type !== "ReturnStatement") return false;
+    result = result.body[0].argument;
+  }
+  result = unwrap(result);
+  return (
+    !result ||
+    (result.type === "Literal" && !result.value) ||
+    (result.type === "UnaryExpression" && result.operator === "void") ||
+    staticRequestString(result) === ""
+  );
 }
 
 function hasNonEmptyStringArray(node: AnyNode): boolean {

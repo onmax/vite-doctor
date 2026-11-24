@@ -84,12 +84,14 @@ In the reply that reports the setup, tell the person in one or two sentences tha
 ## Workflow
 
 1. Use `vite-doctor . --changed --format agent` for uncommitted work. Use `vite-doctor . --since <base-ref> --format agent` for a committed branch or pull request. Run Doctor without either scope flag when Git is unavailable or the user asks for a project audit.
-2. Read `status`, `scope`, and every Diagnostic's code, message, remediation, confidence, relative location, evidence, and optional edit plan.
+2. Read `status`, `scope`, and every Diagnostic's code, message, remediation, confidence, relative location, evidence, related locations, and optional edit plan.
 3. Work only on Diagnostics owned by the requested change. Do not widen the task to unrelated findings.
 4. Apply the smallest fix that satisfies the remediation and preserves project conventions. Treat structured edit plans as proposed edits, not permission to skip review.
-5. Replace the `<rule>` item in `commandArgs.verify` with the Diagnostic's Rule ID. Execute the first array item with the remaining items as literal arguments, without a shell, from `project.cwd`.
-6. Execute `commandArgs.rerun` the same way before finishing. Report remaining Diagnostics or incomplete evidence exactly. If only shell execution is available, `commands` contains quoted POSIX command templates; replace placeholders with correctly quoted literal arguments before running them.
-7. Use the Diagnostic Reference URL when the inline remediation is ambiguous or framework behavior needs confirmation. Routine fixes should not require network access.
+5. When the Diagnostic and its remediation identify one structural cause across sites, such as an import cycle, eager reads between stores during setup, conflicting initializers for one `useState` key, or writes that bypass a shared state's owner, read the primary location and every related location before editing. The number of `related` entries does not determine whether this applies: one related location can complete a cycle or conflict, while several can merely provide evidence. Fix the shared cause for all sites instead of moving the problem between the listed files, suppressing or baselining the Diagnostic, or switching to a dynamic `import()` the remediation does not recommend.
+6. Replace the `<rule>` item in `commandArgs.verify` with the Diagnostic's Rule ID. Execute the first array item with the remaining items as literal arguments, without a shell, from `project.cwd`.
+7. Execute `commandArgs.rerun` the same way before finishing. Report remaining Diagnostics or incomplete evidence exactly. If only shell execution is available, `commands` contains quoted POSIX command templates; replace placeholders with correctly quoted literal arguments before running them.
+8. For a shared structural cause, also verify the original group with an unscoped JSON run. From `commandArgs.rerun`, remove `--changed` or `--since` and its base-ref argument, omit `--new-only` so baseline filtering cannot hide a residual finding, and replace `--format agent` with `--format json`. Keep the relevant Rule or analysis enabled and check that the report has `scope.mode` set to `all` and is not `incomplete`. Even if `status` is `clean`, check both `diagnostics` and `suppressedDiagnostics` for any remaining part of the original problem, including Diagnostics that now point to different locations. Report residual findings, including suppressed ones, without changing existing suppressions or treating unrelated findings as permission to widen the task.
+9. Use the Diagnostic Reference URL when the inline remediation is ambiguous or framework behavior needs confirmation. Routine fixes should not require network access.
 
 ## Rules
 

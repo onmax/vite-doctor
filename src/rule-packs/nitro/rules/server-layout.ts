@@ -1,3 +1,4 @@
+import mime from "mime";
 import { parseSync } from "oxc-parser";
 import { isAbsolute, relative, resolve } from "pathe";
 import type { ProjectInfo, RuleContext, RuleFileSystem } from "../../../core/index.js";
@@ -5,6 +6,8 @@ import type { ProjectInfo, RuleContext, RuleFileSystem } from "../../../core/ind
 export interface StaticConfigOption {
   path: string[];
   value: string | boolean | null;
+  strings?: string[];
+  routes?: { handler: string; method: string }[];
 }
 
 export interface NitroServerFile {
@@ -19,7 +22,24 @@ const NUXT_CONFIG_FILES = configFiles("nuxt.config");
 const ROUTE_DIRS = new Set(["api", "routes"]);
 const SCANNED_SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const DECLARATION_FILE = /\.d\.[cm]?ts$/;
-const TEST_FILE = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:spec|test)\.[cm]?[jt]sx?$/;
+const TEST_FILE = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
+const TEST_DIRECTORY = /(?:^|\/)(?:tests?|__tests__)\//;
+const SCAN_IGNORE_OPTIONS = new Set(["ignore", "ignorePrefix", "ignoreOptions"]);
+const NITRO3_METHODS = new Set([
+  "connect",
+  "delete",
+  "get",
+  "head",
+  "options",
+  "patch",
+  "post",
+  "put",
+  "query",
+  "trace",
+]);
+const NITRO3_ENVS = new Set(["dev", "prod", "prerender"]);
+const LAST_SUFFIX = /(?<=[^/])\.([a-z]+)$/;
+const ORDER_PREFIX = /(?:^|\/)\d+$/;
 
 export function nitroServerDirs(ctx: RuleContext): string[] {
   const key = "nitro:server-dirs";
@@ -45,24 +65,180 @@ export function nitroServerFile(ctx: RuleContext, file: string): NitroServerFile
 /** A file under a Nitro server directory that runs in the server bundle: not a test, type declaration, or config. */
 export function isNitroRuntimeFile(ctx: RuleContext) {
   const path = ctx.file.relativePath.replace(/\\/g, "/");
-  if (TEST_FILE.test(path) || DECLARATION_FILE.test(path)) return false;
+  if (TEST_DIRECTORY.test(path) || TEST_FILE.test(path) || DECLARATION_FILE.test(path))
+    return false;
   return Boolean(nitroServerFile(ctx, ctx.file.path)) && !/\.config\.[cm]?[jt]s$/.test(path);
 }
 
 export function nitroRouteFile(ctx: RuleContext, file: string): NitroServerFile | null {
+  return nitroScannedFile(ctx, file, ROUTE_DIRS);
+}
+
+/**
+ * The server file when Nitro's scan of one of `dirs` provably picks it up: default scan layout,
+ * a scanned script extension, and not dropped by Nuxt's or Nitro's default ignore patterns.
+ */
+export function nitroScannedFile(
+  ctx: RuleContext,
+  file: string,
+  dirs: ReadonlySet<string>,
+): NitroServerFile | null {
   const project = ctx.project;
   const options = readStaticConfigOptions(ctx, project.framework === "nuxt" ? "nuxt" : "nitro");
   if (
     options.some(
-      ({ path }) => path.length === 0 || ["scanDirs", "apiDir", "routesDir"].includes(path.at(-1)!),
+      ({ path }) =>
+        path.length === 0 ||
+        ["scanDirs", "apiDir", "routesDir", "middlewareDir"].includes(path.at(-1)!),
     )
   )
     return null;
   const serverFile = nitroServerFile(ctx, file);
-  if (!serverFile || !ROUTE_DIRS.has(serverFile.dir) || !serverFile.path.includes("/")) return null;
-  if (!SCANNED_SCRIPT.test(file) || DECLARATION_FILE.test(file)) return null;
-  if (project.framework === "nuxt" && isIgnoredByNuxtDefaults(serverFile.path)) return null;
+  if (!serverFile || !dirs.has(serverFile.dir) || !serverFile.path.includes("/")) return null;
+  if (!isNitroScannedScript(ctx, serverFile.path)) return null;
+  if (
+    (runtimeMajor(project, "nitro") ?? 2) >= 3 &&
+    !nitro3ScanPath(
+      ctx,
+      serverFile.path.slice(serverFile.dir.length + 1),
+      ROUTE_DIRS.has(serverFile.dir),
+    )
+  )
+    return null;
   return serverFile;
+}
+
+export function nitro3ScanPath(ctx: RuleContext, path: string, route: boolean) {
+  const { name, method, env } = nitro3PathParts(path, route);
+  const suffix = name.match(LAST_SUFFIX)?.[1];
+  if (suffix) {
+    const reserved = NITRO3_METHODS.has(suffix) || NITRO3_ENVS.has(suffix);
+    if (
+      !(route && reserved) &&
+      !mime.getType(suffix) &&
+      !(!reserved && ORDER_PREFIX.test(name.slice(0, -suffix.length - 1))) &&
+      !hasStaticScanSuffix(ctx, suffix)
+    )
+      return undefined;
+  }
+  return { name, method, env };
+}
+
+export function nitro3DefaultHandlerMayUseCache(ctx: RuleContext, file: NitroServerFile): boolean {
+  const options = readStaticConfigOptions(ctx, ctx.project.framework === "nuxt" ? "nuxt" : "nitro");
+  const filename = resolve(file.serverDir, file.path);
+  const routeOptions = options.filter(({ path }) => path.at(-1) === "routes");
+  let uncertain = options.some(({ path }) => path.at(-1) === "handlers");
+  let bypassesCache = false;
+  for (const { routes } of routeOptions) {
+    if (!routes) {
+      uncertain = true;
+      continue;
+    }
+    for (const { handler, method } of routes) {
+      if (resolve(ctx.project.root, handler) !== filename) continue;
+      if (nitro3CacheableMethod(method)) return true;
+      bypassesCache = true;
+    }
+  }
+  if (options.some(({ path }) => path.at(-1) === "scanDirs")) return false;
+  for (const dir of ROUTE_DIRS) {
+    const overrides = options.filter(({ path }) => path.at(-1) === `${dir}Dir`);
+    const roots = overrides.length
+      ? new Set(
+          overrides.map(({ value }) =>
+            typeof value === "string" || value === false
+              ? resolve(file.serverDir, value || dir)
+              : undefined,
+          ),
+        )
+      : new Set([resolve(file.serverDir, dir)]);
+    const [root] = roots;
+    if (roots.size !== 1 || root === undefined) {
+      uncertain = true;
+      continue;
+    }
+    const path = relative(root, filename);
+    if (!path || path === ".." || path.startsWith("../") || isAbsolute(path)) continue;
+    if (!isNitroScannedScript(ctx, path)) continue;
+    const { method } = nitro3PathParts(path, true);
+    if (nitro3CacheableMethod(method)) {
+      if (nitro3ScanPath(ctx, path, true)) return true;
+    } else {
+      bypassesCache = true;
+    }
+  }
+  return !bypassesCache && !uncertain;
+}
+
+function nitro3CacheableMethod(method: string | undefined): boolean {
+  return !method || method === "get" || method === "head";
+}
+
+function nitro3PathParts(path: string, route: boolean) {
+  let name = path.replace(SCANNED_SCRIPT, "");
+  let env: string | undefined;
+  let method: string | undefined;
+  if (route) {
+    const envSuffix = name.match(LAST_SUFFIX)?.[1];
+    if (envSuffix && NITRO3_ENVS.has(envSuffix)) {
+      env = envSuffix;
+      name = name.slice(0, -env.length - 1);
+    }
+    const methodSuffix = name.match(LAST_SUFFIX)?.[1];
+    if (methodSuffix && NITRO3_METHODS.has(methodSuffix)) {
+      method = methodSuffix;
+      name = name.slice(0, -method.length - 1);
+    }
+  }
+  return { name, method, env };
+}
+
+function hasStaticScanSuffix(ctx: RuleContext, suffix: string): boolean {
+  const nuxt = ctx.project.framework === "nuxt";
+  const options = readStaticConfigOptions(ctx, nuxt ? "nuxt" : "nitro");
+  const configured = options.filter(({ path }) =>
+    nuxt ? path.join(".") === "nitro.scanSuffixes" : path.at(-1) === "scanSuffixes",
+  );
+  return (
+    configured.length === 1 &&
+    configured[0]?.strings?.includes(suffix) === true &&
+    !hasUnresolvedNitroConfig(ctx, options)
+  );
+}
+
+/** Whether Nitro's directory scan keeps this server-relative path under default ignore patterns. */
+export function isNitroScannedScript(ctx: RuleContext, path: string): boolean {
+  if (!SCANNED_SCRIPT.test(path) || DECLARATION_FILE.test(path)) return false;
+  if (ctx.project.framework === "nuxt") return !isIgnoredByNuxtDefaults(path);
+  // Nitro 3 adds test and spec files to its scan ignore list; Nitro 2 scans them.
+  return (runtimeMajor(ctx.project, "nitro") ?? 2) < 3 || !TEST_FILE.test(path);
+}
+
+/** Custom ignore patterns can drop any scanned file, so the scan result is not provable. */
+export function hasCustomScanIgnore(ctx: RuleContext): boolean {
+  const nuxt = ctx.project.framework === "nuxt";
+  const options = readStaticConfigOptions(ctx, nuxt ? "nuxt" : "nitro");
+  if (
+    hasUnresolvedNitroConfig(ctx, options) ||
+    options.some(({ path }) => SCAN_IGNORE_OPTIONS.has(path.at(-1)!))
+  )
+    return true;
+  return nuxt && ctx.fs.exists(resolve(ctx.project.root, ".nuxtignore"));
+}
+
+export function hasUnresolvedNitroConfig(ctx: RuleContext, options: StaticConfigOption[]): boolean {
+  if (
+    options.some(
+      ({ path }) => path.length === 0 || path.at(-1) === "extends" || path.at(-1)?.startsWith("$"),
+    )
+  )
+    return true;
+  if (ctx.project.framework !== "nuxt") return false;
+  if ((ctx.project.nuxt?.layers.length ?? 0) > 1) return true;
+  return (ctx.fs.readDir(resolve(ctx.project.root, "layers")) ?? []).some(
+    (entry) => entry.isDirectory() || entry.isSymbolicLink(),
+  );
 }
 
 export function readStaticConfigOptions(
@@ -151,14 +327,10 @@ function standaloneNitroServerDirs(ctx: RuleContext): string[] {
 
 function isIgnoredByNuxtDefaults(path: string) {
   const name = path.split("/").at(-1)!;
-  return (
-    name.startsWith("-") ||
-    /\.stories\.[cm]?[jt]sx?$/.test(name) ||
-    /\.(?:spec|test)\.[cm]?[jt]sx?$/.test(name)
-  );
+  return name.startsWith("-") || /\.stories\.[cm]?[jt]sx?$/.test(name) || TEST_FILE.test(name);
 }
 
-function configFiles(base: string) {
+export function configFiles(base: string) {
   return ["ts", "mts", "cts", "js", "mjs", "cjs"].map((extension) => `${base}.${extension}`);
 }
 
@@ -189,13 +361,11 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
   if (!config) return [];
   const { properties, pluginsProperty, pluginNames, namespaceNames } = config;
   const nitroProperty = properties.findLast(
-    (property: any) =>
-      property.type === "Property" && !property.computed && propertyKey(property.key) === "nitro",
+    (property: any) => vitePropertyKey(property) === "nitro",
   );
   const options: StaticConfigOption[] = [];
   for (const property of properties) {
-    if (property.type !== "Property" || property.computed) continue;
-    const key = propertyKey(property.key);
+    const key = vitePropertyKey(property);
     if (key === "nitro" && property === nitroProperty) {
       const nested = unwrapConfig(property.value);
       if (nested) collectOptions(nested, ["nitro"], options);
@@ -204,7 +374,58 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
     if (key !== "plugins" || property !== pluginsProperty) continue;
     collectNitroPluginOptions(property.value, pluginNames, namespaceNames, options);
   }
+  const earliestConfig = Math.min(
+    properties.indexOf(nitroProperty),
+    properties.indexOf(pluginsProperty),
+  );
+  if (
+    properties.slice(earliestConfig + 1).some((property: any) => vitePropertyKey(property) === null)
+  )
+    options.push({ path: ["nitro", "scanSuffixes"], value: null });
   return options;
+}
+
+/**
+ * The Nitro option objects of a vite.config program that registers the nitro() plugin: the
+ * top-level `nitro` key and each nitro() call's argument. `null` stands for options Doctor cannot
+ * read statically. Undefined when the config does not register the plugin.
+ */
+export function viteNitroOptionObjects(program: any): Array<any | null> | undefined {
+  const config = viteNitroConfig(program);
+  if (!config) return undefined;
+  const { properties, pluginsProperty, pluginNames, namespaceNames } = config;
+  const objects: Array<any | null> = [];
+  for (const property of properties) {
+    if (property.type !== "Property" || property.computed) {
+      objects.push(null);
+      continue;
+    }
+    const key = propertyKey(property.key);
+    if (key === "nitro") objects.push(unwrapConfig(property.value) ?? null);
+    if (key !== "plugins" || property !== pluginsProperty) continue;
+    const visit = (node: any) => {
+      if (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
+        return visit(node.expression);
+      if (node?.type === "ArrayExpression") return node.elements.forEach(visit);
+      if (node?.type !== "CallExpression") return;
+      if (!isNitroPluginCallee(node.callee, pluginNames, namespaceNames)) return;
+      objects.push(
+        node.arguments.length === 0
+          ? { type: "ObjectExpression", properties: [] }
+          : node.arguments.length === 1
+            ? (unwrapConfig(node.arguments[0]) ?? null)
+            : null,
+      );
+    };
+    visit(property.value);
+  }
+  return objects;
+}
+
+function vitePropertyKey(property: any): string | null {
+  if (property.type !== "Property") return null;
+  if (property.computed && property.key.type !== "Literal") return null;
+  return propertyKey(property.key);
 }
 
 export function hasViteNitroPlugin(program: Record<string, unknown>): boolean {
@@ -237,8 +458,7 @@ function viteNitroConfig(program: any) {
   const config = unwrapConfig(expression);
   if (!config) return undefined;
   const pluginsProperty = config.properties.findLast(
-    (property: any) =>
-      property.type === "Property" && !property.computed && propertyKey(property.key) === "plugins",
+    (property: any) => vitePropertyKey(property) === "plugins",
   );
   const plugins = pluginsProperty?.value;
   if (!hasNitroPlugin(plugins, pluginNames, namespaceNames)) return undefined;
@@ -294,7 +514,7 @@ function isNitroPluginCallee(node: any, names: Set<string>, namespaces: Set<stri
   );
 }
 
-function unwrapConfig(node: any): any {
+export function unwrapConfig(node: any): any {
   while (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
     node = node.expression;
   if (
@@ -315,6 +535,10 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
     }
     const key = propertyKey(property.key);
     if (!key) continue;
+    if (key === "extends" || key.startsWith("$")) {
+      options.push({ path: [...path, key], value: null });
+      continue;
+    }
     if (key === "imports" || key === "experimental") {
       const nested = unwrapConfig(property.value);
       if (nested) {
@@ -327,11 +551,36 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
       }
     }
     if (
-      !["srcDir", "serverDir", "scanDirs", "apiDir", "routesDir", "nitro", "imports"].includes(key)
+      ![
+        "srcDir",
+        "serverDir",
+        "scanDirs",
+        "apiDir",
+        "routesDir",
+        "routes",
+        "handlers",
+        "middlewareDir",
+        "scanSuffixes",
+        "nitro",
+        "imports",
+        "cache",
+        "ignore",
+        "ignorePrefix",
+        "ignoreOptions",
+      ].includes(key)
     )
       continue;
     const next = [...path, key];
-    options.push({ path: next, value: literalValue(property.value) });
+    const option: StaticConfigOption = { path: next, value: literalValue(property.value) };
+    if (key === "scanSuffixes" && property.kind === "init") {
+      const strings = literalStringArray(property.value);
+      if (strings) option.strings = strings;
+    }
+    if (key === "routes" && property.kind === "init") {
+      const routes = staticRoutes(property.value);
+      if (routes) option.routes = routes;
+    }
+    options.push(option);
     if (key === "nitro") {
       const nested = unwrapConfig(property.value);
       if (nested) collectOptions(nested, next, options);
@@ -340,13 +589,44 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
   }
 }
 
-function propertyKey(node: any): string | null {
+function staticRoutes(node: any): StaticConfigOption["routes"] {
+  const config = unwrapConfig(node);
+  if (!config) return undefined;
+  const routes = new Map<string, NonNullable<StaticConfigOption["routes"]>[number]>();
+  for (const route of config.properties) {
+    const key = vitePropertyKey(route);
+    if (key === null || route.kind !== "init") return undefined;
+    const options = unwrapConfig(route.value);
+    if (options?.properties.some((property: any) => vitePropertyKey(property) === null))
+      return undefined;
+    const handler = literalValue(
+      options
+        ? options.properties.findLast((property: any) => vitePropertyKey(property) === "handler")
+            ?.value
+        : route.value,
+    );
+    const methodOption = options?.properties.findLast(
+      (property: any) => vitePropertyKey(property) === "method",
+    );
+    const method = methodOption ? literalValue(methodOption.value) : "";
+    if (
+      typeof handler !== "string" ||
+      (!handler.startsWith("./") && !isAbsolute(handler)) ||
+      typeof method !== "string"
+    )
+      return undefined;
+    routes.set(key, { handler, method: method.toLowerCase() });
+  }
+  return [...routes.values()];
+}
+
+export function propertyKey(node: any): string | null {
   if (node?.type === "Identifier") return node.name;
   if (node?.type === "Literal" && typeof node.value === "string") return node.value;
   return null;
 }
 
-function literalValue(node: any): string | boolean | null {
+export function literalValue(node: any): string | boolean | null {
   while (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
     node = node.expression;
   if (
@@ -357,4 +637,17 @@ function literalValue(node: any): string | boolean | null {
   if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
     return node.quasis[0]?.value?.cooked ?? null;
   return null;
+}
+
+function literalStringArray(node: any): string[] | undefined {
+  while (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
+    node = node.expression;
+  if (node?.type !== "ArrayExpression") return undefined;
+  const values: string[] = [];
+  for (const element of node.elements) {
+    const value = literalValue(element);
+    if (typeof value !== "string") return undefined;
+    values.push(value);
+  }
+  return values;
 }

@@ -163,7 +163,7 @@ export function manifestPropertyRange(
   ctx: RuleContext,
   file: string,
   text: string,
-  path: string[],
+  path: readonly (string | number)[],
 ): SourceRange | undefined {
   const ts = loadTypeScript();
   const key = `package:manifest-source:${file}`;
@@ -176,6 +176,15 @@ export function manifestPropertyRange(
   if (!statement || !ts.isExpressionStatement(statement)) return;
   let value: Expression = statement.expression;
   for (const [index, name] of path.entries()) {
+    if (typeof name === "number") {
+      if (!ts.isArrayLiteralExpression(value)) return;
+      const element = value.elements[name];
+      if (!element) return;
+      if (index === path.length - 1)
+        return ctx.helpers.rangeFromOffsets(file, text, element.getStart(source), element.end);
+      value = element;
+      continue;
+    }
     if (!ts.isObjectLiteralExpression(value)) return;
     const property = value.properties.findLast(
       (member) =>

@@ -114,35 +114,49 @@ export const noRequestStateInCachedPage = createRule({
           const applicable = reads.filter((candidate) =>
             kinds.some((kind) => applies(candidate, kind)),
           );
-          const read =
-            applicable.find(
-              (candidate) => !candidate.renderUnproven && !candidate.visitorUnproven,
-            ) ?? applicable[0];
-          if (!read) continue;
-          const kind = kinds.find((kind) => applies(read, kind))!;
-          const doubts = [
-            read.renderUnproven &&
-              "Doctor can't prove this code runs while the page renders on the server; it may only run later in the browser.",
-            read.visitorUnproven &&
-              "`event.context` holds whatever middleware, Nitro and the deployment adapter put there, such as `context.cloudflare.env`; Doctor can't tell whether this field is per visitor.",
-          ].filter((doubt): doubt is string => !!doubt);
-          const confidence: Confidence = doubts.length ? "heuristic-medium" : "manifest-backed";
-          ctx.report(diagnostics.NUXT0106({ why: why(read, kind, route), fix: fix(read) }), {
-            ruleId: RULE_ID,
-            severity: ctx.severity,
-            category: "ssr",
-            file: ctx.file.path,
-            range: ctx.range(read.node),
-            confidence,
-            evidence: [
-              {
-                kind: "manifest",
-                summary: `Nitro's route rule matcher applies ${patterns.join(", ")} to ${route}, which merge to \`${kind}\`.`,
-              },
-              ...doubts.map((summary) => ({ kind: "ast" as const, summary })),
-            ],
-          });
+          if (!applicable.length) continue;
+          const byKind = new Map<RequestRead["kind"], RequestRead>();
+          for (const read of applicable) {
+            const earlier = byKind.get(read.kind);
+            if (
+              !earlier ||
+              ((earlier.renderUnproven || earlier.visitorUnproven) &&
+                !read.renderUnproven &&
+                !read.visitorUnproven)
+            )
+              byKind.set(read.kind, read);
+          }
+          for (const read of byKind.values())
+            reportRead(
+              read,
+              kinds.find((kind) => applies(read, kind))!,
+            );
           return;
+
+          function reportRead(read: RequestRead, kind: SharedCacheKind) {
+            const doubts = [
+              read.renderUnproven &&
+                "Doctor can't prove this code runs while the page renders on the server; it may only run later in the browser.",
+              read.visitorUnproven &&
+                "`event.context` holds whatever middleware, Nitro and the deployment adapter put there, such as `context.cloudflare.env`; Doctor can't tell whether this field is per visitor.",
+            ].filter((doubt): doubt is string => !!doubt);
+            const confidence: Confidence = doubts.length ? "heuristic-medium" : "manifest-backed";
+            ctx.report(diagnostics.NUXT0106({ why: why(read, kind, route), fix: fix(read) }), {
+              ruleId: RULE_ID,
+              severity: ctx.severity,
+              category: "ssr",
+              file: ctx.file.path,
+              range: ctx.range(read.node),
+              confidence,
+              evidence: [
+                {
+                  kind: "manifest",
+                  summary: `Nitro's route rule matcher applies ${patterns.join(", ")} to ${route}, which merge to \`${kind}\`.`,
+                },
+                ...doubts.map((summary) => ({ kind: "ast" as const, summary })),
+              ],
+            });
+          }
 
           function applies(read: RequestRead, kind: SharedCacheKind) {
             if (read.kind === "query") return kind === "prerender";
@@ -228,6 +242,7 @@ function renderedBinding(ctx: RuleContext, program: AnyNode, call: AnyNode) {
           isSource: (node) => node === call,
           programBinding: findStatementBinding,
           maxDepth: 8,
+          projectObjectMembers: true,
         })
       )
         return id.name;
@@ -270,7 +285,11 @@ function why(read: RequestRead, kind: SharedCacheKind, route: string) {
 }
 
 function fix(read: RequestRead) {
-  return read.kind === "query"
-    ? "Read the query on the client, in onMounted() or behind import.meta.client, or drop `prerender` for this route so it renders per request."
-    : "Move the per-visitor part to the client (onMounted(), import.meta.client, or <ClientOnly>) or to an uncached API call, or exclude the route from the cache with `cache: false` / `isr: false` / `prerender: false`. For a cache keyed on a header, list it in `cache.varies`.";
+  if (read.kind === "query")
+    return "Read the query on the client, in onMounted() or behind import.meta.client, or drop `prerender` for this route so it renders per request.";
+  const perRequest =
+    "Move the per-visitor part to the client (onMounted(), import.meta.client, or <ClientOnly>) or to an uncached API call, or exclude the route from the cache with `cache: false` / `isr: false` / `prerender: false`.";
+  return read.kind === "headers"
+    ? `${perRequest} For a cache keyed on a header, list it in \`cache.varies\`.`
+    : perRequest;
 }

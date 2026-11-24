@@ -26,12 +26,14 @@ const WRAPPERS = new Set([
   "ParenthesizedExpression",
 ]);
 const PROMISE_METHODS = new Set(["then", "catch", "finally"]);
+const UNKNOWN_VALUE = Symbol("unknown value");
+type StaticValue = string | number | boolean | bigint | null | typeof UNKNOWN_VALUE;
 
 export interface RequestValueSources {
   /** A node that is request data by itself, such as `useRoute()` or `getQuery(event)`. */
   isSource(node: AnyNode): boolean;
   /** The declarator binding `name` at program scope whose initializer the flow follows. */
-  programBinding?(program: AnyNode, name: string, reference: AnyNode): AnyNode;
+  programBinding?: (program: AnyNode, name: string, reference: AnyNode) => AnyNode;
   /**
    * Whether `reference`, which resolves to parameter `index` of `fn`, holds request data, such as
    * the `event` an h3 handler receives. Without it, parameters are not resolved.
@@ -39,6 +41,8 @@ export interface RequestValueSources {
   parameter?(fn: AnyNode, index: number, reference: AnyNode): boolean;
   /** How many local initializers the flow follows. Defaults to 2. */
   maxDepth?: number;
+  /** Trace the selected value, not evaluation of other fields in a local object initializer. */
+  projectObjectMembers?: boolean;
 }
 
 /** Whether evaluating `value` reads a request source, directly or through local bindings. */
@@ -118,6 +122,18 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
       return;
     }
     if (FUNCTION_TYPES.has(node.type) && !isInvoked(node) && !isPromiseCallback(node)) return;
+    if (sources.projectObjectMembers && node.type === "MemberExpression") {
+      const selected = projectMember(node, sources, (sources.maxDepth ?? 2) - depth);
+      if (selected) {
+        found = flows(selected.value, sources, depth + selected.steps);
+        return;
+      }
+    }
+    if (node.type === "LogicalExpression") {
+      visit(node.left);
+      if (!found && !logicalRightIsSkipped(node, sources.programBinding)) visit(node.right);
+      return;
+    }
     for (const [key, child] of Object.entries(node) as [string, AnyNode][]) {
       if (key === "__doctorParent" || key === "parent" || key === "typeAnnotation") continue;
       if (Array.isArray(child)) child.forEach(visit);
@@ -128,10 +144,45 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
   return found;
 }
 
+function projectMember(
+  node: AnyNode,
+  sources: RequestValueSources,
+  remaining: number,
+): { value: AnyNode; steps: number } | undefined {
+  const name = staticMemberName(node);
+  if (name === undefined || name === "__proto__" || remaining <= 0) return;
+  let object = unwrapExpression(node.object);
+  let steps = 1;
+  while (object?.type !== "ObjectExpression" && steps < remaining) {
+    if (object?.type === "Identifier") {
+      object = unwrapExpression(provenConstBinding(object, sources.programBinding)?.init);
+      steps++;
+    } else if (object?.type === "MemberExpression") {
+      const inner = projectMember(object, sources, remaining - steps);
+      if (!inner) return;
+      object = unwrapExpression(inner.value);
+      steps += inner.steps;
+    } else return;
+  }
+  if (object?.type !== "ObjectExpression") return;
+  for (const property of object.properties.toReversed()) {
+    if (property.type !== "Property") return;
+    const key =
+      !property.computed && property.key.type === "Identifier"
+        ? property.key.name
+        : staticRequestString(property.key);
+    if (key === undefined || key === "__proto__") return;
+    if (key === name)
+      return property.kind === "init" ? { value: property.value, steps } : undefined;
+  }
+  return { value: null, steps };
+}
+
 function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, depth: number) {
   const parent = node.__doctorParent;
   if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed)
     return false;
+  let child = node;
   for (let current = parent; current; current = current.__doctorParent) {
     if (sources.parameter && FUNCTION_TYPES.has(current.type)) {
       const index = current.params.findIndex((param: AnyNode) =>
@@ -142,33 +193,95 @@ function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, dep
     const declarator =
       current.type === "Program"
         ? (sources.programBinding?.(current, node.name, node) ?? null)
-        : nearerBinding(current, node.name);
+        : nearerBinding(current, child, node.name);
     if (declarator?.type === "VariableDeclarator")
       return Boolean(declarator.init) && flows(declarator.init, sources, depth + 1);
     if (declarator) return false;
+    child = current;
   }
   return false;
 }
 
 /** Whether `node` refers to the program-scope binding `name` rather than a nearer declaration. */
 export function resolvesToModuleBinding(node: AnyNode, name: string) {
+  let child = node;
   for (let current = node.__doctorParent; current; current = current.__doctorParent) {
     if (current.type === "Program") return true;
-    if (nearerBinding(current, name)) return false;
+    if (nearerBinding(current, child, name)) return false;
+    child = current;
   }
   return false;
 }
 
 export function resolveLexicalBinding(node: AnyNode): AnyNode {
+  return resolveBinding(node, (program, name) => findStatementBinding(program, name));
+}
+
+function resolveBinding(
+  node: AnyNode,
+  programBinding: NonNullable<RequestValueSources["programBinding"]>,
+): AnyNode {
+  let child = node;
   for (let current = node.__doctorParent; current; current = current.__doctorParent) {
-    if (current.type === "Program") return findStatementBinding(current, node.name);
-    const binding = nearerBinding(current, node.name);
+    if (current.type === "Program") return programBinding(current, node.name, node);
+    const binding = nearerBinding(current, child, node.name);
     if (binding) return binding;
+    child = current;
   }
   return null;
 }
 
-function nearerBinding(scope: AnyNode, name: string): AnyNode {
+export function logicalRightIsSkipped(
+  node: AnyNode,
+  programBinding?: RequestValueSources["programBinding"],
+): boolean {
+  return shortCircuits(node.operator, staticValue(node.left, programBinding, 0));
+}
+
+function shortCircuits(operator: string, left: StaticValue): boolean {
+  if (left === UNKNOWN_VALUE) return false;
+  if (operator === "&&") return !left;
+  if (operator === "||") return Boolean(left);
+  return operator === "??" && left !== null;
+}
+
+function staticValue(
+  input: AnyNode,
+  programBinding: RequestValueSources["programBinding"],
+  depth: number,
+): StaticValue {
+  const node = unwrapExpression(input);
+  if (!node || depth > 5) return UNKNOWN_VALUE;
+  if (node.type === "Literal" && !node.regex) return node.value;
+  if (node.type === "TemplateLiteral" && !node.expressions.length)
+    return node.quasis[0].value.cooked;
+  if (node.type === "LogicalExpression") {
+    const left = staticValue(node.left, programBinding, depth + 1);
+    if (left === UNKNOWN_VALUE || shortCircuits(node.operator, left)) return left;
+    return staticValue(node.right, programBinding, depth + 1);
+  }
+  const binding = provenConstBinding(node, programBinding);
+  if (binding) return staticValue(binding.init, programBinding, depth + 1);
+  return UNKNOWN_VALUE;
+}
+
+export function provenConstBinding(
+  node: AnyNode,
+  programBinding?: RequestValueSources["programBinding"],
+): AnyNode {
+  if (node.type !== "Identifier") return null;
+  const binding = programBinding
+    ? resolveBinding(node, programBinding)
+    : resolveLexicalBinding(node);
+  return binding?.type === "VariableDeclarator" &&
+    binding.id.type === "Identifier" &&
+    binding.__doctorParent?.kind === "const" &&
+    binding.end <= node.start
+    ? binding
+    : null;
+}
+
+function nearerBinding(scope: AnyNode, child: AnyNode, name: string): AnyNode {
   if (FUNCTION_TYPES.has(scope.type)) {
     if (scope.type === "FunctionExpression" && scope.id?.name === name) return scope;
     return (
@@ -176,6 +289,10 @@ function nearerBinding(scope: AnyNode, name: string): AnyNode {
       findFunctionVar(scope.body, name)
     );
   }
+  if (scope.type === "ClassExpression" && scope.id?.name === name) return scope;
+  if (scope.type === "SwitchStatement" && child === scope.discriminant) return null;
+  if (scope.type === "StaticBlock" || scope.type === "TSModuleBlock")
+    return findStatementBinding(scope, name) ?? findFunctionVar(scope.body, name);
   if (SCOPE_TYPES.has(scope.type)) return findStatementBinding(scope, name);
   if (scope.type === "CatchClause" && patternNames(scope.param).includes(name)) return scope.param;
   return null;

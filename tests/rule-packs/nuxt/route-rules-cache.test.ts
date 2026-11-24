@@ -124,19 +124,43 @@ test("reports an event.context read at heuristic confidence", async () => {
   expect(result.diagnostics[0]?.evidence?.[1]?.summary).toContain("per visitor");
 });
 
-test("prefers a proven read over an event.context read on the same page", async () => {
+test("reports a rendered context value separately from a stripped header", async () => {
   const file = "app/pages/account.vue";
   const script =
-    "const env = useRequestEvent()?.context.cloudflare.env\nconst headers = useRequestHeaders(['cookie'])";
+    "const user = useRequestEvent()?.context.user\nconsole.debug(useRequestHeader('x-request-id'))";
   const result = await run({
-    [file]: page(script),
+    [file]: page(script, "<div>{{ user }}</div>"),
     ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
       "/account": { swr: 60 },
     }),
   });
 
-  expect(result.diagnostics).toMatchObject([{ line: 3, confidence: "manifest-backed" }]);
+  expect(result.diagnostics).toMatchObject([
+    { line: 2, confidence: "heuristic-medium" },
+    { line: 3, confidence: "manifest-backed" },
+  ]);
+  expect(result.diagnostics[0]?.why).toContain("if this field holds per-visitor data");
 });
+
+test.each([
+  ["layout", 0],
+  ["theme", 1],
+])(
+  "traces a rendered local to the selected cookie-bearing property: %s",
+  async (property, count) => {
+    const file = "app/pages/account.vue";
+    const result = await run({
+      [file]: page(
+        `const preferences = { theme: useCookie('theme'), layout: 'grid' }; const rendered = preferences.${property}`,
+        "<div>{{ rendered }}</div>",
+      ),
+      ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+        "/account": { swr: 60 },
+      }),
+    });
+    expect(result.diagnostics).toHaveLength(count);
+  },
+);
 
 test("reports a read in a function not proven to run during server render at heuristic confidence", async () => {
   const file = "app/pages/search.vue";
@@ -396,6 +420,20 @@ test.each([
   ["export default cachedEventHandler(event => event.node.req.headers.cookie)", 1],
 ])("recognizes only proven handler request reads: %s", async (source, count) => {
   expect((await handler({ "server/api/theme.get.ts": source })).diagnostics).toHaveLength(count);
+});
+
+test.each([
+  ["varies: [...['cookie']]", 0],
+  ["varies: [...['accept-language']]", 1],
+  ["varies: ['cookie'], getKey: () => ''", 0],
+  ["varies: ['cookie'], async getKey() { return '' }", 0],
+  ["varies: ['cookie'], getKey: () => 'shared'", 1],
+  ["varies: ['accept-language'], getKey: () => ''", 1],
+])("accounts for effective handler variation with %s", async (options, count) => {
+  const result = await handler({
+    "server/api/theme.get.ts": `export default cachedEventHandler(event => getCookie(event, 'theme'), { ${options} })`,
+  });
+  expect(result.diagnostics).toHaveLength(count);
 });
 
 test.each(["getCookie(event, 'theme')", "event.context.tenant"])(
