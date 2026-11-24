@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
+import { resolveConfig } from "vite";
 import { runProjectFixture } from "../../src/core/testkit.ts";
 import {
   noBroadEnvPrefix,
@@ -97,6 +98,30 @@ describe("vite/env/no-unprefixed-client-env", () => {
         "src/main.ts": "console.log(import.meta.env.APP_LABEL)",
       }),
     ).toEqual([]);
+  });
+
+  test("uses the owning Vue workspace app's Vite config", async () => {
+    const result = await runProjectFixture({
+      framework: "vite",
+      rules: [noUnprefixedClientEnv],
+      files: {
+        "pnpm-workspace.yaml": 'packages:\n  - "apps/*"\n',
+        "vite.config.ts": config("{ envPrefix: 'API_' }"),
+        "apps/web/package.json": JSON.stringify({
+          name: "web",
+          dependencies: { vue: "^3.5.0" },
+          devDependencies: { vite: "^8.0.0" },
+        }),
+        "apps/web/vite.config.ts": config("{ envPrefix: 'APP_' }"),
+        "apps/web/src/main.ts": "console.log(import.meta.env.API_URL, import.meta.env.APP_URL)",
+      },
+    });
+    expect(result.workspacePackages).toContainEqual(
+      expect.objectContaining({ root: "apps/web", framework: "vue" }),
+    );
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: "VITE0030", why: expect.stringContaining("env.API_URL") }),
+    ]);
   });
 
   test("uses only client defines and does not let unused objects mask a read", async () => {
@@ -272,6 +297,45 @@ export default vite.defineConfig(({ mode }) => ({
         "vite.config.ts": viteConfig,
       }),
     ).toEqual([expect.stringMatching(/^VITE0031: Vite define "__CONFIG__"/)]);
+  });
+
+  test.each([
+    { kind: "object", override: { PUBLIC_LABEL: "client" }, retains: true },
+    { kind: "array", override: ["client"], retains: true },
+    { kind: "string", override: '"client"', retains: false },
+    { kind: "null", override: null, retains: true },
+    {
+      kind: "object over a string",
+      override: { PUBLIC_LABEL: "client" },
+      retains: false,
+      serialized: true,
+    },
+    { kind: "array over a string", override: ["client"], retains: true, serialized: true },
+  ])("tracks Vite's client define merge with $kind", async ({ override, retains, serialized }) => {
+    const marker = "doctor-fixture-env-marker";
+    const env = { DOCTOR_FIXTURE: marker };
+    const resolved = await resolveConfig(
+      {
+        configFile: false,
+        envFile: false,
+        define: { __CONFIG__: serialized ? JSON.stringify(env) : env },
+        environments: { client: { define: { __CONFIG__: override } } },
+      },
+      "serve",
+    );
+    expect(JSON.stringify(resolved.environments.client.define?.__CONFIG__).includes(marker)).toBe(
+      retains,
+    );
+    const diagnostics = await run([noLoadEnvAllInDefine], {
+      "vite.config.ts": `const override = ${JSON.stringify(override)};
+export default {
+  define: { __CONFIG__: ${serialized ? "JSON.stringify(process.env)" : "process.env"} },
+  environments: { client: { define: { __CONFIG__: override } } },
+}`,
+    });
+    expect(diagnostics).toEqual(
+      retains ? [expect.stringMatching(/^VITE0031: Vite define "__CONFIG__"/)] : [],
+    );
   });
 
   test.each([

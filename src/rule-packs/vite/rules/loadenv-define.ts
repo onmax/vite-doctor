@@ -45,11 +45,11 @@ export function wholeEnvDefineLeaks(ctx: RuleContext): Leak[] {
     const config = staticConfig(scope);
     const defines = config && clientDefineObjects(scope, config);
     if (!defines) return [];
-    const leaks = new Map<string | symbol, Leak>();
+    const leaks = new Map<string | symbol, Leak & { kind: "object" | "string" }>();
     for (const [index, define] of defines.entries()) {
       if (index > 0 && isNullish(scope, define)) continue;
       if (wholeEnv(scope, define)) {
-        leaks.set(Symbol(), { node: define, entry: "The Vite define object" });
+        leaks.set(Symbol(), { node: define, entry: "The Vite define object", kind: "object" });
       } else {
         const entries = readDefine(scope, define);
         if (!entries) {
@@ -57,12 +57,17 @@ export function wholeEnvDefineLeaks(ctx: RuleContext): Leak[] {
           continue;
         }
         for (const [key, value] of entries) {
-          if (key === unknownKeys) leaks.clear();
-          else if (index === 0 || !isNullish(scope, value)) leaks.delete(key);
-          if (typeof key === "symbol" && key !== unknownKeys)
-            leaks.set(key, { node: value, entry: "A spread in Vite define" });
-          else if (typeof key === "string" && leaksValue(scope, value))
-            leaks.set(key, { node: value, entry: `Vite define "${key}"` });
+          if (key === unknownKeys) {
+            leaks.clear();
+          } else if (typeof key === "symbol") {
+            leaks.set(key, { node: value, entry: "A spread in Vite define", kind: "object" });
+          } else {
+            const kind = leakingValueKind(scope, value);
+            const previous = leaks.get(key);
+            if (kind) leaks.set(key, { node: value, entry: `Vite define "${key}"`, kind });
+            else if (previous && !retainsDefineValue(scope, value, previous.kind))
+              leaks.delete(key);
+          }
         }
       }
     }
@@ -124,26 +129,35 @@ function readDefine(scope: ScriptScope, input: AnyNode): Map<string | symbol, An
   return entries;
 }
 
-function leaksValue(scope: ScriptScope, input: AnyNode): boolean {
+function retainsDefineValue(scope: ScriptScope, override: AnyNode, previous: "object" | "string") {
+  const node = resolveConst(scope, override);
+  return (
+    isNullish(scope, node) ||
+    node?.type === "ArrayExpression" ||
+    (previous === "object" && node?.type === "ObjectExpression")
+  );
+}
+
+function leakingValueKind(scope: ScriptScope, input: AnyNode): "object" | "string" | undefined {
   const node = resolveConst(scope, input);
-  if (wholeEnv(scope, node)) return true;
+  if (wholeEnv(scope, node)) return "object";
   if (
     node?.type === "CallExpression" &&
     memberName(node.callee, "JSON", "stringify") &&
-    isGlobal(scope, unwrap(node.callee).object)
+    isGlobal(scope, unwrap(node.callee).object) &&
+    !node.arguments.some((argument: AnyNode) => argument.type === "SpreadElement") &&
+    nonFilteringReplacer(scope, node.arguments[1]) &&
+    wholeEnv(scope, node.arguments[0])
   )
-    return (
-      !node.arguments.some((argument: AnyNode) => argument.type === "SpreadElement") &&
-      nonFilteringReplacer(scope, node.arguments[1]) &&
-      wholeEnv(scope, node.arguments[0])
-    );
-  return (
+    return "string";
+  if (
     node?.type === "ObjectExpression" &&
     node === unwrap(input) &&
     node.properties.some(
       (entry: AnyNode) => entry.type === "SpreadElement" && wholeEnv(scope, entry.argument),
     )
-  );
+  )
+    return "object";
 }
 
 function nonFilteringReplacer(scope: ScriptScope, input: AnyNode): boolean {

@@ -378,7 +378,7 @@ function projectViteConfig(ctx: RuleContext): string | undefined {
   const owner = (workspacePackages ?? [])
     .filter(({ root }) => root !== "." && path.startsWith(`${root}/`))
     .sort((left, right) => right.root.length - left.root.length)[0];
-  if (owner && owner.framework !== "vite") return;
+  if (owner && owner.framework !== "vite" && owner.framework !== "vue") return;
   const configRoot = owner ? resolve(root, owner.root) : root;
   return VITE_CONFIG_FILES.map((name) => resolve(configRoot, name)).find((file) =>
     ctx.fs.stat(file)?.isFile(),
