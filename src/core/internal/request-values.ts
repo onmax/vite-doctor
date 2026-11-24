@@ -165,6 +165,7 @@ function projectMember(
     } else return;
   }
   if (object?.type !== "ObjectExpression") return;
+  const write = setupMemberWrite(node, object, name, sources);
   for (const property of object.properties.toReversed()) {
     if (property.type !== "Property") return;
     const key =
@@ -173,9 +174,50 @@ function projectMember(
         : staticRequestString(property.key);
     if (key === undefined || key === "__proto__") return;
     if (key === name)
-      return property.kind === "init" ? { value: property.value, steps } : undefined;
+      return property.kind === "init" ? { value: write ?? property.value, steps } : undefined;
   }
-  return { value: null, steps };
+  return { value: write, steps };
+}
+
+const setupWritesByProgram = new WeakMap<object, AnyNode[]>();
+
+function setupMemberWrite(
+  reference: AnyNode,
+  object: AnyNode,
+  name: string,
+  sources: RequestValueSources,
+): AnyNode {
+  let program = reference;
+  while (program.__doctorParent) {
+    if (FUNCTION_TYPES.has(program.type)) return null;
+    program = program.__doctorParent;
+  }
+  let writes = setupWritesByProgram.get(program);
+  if (!writes) {
+    writes = [];
+    for (const statement of program.body ?? []) {
+      if (statement.type !== "ExpressionStatement") continue;
+      const assignment = unwrapExpression(statement.expression);
+      if (
+        assignment?.type === "AssignmentExpression" &&
+        assignment.operator === "=" &&
+        unwrapExpression(assignment.left)?.type === "MemberExpression"
+      )
+        writes.push(assignment);
+    }
+    writes.reverse();
+    setupWritesByProgram.set(program, writes);
+  }
+  for (const write of writes) {
+    if (write.end > reference.start) continue;
+    const target = unwrapExpression(write.left);
+    if (staticMemberName(target) !== name) continue;
+    let base = unwrapExpression(target.object);
+    while (base?.type === "Identifier")
+      base = unwrapExpression(provenConstBinding(base, sources.programBinding)?.init);
+    if (base === object) return write.right;
+  }
+  return null;
 }
 
 function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, depth: number) {

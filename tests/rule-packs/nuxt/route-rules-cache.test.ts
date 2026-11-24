@@ -162,6 +162,51 @@ test.each([
   },
 );
 
+test.each([
+  [
+    "an assignment from a sibling cookie",
+    "preferences.theme = preferences.cookie.value ?? 'light'; const rendered = preferences.theme",
+    1,
+  ],
+  [
+    "an assignment from a separate binding",
+    "const theme = useCookie('theme'); preferences.theme = theme.value ?? 'light'; const rendered = preferences.theme",
+    1,
+  ],
+  [
+    "an assignment to an unused sibling",
+    "preferences.cookie = useCookie('other'); const rendered = preferences.theme",
+    0,
+  ],
+  [
+    "an assignment after the selected read",
+    "const rendered = preferences.theme; preferences.theme = preferences.cookie.value ?? 'light'",
+    0,
+  ],
+  [
+    "an assignment through a const alias",
+    "const alias = preferences; alias['theme'] = preferences.cookie.value; const rendered = preferences.theme",
+    1,
+  ],
+  [
+    "an assignment overwritten before rendering",
+    "preferences.theme = preferences.cookie.value; preferences.theme = 'light'; const rendered = preferences.theme",
+    0,
+  ],
+])("traces a rendered object property through setup writes: %s", async (_, setup, count) => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: page(
+      `const preferences = { theme: 'light', cookie: useCookie<string>('theme') }; ${setup}`,
+      "<div>{{ rendered }}</div>",
+    ),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { swr: 60 },
+    }),
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});
+
 test("reports a read in a function not proven to run during server render at heuristic confidence", async () => {
   const file = "app/pages/search.vue";
   // The callback runs only when the button is clicked, but Doctor can't see inside useSearchBox.
