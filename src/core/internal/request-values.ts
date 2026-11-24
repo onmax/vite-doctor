@@ -102,6 +102,7 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
   let found = false;
   const visit = (node: AnyNode) => {
     if (found || !node || typeof node !== "object") return;
+    if (sources.isSkippedOperation?.(node)) return;
     if (isModuleImport(node)) {
       if (node.type !== "CallExpression") return;
       // A continuation can still perform request work even though the imported module value

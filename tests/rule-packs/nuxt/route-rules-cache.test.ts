@@ -204,6 +204,21 @@ test.each([
     1,
   ],
   [
+    "a read in the client branch of a ternary",
+    "preferences.theme = preferences.cookie.value; if (import.meta.client) preferences.theme = 'light'; const rendered = import.meta.client ? preferences.theme : 'light'",
+    0,
+  ],
+  [
+    "a read short-circuited on the server",
+    "preferences.theme = preferences.cookie.value; if (import.meta.client) preferences.theme = 'light'; const rendered = import.meta.client && preferences.theme",
+    0,
+  ],
+  [
+    "a read in the server branch of a ternary",
+    "preferences.theme = preferences.cookie.value; if (import.meta.client) preferences.theme = 'light'; const rendered = import.meta.client ? 'light' : preferences.theme",
+    1,
+  ],
+  [
     "an overwrite in onMounted",
     "preferences.theme = preferences.cookie.value; onMounted(() => { preferences.theme = 'light' }); const rendered = preferences.theme",
     1,
