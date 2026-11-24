@@ -538,6 +538,12 @@ export interface ExportFact {
   range?: SourceRange;
 }
 
+export interface ReExportFact {
+  source: string;
+  typeOnly: boolean;
+  range?: SourceRange;
+}
+
 export interface DynamicImportFact {
   source: string | null;
   range?: SourceRange;
@@ -570,6 +576,7 @@ export interface FileFacts {
   sfc?: SfcBlockHashes;
   imports: ImportFact[];
   exports: ExportFact[];
+  reExports: ReExportFact[];
   dynamicImports: DynamicImportFact[];
   calls: CallFact[];
   templateRefs: TemplateFact[];
@@ -692,10 +699,57 @@ export interface ComponentUsageGraph {
   unresolved: ComponentUsageEdge[];
 }
 
+/** A module dependency written in a source file of the Doctor Run. */
+export interface ImportGraphEdge {
+  /** The importing file, as an absolute path. */
+  from: string;
+  /** The imported file, when the specifier resolves to a source file in the Doctor Run. */
+  to?: string;
+  /** The specifier as written, such as `./b` or `~/utils/format`. */
+  specifier: string;
+  /** `import` declarations, `export ... from` re-exports, or `import()` with a string literal. */
+  kind: "import" | "re-export" | "dynamic-import";
+  /** Whether TypeScript erases the dependency: `import type` or `export type ... from`. */
+  typeOnly: boolean;
+  /** The import or re-export declaration, or the `import()` call. */
+  range?: SourceRange;
+}
+
+/** Files that evaluate each other through static runtime imports. */
+export interface ImportCycle {
+  /** Every file in the strongly connected group, as sorted absolute paths. */
+  files: readonly string[];
+  /**
+   * One shortest loop through the group, starting at the first file in `files` that lies on one:
+   * each edge starts where the previous one ends, and the last edge leads back to the first. It
+   * can visit fewer files than `files` holds.
+   */
+  path: readonly ImportGraphEdge[];
+}
+
+/** Project Inventory of which source files import which, built from File Facts. */
+export interface ImportGraph {
+  /** Every source file in the Doctor Run with File Facts, as absolute paths. */
+  files: readonly string[];
+  /** Every import, re-export, and literal dynamic import, in source order per file. */
+  edges: readonly ImportGraphEdge[];
+  /** Edges written in `file`, an absolute path. */
+  importsOf(file: string): readonly ImportGraphEdge[];
+  /** Edges that resolve to `file`, an absolute path. */
+  importersOf(file: string): readonly ImportGraphEdge[];
+  /**
+   * Groups of two or more files joined by static imports and re-exports. Type-only edges are
+   * erased and dynamic imports run later, so neither forms a cycle.
+   */
+  cycles: readonly ImportCycle[];
+}
+
 /** Project Inventory derived from the Doctor Run's source files. */
 export interface RuleInventory {
   /** Available to `workspace` and `manifest` Rules, which see the whole project. */
   componentUsage(): Promise<ComponentUsageGraph>;
+  /** Available to `workspace` and `manifest` Rules, which see the whole project. */
+  importGraph(): Promise<ImportGraph>;
   /** Authored files selected by the run, including HTML when requested separately. */
   sourcePaths(kind?: "html"): Promise<readonly string[]>;
 }

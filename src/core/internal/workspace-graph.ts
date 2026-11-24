@@ -6,14 +6,17 @@ import type {
   ExportFact,
   FileFacts,
   GraphEdge,
+  ImportCycle,
+  ImportGraph,
   RuleFileSystem,
   VirtualRootNode,
   WorkspaceGraph,
 } from "../primitives.js";
 import type { ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
-import { pushDiagnostic } from "./diagnostics.js";
-import { walkAstFacts } from "./facts.js";
+import { pushDiagnostic, scopedReportLocations } from "./diagnostics.js";
+import { sourceFacts, walkAstFacts } from "./facts.js";
+import { buildImportGraph, computeSccs, isRuntimeImportEdge } from "./import-graph.js";
 import { projectNuxtInventories } from "./workspace-nuxt.js";
 
 export interface GraphIndex {
@@ -36,15 +39,18 @@ export function buildWorkspaceGraph(session: ScanSession, fs: RuleFileSystem): W
 
   for (const fact of session.facts) {
     for (const item of fact.exports) {
-      exportEdges.push({
-        from: fact.fileId,
-        to: item.source ? index.resolveImport(fact, item.source) : undefined,
-        specifier: item.source,
-        kind: item.source ? (item.kind === "type" ? "type-re-export" : "re-export") : "export",
-      });
+      if (item.source === undefined) exportEdges.push({ from: fact.fileId, kind: "export" });
       const exports = exportsByName.get(item.name) ?? [];
       exports.push(item);
       exportsByName.set(item.name, exports);
+    }
+    for (const item of fact.reExports) {
+      exportEdges.push({
+        from: fact.fileId,
+        to: index.resolveImport(fact, item.source),
+        specifier: item.source,
+        kind: item.typeOnly ? "type-re-export" : "re-export",
+      });
     }
     for (const item of fact.imports) {
       const target = index.resolveImport(fact, item.source);
@@ -101,7 +107,7 @@ export function buildWorkspaceGraph(session: ScanSession, fs: RuleFileSystem): W
     exportEdges,
     virtualRoots,
     reverseIndex: { importersByFile, refsByExport, exportsByName },
-    sccs: computeSccs(
+    sccs: runtimeSccs(
       session.facts.map((fact) => fact.fileId),
       [
         ...importEdges.filter((edge) => edge.kind === "import"),
@@ -363,7 +369,8 @@ export function runStructuralGraphRules(session: ScanSession, graph: WorkspaceGr
       graph,
       graphIndexes.get(graph) ?? createGraphIndex(session, session.ruleInputs.frame().fs),
     );
-  if (analyses.has("graph")) runCycleAndDuplicateExportRules(session, graph);
+  if (analyses.has("graph"))
+    runCycleAndDuplicateExportRules(session, graph, graphIndexes.get(graph));
 }
 
 function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph, index: GraphIndex) {
@@ -487,22 +494,109 @@ function runDeadCodeRules(session: ScanSession, graph: WorkspaceGraph, index: Gr
   }
 }
 
-function runCycleAndDuplicateExportRules(session: ScanSession, graph: WorkspaceGraph) {
-  for (const scc of graph.sccs.filter((item) => item.length > 1)) {
-    const files = scc.map((id) => graph.files.get(id)?.path).filter(Boolean) as string[];
-    reportWorkspaceDiagnostic(session, {
-      ruleId: "workspace/dead-code/circular-dependency",
-      severity: "warn",
-      category: "architecture",
-      message: `Circular dependency detected across ${files.length} files.`,
-      suggestion: "Break the cycle by moving shared code into an acyclic module.",
-      file: files[0]!,
-      related: files.slice(1).map((file) => ({ file, message: "Cycle member" })),
-      confidence: "proven",
-      evidence: [{ kind: "graph", summary: "Strongly connected component in import graph." }],
-      analysisPhase: "graph",
-    });
+function runtimeSccs(nodes: number[], edges: GraphEdge[]): number[][] {
+  const successors = new Map<number, number[]>();
+  for (const edge of edges) {
+    if (edge.to === undefined || edge.from === edge.to) continue;
+    const targets = successors.get(edge.from) ?? [];
+    targets.push(edge.to);
+    successors.set(edge.from, targets);
   }
+  return computeSccs(nodes, (node) => successors.get(node) ?? []);
+}
+
+const importGraphs = new WeakMap<ScanSession, ImportGraph>();
+
+/** The run's import graph, built once from File Facts. */
+export async function importGraphInventory(session: ScanSession): Promise<ImportGraph> {
+  const cached = importGraphs.get(session);
+  if (cached) return cached;
+  session.facts = await sourceFacts(session);
+  return sessionImportGraph(session);
+}
+
+function sessionImportGraph(session: ScanSession, index?: GraphIndex): ImportGraph {
+  let graph = importGraphs.get(session);
+  if (!graph) {
+    const resolver = index ?? createGraphIndex(session, session.ruleInputs.frame().fs);
+    graph = buildImportGraph(session.root, session.facts, (from, specifier) =>
+      resolver.resolveImport(from, specifier),
+    );
+    importGraphs.set(session, graph);
+  }
+  return graph;
+}
+
+function reportImportCycle(session: ScanSession, cycle: ImportCycle, graph: ImportGraph): void {
+  const path = (file: string) => relative(session.root, file);
+  const [first] = cycle.path;
+  if (!first) return;
+  const loop = [...cycle.path.map((edge) => path(edge.from)), path(first.from)].join(" → ");
+  const onLoop = new Set(cycle.path.map((edge) => edge.from));
+  const others = cycle.files.filter((file) => !onLoop.has(file));
+  const group = others.length
+    ? ` It is one loop in a group of ${cycle.files.length} files that import each other; ${others.length === 1 ? "the file off this loop is listed as a cycle member" : `the ${others.length} files off this loop are listed as cycle members`}.`
+    : "";
+  const locations = session.scopedReport ? cycleScopeLocations(cycle, graph) : undefined;
+  reportWorkspaceDiagnostic(session, {
+    ruleId: "workspace/dead-code/circular-dependency",
+    severity: "warn",
+    category: "architecture",
+    message: `Circular import: ${loop}.${group}`,
+    suggestion:
+      "Read every related import edge and cut the one that points from a lower layer to a higher one: move what it needs into a module that imports neither side. Do not hide the cycle behind a dynamic import().",
+    file: first.from,
+    range: first.range,
+    related: [
+      ...cycle.path.map((edge) => ({
+        file: edge.from,
+        ...(edge.range ? { range: edge.range } : {}),
+        message: `${edge.kind === "re-export" ? "re-exports" : "imports"} '${edge.specifier}' → ${path(edge.to!)}`,
+      })),
+      ...others.map((file) => ({ file, message: "Cycle member" })),
+    ],
+    ...(locations?.length ? { [scopedReportLocations]: locations } : {}),
+    // Keyed on the group rather than the loop, so reordering imports keeps baselined findings.
+    fingerprint: sha256(
+      `workspace/dead-code/circular-dependency:${cycle.files.map(path).join("\n")}`,
+    ),
+    confidence: "proven",
+    evidence: [
+      {
+        kind: "graph",
+        summary: `Strongly connected group of ${cycle.files.length} files joined by static runtime imports or re-exports.`,
+      },
+    ],
+    analysisPhase: "graph",
+  });
+}
+
+function cycleScopeLocations(cycle: ImportCycle, graph: ImportGraph) {
+  const members = new Set(cycle.files);
+  const onLoop = new Set(cycle.path);
+  return cycle.files.flatMap((file) =>
+    graph
+      .importsOf(file)
+      .flatMap((edge) =>
+        edge.to &&
+        edge.to !== file &&
+        members.has(edge.to) &&
+        edge.range &&
+        isRuntimeImportEdge(edge) &&
+        !onLoop.has(edge)
+          ? [{ file, range: edge.range }]
+          : [],
+      ),
+  );
+}
+
+function runCycleAndDuplicateExportRules(
+  session: ScanSession,
+  graph: WorkspaceGraph,
+  index?: GraphIndex,
+) {
+  const imports = sessionImportGraph(session, index);
+  for (const cycle of imports.cycles) reportImportCycle(session, cycle, imports);
   const exportOwners = new Map<ExportFact, string>();
   for (const fact of graph.files.values()) {
     for (const item of fact.exports) if (!exportOwners.has(item)) exportOwners.set(item, fact.path);
@@ -656,48 +750,6 @@ function reachableFiles(graph: WorkspaceGraph): Set<number> {
     for (const target of targetsByFile.get(id) ?? []) if (!live.has(target)) queue.push(target);
   }
   return live;
-}
-
-function computeSccs(nodes: number[], edges: GraphEdge[]): number[][] {
-  const graph = new Map<number, number[]>();
-  for (const node of nodes) graph.set(node, []);
-  for (const edge of edges) {
-    if (edge.to !== undefined && edge.from !== edge.to) graph.get(edge.from)?.push(edge.to);
-  }
-  let index = 0;
-  const stack: number[] = [];
-  const onStack = new Set<number>();
-  const indices = new Map<number, number>();
-  const lowlinks = new Map<number, number>();
-  const components: number[][] = [];
-  const strongConnect = (node: number) => {
-    indices.set(node, index);
-    lowlinks.set(node, index);
-    index++;
-    stack.push(node);
-    onStack.add(node);
-    for (const next of graph.get(node) ?? []) {
-      if (!indices.has(next)) {
-        strongConnect(next);
-        lowlinks.set(node, Math.min(lowlinks.get(node)!, lowlinks.get(next)!));
-      } else if (onStack.has(next)) {
-        lowlinks.set(node, Math.min(lowlinks.get(node)!, indices.get(next)!));
-      }
-    }
-    if (lowlinks.get(node) === indices.get(node)) {
-      const component: number[] = [];
-      let next: number | undefined;
-      do {
-        next = stack.pop();
-        if (next === undefined) break;
-        onStack.delete(next);
-        component.push(next);
-      } while (next !== node);
-      components.push(component);
-    }
-  };
-  for (const node of nodes) if (!indices.has(node)) strongConnect(node);
-  return components;
 }
 
 interface PackageDependencyFacts {
