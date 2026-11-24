@@ -397,6 +397,9 @@ async function detectNuxt(
           enabled: manifest.nitroAutoImportEnabled !== false,
           authoritative: manifestCurrent && manifest.nitroAutoImports !== undefined,
           entries: manifest.nitroAutoImports as AutoImportEntry[] | undefined,
+          scanDirs: manifest.nitroScanDirs?.map((dir) => resolve(root, dir)),
+          scan: manifest.nitroAutoImportScan,
+          transform: manifest.nitroAutoImportTransform,
         }
       : undefined,
     components: new Map(

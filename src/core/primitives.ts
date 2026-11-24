@@ -253,6 +253,9 @@ export interface NuxtProjectInfo {
     enabled: boolean;
     authoritative: boolean;
     entries?: AutoImportEntry[];
+    scanDirs?: string[];
+    scan?: NuxtDoctorManifest["nitroAutoImportScan"];
+    transform?: NuxtDoctorManifest["nitroAutoImportTransform"];
   };
   components: Map<
     string,
@@ -375,6 +378,14 @@ export interface NuxtDoctorManifest {
   nitroAutoImportEnabled?: boolean;
   /** Nitro's resolved runtime auto-imports, with aliases resolved to paths. */
   nitroAutoImports?: unknown[];
+  /** Resolved Nitro scan roots, separate from the server handler freshness inventory. */
+  nitroScanDirs?: string[];
+  nitroAutoImportScan?: { patterns: string[]; fingerprint: string };
+  nitroAutoImportTransform?: {
+    include: Array<{ glob: string } | { source: string; flags: string }>;
+    exclude: Array<{ glob: string } | { source: string; flags: string }>;
+    commentsDisable: string[];
+  };
   components: unknown[];
   layers: Array<{
     root: string;

@@ -10,6 +10,7 @@ import {
   type ImportGraph,
 } from "../../src/core/index.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
+import { nitroAutoImportScanFingerprint } from "../../src/core/internal/nitro-auto-import-scan.ts";
 import nuxtDoctorModule from "../../src/rule-packs/nuxt/module.ts";
 
 const cycleRule = "workspace/dead-code/circular-dependency";
@@ -25,6 +26,7 @@ interface ManifestOptions {
 
 function manifestFor(root: string, options: ManifestOptions) {
   const serverDir = join(root, options.serverDir ?? "server");
+  const patterns = [join(serverDir, "utils/**/*")];
   const nitroAutoImports = options.nitroAutoImports ?? (() => []);
   return JSON.stringify({
     nuxtVersion: "4.4.6",
@@ -40,6 +42,12 @@ function manifestFor(root: string, options: ManifestOptions) {
       { name: "useApp", from: join(root, "app/composables/useApp.ts"), kind: "app" },
     ],
     nitroAutoImportEnabled: options.nitroAutoImportEnabled ?? true,
+    nitroAutoImportScan: { patterns, fingerprint: nitroAutoImportScanFingerprint(patterns) },
+    nitroAutoImportTransform: {
+      include: [{ source: String.raw`\.[jt]sx?$`, flags: "" }],
+      exclude: [],
+      commentsDisable: [],
+    },
     nitroAutoImports:
       nitroAutoImports === false
         ? undefined
@@ -132,9 +140,9 @@ async function run(files: Record<string, string>, options: ManifestOptions = {})
   try {
     writeFixture(root, {
       "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "4.4.6" } }),
-      ".nuxt/doctor.manifest.json": manifestFor(root, options),
       ...files,
     });
+    writeFixture(root, { ".nuxt/doctor.manifest.json": manifestFor(root, options) });
     return await analyze(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -266,7 +274,15 @@ test("a layer's configured serverDir resolves against the Nitro registry", async
   expect(cycles).toHaveLength(1);
 });
 
-test("the Nuxt module records Nitro's resolved registry, which closes the server cycle", async () => {
+async function withNitroManifest(
+  files: Record<string, string>,
+  check: (root: string, rewriteManifest: () => Promise<void>) => Promise<void>,
+  options: {
+    appAutoImport?: boolean;
+    extraScanDir?: boolean;
+    imports?: Record<string, unknown>;
+  } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "doctor-nitro-auto-import-manifest-"));
   try {
     writeFixture(root, {
@@ -275,30 +291,50 @@ test("the Nuxt module records Nitro's resolved registry, which closes the server
       "server/utils/b.ts": useB,
       "server/utils/types.ts": "export interface Account {\n  id: string\n}\n",
       "app/composables/useApp.ts": "export const useApp = () => 1\n",
+      ...files,
     });
     const { createUnimport } = await importModule<{
       createUnimport: (options: unknown) => { init: () => Promise<void> };
     }>("unimport", { url: new URL(import.meta.resolve("nuxt")) });
+    const scanDirs = [join(root, "server"), ...(options.extraScanDir ? [join(root, "extra")] : [])];
     const imports = {
       autoImport: true,
-      dirs: [join(root, "server/utils/**/*")],
+      dirs: scanDirs.map((dir) => join(dir, "utils/**/*")),
       imports: [{ name: "useA", as: "useServerA", from: "#server/utils/a" }],
+      ...options.imports,
     };
     const unimport = createUnimport(imports);
     await unimport.init();
     const hooks = new Map<string, (payload?: any) => unknown>();
     await nuxtDoctorModule({}, {
       _version: "4.4.6",
-      options: { rootDir: root, srcDir: join(root, "app"), buildDir: ".nuxt", modules: [] },
+      options: {
+        rootDir: root,
+        srcDir: join(root, "app"),
+        buildDir: ".nuxt",
+        modules: [],
+        imports: { autoImport: options.appAutoImport ?? true },
+      },
       hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
       async callHook() {},
     } as any);
+    const nitroHooks = new Map<string, () => Promise<void>>();
     await hooks.get("nitro:init")!({
-      options: { imports, alias: { "#server": join(root, "server") }, handlers: [] },
+      options: { imports, scanDirs, alias: { "#server": join(root, "server") }, handlers: [] },
       unimport,
       scannedHandlers: [],
-      hooks: { hook() {} },
+      hooks: {
+        hook: (name: string, callback: () => Promise<void>) => nitroHooks.set(name, callback),
+      },
     });
+    await check(root, nitroHooks.get("compiled")!);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("the Nuxt module records Nitro's resolved registry, which closes the server cycle", () =>
+  withNitroManifest({}, async (root) => {
     const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
     expect(manifest.nitroAutoImportEnabled).toBe(true);
     expect(
@@ -313,7 +349,67 @@ test("the Nuxt module records Nitro's resolved registry, which closes the server
       "server/utils/b.ts -useA-> server/utils/a.ts",
     ]);
     expect(cycles).toHaveLength(1);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+  }));
+
+test("Nitro injection works independently of disabled app auto-imports", () =>
+  withNitroManifest(
+    {},
+    async (root) => {
+      const { autoImportEdges, cycles } = await analyze(root);
+      expect(autoImportEdges).toEqual([
+        "server/utils/a.ts -useB-> server/utils/b.ts",
+        "server/utils/b.ts -useA-> server/utils/a.ts",
+      ]);
+      expect(cycles).toHaveLength(1);
+    },
+    { appAutoImport: false },
+  ));
+
+test("a cycle can cross the layer serverDir and an extra Nitro scanDir", () =>
+  withNitroManifest(
+    { "server/utils/b.ts": "export const other = 1", "extra/utils/b.ts": useB },
+    async (root) => {
+      const { autoImportEdges, cycles } = await analyze(root);
+      expect(autoImportEdges).toEqual([
+        "extra/utils/b.ts -useA-> server/utils/a.ts",
+        "server/utils/a.ts -useB-> extra/utils/b.ts",
+      ]);
+      expect(cycles).toHaveLength(1);
+    },
+    { extraScanDir: true },
+  ));
+
+test.each([
+  { name: "exclude", imports: { exclude: /\/utils\/b\.ts$/ }, source: useB },
+  { name: "include", imports: { include: "**/utils/a.ts" }, source: useB },
+  { name: "default opt-out", imports: {}, source: `/*! @unimport-disable */\n${useB}` },
+  {
+    name: "configured opt-out",
+    imports: { commentsDisable: ["@no-inject"] },
+    source: `/*! @no-inject */\n${useB}`,
+  },
+])("Nitro's $name suppresses injection but not registry membership", ({ imports, source }) =>
+  withNitroManifest(
+    { "server/utils/b.ts": source },
+    async (root) => {
+      const { autoImportEdges, cycles } = await analyze(root);
+      expect(autoImportEdges).toEqual(["server/utils/a.ts -useB-> server/utils/b.ts"]);
+      expect(cycles).toEqual([]);
+    },
+    { imports },
+  ),
+);
+
+test("adding an export to an existing Nitro scan input invalidates the captured registry", () =>
+  withNitroManifest(
+    { "server/utils/b.ts": "export const other = 1\n" },
+    async (root, rewriteManifest) => {
+      expect((await analyze(root)).gaps).toEqual([]);
+      writeFixture(root, { "server/utils/b.ts": `export const other = 1\n${useB}` });
+      await rewriteManifest();
+      const { autoImportEdges, cycles, gaps } = await analyze(root);
+      expect(autoImportEdges).toEqual([]);
+      expect(cycles).toEqual([]);
+      expect(gaps).toEqual([expect.stringContaining("Nitro's auto-import scan inputs changed")]);
+    },
+  ));

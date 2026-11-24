@@ -5,6 +5,7 @@ import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
 } from "../../core/internal/runtime-graph.js";
+import { nitroAutoImportScanFingerprint } from "../../core/internal/nitro-auto-import-scan.js";
 import {
   createIsIgnored,
   defineNuxtModule,
@@ -49,15 +50,14 @@ type NuxtAutoImportContext = {
   getImports?: () => Promise<unknown[]> | unknown[];
 };
 
-type NitroAutoImports = {
-  getImportMap?: () => Promise<Map<string, unknown>>;
-};
-
-type NitroAutoImportEvidence = {
-  enabled: boolean;
-  unimport?: NitroAutoImports;
-  aliases: Record<string, string>;
-};
+type NitroAutoImportEvidence = Pick<
+  NuxtDoctorManifest,
+  | "nitroAutoImportEnabled"
+  | "nitroAutoImports"
+  | "nitroScanDirs"
+  | "nitroAutoImportScan"
+  | "nitroAutoImportTransform"
+>;
 
 type NuxtDoctorEvidence = {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
@@ -104,12 +104,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
-    const imports = nitro.options.imports;
-    evidence.nitroAutoImports = {
-      enabled: Boolean(imports) && imports.autoImport !== false,
-      unimport: nitro.unimport,
-      aliases: nitro.options.alias ?? {},
-    };
+    evidence.nitroAutoImports = await captureNitroAutoImports(nitro);
     const captureHandlers = async () => {
       const environments = new Set([
         nitro.options.dev ? "dev" : "prod",
@@ -306,11 +301,6 @@ export async function writeManifest(
     normalizeAutoImports(resolvedAutoImports),
     normalizeAutoImports(evidence?.autoImportEntries ?? []),
   );
-  const nitroAutoImports = evidence?.nitroAutoImports;
-  const nitroImportMap =
-    nitroAutoImports?.enabled && nitroAutoImports.unimport?.getImportMap
-      ? await nitroAutoImports.unimport.getImportMap()
-      : undefined;
   const layerDirectories = nuxt.options._layers ? getLayerDirectories(nuxt) : [];
   const composableScanRoots = new Set<string>(
     nuxt.options.imports?.scan === false
@@ -348,14 +338,7 @@ export async function writeManifest(
     buildDir,
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
-    nitroAutoImportEnabled: nitroAutoImports?.enabled,
-    nitroAutoImports:
-      nitroAutoImports?.enabled && nitroImportMap
-        ? normalizeAutoImports([...nitroImportMap.values()]).map((entry) => ({
-            ...entry,
-            from: resolveAlias(entry.from, nitroAutoImports.aliases),
-          }))
-        : undefined,
+    ...evidence?.nitroAutoImports,
     scannedComposableFiles:
       scannedAutoImportEntries === undefined
         ? undefined
@@ -563,6 +546,48 @@ function autoImportIdentity(entry: {
   priority?: number;
 }) {
   return JSON.stringify([entry.name, entry.as, entry.from, entry.type === true, entry.priority]);
+}
+
+async function captureNitroAutoImports(nitro: any): Promise<NitroAutoImportEvidence> {
+  const imports = nitro.options.imports;
+  const enabled = Boolean(imports) && imports.autoImport !== false;
+  const evidence: NitroAutoImportEvidence = {
+    nitroAutoImportEnabled: enabled,
+    nitroScanDirs: toArray<string>(nitro.options.scanDirs).map((dir) => resolve(dir)),
+  };
+  if (!enabled || !nitro.unimport?.getImportMap) return evidence;
+
+  const map: Map<string, unknown> = await nitro.unimport.getImportMap();
+  evidence.nitroAutoImports = normalizeAutoImports([...map.values()]).map((entry) => ({
+    ...entry,
+    from: resolveAlias(entry.from, nitro.options.alias ?? {}),
+  }));
+  const { normalizeScanDirs } = await importModule<{
+    normalizeScanDirs: (dirs: unknown[], options: unknown) => Array<{ glob: string }>;
+  }>("unimport", { url: new URL(import.meta.resolve("nuxt")) });
+  const patterns = normalizeScanDirs(imports.dirs ?? [], imports.dirsScanOptions).map(
+    ({ glob }) => glob,
+  );
+  const fingerprint = nitroAutoImportScanFingerprint(patterns);
+  if (fingerprint !== undefined) evidence.nitroAutoImportScan = { patterns, fingerprint };
+
+  const serialize = (value: string | RegExp | Array<string | RegExp> | undefined) =>
+    (Array.isArray(value) ? value : value === undefined ? [] : [value]).map((pattern) => {
+      if (typeof pattern !== "string") return { source: pattern.source, flags: pattern.flags };
+      const glob = normalize(pattern);
+      if (isAbsolute(glob) || glob.startsWith("**")) return { glob };
+      const base = normalize(process.cwd()).replace(/[-^$*+?.()|[\]{}]/g, "\\$&");
+      return { glob: join(base, glob) };
+    });
+  const include = serialize(imports.include);
+  evidence.nitroAutoImportTransform = {
+    include: include.length
+      ? include
+      : serialize([/\.[jt]sx?$/, /\.vue$/, /\.vue\?vue/, /\.svelte$/]),
+    exclude: serialize(imports.exclude ?? [/[\\/]node_modules[\\/]/, /[\\/]\.git[\\/]/]),
+    commentsDisable: imports.commentsDisable ?? ["@unimport-disable", "@imports-disable"],
+  };
+  return evidence;
 }
 
 function serializeImportTransform(transform: any) {
