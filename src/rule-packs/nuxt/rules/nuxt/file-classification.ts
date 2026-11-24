@@ -211,6 +211,11 @@ function owningNuxtAppSource(ctx: RuleContext, file: string) {
   return owner;
 }
 
+export function nuxtInventoryRoot(ctx: RuleContext): string {
+  const primaryLayer = ctx.project.nuxt?.layers.find((layer) => layer.priority === 0);
+  return toPosixPath(resolve(ctx.project.root, primaryLayer?.root ?? "."));
+}
+
 // Nuxt roots come from manifest layers or every detected nuxt.config, so nested apps such as
 // docs/ each get their own srcDir instead of treating the whole app root as app code.
 export function nuxtAppSources(ctx: RuleContext): NuxtAppSource[] {
@@ -222,8 +227,7 @@ export function nuxtAppSources(ctx: RuleContext): NuxtAppSource[] {
     ...layer,
     root: toPosixPath(resolve(ctx.project.root, layer.root)),
   }));
-  const primaryRoot =
-    layers.find((layer) => layer.priority === 0)?.root ?? toPosixPath(ctx.project.root);
+  const primaryRoot = nuxtInventoryRoot(ctx);
   const roots = new Set([
     ...(nuxt?.appRoots ?? []).map((root) => toPosixPath(resolve(ctx.project.root, root))),
     ...layers.map((layer) => layer.root),

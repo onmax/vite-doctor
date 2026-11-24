@@ -1,8 +1,15 @@
-import { resolve } from "pathe";
+import { basename, dirname, join, relative, resolve } from "pathe";
 import { gte, valid } from "semver";
 import { parseScriptScope } from "../../../../core/internal/script-scope.js";
 import type { DiagnosticEvidence, RuleContext } from "../../../../core/index.js";
+import { nuxtInventoryRoot } from "./file-classification.js";
 import { FUNCTION_TYPES, propertyName, unwrap } from "./nuxt-config-ast.js";
+import {
+  conventionalPagesDirectory,
+  isInsideDir,
+  isScannedNuxtFile,
+  preparedPagesSourceChanged,
+} from "./page-structure.js";
 import {
   type AnyNode,
   createRule,
@@ -123,20 +130,21 @@ function routeParams(
   metaPath: AnyNode,
 ): RouteParams | null {
   const manifest = ctx.project.nuxt?.manifest;
-  if (manifest?.resolvedApp || (manifest?.isCurrent && manifest.pages?.length)) {
-    if (
-      manifest.resolvedApp &&
-      (!manifest.resolvedApp.pagesResolved || !manifest.resolvedAppCurrent?.pages)
-    )
-      return null;
-    const file = resolve(ctx.project.root, ctx.file.path);
+  const file = resolve(ctx.project.root, ctx.file.path);
+  const pages = manifest?.resolvedApp && conventionalPagesDirectory(ctx);
+  if (
+    manifest &&
+    (manifest.resolvedApp
+      ? manifest.resolvedAppCurrent?.pages && !preparedPagesSourceChanged(ctx, pages)
+      : manifest.isCurrent && manifest.pages?.length)
+  ) {
+    if (manifest.resolvedApp && !manifest.resolvedApp.pagesResolved) return null;
+    const root = nuxtInventoryRoot(ctx);
     const paths = [
       ...new Set(
         (manifest.pages ?? []).flatMap((page) => {
           const path = manifest.resolvedApp ? page.fullPath : (page.fullPath ?? page.path);
-          return path && page.file && resolveSameFile(resolve(ctx.project.root, page.file), file)
-            ? [path]
-            : [];
+          return path && page.file && resolveSameFile(resolve(root, page.file), file) ? [path] : [];
         }),
       ),
     ];
@@ -148,6 +156,11 @@ function routeParams(
         summary: `Nuxt resolves this page to ${paths.join(", ")}.`,
       },
     };
+  }
+  if (manifest?.resolvedApp) {
+    if (!pages || !isInsideDir(file, pages)) return null;
+    pagePath = relative(pages, file);
+    if (!canInferStaleRoute(ctx, pages, pagePath, metaPath)) return null;
   }
   if (!pagePath) return null;
   if (metaPath) {
@@ -165,6 +178,62 @@ function routeParams(
       summary: `The file-based route pages/${pagePath} has dynamic segments.`,
     },
   };
+}
+
+function canInferStaleRoute(
+  ctx: RuleContext,
+  pages: string,
+  pagePath: string,
+  metaPath: AnyNode,
+): boolean {
+  if (
+    !isScannedNuxtFile(pagePath) ||
+    /[()@]|\.(?:client|server)\./.test(pagePath) ||
+    pagePath.split("/").some((part) => part.startsWith("-") || part.startsWith("."))
+  )
+    return false;
+  const entries = pageCandidates(ctx, join(pages, dirname(pagePath)), routeStem(pagePath));
+  if (entries?.length !== 1 || entries[0] !== basename(pagePath)) return false;
+  const path = unwrap(metaPath);
+  if (
+    metaPath &&
+    !(path?.type === "Literal" && typeof path.value === "string" && path.value.startsWith("/"))
+  )
+    return false;
+  for (let folder = dirname(pagePath); folder !== "."; folder = dirname(folder)) {
+    const parentDir = join(pages, dirname(folder));
+    const parents = pageCandidates(ctx, parentDir, basename(folder));
+    if (!parents || parents.length > 1) return false;
+    if (parents.length && !metaPath) {
+      const [parent] = parents;
+      const source = ctx.fs.readText(join(parentDir, parent!));
+      if (
+        source === undefined ||
+        parent !== `${basename(folder)}.vue` ||
+        /definePageMeta|<script\b[^>]*\bsrc\s*=/.test(source)
+      )
+        return false;
+    }
+  }
+  return true;
+}
+
+function routeStem(file: string) {
+  return basename(file)
+    .replace(/\.[^.]+$/, "")
+    .replace(/(?:\.(?:client|server))+$/, "");
+}
+
+function pageCandidates(ctx: RuleContext, dir: string, stem: string) {
+  return ctx.fs
+    .readDir(dir)
+    ?.flatMap((entry) =>
+      (entry.isFile() || entry.isSymbolicLink()) &&
+      isScannedNuxtFile(entry.name) &&
+      routeStem(entry.name) === stem
+        ? [entry.name]
+        : [],
+    );
 }
 
 function matches(text: string, pattern: RegExp): string[] {

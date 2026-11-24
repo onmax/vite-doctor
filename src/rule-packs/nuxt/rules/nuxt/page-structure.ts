@@ -16,7 +16,12 @@ import {
   TemplateNodeType,
   templateRoots,
 } from "../../../../core/internal/template.js";
-import { nuxtAppSources, toPosixPath, type NuxtAppSource } from "./file-classification.js";
+import {
+  nuxtAppSources,
+  nuxtInventoryRoot,
+  toPosixPath,
+  type NuxtAppSource,
+} from "./file-classification.js";
 import {
   ENVIRONMENT_OVERRIDE_KEYS,
   exportedConfigObject,
@@ -57,7 +62,13 @@ export function nuxtLayerSources(ctx: RuleContext): NuxtAppSource[][] {
     .map((layer) => byRoot.get(toPosixPath(resolve(ctx.project.root, layer.root))))
     .filter((source): source is NuxtAppSource => !!source);
   const apps = layers.length ? [layers] : [];
-  for (const source of sources) if (!layers.includes(source)) apps.push([source]);
+  const workspaceApps = new Set(
+    (ctx.project.workspaceNuxt ?? []).map(({ root }) =>
+      toPosixPath(resolve(ctx.project.root, root)),
+    ),
+  );
+  for (const source of sources)
+    if (!layers.includes(source) && !workspaceApps.has(source.root)) apps.push([source]);
   return apps;
 }
 
@@ -205,10 +216,12 @@ export function readAppConfigFlag(
  * Without a Nuxt manifest Doctor only sees the root layer, so `extends` hides the others.
  */
 export function unreadLayers(ctx: RuleContext, layers: NuxtAppSource[]): string | undefined {
-  const known = ctx.project.nuxt?.layers.length ?? 0;
+  const projectApp = isProjectApp(ctx, layers);
+  const known = projectApp ? (ctx.project.nuxt?.layers.length ?? 0) : 0;
   if (known > layers.length)
     return `${known - layers.length} Nuxt layer(s) of the app are outside the Doctor Run.`;
-  if (layers.length !== 1 || ctx.project.nuxt?.manifest?.hasManifest) return undefined;
+  if (layers.length !== 1 || (projectApp && ctx.project.nuxt?.manifest?.hasManifest))
+    return undefined;
   const config = configFile(ctx, layers[0]!.root);
   if (config && /\bextends\s*:/.test(config.text))
     return `${displayPath(ctx, config.file)} extends layers Doctor cannot read without a Nuxt manifest.`;
@@ -403,11 +416,101 @@ function scanIsReliable(ctx: RuleContext, layer: NuxtAppSource, kind: "pages" | 
   );
 }
 
+export function conventionalPagesDirectory(
+  ctx: RuleContext,
+  layers = nuxtLayerSources(ctx).find((app) => isProjectApp(ctx, app)),
+): string | undefined {
+  if (!layers || layers.length !== 1 || !isProjectApp(ctx, layers)) return undefined;
+  const [layer] = layers;
+  if (!layer) return undefined;
+  if (layer.srcDir !== layer.root && layer.srcDir !== join(layer.root, "app")) return undefined;
+  const preparedDir =
+    ctx.project.nuxt?.manifest?.resolvedApp?.inputs?.pages?.directories[0]?.directory;
+  if (preparedDir !== undefined && resolve(layer.root, preparedDir) !== join(layer.srcDir, "pages"))
+    return undefined;
+  const appDir = join(layer.root, "app");
+  const appEntries = ctx.fs.readDir(appDir);
+  if (!appEntries && ctx.fs.exists(appDir)) return undefined;
+  const legacy = ["app.vue", "App.vue", "assets", "layouts", "middleware", "pages", "plugins"];
+  const srcDir =
+    appEntries &&
+    (appEntries.some(
+      ({ name }) => name !== "spa-loading-template.html" && !name.startsWith("router.options"),
+    ) ||
+      !legacy.some((name) => ctx.fs.exists(join(layer.root, name))))
+      ? appDir
+      : layer.root;
+  const sourceEntries = srcDir === appDir ? appEntries : ctx.fs.readDir(srcDir);
+  if (
+    !sourceEntries ||
+    [".nuxtignore", ".nuxtrc", "layers", "modules"].some((path) =>
+      ctx.fs.exists(join(layer.root, path)),
+    ) ||
+    ctx.fs.exists(join(srcDir, "modules")) ||
+    sourceEntries.some((entry) => entry.name.startsWith("router.options."))
+  )
+    return undefined;
+  const config = configFile(ctx, layer.root);
+  if (config) {
+    const program = parseScript(config.file, config.text) as AnyNode;
+    if (
+      !program ||
+      program.body.some((statement: AnyNode) => statement.type !== "ExportDefaultDeclaration")
+    )
+      return undefined;
+    const object = exportedConfigObject(program, new Map());
+    if (
+      !object ||
+      object.properties.some((property: AnyNode) => {
+        if (property.type !== "Property" || property.computed || property.kind !== "init")
+          return true;
+        const name = propertyName(property);
+        return (
+          !name ||
+          name.startsWith("$") ||
+          /^(?:extends|theme|modules|_modules|hooks|router|rootDir|srcDir|dir|pagesDir|ignore|ignorePrefix|extensions|future)$/.test(
+            name,
+          ) ||
+          (name === "alias" && mayAliasPages(property.value)) ||
+          (name === "pages" && unwrap(property.value)?.value !== true)
+        );
+      })
+    )
+      return undefined;
+  } else if (NUXT_CONFIG_FILES.some((name) => ctx.fs.exists(join(layer.root, name)))) {
+    return undefined;
+  }
+  return join(srcDir, "pages");
+}
+
+function mayAliasPages(value: AnyNode): boolean {
+  const aliases = unwrap(value);
+  return (
+    aliases?.type !== "ObjectExpression" ||
+    aliases.properties.some((property: AnyNode) => {
+      const name = propertyName(property);
+      return property.type !== "Property" || property.computed || !name || name === "pages";
+    })
+  );
+}
+
+export function preparedPagesSourceChanged(ctx: RuleContext, conventionalDir: string | undefined) {
+  const preparedDir =
+    ctx.project.nuxt?.manifest?.resolvedApp?.inputs?.pages?.directories[0]?.directory;
+  return (
+    conventionalDir !== undefined &&
+    preparedDir !== undefined &&
+    resolve(nuxtInventoryRoot(ctx), preparedDir) !== conventionalDir
+  );
+}
+
+function isProjectApp(ctx: RuleContext, layers: NuxtAppSource[]): boolean {
+  return layers[0]?.root === nuxtInventoryRoot(ctx);
+}
+
 function currentManifest(ctx: RuleContext, layers: NuxtAppSource[], kind: NuxtAppInventoryKind) {
   const manifest = ctx.project.nuxt?.manifest;
-  return manifest?.resolvedAppCurrent?.[kind] && layers[0]?.root === ctx.project.root
-    ? manifest
-    : undefined;
+  return manifest?.resolvedAppCurrent?.[kind] && isProjectApp(ctx, layers) ? manifest : undefined;
 }
 
 export interface PageRoute {
@@ -417,24 +520,31 @@ export interface PageRoute {
 }
 
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
-  const manifest = currentManifest(ctx, layers, "pages");
+  const prepared = isProjectApp(ctx, layers) ? ctx.project.nuxt?.manifest?.resolvedApp : undefined;
+  const conventionalDir = prepared && conventionalPagesDirectory(ctx, layers);
+  const manifest = preparedPagesSourceChanged(ctx, conventionalDir)
+    ? undefined
+    : currentManifest(ctx, layers, "pages");
   const pages = manifest?.pages ?? [];
-  if (manifest?.resolvedApp?.pagesResolved)
+  if (manifest?.resolvedApp?.pagesResolved) {
+    const root = nuxtInventoryRoot(ctx);
     return pages.flatMap((page): PageRoute[] =>
       page.file
         ? [
             {
-              file: resolve(ctx.project.root, page.file),
-              parent: page.parentFile ? resolve(ctx.project.root, page.parentFile) : null,
+              file: resolve(root, page.file),
+              parent: page.parentFile ? resolve(root, page.parentFile) : null,
               path: page.path,
             },
           ]
         : [],
     );
+  }
   if (pages.length || layers.length !== 1 || unreadLayers(ctx, layers)) return undefined;
   const layer = layers[0]!;
   if (!scanIsReliable(ctx, layer, "pages")) return undefined;
-  const dir = join(layer.srcDir, "pages");
+  const dir = prepared ? conventionalDir : join(layer.srcDir, "pages");
+  if (!dir) return undefined;
   const files = sources.filter((file) => isInsideDir(file, dir) && isScannedNuxtFile(file));
   const stems = new Map(files.map((file) => [file.replace(/\.[^.]+$/, ""), file]));
   return files.map((file): PageRoute => {
@@ -462,7 +572,7 @@ export function registeredLayouts(
   if (app)
     return Object.entries(app.layouts).map(([name, file]) => ({
       name,
-      file: resolve(ctx.project.root, file),
+      file: resolve(nuxtInventoryRoot(ctx), file),
     }));
   if (
     layers.length !== 1 ||
@@ -489,7 +599,7 @@ export function registeredLayouts(
 export function mainApp(ctx: RuleContext, layers: NuxtAppSource[]): string | null | undefined {
   const component = currentManifest(ctx, layers, "mainComponent")?.resolvedApp?.mainComponent;
   if (component) {
-    const file = resolve(ctx.project.root, component);
+    const file = resolve(nuxtInventoryRoot(ctx), component);
     if (/\/nuxt\/dist\/(?:pages\/runtime\/app|app\/components\/welcome)\.vue$/.test(file))
       return undefined;
     return file;
