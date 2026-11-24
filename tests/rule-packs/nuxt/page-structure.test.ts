@@ -588,6 +588,7 @@ function runPreparedRules(root: string) {
   const rules = [
     rule("nuxt/routing/parent-page-requires-nuxtpage"),
     rule("nuxt/layouts/app-renders-nuxtlayout"),
+    rule("nuxt/routing/keepalive-requires-max"),
   ];
   return runDoctor({
     root,
@@ -609,7 +610,7 @@ function runPreparedRules(root: string) {
   });
 }
 
-test.each(["pages", "screens"])(
+test.each(["pages", "screens", "markdown"])(
   "checks prepared %s without metadata scanning",
   async (directory) => {
     const root = mkdtempSync(join(tmpdir(), "doctor-prepared-page-structure-"));
@@ -620,7 +621,8 @@ test.each(["pages", "screens"])(
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, text);
     };
-    const page = (path: string) => `app/${directory}/${path}.vue`;
+    const pagesDir = directory === "pages" ? "pages" : "screens";
+    const page = (path: string) => `app/${pagesDir}/${path}.vue`;
     try {
       symlinkSync(
         fileURLToPath(new URL("../../../node_modules", import.meta.url)),
@@ -630,12 +632,22 @@ test.each(["pages", "screens"])(
       write("package.json", JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }));
       write(
         "nuxt.config.ts",
-        `export default { experimental: { scanPageMeta: false, typedPages: false }${directory === "screens" ? ", dir: { pages: 'screens' }" : ""} }`,
+        `export default {
+          experimental: { scanPageMeta: false, typedPages: false },
+          ${directory === "pages" ? "" : `dir: { pages: '${pagesDir}' },`}
+          ${directory === "markdown" ? "pages: { pattern: ['**/*.vue', '**/*.md'] }," : ""}
+        }`,
       );
       write("app/app.vue", template("<NuxtPage />"));
+      if (directory === "screens") write(".nuxtignore", "app/screens/ignored.vue\n");
       write(page("teams"), template("<div>Teams</div>"));
       write(page("users"), template("<div>Users</div>"));
       write(page("users/[id]"), template("<div>User</div>"));
+      write(page("[org]"), template("<NuxtPage />"));
+      write(
+        page("[org]/settings"),
+        template("<div>Settings</div>", "definePageMeta({ keepalive: true })"),
+      );
       process.chdir(root);
       nuxt = await loadNuxt({
         cwd: root,
@@ -649,6 +661,20 @@ test.each(["pages", "screens"])(
       expect((await issues("NUXT0098")).map((item) => item.file)).toEqual([
         expect.stringMatching(/users\.vue$/),
       ]);
+      expect((await issues("NUXT0094")).map((item) => item.why)).toEqual([
+        expect.stringContaining(":org"),
+      ]);
+
+      write(`app/${pagesDir}/notes.md`, "# Notes");
+      expect(await issues("NUXT0098")).toHaveLength(directory === "markdown" ? 0 : 1);
+      rmSync(join(root, `app/${pagesDir}/notes.md`));
+
+      if (directory === "screens") {
+        write(page("ignored"), template("<div>Ignored</div>"));
+        expect(await issues("NUXT0098")).toHaveLength(1);
+        write(page("users/[id]"), template("<div>Edited user page</div>"));
+        expect(await issues("NUXT0098")).toHaveLength(0);
+      }
 
       write(page("teams/[id]"), template("<div>Team</div>"));
       write("app/layouts/default.vue", template("<div><slot /></div>"));

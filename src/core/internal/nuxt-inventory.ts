@@ -69,9 +69,7 @@ export function createNuxtProjectInventory(
     pages: manifest?.pages ?? [],
     resolvedApp: manifest?.resolvedApp,
     resolvedAppCurrent: Boolean(
-      isCurrent &&
-      inputs?.signature &&
-      inputs.signature === nuxtAppInputSignature(root, inputs.directories, inputs.files),
+      isCurrent && inputs?.signature && inputs.signature === nuxtAppInputSignature(root, inputs),
     ),
     prerenderRoutes: manifest?.prerenderRoutes ?? [],
     buildManifest: manifest?.buildManifest,

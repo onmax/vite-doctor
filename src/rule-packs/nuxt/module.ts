@@ -11,6 +11,7 @@ import {
   defineNuxtModule,
   getLayerDirectories,
   importModule,
+  resolveIgnorePatterns,
   resolvePath,
 } from "nuxt/kit";
 import type { Nuxt, NuxtApp, NuxtModule } from "nuxt/schema";
@@ -201,9 +202,12 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     };
     const layers = getLayerDirectories(nuxt);
     const root = nuxt.options.rootDir;
-    const directories = [
-      ...new Set(layers.flatMap((layer) => [layer.appPages, layer.appLayouts])),
-    ].map((directory) => relative(root, directory));
+    const extensionPattern = `**/*{${nuxt.options.extensions.join(",")}}`;
+    const pagePatterns = [nuxt.options.pages?.pattern ?? extensionPattern].flat() as string[];
+    const directories = layers.flatMap((layer) => [
+      { directory: relative(root, layer.appPages), patterns: pagePatterns },
+      { directory: relative(root, layer.appLayouts), patterns: [extensionPattern] },
+    ]);
     const files = [
       ...new Set([
         app.mainComponent,
@@ -221,8 +225,17 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     ]
       .filter((file): file is string => typeof file === "string" && isAbsolute(file))
       .map((file) => relative(root, file));
-    const signature = nuxtAppInputSignature(root, directories, files);
-    if (signature) evidence.resolvedApp.inputs = { directories, files, signature };
+    const inputs = {
+      directories,
+      files,
+      ignore: {
+        roots: layers.map((layer) => relative(root, layer.root)),
+        patterns: resolveIgnorePatterns(),
+        options: nuxt.options.ignoreOptions,
+      },
+    };
+    const signature = nuxtAppInputSignature(root, inputs);
+    if (signature) evidence.resolvedApp.inputs = { ...inputs, signature };
   });
 
   nuxt.hook?.("prerender:routes", (ctx: any) => {
@@ -509,11 +522,19 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
 function flattenPages(
   pages: NuxtApp["pages"],
   parentFile: string | null = null,
+  parentPath = "",
 ): NonNullable<NuxtDoctorManifest["pages"]> {
-  return toArray(pages).flatMap((page) => [
-    { path: page.path, file: page.file, name: page.name, parentFile },
-    ...flattenPages(page.children, page.file ?? parentFile),
-  ]);
+  return toArray(pages).flatMap((page) => {
+    const { path, file, name } = page;
+    const fullPath =
+      path.startsWith("/") || !parentPath
+        ? path
+        : `${parentPath}${path && !parentPath.endsWith("/") ? "/" : ""}${path}`;
+    return [
+      { path, fullPath, file, name, parentFile },
+      ...flattenPages(page.children, file ?? parentFile, fullPath),
+    ];
+  });
 }
 
 function toArray<T = unknown>(value: T[] | Record<string, T> | undefined | null): T[] {

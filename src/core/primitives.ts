@@ -388,12 +388,27 @@ export interface NuxtDoctorManifest {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
-  pages?: Array<{ path?: string; file?: string; name?: string; parentFile?: string | null }>;
+  pages?: Array<{
+    path?: string;
+    fullPath?: string;
+    file?: string;
+    name?: string;
+    parentFile?: string | null;
+  }>;
   resolvedApp?: {
     mainComponent?: string;
     layouts: Record<string, string>;
     pagesResolved?: boolean;
-    inputs?: { directories: string[]; files: string[]; signature: string };
+    inputs?: {
+      directories: Array<{ directory: string; patterns: string[] }>;
+      files: string[];
+      ignore: {
+        roots: string[];
+        patterns: string[];
+        options?: { ignorecase?: boolean; ignoreCase?: boolean; allowRelativePaths?: boolean };
+      };
+      signature: string;
+    };
   };
   prerenderRoutes?: string[];
   buildManifest?: {
