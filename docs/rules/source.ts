@@ -1081,6 +1081,10 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Nitro handlers", "https://nitro.build/guide/routing");
   }
 
+  if (rule.id === "nitro/cache/require-varies-for-header-read") {
+    add("Nitro cache", "https://nitro.build/guide/cache");
+  }
+
   if (rule.framework === "vite" && rule.category === "env") {
     add("Vite env variables and modes", "https://vite.dev/guide/env-and-mode/");
   }

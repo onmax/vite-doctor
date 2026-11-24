@@ -19,6 +19,8 @@ const NUXT_CONFIG_FILES = configFiles("nuxt.config");
 const ROUTE_DIRS = new Set(["api", "routes"]);
 const SCANNED_SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const DECLARATION_FILE = /\.d\.[cm]?ts$/;
+const TEST_FILE = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
+const SCAN_IGNORE_OPTIONS = new Set(["ignore", "ignorePrefix", "ignoreOptions"]);
 
 export function nitroServerDirs(ctx: RuleContext): string[] {
   const key = "nitro:server-dirs";
@@ -42,6 +44,18 @@ export function nitroServerFile(ctx: RuleContext, file: string): NitroServerFile
 }
 
 export function nitroRouteFile(ctx: RuleContext, file: string): NitroServerFile | null {
+  return nitroScannedFile(ctx, file, ROUTE_DIRS);
+}
+
+/**
+ * The server file when Nitro's scan of one of `dirs` provably picks it up: default scan layout,
+ * a scanned script extension, and not dropped by Nuxt's or Nitro's default ignore patterns.
+ */
+export function nitroScannedFile(
+  ctx: RuleContext,
+  file: string,
+  dirs: ReadonlySet<string>,
+): NitroServerFile | null {
   const project = ctx.project;
   const options = readStaticConfigOptions(ctx, project.framework === "nuxt" ? "nuxt" : "nitro");
   if (
@@ -51,10 +65,25 @@ export function nitroRouteFile(ctx: RuleContext, file: string): NitroServerFile 
   )
     return null;
   const serverFile = nitroServerFile(ctx, file);
-  if (!serverFile || !ROUTE_DIRS.has(serverFile.dir) || !serverFile.path.includes("/")) return null;
-  if (!SCANNED_SCRIPT.test(file) || DECLARATION_FILE.test(file)) return null;
-  if (project.framework === "nuxt" && isIgnoredByNuxtDefaults(serverFile.path)) return null;
-  return serverFile;
+  if (!serverFile || !dirs.has(serverFile.dir) || !serverFile.path.includes("/")) return null;
+  return isNitroScannedScript(ctx, serverFile.path) ? serverFile : null;
+}
+
+/** Whether Nitro's directory scan keeps this server-relative path under default ignore patterns. */
+export function isNitroScannedScript(ctx: RuleContext, path: string): boolean {
+  if (!SCANNED_SCRIPT.test(path) || DECLARATION_FILE.test(path)) return false;
+  if (ctx.project.framework === "nuxt") return !isIgnoredByNuxtDefaults(path);
+  // Nitro 3 adds test and spec files to its scan ignore list; Nitro 2 scans them.
+  return (runtimeMajor(ctx.project, "nitro") ?? 2) < 3 || !TEST_FILE.test(path);
+}
+
+/** Custom ignore patterns can drop any scanned file, so the scan result is not provable. */
+export function hasCustomScanIgnore(ctx: RuleContext): boolean {
+  const nuxt = ctx.project.framework === "nuxt";
+  const options = readStaticConfigOptions(ctx, nuxt ? "nuxt" : "nitro");
+  if (options.some(({ path }) => path.length === 0 || SCAN_IGNORE_OPTIONS.has(path.at(-1)!)))
+    return true;
+  return nuxt && ctx.fs.exists(resolve(ctx.project.root, ".nuxtignore"));
 }
 
 export function readStaticConfigOptions(
@@ -143,11 +172,7 @@ function standaloneNitroServerDirs(ctx: RuleContext): string[] {
 
 function isIgnoredByNuxtDefaults(path: string) {
   const name = path.split("/").at(-1)!;
-  return (
-    name.startsWith("-") ||
-    /\.stories\.[cm]?[jt]sx?$/.test(name) ||
-    /\.(?:spec|test)\.[cm]?[jt]sx?$/.test(name)
-  );
+  return name.startsWith("-") || /\.stories\.[cm]?[jt]sx?$/.test(name) || TEST_FILE.test(name);
 }
 
 function configFiles(base: string) {
@@ -319,7 +344,19 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
       }
     }
     if (
-      !["srcDir", "serverDir", "scanDirs", "apiDir", "routesDir", "nitro", "imports"].includes(key)
+      ![
+        "srcDir",
+        "serverDir",
+        "scanDirs",
+        "apiDir",
+        "routesDir",
+        "nitro",
+        "imports",
+        "cache",
+        "ignore",
+        "ignorePrefix",
+        "ignoreOptions",
+      ].includes(key)
     )
       continue;
     const next = [...path, key];
