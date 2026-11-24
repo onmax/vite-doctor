@@ -289,6 +289,7 @@ export interface NuxtProjectInfo {
     pluginFiles: string[];
     resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
     resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
+    hasServerPageIslands?: boolean;
     componentIslands?: NuxtDoctorManifest["componentIslands"];
     keyedComposables: NuxtKeyedComposable[];
     aliases: Record<string, string>;
@@ -347,6 +348,11 @@ export interface NuxtKeyedComposable {
   source?: string;
 }
 
+export interface NuxtAppRegistrationSnapshot {
+  directories: Record<string, string[]>;
+  files: string[];
+}
+
 export interface NuxtDoctorManifest {
   scannedComposableFiles?: string[];
   autoRegisteredLayers?: string[];
@@ -367,6 +373,11 @@ export interface NuxtDoctorManifest {
   autoImports: unknown[];
   components: unknown[];
   resolvedComponents?: Array<{ name: string; file: string; mode: "client" | "server" | "all" }>;
+  hasServerPageIslands?: boolean;
+  appRegistration?: Record<
+    "components" | "pages" | "plugins",
+    NuxtAppRegistrationSnapshot | undefined
+  >;
   componentIslands?: boolean | "auto";
   layers: Array<{
     root: string;

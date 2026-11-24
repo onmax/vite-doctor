@@ -1264,7 +1264,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/plugins/no-island-disabled-dependency": {
     description:
       "Finds a plugin whose dependsOn names a plugin that sets env: { islands: false }, in an app that renders server component islands.",
-    why: "When Nuxt renders an island it skips plugins with env: { islands: false }, but a plugin that depends on one still waits for it. The dependency never resolves, so the dependent plugin silently never runs in island renders, and whatever it provides is missing there. Doctor reports only object-syntax plugins with literal names, where each name is unique, and only when experimental.componentIslands is not turned off and the app has a server component, island component, or server page. Client-only plugins are not reported because islands render on the server.",
+    why: "When Nuxt renders an island it skips plugins with env: { islands: false }, but a plugin that depends on one still waits for it. The dependency never resolves, so the dependent plugin silently never runs in island renders, and whatever it provides is missing there. Doctor reports only object-syntax plugins with unique literal names, and only when experimental.componentIslands is not turned off and the app has an island component or a top-level server page that Nuxt registers as an island. Doctor uses current registrations from Nuxt prepare or falls back to default file conventions where it can. Client-only plugins are not reported because islands render on the server.",
     recommendedReplacement:
       "Drop the dependency if the plugin can run without it, or set env: { islands: false } on the dependent plugin too.",
     examples: [

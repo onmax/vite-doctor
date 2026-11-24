@@ -1,6 +1,7 @@
 import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { snapshotNuxtAppRegistration } from "../../core/internal/nuxt-inventory.js";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
@@ -10,6 +11,7 @@ import {
   defineNuxtModule,
   getLayerDirectories,
   importModule,
+  resolveAlias,
   resolvePath,
 } from "nuxt/kit";
 import type { Nuxt, NuxtModule } from "nuxt/schema";
@@ -49,6 +51,7 @@ type NuxtAutoImportContext = {
 };
 
 type NuxtDoctorEvidence = {
+  appRegistration?: NuxtDoctorManifest["appRegistration"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
@@ -69,6 +72,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   nuxt.options.doctor = options;
 
   const evidence = {
+    appRegistration: undefined as NuxtDoctorManifest["appRegistration"],
     resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
     serverInventory: undefined as Record<string, string[]> | undefined,
     serverHandlerMtimes: undefined as Record<string, number> | undefined,
@@ -237,7 +241,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   }
 
   nuxt.hook?.("components:dirs", (dirs: unknown[]) => {
-    evidence.componentDirs.push(...toArray(dirs));
+    evidence.componentDirs = dirs;
   });
 
   nuxt.hook?.("builder:generateApp", async () => {
@@ -249,6 +253,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("app:templatesGenerated", async () => {
+    evidence.appRegistration = appRegistration(nuxt, evidence.componentDirs);
     await writeManifest(nuxt, evidence);
   });
 
@@ -342,6 +347,14 @@ export async function writeManifest(
             ),
           ].sort(),
     autoImports,
+    appRegistration: evidence?.appRegistration,
+    hasServerPageIslands: evidence?.appRegistration?.pages
+      ? Boolean(
+          (app as Nuxt["apps"][string] | undefined)?.pages?.some(
+            (page) => page.mode === "server" && page.file && page.name,
+          ),
+        )
+      : undefined,
     components: toArray(nuxt.options.components ?? nuxt._components),
     resolvedComponents: Array.isArray(app?.components)
       ? app.components.flatMap((component: any) =>
@@ -512,6 +525,42 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
     entries.push(path && isAbsolute(path) ? { name, source: relative(rootDir, path) } : { name });
   }
   return entries;
+}
+
+function appRegistration(
+  nuxt: Nuxt,
+  componentDirs: unknown[],
+): NuxtDoctorManifest["appRegistration"] {
+  const app = nuxt.apps.default;
+  if (!app) return undefined;
+  const { rootDir, srcDir, alias } = nuxt.options;
+  const layers = getLayerDirectories(nuxt);
+  const files = (paths: Array<string | undefined>, base = rootDir) =>
+    paths.flatMap((path) => (path ? [resolve(base, path)] : []));
+  return {
+    components: Array.isArray(app.components)
+      ? snapshotNuxtAppRegistration(
+          componentDirs.flatMap((entry) => {
+            const path = typeof entry === "string" ? entry : (entry as { path?: string })?.path;
+            return typeof path === "string" ? [resolve(srcDir, resolveAlias(path, alias))] : [];
+          }),
+          files(
+            app.components.map(({ filePath }) => filePath),
+            srcDir,
+          ),
+        )
+      : undefined,
+    pages: snapshotNuxtAppRegistration(
+      layers.map(({ appPages }) => appPages),
+      files(flattenPages(app.pages ?? []).map(({ file }) => file)),
+    ),
+    plugins: Array.isArray(app.plugins)
+      ? snapshotNuxtAppRegistration(
+          layers.map(({ appPlugins }) => appPlugins),
+          files(app.plugins.map(({ src }) => src)),
+        )
+      : undefined,
+  };
 }
 
 function flattenPages(pages: any[]): any[] {

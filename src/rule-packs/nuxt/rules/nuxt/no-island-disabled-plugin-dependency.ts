@@ -152,14 +152,21 @@ function readPlugins(ctx: RuleContext, app: AppRoots, sources: readonly string[]
     inventory?.resolvedPlugins &&
     new Map(inventory.resolvedPlugins.map(({ file, mode }) => [file, mode]));
   const explicit = new Set(inventory?.pluginFiles ?? []);
-  if (!modes && readRegistration(ctx, app, "plugins") !== undefined) return [];
+  if (
+    !modes &&
+    (sources.some((file) => explicit.has(file)) ||
+      readRegistration(ctx, app, "plugins") !== undefined ||
+      readRegistration(ctx, app, "dir") !== undefined)
+  ) {
+    recordRegistrationGap(ctx, "plugin");
+    return [];
+  }
   const files = sources.filter(
     (file) =>
       !/\.d\.[cm]?ts$/.test(file) &&
       (modes
         ? modes.has(file) && modes.get(file) !== "client"
-        : !explicit.has(file) &&
-          !/\.client\.[^/.]+$/.test(basename(file)) &&
+        : !/\.client\.[^/.]+$/.test(basename(file)) &&
           app.pluginDirs.some((dir) => {
             const path = relative(dir, file);
             return !path.startsWith("..") && PLUGIN_FILE_RE.test(path);
@@ -238,14 +245,15 @@ function islandsRender(ctx: RuleContext, app: AppRoots, sources: readonly string
     )
       return false;
   }
-  if (inventory?.isCurrent && inventory.pages?.some((page) => page.mode === "server")) return true;
+  if (inventory?.hasServerPageIslands) return true;
   const components = inventory?.resolvedComponents;
   if (components) {
     const clients = new Set(
       components.filter(({ mode }) => mode === "client").map(({ name }) => name),
     );
-    return components.some(({ name, mode }) => mode === "server" && !clients.has(name));
+    if (components.some(({ name, mode }) => mode === "server" && !clients.has(name))) return true;
   }
+  if (components && inventory?.hasServerPageIslands === false) return false;
   const defaults = (option: string) => {
     const value = readRegistration(ctx, app, option);
     return value === undefined || (value?.type === "Literal" && value.value === true);
@@ -253,15 +261,17 @@ function islandsRender(ctx: RuleContext, app: AppRoots, sources: readonly string
   if (
     readRegistration(ctx, app, "dir") !== undefined ||
     readRegistration(ctx, app, "srcDir") !== undefined
-  )
+  ) {
+    recordRegistrationGap(ctx, "island");
     return false;
-  const checkComponents = defaults("components");
-  const checkPages = defaults("pages");
+  }
+  const checkComponents = !components && defaults("components");
+  const checkPages = inventory?.hasServerPageIslands === undefined && defaults("pages");
   const vueFiles = new Set(sources.filter((file) => file.endsWith(".vue")));
-  return app.sourceDirs.some((dir) =>
+  const matches = app.sourceDirs.some((dir) =>
     [...vueFiles].some((file) => {
       const path = relative(dir, file);
-      if (checkPages && path.startsWith("pages/") && SERVER_COMPONENT_RE.test(path))
+      if (checkPages && /^pages\/[\w-]+\.server\.vue$/.test(path))
         return !vueFiles.has(file.replace(SERVER_COMPONENT_RE, ".client.vue"));
       if (!checkComponents || !path.startsWith("components/")) return false;
       return (
@@ -272,6 +282,21 @@ function islandsRender(ctx: RuleContext, app: AppRoots, sources: readonly string
       );
     }),
   );
+  if (!matches) recordRegistrationGap(ctx, "island");
+  return matches;
+}
+
+function recordRegistrationGap(ctx: RuleContext, kind: "island" | "plugin") {
+  const manifestPath = ctx.project.nuxt?.manifestPath;
+  if (!manifestPath) return;
+  const source = `${RULE_ID}/${kind}-registration`;
+  const gaps = (ctx.project.evidenceGaps ??= []);
+  if (gaps.some((gap) => gap.source === source)) return;
+  gaps.push({
+    source,
+    message: `Doctor could not verify current Nuxt ${kind} registrations. Run nuxt prepare to refresh the Doctor manifest.`,
+    files: [relative(ctx.project.root, manifestPath)],
+  });
 }
 
 function readRegistration(ctx: RuleContext, app: AppRoots, key: string, experimental = false) {

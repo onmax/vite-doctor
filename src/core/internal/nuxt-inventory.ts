@@ -1,6 +1,12 @@
+import { existsSync, readdirSync } from "node:fs";
 import { relative, resolve } from "pathe";
 import { isNuxtManifestCurrent } from "./runtime-graph.js";
-import type { NuxtDoctorManifest, NuxtKeyedComposable, NuxtModuleSource } from "../primitives.js";
+import type {
+  NuxtAppRegistrationSnapshot,
+  NuxtDoctorManifest,
+  NuxtKeyedComposable,
+  NuxtModuleSource,
+} from "../primitives.js";
 
 export interface NuxtProjectInventory {
   scannedComposableFiles?: string[];
@@ -8,6 +14,7 @@ export interface NuxtProjectInventory {
   pluginFiles: string[];
   resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
   resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
+  hasServerPageIslands?: boolean;
   componentIslands?: NuxtDoctorManifest["componentIslands"];
   keyedComposables: NuxtKeyedComposable[];
   aliases: Record<string, string>;
@@ -42,17 +49,20 @@ export function createNuxtProjectInventory(
   fallbackImportsDirs: string[] = [],
   isCurrent = isNuxtManifestCurrent(root, manifest),
 ): NuxtProjectInventory {
+  const current = (kind: "components" | "pages" | "plugins") =>
+    isCurrent && registrationIsCurrent(root, manifest?.appRegistration?.[kind]);
   return {
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
-    resolvedPlugins: isCurrent
+    resolvedPlugins: current("plugins")
       ? manifest?.resolvedPlugins?.map((plugin) => ({
           ...plugin,
           file: resolve(root, plugin.file),
         }))
       : undefined,
-    resolvedComponents: isCurrent ? manifest?.resolvedComponents : undefined,
+    resolvedComponents: current("components") ? manifest?.resolvedComponents : undefined,
+    hasServerPageIslands: current("pages") ? manifest?.hasServerPageIslands : undefined,
     componentIslands: isCurrent ? manifest?.componentIslands : undefined,
     keyedComposables: keyedComposables(root, manifest?.keyedComposables),
     aliases: manifest?.aliases ?? {},
@@ -83,6 +93,46 @@ export function createNuxtProjectInventory(
       serverRoutes: manifest?.serverHandlers?.length ?? 0,
     },
   };
+}
+
+function registrationDirectory(directory: string): string[] {
+  try {
+    return readdirSync(directory, { recursive: true, encoding: "utf8" }).map(toPosixPath).sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+export function snapshotNuxtAppRegistration(
+  directories: string[],
+  files: string[],
+): NuxtAppRegistrationSnapshot | undefined {
+  try {
+    return {
+      directories: Object.fromEntries(
+        [...new Set(directories)].map((dir) => [dir, registrationDirectory(dir)]),
+      ),
+      files: [...new Set(files.filter((file) => existsSync(file)))].sort(),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function registrationIsCurrent(root: string, snapshot?: NuxtAppRegistrationSnapshot): boolean {
+  if (!snapshot) return false;
+  try {
+    return (
+      snapshot.files.every((file) => existsSync(resolve(root, file))) &&
+      Object.entries(snapshot.directories).every(
+        ([dir, entries]) =>
+          JSON.stringify(entries) === JSON.stringify(registrationDirectory(resolve(root, dir))),
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 const IDENTIFIER_RE = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*$/u;

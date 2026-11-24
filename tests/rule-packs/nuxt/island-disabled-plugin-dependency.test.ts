@@ -1,5 +1,12 @@
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { buildNuxt, loadNuxt } from "nuxt/kit";
+import { dirname, join } from "pathe";
 import { describe, expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
+import { runViteDoctor } from "../../../src/doctor.ts";
+import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import { noIslandDisabledPluginDependency } from "../../../src/rule-packs/nuxt/rules/nuxt/no-island-disabled-plugin-dependency.ts";
 
 async function run(files: Record<string, string>) {
@@ -16,7 +23,88 @@ const auth = plugin("  name: 'auth',\n  env: { islands: false },");
 const api = plugin("  name: 'api',\n  dependsOn: ['auth'],");
 const island = { "app/components/Chart.server.vue": "<template><div /></template>\n" };
 
+async function withPreparedApp(
+  files: Record<string, string>,
+  check: (app: {
+    root: string;
+    write: (file: string, source: string) => void;
+    scan: () => Promise<string[]>;
+  }) => Promise<void>,
+) {
+  const root = mkdtempSync(join(tmpdir(), "doctor-island-registration-"));
+  const cwd = process.cwd();
+  let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
+  const write = (file: string, source: string) => {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), source);
+  };
+  try {
+    symlinkSync(
+      fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+      join(root, "node_modules"),
+      "junction",
+    );
+    write("package.json", JSON.stringify({ type: "module", dependencies: { nuxt: "^4.5.2" } }));
+    write("nuxt.config.ts", "export default defineNuxtConfig({})");
+    write("app/plugins/auth.ts", auth);
+    write("app/plugins/api.ts", api);
+    for (const [file, source] of Object.entries(files)) write(file, source);
+    process.chdir(root);
+    nuxt = await loadNuxt({
+      cwd: root,
+      overrides: { _prepare: true, telemetry: false, modules: [nuxtDoctorModule] },
+    });
+    await buildNuxt(nuxt);
+    await nuxt.close();
+    nuxt = undefined;
+    await check({
+      root,
+      write,
+      scan: async () =>
+        (await runViteDoctor({ root, framework: "nuxt", cache: false })).diagnostics
+          .filter(({ code }) => code === "NUXT0104")
+          .map(({ file }) => file),
+    });
+  } finally {
+    await nuxt?.close();
+    process.chdir(cwd);
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 describe("nuxt/plugins/no-island-disabled-dependency", () => {
+  test("checks additions, removals, and renames after Nuxt prepare without re-preparing", async () => {
+    await withPreparedApp({}, async ({ root, write, scan }) => {
+      expect(await scan()).toEqual([]);
+      write("app/components/Chart.server.vue", "<template><div /></template>");
+      expect(await scan()).toEqual([expect.stringMatching(/app\/plugins\/api\.ts$/)]);
+      renameSync(join(root, "app/plugins/api.ts"), join(root, "app/plugins/backend.ts"));
+      expect(await scan()).toEqual([expect.stringMatching(/app\/plugins\/backend\.ts$/)]);
+    });
+    await withPreparedApp(island, async ({ root, scan }) => {
+      expect(await scan()).toHaveLength(1);
+      rmSync(join(root, "app/components/Chart.server.vue"));
+      expect(await scan()).toEqual([]);
+    });
+  });
+
+  test("only counts server pages registered as islands after Nuxt prepare", async () => {
+    const server = "<template><div /></template>";
+    await withPreparedApp(
+      {
+        "app/pages/parent.vue": "<template><NuxtPage /></template>",
+        "app/pages/parent/child.server.vue": server,
+      },
+      async ({ scan }) => expect(await scan()).toEqual([]),
+    );
+    await withPreparedApp(
+      {
+        "app/pages/standalone.server.vue": server,
+      },
+      async ({ scan }) => expect(await scan()).toHaveLength(1),
+    );
+  });
+
   test("uses default island roots and withholds reports for unknown or disabled registration", async () => {
     const plugins = { "app/plugins/auth.ts": auth, "app/plugins/api.ts": api };
     expect(
@@ -77,6 +165,15 @@ describe("nuxt/plugins/no-island-disabled-dependency", () => {
           components: [],
           layers: [],
           componentIslands: "auto",
+          hasServerPageIslands: false,
+          appRegistration: {
+            components: { directories: { "app/components": ["Chart.server.vue"] }, files: [] },
+            pages: { directories: { "app/pages": [] }, files: [] },
+            plugins: {
+              directories: { "app/plugins": ["api.ts"] },
+              files: ["app/runtime/auth.client.ts"],
+            },
+          },
           resolvedComponents: hasIsland
             ? [{ name: "Chart", file: "app/components/Chart.server.vue", mode: "server" }]
             : [],
