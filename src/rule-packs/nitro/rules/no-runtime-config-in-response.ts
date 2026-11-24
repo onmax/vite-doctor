@@ -86,12 +86,12 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
     isConfigCall(node) ||
     (node?.type === "Identifier" && configs.has(resolvedVariable(scope, node)));
   const leaks: AnyNode[] = [];
-  // Reports only the whole config, a spread of it, or a property set to it that nothing later in
-  // the literal can overwrite. Anything less direct stays quiet.
+  // A config spread has unknown keys, so any later property could overwrite one.
   const leakFromObject = (object: AnyNode) => {
     object.properties.forEach((property: AnyNode, index: number) => {
       if (property.type === "SpreadElement") {
-        if (isWholeConfig(stripAwait(property.argument))) leaks.push(property.argument);
+        if (index === object.properties.length - 1 && isWholeConfig(stripAwait(property.argument)))
+          leaks.push(property.argument);
         return;
       }
       if (!isWholeConfig(stripAwait(property.value))) return;
@@ -131,10 +131,20 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
 }
 
 function staticKey(property: AnyNode): string | undefined {
-  if (property.computed) return undefined;
-  if (property.key.type === "Identifier") return property.key.name;
-  const value = property.key.type === "Literal" ? property.key.value : undefined;
-  if (typeof value === "string" || typeof value === "number") return String(value);
+  const key = unwrapExpression(property.key);
+  if (!property.computed && key.type === "Identifier") return key.name;
+  if (key.type === "TemplateLiteral" && !key.expressions.length)
+    return key.quasis[0]?.value.cooked ?? undefined;
+  if (key.type !== "Literal") return undefined;
+  const value = key.value;
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "bigint" ||
+    typeof value === "boolean"
+  )
+    return String(value);
   return undefined;
 }
 

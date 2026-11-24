@@ -258,7 +258,7 @@ export const ruleDocumentationMetadata = {
   },
   "nitro/runtime/no-runtime-config-in-response": {
     description:
-      "Report Nitro handlers that return the whole object useRuntimeConfig() gives them: the config itself or a const bound to it, a spread of it, or an object literal with it as a property value, also when serialized with JSON.stringify() or Response.json().",
+      "Report Nitro handlers that return the whole object useRuntimeConfig() gives them: the config itself or a const bound to it, an object literal ending in a spread of it, or an object literal with it as a property value, also when serialized with JSON.stringify() or Response.json().",
     why: "useRuntimeConfig() returns every runtimeConfig key, including the private ones that stay on the server and that Nitro fills from NITRO_ and NUXT_ environment variables, such as API secrets and database URLs. Nuxt only sends runtimeConfig.public and app to the browser; a handler that returns the whole object sends the rest to any client that calls the route. Doctor only checks what the handler's own return statements send. It does not report single keys or groups such as config.stripe, values nested deeper than one object literal, or properties a later spread or key can overwrite.",
     recommendedReplacement:
       "Return only the fields the client needs, such as config.public.siteUrl, and keep values meant for the client under runtimeConfig.public.",

@@ -55,11 +55,21 @@ test.each([
   "({ debug: config, debug: false })",
   "({ debug: config, ...{ debug: false } })",
   "({ debug: config, [key]: false })",
+  "JSON.stringify(config, fields)",
+  "({ debug: config, ...redacted })",
+  "({ ...config, ...redacted })",
+  "({ ...config, ...config.public })",
+  "({ ...config, apiSecret: '[redacted]' })",
+  "Response.json({ ...config, ...redacted })",
+  "JSON.stringify({ ...config, ...redacted })",
 ])("stays quiet outside the whole-config shapes: %s", async (response) => {
   expect(
     await run({
+      "nuxt.config.ts": "export default { runtimeConfig: { apiSecret: 'fixture' } }",
       "server/api/config.ts": `export default defineEventHandler(() => {
     const config = useRuntimeConfig()
+    const fields = ['public']
+    const redacted = { apiSecret: '[redacted]', debug: false }
     return ${response}
   })`,
     }),
@@ -70,8 +80,10 @@ test.each([
   "config",
   "{ config }",
   "{ ...config }",
-  "{ ...config, ...config.public }",
+  "{ ...override, ...config }",
   "{ debug: config, 200: 'ok' }",
+  "{ debug: config, [200]: 'ok' }",
+  "{ debug: config, [`status`]: 'ok' }",
   "{ debug: config, ...config }",
   "JSON.stringify(config)",
   "JSON.stringify(config, null, 2)",
