@@ -668,7 +668,7 @@ export interface ComponentUsageFact {
    * Tags of the components, built-ins such as `<Transition>`, and `<slot>` outlets that enclose
    * the usage in the same template, outermost first.
    */
-  wrappers: Array<{ tag: string; defaultSlot: boolean; slotObject: boolean; shadowed: boolean }>;
+  wrappers: Array<{ tag: string; offset: number; defaultSlot: boolean; shadowed: boolean }>;
   /** Names that an enclosing `v-for` or `v-slot` introduces, or a `v-for` on this element. */
   scope: string[];
   /** Whether this element or an ancestor has `v-for`. */

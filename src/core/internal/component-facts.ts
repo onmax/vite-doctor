@@ -817,15 +817,15 @@ function walkElement(
       ...wrappers,
       {
         tag: element.tag,
+        offset: element.loc.start.offset,
         defaultSlot,
-        slotObject: !element.children.some(
-          (child) =>
-            child.type === TemplateNodeType.ELEMENT &&
-            child.tagType === 3 &&
-            findTemplateDirective(child, "slot") &&
-            (findTemplateDirective(child, "if") || findTemplateDirective(child, "for")),
-        ),
-        shadowed: tagCandidates(element.tag).some((tag) => elementScope.includes(tag)),
+        shadowed:
+          tagCandidates(element.tag).some((tag) => elementScope.includes(tag)) ||
+          element.props.some((prop) =>
+            prop.type === TemplateNodeType.ATTRIBUTE
+              ? prop.name === "is" && prop.value?.content.startsWith("vue:")
+              : prop.name === "is",
+          ),
       },
     ];
   } else if (element.tagType === 3 && slot && !defaultSlot && !parent?.element) {

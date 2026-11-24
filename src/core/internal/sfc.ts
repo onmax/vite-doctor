@@ -7,6 +7,70 @@ import { SFC_TEMPLATE_PARSE_OPTIONS, templateAstFromDescriptor } from "./templat
 
 const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
 
+const NUXT_CLIENT_ONLY_SSR_NAME = /^_component_(?:Lazy|lazy_)?(?:ClientOnly|client_only)$/;
+
+/** Locate default slots Nuxt's server tree shaker can remove without a VNode fallback path. */
+export async function nuxtPrunableDefaultSlots(file: string, source: string): Promise<Set<number>> {
+  const offsets = new Set<number>();
+  try {
+    const { parse, compileScript, compileTemplate } =
+      await optionalImport<typeof import("@vue/compiler-sfc")>("@vue/compiler-sfc");
+    const { descriptor, errors: parseErrors } = parse(source, { filename: file, sourceMap: false });
+    const template = descriptor.template;
+    if (
+      parseErrors.length ||
+      !template ||
+      template.src ||
+      (template.lang && template.lang !== "html")
+    )
+      return offsets;
+    const bindings =
+      descriptor.script || descriptor.scriptSetup
+        ? compileScript(descriptor, { id: file }).bindings
+        : undefined;
+    const { ast, errors } = compileTemplate({
+      filename: file,
+      source: template.content,
+      id: file,
+      ssr: true,
+      ssrCssVars: descriptor.cssVars,
+      compilerOptions: { bindingMetadata: bindings },
+    });
+    if (!ast || errors.length) return offsets;
+    const templateOffset = template.loc.start.offset;
+    visit(ast.children);
+
+    function visit(nodes: NonNullable<typeof ast>["children"]) {
+      for (const node of nodes) {
+        if (node.type === 9) {
+          for (const branch of node.branches) visit(branch.children);
+        } else if (node.type === 11 || (node.type === 1 && node.tagType === 0)) {
+          visit(node.children);
+        } else if (node.type === 1 && node.tagType === 1 && node.ssrCodegenNode?.type === 14) {
+          const call = node.ssrCodegenNode;
+          const [component, , slots] = call.arguments;
+          if (
+            typeof call.callee === "symbol" &&
+            call.callee.description === "ssrRenderComponent" &&
+            typeof component === "string" &&
+            NUXT_CLIENT_ONLY_SSR_NAME.test(component) &&
+            typeof slots === "object" &&
+            !Array.isArray(slots) &&
+            slots.type === 15 &&
+            slots.properties.some(
+              (prop) => prop.key.type === 4 && prop.key.isStatic && prop.key.content === "default",
+            )
+          )
+            offsets.add(templateOffset + node.loc.start.offset);
+        }
+      }
+    }
+  } catch {
+    return new Set();
+  }
+  return offsets;
+}
+
 export async function parseSfcFile(
   file: string,
   source: string,

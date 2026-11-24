@@ -315,7 +315,9 @@ import Card from '../components/Card.vue'
 </template>`,
         "app/pages/excluded.vue": `<script>
 import Wrapper from '../components/Wrapper.vue'
-export default { components: { ClientOnly: Wrapper } }
+import { h } from 'vue'
+const RenderSlot = (_, { slots }) => h('article', slots.default?.())
+export default { components: { ClientOnly: Wrapper, Wrapper, RenderSlot } }
 </script>
 <script setup>
 import Card from '../components/Card.vue'
@@ -325,6 +327,8 @@ const ready = true
   <ClientOnly><template v-if="ready" #default><p><Card />excluded-marker</p></template></ClientOnly>
   <ClientOnly><p v-if="ready"><Card />pruned-marker</p></ClientOnly>
   <ClientOnly><template v-if="ready" #other><i /></template><p><Card />dynamic-slots-marker</p></ClientOnly>
+  <RenderSlot><ClientOnly><p><Card />vnode-slot-marker</p></ClientOnly></RenderSlot>
+  <ClientOnly is="vue:Wrapper"><p><Card />renamed-wrapper-marker</p></ClientOnly>
 </template>`,
       })) {
         const file = join(root, path);
@@ -349,6 +353,8 @@ const ready = true
       expect(excluded).toContain("<section><!--[--><!--]--></section>");
       expect(excluded).not.toContain("pruned-marker");
       expect(excluded).toContain("<p><div>card</div>dynamic-slots-marker</p>");
+      expect(excluded).toContain("<p><div>card</div>vnode-slot-marker</p>");
+      expect(excluded).toContain("<p><div>card</div>renamed-wrapper-marker</p>");
       const result = await runDoctor({
         root,
         framework: "nuxt",
@@ -357,8 +363,10 @@ const ready = true
         extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
       });
       expect(located(result)).toEqual([
-        ["VUE0052", "app/pages/excluded.vue", 10],
         ["VUE0052", "app/pages/excluded.vue", 12],
+        ["VUE0052", "app/pages/excluded.vue", 14],
+        ["VUE0052", "app/pages/excluded.vue", 15],
+        ["VUE0052", "app/pages/excluded.vue", 16],
         ["VUE0052", "app/pages/index.vue", 11],
       ]);
     } finally {

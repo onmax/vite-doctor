@@ -11,6 +11,7 @@ import type {
 import { pascalCase, tagCandidates } from "./component-facts.js";
 import { sourceFacts } from "./facts.js";
 import type { ScanSession } from "./scan-session.js";
+import { nuxtPrunableDefaultSlots } from "./sfc.js";
 import { createGraphIndex, type GraphIndex } from "./workspace-graph.js";
 
 const graphs = new WeakMap<ScanSession, Promise<ComponentUsageGraph>>();
@@ -49,7 +50,8 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
   for (const fact of facts) {
     const node: ComponentNode | undefined = components.get(fact.path);
     if (!node) continue;
-    const nuxt = session.handlesByPath.get(fact.path)?.project.nuxt;
+    const handle = session.handlesByPath.get(fact.path);
+    const nuxt = handle?.project.nuxt;
     const registry = nuxt?.components;
     const transformExclude = nuxt?.componentTransformExclude;
     const excludedFromComponentTransform = transformExclude?.some((pattern) => {
@@ -60,14 +62,22 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       const candidates = tagCandidates(tag);
       return node.facts.imports.find((item) => candidates.includes(item.local));
     };
+    const prunableSlots =
+      handle &&
+      excludedFromComponentTransform &&
+      [...node.facts.usages, ...node.facts.dynamicRenders].some((usage) =>
+        usage.wrappers.some(
+          ({ tag, defaultSlot }) =>
+            defaultSlot && /^(?:Lazy|lazy-)?(?:ClientOnly|client-only)$/.test(tag),
+        ),
+      )
+        ? await nuxtPrunableDefaultSlots(handle.path, handle.text)
+        : undefined;
     const inClientOnlySlot = (wrappers: ComponentUsageFact["wrappers"]) =>
-      wrappers.some(({ tag, defaultSlot, slotObject, shadowed }) => {
+      wrappers.some(({ tag, offset, defaultSlot, shadowed }) => {
         if (!defaultSlot || shadowed) return false;
         const binding = findBinding(tag);
-        if (!binding && excludedFromComponentTransform)
-          return (
-            slotObject && /^(?:ClientOnly|client-only|LazyClientOnly|lazy-client-only)$/.test(tag)
-          );
+        if (!binding && excludedFromComponentTransform) return prunableSlots?.has(offset) ?? false;
         const name = binding?.source === "#components" ? binding.imported : pascalCase(tag);
         if (
           binding?.source === "vue-client-only" ||
