@@ -67,6 +67,12 @@ export interface AppliedFixes {
   skipped: number;
 }
 
+export const scopedReportLocations = Symbol("scoped report locations");
+
+type ScopedReportLocations = {
+  [scopedReportLocations]?: readonly { file: string; range: SourceRange }[];
+};
+
 export function applyRequestedFixes(session: ScanSession): AppliedFixes | undefined {
   if (!session.options.fix && !session.options.unsafeFix && !session.options.structuralReview)
     return undefined;
@@ -758,21 +764,26 @@ async function applyReportEligibility(session: ScanSession): Promise<void> {
       (changed) => range.line <= changed.endLine && endLine >= changed.startLine,
     );
   };
-  session.diagnostics = session.diagnostics.filter((diagnostic) => {
-    const locations = [diagnostic, ...(diagnostic.related ?? [])];
-    const located = locations.some((location) => {
-      if (location.range) return onChangedLine(location.file, location.range);
-      return diagnostic.range === undefined && eligibility.get(location.file) !== undefined;
-    });
-    // A manifest or lockfile entry is the cause of the finding even when the finding is
-    // reported elsewhere, such as a lockfile route that reaches a second copy.
-    return (
-      located ||
-      manifestEvidence(diagnostic).some(({ file, range }) =>
-        onChangedLine(file, range, eligibility.get(file) ?? external.get(file)),
-      )
-    );
-  });
+  session.diagnostics = session.diagnostics.filter(
+    (diagnostic: Diagnostic & ScopedReportLocations) => {
+      const scopeLocations = diagnostic[scopedReportLocations];
+      delete diagnostic[scopedReportLocations];
+      const locations = [diagnostic, ...(diagnostic.related ?? [])];
+      const located = locations.some((location) => {
+        if (location.range) return onChangedLine(location.file, location.range);
+        return diagnostic.range === undefined && eligibility.get(location.file) !== undefined;
+      });
+      // A manifest or lockfile entry is the cause of the finding even when the finding is
+      // reported elsewhere, such as a lockfile route that reaches a second copy.
+      return (
+        located ||
+        scopeLocations?.some(({ file, range }) => onChangedLine(file, range)) ||
+        manifestEvidence(diagnostic).some(({ file, range }) =>
+          onChangedLine(file, range, eligibility.get(file) ?? external.get(file)),
+        )
+      );
+    },
+  );
 }
 
 function readTextOrUndefined(file: string): string | undefined {
@@ -1041,15 +1052,16 @@ function configuredDiagnosticSeverity(
 
 export function pushDiagnostic(
   session: ScanSession,
-  diagnostic: Partial<Diagnostic> & {
-    ruleId: string;
-    severity: Diagnostic["severity"];
-    category: string;
-    message?: string;
-    why?: string;
-    suggestion: string;
-    file: string;
-  },
+  diagnostic: Partial<Diagnostic> &
+    ScopedReportLocations & {
+      ruleId: string;
+      severity: Diagnostic["severity"];
+      category: string;
+      message?: string;
+      why?: string;
+      suggestion: string;
+      file: string;
+    },
 ): void {
   const severity = configuredDiagnosticSeverity(
     session,
