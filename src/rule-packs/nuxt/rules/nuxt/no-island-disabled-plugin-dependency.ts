@@ -1,6 +1,13 @@
-import { dirname, join, relative } from "pathe";
+import { join, relative } from "pathe";
 import { createRule, type RuleContext, type SourceRange } from "../../../../core/index.js";
+import { projectWorkspacePackages } from "../../../../core/internal/applicability.js";
+import { readExportedExperimentalOption } from "../../../../core/internal/runtime-graph.js";
 import { parseScript } from "../../../../core/internal/script.js";
+import {
+  nuxtInventoryOwner,
+  owningWorkspacePackage,
+} from "../../../../core/internal/workspace-packages.js";
+import { workspaceViewRoot } from "../../../../core/internal/workspace-nuxt.js";
 import { diagnostics } from "../../diagnostics.js";
 import type { AnyNode } from "./shared.js";
 
@@ -37,30 +44,59 @@ export const noIslandDisabledPluginDependency = createRule({
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        if (!islandsRender(ctx)) return;
-        const plugins = readPlugins(ctx, new Set(await ctx.inventory.sourcePaths()));
-        if (!plugins.length || !plugins.some((plugin) => plugin.islandsDisabled)) return;
+        const packages = projectWorkspacePackages(ctx.project);
+        const owner = workspaceViewRoot(ctx.project) ?? nuxtInventoryOwner(packages)?.root ?? ".";
+        const root = join(ctx.project.root, owner);
+        const islands = islandsRender(ctx, root);
+        if (islands === false) return;
+        const sources = new Set(await ctx.inventory.sourcePaths());
+        const registered = ctx.project.nuxt?.manifest?.resolvedPlugins;
+        if (!registered) {
+          const candidates = [...sources].filter(
+            (file) => owningWorkspacePackage(packages, relative(ctx.project.root, file)) === owner,
+          );
+          if (findDependencies(readPlugins(ctx, candidates), false).length) {
+            recordRegistrationGap(ctx, root, islands === undefined ? "island" : "plugin");
+          }
+          return;
+        }
+        const plugins = readPlugins(
+          ctx,
+          registered
+            .filter(({ file, mode }) => mode !== "client" && sources.has(file))
+            .map(({ file }) => file),
+        );
         // Duplicate or computed names can resolve a dependency through another plugin.
         if (plugins.some((plugin) => !plugin.readable)) return;
-        const names = new Map<string, PluginMeta[]>();
-        for (const plugin of plugins) {
-          if (plugin.name === undefined) continue;
-          names.set(plugin.name, [...(names.get(plugin.name) ?? []), plugin]);
+        const dependencies = findDependencies(plugins);
+        if (!dependencies.length) return;
+        if (islands === undefined) {
+          recordRegistrationGap(ctx, root, "island");
+          return;
         }
-        const manifestPath = ctx.project.nuxt?.manifestPath;
-        const root = manifestPath ? dirname(dirname(manifestPath)) : ctx.project.root;
-        for (const plugin of plugins) {
-          if (plugin.islandsDisabled || !plugin.dependsOn) continue;
-          for (const dependency of plugin.dependsOn) {
-            const [target, ...others] = names.get(dependency.name) ?? [];
-            if (!target || others.length || !target.islandsDisabled) continue;
-            report(ctx, root, plugin, dependency, target);
-          }
+        for (const { plugin, dependency, target } of dependencies) {
+          report(ctx, root, plugin, dependency, target);
         }
       },
     };
   },
 });
+
+function findDependencies(plugins: PluginMeta[], requireUnique = true) {
+  const names = new Map<string, PluginMeta[]>();
+  for (const plugin of plugins) {
+    if (plugin.name === undefined) continue;
+    names.set(plugin.name, [...(names.get(plugin.name) ?? []), plugin]);
+  }
+  return plugins.flatMap((plugin) =>
+    (plugin.islandsDisabled ? [] : (plugin.dependsOn ?? [])).flatMap((dependency) => {
+      const targets = names.get(dependency.name) ?? [];
+      if (requireUnique && targets.length !== 1) return [];
+      const target = targets.find((candidate) => candidate.islandsDisabled);
+      return target ? [{ plugin, dependency, target }] : [];
+    }),
+  );
+}
 
 function report(
   ctx: RuleContext,
@@ -98,14 +134,9 @@ function rangeOf(ctx: RuleContext, plugin: PluginMeta, node: AnyNode): SourceRan
   return ctx.helpers.rangeFromOffsets(plugin.file, plugin.text, node.start, node.end);
 }
 
-function readPlugins(ctx: RuleContext, sources: ReadonlySet<string>): PluginMeta[] {
-  const registered = ctx.project.nuxt?.manifest?.resolvedPlugins;
-  if (!registered) {
-    recordRegistrationGap(ctx, "plugin");
-    return [];
-  }
-  return registered.flatMap(({ file, mode }) => {
-    if (!sources.has(file) || mode === "client" || /\.d\.[cm]?ts$/.test(file)) return [];
+function readPlugins(ctx: RuleContext, files: string[]): PluginMeta[] {
+  return files.flatMap((file) => {
+    if (!/\.[cm]?[jt]sx?$/.test(file) || /\.d\.[cm]?ts$/.test(file)) return [];
     const text = ctx.fs.readText(file);
     if (!text || !/\bdefineNuxtPlugin\b/.test(text)) return [];
     const plugin = readPlugin(file, text);
@@ -166,12 +197,19 @@ function unwrap(node: AnyNode): AnyNode {
  * Whether island renders can happen: experimental.componentIslands is not turned off and the app
  * has a component or page that renders as an island.
  */
-function islandsRender(ctx: RuleContext): boolean {
+function islandsRender(ctx: RuleContext, root: string): boolean | undefined {
   const inventory = ctx.project.nuxt?.manifest;
   if (inventory?.componentIslands === false) return false;
   if (inventory?.componentIslands === undefined) {
-    recordRegistrationGap(ctx, "island");
-    return false;
+    for (const extension of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
+      const file = join(root, `nuxt.config.${extension}`);
+      const text = ctx.fs.readText(file);
+      if (text === undefined) continue;
+      if (readExportedExperimentalOption(file, text, "componentIslands")?.value === false)
+        return false;
+      break;
+    }
+    return undefined;
   }
   if (inventory?.hasServerPageIslands) return true;
   const components = inventory?.resolvedComponents;
@@ -181,20 +219,18 @@ function islandsRender(ctx: RuleContext): boolean {
     );
     if (components.some(({ name, mode }) => mode === "server" && !clients.has(name))) return true;
   }
-  if (!components || inventory?.hasServerPageIslands === undefined)
-    recordRegistrationGap(ctx, "island");
-  return false;
+  return components && inventory?.hasServerPageIslands === false ? false : undefined;
 }
 
-function recordRegistrationGap(ctx: RuleContext, kind: "island" | "plugin") {
-  const manifestPath =
-    ctx.project.nuxt?.manifestPath ?? join(ctx.project.root, ".nuxt/doctor.manifest.json");
+function recordRegistrationGap(ctx: RuleContext, root: string, kind: "island" | "plugin") {
+  const manifestPath = ctx.project.nuxt?.manifestPath ?? join(root, ".nuxt/doctor.manifest.json");
+  const file = relative(ctx.project.root, manifestPath);
   const source = `${RULE_ID}/${kind}-registration`;
   const gaps = (ctx.project.evidenceGaps ??= []);
-  if (gaps.some((gap) => gap.source === source)) return;
+  if (gaps.some((gap) => gap.source === source && gap.files.includes(file))) return;
   gaps.push({
     source,
     message: `Doctor could not verify current Nuxt ${kind} registrations. Run nuxt prepare with vite-doctor/nuxt to write the Doctor manifest.`,
-    files: [relative(ctx.project.root, manifestPath)],
+    files: [file],
   });
 }
