@@ -46,6 +46,10 @@ test.each([
   "new Response(Response.json(config))",
   "({ debug: config, ...{ debug: false } })",
   "({ debug: config, debug: false })",
+  "({ [200]: config, '200': false })",
+  "({ '200': config, ...{ 200: false } })",
+  "({ '200': config, [200n]: false })",
+  "({ debug: config, [`de\\u0062ug`]: false })",
 ])("does not report discarded or filtered config: %s", async (response) => {
   expect(
     await run({
@@ -68,6 +72,7 @@ test.each([
   "const override = { debug: false }; Reflect.deleteProperty(override, 'debug'); return { ...{ debug: config }, ...override }",
   "const override = { debug: false }; return { debug: config, ...{ ...override } }",
   "return { debug: config, [String('debug')]: false }",
+  "return { debug: config, [`${key}`]: false }",
   "return { ...config, ...config.public }",
 ])("does not report when the whole-config flow is unknown: %s", async (body) => {
   expect(
@@ -85,6 +90,10 @@ test.each([
   "return JSON.stringify(config, null, 2)",
   "return new Response(JSON.stringify(config, undefined, 2))",
   "return { ...{ debug: config } }",
+  "return { debug: config, 200: 'ok' }",
+  "return { debug: config, [200]: 'ok' }",
+  "return { debug: config, [`status`]: 'ok' }",
+  "return { debug: config, ...{ [200]: 'ok', [`status`]: true } }",
   "const override = { debug: false }; return { ...override, debug: config }",
   "const override = { debug: false }; return { debug: config, ...override, cfg: config }",
   "const response = { previous: false ? { ...response } : null }; return { ...response, cfg: config }",

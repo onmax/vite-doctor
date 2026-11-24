@@ -10,7 +10,6 @@ import {
   walk,
   walkOwnBody,
 } from "./nitro-handlers.js";
-import { propertyKey } from "./server-layout.js";
 import { type AnyNode, createRule } from "./shared.js";
 
 const RULE_ID = "nitro/runtime/no-runtime-config-in-response";
@@ -104,11 +103,7 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
             }
             continue;
           }
-          const key = property.computed
-            ? property.key.type === "Literal"
-              ? propertyKey(property.key)
-              : null
-            : propertyKey(property.key);
+          const key = responsePropertyKey(property);
           if (key === null) return false;
           if (!overwritten.has(key)) leak(property.value);
           overwritten.add(key);
@@ -155,6 +150,19 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
     });
   }
   return leaks;
+}
+
+function responsePropertyKey(property: AnyNode): string | null {
+  const key = unwrapExpression(property.key);
+  if (key.type === "Identifier" && !property.computed) return key.name;
+  if (key.type === "Literal") {
+    const value = key.value;
+    if (value === null || ["string", "number", "bigint", "boolean"].includes(typeof value))
+      return String(value);
+  }
+  if (key.type === "TemplateLiteral" && key.expressions.length === 0)
+    return key.quasis[0].value.cooked ?? null;
+  return null;
 }
 
 function isSerializer(scope: ScriptScope, call: AnyNode, directResponse: boolean) {
