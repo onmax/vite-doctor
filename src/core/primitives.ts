@@ -306,7 +306,6 @@ export interface NuxtProjectInfo {
     pluginFiles: string[];
     resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
     resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
-    clientBuildFiles?: NuxtDoctorManifest["clientBuildFiles"];
     resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
     hasServerPageIslands?: boolean;
     componentIslands?: NuxtDoctorManifest["componentIslands"];
@@ -505,7 +504,6 @@ export interface NuxtDoctorManifest {
   pluginFiles?: string[];
   resolvedPlugins?: Array<{ file: string; mode: "client" | "server" | "all" }>;
   resolvedMiddleware?: string[];
-  clientBuildFiles?: string[];
   appScanRoots?: string[];
   sharedScanRoots?: string[];
 }

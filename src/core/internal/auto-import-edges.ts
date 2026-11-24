@@ -88,7 +88,6 @@ async function collect(
   const appQueue: FileFacts[] = [];
   const clientEntries = new Set<number>();
   const serverEntries = new Set<number>();
-  const observedClientFiles = new Set<number>();
   const appDependencies = new Map<number, number[]>();
   const scanTargets = new Map<NuxtProjectInfo, Set<number | undefined>>();
   const projectOf = (fact: FileFacts) => session.handlesByPath.get(fact.path)?.project.nuxt;
@@ -117,10 +116,6 @@ async function collect(
           ...(nuxt.manifest.resolvedPlugins ?? []),
           ...(nuxt.manifest.resolvedMiddleware ?? []).map((file) => ({ file, mode: "all" })),
         ];
-        for (const file of nuxt.manifest.clientBuildFiles ?? []) {
-          const target = index.resolveFile(file);
-          if (target !== undefined) observedClientFiles.add(target);
-        }
         for (const file of nuxt.manifest.pluginFiles) enqueue(index.resolveFile(file), nuxt, false);
         for (const { file, mode } of registrations) {
           if (!file) continue;
@@ -272,10 +267,11 @@ async function collect(
       clientQueue.push(dependency);
     }
   }
-  const inClient = (file: number) => observedClientFiles.has(file) || clientFiles.has(file);
   clientParticipation.set(session, (from, to) => {
-    if (inClient(from) && inClient(to)) return true;
-    if ((serverEntries.has(from) && !inClient(from)) || (serverEntries.has(to) && !inClient(to)))
+    if (
+      (serverEntries.has(from) && !clientFiles.has(from)) ||
+      (serverEntries.has(to) && !clientFiles.has(to))
+    )
       return false;
     return undefined;
   });

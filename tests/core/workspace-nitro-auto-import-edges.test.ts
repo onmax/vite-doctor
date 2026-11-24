@@ -648,6 +648,59 @@ test("a changed Nitro edge reports its loop even when Nuxt already cycles over t
     },
   ));
 
+test("Git scope and the baseline retain a Nitro cycle with the same displayed loop as Nuxt", () =>
+  withNitroManifest(
+    {
+      "app/app.vue": "<script setup>useAppA()</script>",
+      "lib/a.ts": "import './b'; import './c'; export const useShared = () => 1",
+      "lib/b.ts": "import './a'",
+      "lib/c.ts": "useAppA()\n",
+      "server/utils/a.ts": "export const useA = () => 1",
+      "server/utils/b.ts": "export const useB = () => 1",
+      "server/api/shared.ts": "export { useShared as default } from '../../lib/a'",
+    },
+    async (root) => {
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
+      git("init");
+      git("add", "lib", "app", "server", "package.json");
+      git(
+        "-c",
+        "user.name=Doctor",
+        "-c",
+        "user.email=doctor@example.test",
+        "commit",
+        "-m",
+        "fixture",
+      );
+      const options = {
+        root,
+        framework: "nuxt",
+        analyses: "graph",
+        rules: cycleRule,
+        baseline: "doctor-baseline.json",
+        cache: false,
+      } as const;
+      const before = await runViteDoctor({ ...options, updateBaseline: true });
+      const appCycle = before.diagnostics.find((item) => item.message.includes("group of 3 files"));
+      expect(appCycle?.message).toContain("lib/a.ts → lib/b.ts → lib/a.ts");
+      writeFixture(root, { "lib/c.ts": "useAppA()\nuseShared()\n" });
+      for (const filters of [
+        { since: "HEAD" },
+        { newOnly: true },
+        { since: "HEAD", newOnly: true },
+      ]) {
+        const { diagnostics } = await runViteDoctor({ ...options, ...filters });
+        expect(diagnostics).toHaveLength(1);
+        expect(diagnostics[0]?.message).toBe(appCycle?.message);
+        expect(diagnostics[0]?.fingerprint).not.toBe(appCycle?.fingerprint);
+      }
+    },
+    {
+      appImports: { useAppA: { name: "useShared", file: "lib/a.ts" } },
+      extraImportDirs: ["lib/a.ts"],
+    },
+  ));
+
 test("reordering written imports does not make a mixed cycle new to the baseline", () =>
   withNitroManifest(
     {
@@ -682,6 +735,46 @@ test("reordering written imports does not make a mixed cycle new to the baseline
     { appImports: { useA: "app/a.ts" } },
   ));
 
+test.each([false, true])(
+  "old production module membership does not prove current HMR (explicit: %s)",
+  (explicit) =>
+    withNitroManifest(
+      {
+        "app/app.vue": "<script setup>useLoop()</script>",
+        "app/plugins/entry.server.ts": "export default () => useLoop()",
+        "app/composables/loop.ts": `${explicit ? "import { useHelper } from './helper';" : ""} export const useLoop = () => useHelper(); if (import.meta.hot) import.meta.hot.accept()`,
+        "app/composables/helper.ts":
+          "import { useLoop } from './loop'; export const useHelper = () => useLoop()",
+      },
+      async (root) => {
+        const manifestPath = join(root, ".nuxt/doctor.manifest.json");
+        const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+        manifest.clientBuildFiles = [
+          "app/app.vue",
+          "app/composables/loop.ts",
+          "app/composables/helper.ts",
+        ].map((file) => join(root, file));
+        writeFileSync(manifestPath, JSON.stringify(manifest));
+        writeFixture(root, { "app/app.vue": "<template><div /></template>" });
+        const { diagnostics } = await runViteDoctor({
+          root,
+          framework: "nuxt",
+          config: { extends: ["auto", "vite/strict"] },
+          cache: false,
+        });
+        const hmr = diagnostics.filter((item) => item.code === "VITE0029");
+        expect(hmr).toHaveLength(1);
+        expect(hmr[0]?.message).toContain(
+          "does not establish that this whole loop runs in the browser",
+        );
+      },
+      {
+        appImports: { useLoop: "app/composables/loop.ts", useHelper: "app/composables/helper.ts" },
+        appPlugins: [{ file: "app/plugins/entry.server.ts", mode: "server" }],
+      },
+    ),
+);
+
 test.each([
   { registered: true, explicit: false },
   { registered: true, explicit: true },
@@ -706,9 +799,9 @@ test.each([
         const hmr = diagnostics.filter((item) => item.code === "VITE0029");
         expect(hmr).toHaveLength(1);
         expect(hmr[0]?.message).toContain("app/middleware/probe.global.ts");
-        expect(
-          hmr[0]?.message.includes("does not establish that this whole loop runs in the browser"),
-        ).toBe(!registered);
+        expect(hmr[0]?.message).toContain(
+          "does not establish that this whole loop runs in the browser",
+        );
       },
       {
         appImports: { useLoop: "app/composables/loop.ts" },
@@ -735,9 +828,8 @@ test.each([
         const { cycles, graph } = await analyze(root);
         expect(cycles.some((cycle) => cycle.message.includes("lib/helper.ts"))).toBe(true);
         expect(
-          graph.edges.find((edge) => edge.from.endsWith("/lib/helper.ts"))?.clientReachable ===
-            true,
-        ).toBe(mode === "all");
+          graph.edges.find((edge) => edge.to?.endsWith("/app/plugins/entry.ts"))?.clientReachable,
+        ).toBe(mode === "server" ? false : undefined);
         const { diagnostics } = await runViteDoctor({
           root,
           framework: "nuxt",

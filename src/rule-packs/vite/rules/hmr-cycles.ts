@@ -94,7 +94,7 @@ export const noCircularImportAtHmrBoundary = createRule({
                     boundary.endsWith(".vue")
                       ? `${path(boundary)} is a Vue SFC. ${vueHmr.note}`
                       : `${path(boundary)} calls import.meta.hot.accept() without a dependency.`
-                  } It is in a group of ${files.length} files joined by Vite's HMR importer edges: static imports, re-exports, and import() calls with a literal path.`,
+                  } It is in a group of ${files.length} files joined by ${clientUnverified ? "source dependencies that could participate in client HMR" : "Vite's HMR importer edges"}: static imports, re-exports, literal import() calls, or Nuxt auto-imports.`,
                 },
               ],
             },

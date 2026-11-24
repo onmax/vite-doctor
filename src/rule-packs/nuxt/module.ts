@@ -24,7 +24,6 @@ import {
   resolvePath,
 } from "nuxt/kit";
 import type { Nuxt, NuxtModule } from "nuxt/schema";
-import type { Plugin } from "vite";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
 import { resolveAlias as resolveNitroAlias } from "pathe/utils";
 import type {
@@ -91,7 +90,6 @@ type NuxtDoctorEvidence = {
   pages?: Array<{ path?: string; file?: string; name?: string }>;
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
-  clientBuildFiles?: string[];
   componentDirs?: unknown[];
   importDirs?: unknown[];
   autoImportContext?: NuxtAutoImportContext;
@@ -117,7 +115,6 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     pages: [] as NonNullable<NuxtDoctorManifest["pages"]>,
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
-    clientBuildFiles: undefined as string[] | undefined,
     componentDirs: [] as unknown[],
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
@@ -282,28 +279,6 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
         isDynamicEntry: chunk.isDynamicEntry,
       })),
     };
-  });
-
-  nuxt.hook?.("vite:extend", ({ config }: { config: { plugins?: Plugin[] } }) => {
-    (config.plugins ??= []).push({
-      name: "vite-doctor:nuxt-client-files",
-      apply: "build",
-      applyToEnvironment: (environment) => environment.name === "client",
-      generateBundle(_options, bundle) {
-        if (this.environment.name !== "client") return;
-        evidence.clientBuildFiles = [
-          ...new Set(
-            Object.values(bundle).flatMap((output) =>
-              output.type === "chunk"
-                ? Object.keys(output.modules)
-                    .map((id) => normalize(id.split("?", 1)[0]!))
-                    .filter((file) => isAbsolute(file) && !file.includes("/node_modules/"))
-                : [],
-            ),
-          ),
-        ].sort();
-      },
-    });
   });
 
   const nuxtRuntimeUrl = import.meta.resolve("nuxt");
@@ -576,7 +551,6 @@ export async function writeManifest(
     resolvedMiddleware: app?.middleware?.map(({ path }: { path: string }) =>
       resolve(rootDir, path),
     ),
-    clientBuildFiles: evidence?.clientBuildFiles,
     appScanRoots: [appDir],
     sharedScanRoots: [
       resolve(rootDir, "shared/utils"),

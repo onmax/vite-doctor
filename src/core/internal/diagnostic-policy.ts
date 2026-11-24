@@ -200,6 +200,7 @@ export function diagnosticOccurrenceKey(diagnostic: Diagnostic): string {
     diagnostic.range?.start ??
       (diagnostic.code === "DOC0040" ? (diagnostic.fingerprint ?? "") : ""),
     diagnostic.message,
+    ...(diagnostic.code === "DOC0001" ? [diagnostic.fingerprint ?? ""] : []),
   ].join("\0");
 }
 
