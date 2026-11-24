@@ -335,6 +335,7 @@ export interface NuxtResolvedRoute {
   path: string;
   name?: string;
   file?: string;
+  sourceHash?: string;
   redirect?: unknown;
   alias?: unknown;
   dynamic?: string[];

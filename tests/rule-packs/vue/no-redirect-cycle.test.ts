@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { sha256 } from "../../../src/core/internal/utils.ts";
 import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import { vueRulePack } from "../../../src/rule-packs/vue/index.ts";
 import { noRedirectCycle } from "../../../src/rule-packs/vue/rules/vue/no-redirect-cycle.ts";
@@ -96,6 +97,14 @@ export default createRouter({ history: createWebHistory(), routes })
 
 test.each([
   [
+    "a named target requiring params",
+    `[{ path: '/a', redirect: { name: 'b' } }, { path: '/b/:id', name: 'b', redirect: '/a' }]`,
+  ],
+  [
+    "a record removed by a duplicate name",
+    `[{ path: '/a', name: 'entry', redirect: '/b' }, { path: '/b', redirect: '/a' }, { path: '/landing', name: 'entry', component: Home }]`,
+  ],
+  [
     "a chain that ends at a component",
     `[{ path: '/a', redirect: '/b' }, { path: '/b', redirect: '/c' }, { path: '/c', component: Home }]`,
   ],
@@ -121,6 +130,15 @@ test.each([
   expect(result.diagnostics).toEqual([]);
 });
 
+test.each(["...overrides", "routes: []", "[key]: []"])(
+  "does not report a routes array followed by %s",
+  async (override) => {
+    const source = routerFile(`[{ path: '/a', redirect: '/a' }], ${override}`);
+
+    expect((await runRouter(source)).diagnostics).toEqual([]);
+  },
+);
+
 test("does not report a createRouter that is not vue-router's", async () => {
   const result = await runRouter(
     routerFile(
@@ -134,6 +152,7 @@ test("does not report a createRouter that is not vue-router's", async () => {
 
 const nuxtPage = (redirect: string) =>
   `<script setup lang="ts">\ndefinePageMeta({ redirect: '${redirect}' })\n</script>\n`;
+const indexPage = "<template><main /></template>\n";
 
 function nuxtManifest(overrides: Record<string, unknown> = {}) {
   return JSON.stringify({
@@ -141,9 +160,9 @@ function nuxtManifest(overrides: Record<string, unknown> = {}) {
     appDir: "app",
     routerOptionsFiles: [],
     routes: [
-      { path: "/", file: "app/pages/index.vue" },
-      { path: "/a", file: "app/pages/a.vue", redirect: "/b" },
-      { path: "/b", file: "app/pages/b.vue", redirect: "/a" },
+      { path: "/", file: "app/pages/index.vue", sourceHash: sha256(indexPage) },
+      { path: "/a", file: "app/pages/a.vue", redirect: "/b", sourceHash: sha256(nuxtPage("/b")) },
+      { path: "/b", file: "app/pages/b.vue", redirect: "/a", sourceHash: sha256(nuxtPage("/a")) },
     ],
     ...overrides,
   });
@@ -154,7 +173,7 @@ function runNuxt(files: Record<string, string> = {}, manifest = nuxtManifest()) 
     framework: "nuxt",
     rule: noRedirectCycle,
     files: {
-      "app/pages/index.vue": "<template><main /></template>\n",
+      "app/pages/index.vue": indexPage,
       "app/pages/a.vue": nuxtPage("/b"),
       "app/pages/b.vue": nuxtPage("/a"),
       ".nuxt/doctor.manifest.json": manifest,
@@ -180,7 +199,28 @@ test("reports Nuxt pages whose resolved routes redirect to each other", async ()
   ]);
 });
 
+test("reports Nuxt cycles with a statically known non-overriding options export", async () => {
+  const result = await runNuxt(
+    {
+      "app/router.options.ts":
+        "var options = { scrollBehavior() {} }; export { options as default }",
+    },
+    nuxtManifest({ routerOptionsFiles: ["app/router.options.ts"] }),
+  );
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0053"]);
+});
+
 test.each([
+  ["an edited non-anchor page", { "app/pages/b.vue": nuxtPage("/home") }, nuxtManifest()],
+  [
+    "a re-exported router.options override",
+    {
+      "app/router.options.ts": "export { default } from './custom-router'",
+      "app/custom-router.ts": "export default { routes: () => [] }",
+    },
+    nuxtManifest({ routerOptionsFiles: ["app/router.options.ts"] }),
+  ],
   [
     "a router.options file that can replace the routes",
     {
@@ -236,6 +276,10 @@ test("the Nuxt manifest records full route paths and static redirects", async ()
     await nuxt.callHook("pages:routerOptions", {
       files: [{ path: join(root, "app/router.options.ts") }],
     });
+    const profile = join(root, "app/pages/settings/profile.vue");
+    const profileSource = `<script setup>definePageMeta({ redirect: { name: 'settings-account' } })</script>`;
+    mkdirSync(join(root, "app/pages/settings"), { recursive: true });
+    writeFileSync(profile, profileSource);
     await nuxt.callHook("app:templates", {
       middleware: [],
       pages: [
@@ -246,7 +290,7 @@ test("the Nuxt manifest records full route paths and static redirects", async ()
             {
               path: "profile",
               name: "settings-profile",
-              file: join(root, "app/pages/settings/profile.vue"),
+              file: profile,
               redirect: { name: "settings-account" },
             },
             {
@@ -268,7 +312,8 @@ test("the Nuxt manifest records full route paths and static redirects", async ()
       {
         path: "/settings/profile",
         name: "settings-profile",
-        file: join(root, "app/pages/settings/profile.vue"),
+        file: profile,
+        sourceHash: sha256(profileSource),
         redirect: { name: "settings-account" },
       },
       {

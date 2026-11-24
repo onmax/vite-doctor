@@ -6,8 +6,6 @@ import { diagnostics } from "../../diagnostics.js";
 
 const RULE_ID = "nuxt/routing/no-global-middleware-redirect-loop";
 const NUXT_IMPORT_SOURCES = new Set(["#app", "#imports", "nuxt/app", "#app/composables/router"]);
-// Nuxt composables whose value cannot change between two navigations of one redirect chain.
-const STABLE_COMPOSABLES = new Set(["useState", "useCookie", "useRuntimeConfig", "useAppConfig"]);
 // Globals that describe the browser location, which a guard may compare against the target.
 const LOCATION_GLOBALS = new Set([
   "arguments",
@@ -30,7 +28,7 @@ interface Redirect {
   target: string;
 }
 
-type Scan = { kind: "redirect"; redirect: Redirect } | { kind: "clean" } | { kind: "unsafe" };
+type Scan = Redirect | "continue" | "stop";
 
 export const noGlobalMiddlewareRedirectLoop = createRule({
   meta: {
@@ -62,10 +60,14 @@ export const noGlobalMiddlewareRedirectLoop = createRule({
           (candidate) => candidate.global && resolveSameFile(candidate.path, file),
         );
         if (!entry) return;
+        const pathname = redirect.target.split(/[?#]/, 1)[0]!;
+        const example = /^\/[\w./~-]*$/.test(pathname)
+          ? `, for example \`if (to.path === ${JSON.stringify(pathname)}) return\``
+          : "";
         ctx.report(
           diagnostics.NUXT0107({
             why: `Nuxt runs the global middleware '${entry.name}' on every navigation, including the redirect to '${redirect.target}'. Nothing on the way to this navigateTo() reads the destination, so the navigation to '${redirect.target}' redirects to '${redirect.target}' again, and the redirects never settle. vue-router aborts after 30 in development and loops in production.`,
-            fix: `Return early when the navigation already goes to the target, for example \`if (to.path === '${redirect.target}') return\`, or guard the redirect with a condition that reads \`to\`, such as \`to.meta.auth\`.`,
+            fix: `Return early when the navigation already goes to the target${example}, or guard the redirect with a condition that reads \`to\`, such as \`to.meta.auth\`.`,
           }),
           {
             ruleId: RULE_ID,
@@ -108,7 +110,6 @@ function loopingRedirect(program: AnyNode, declaration: AnyNode): Redirect | nul
   if (!fn || fn.params.length > 2) return null;
   const [to, from] = fn.params;
   if ((to && to.type !== "Identifier") || (from && from.type !== "Identifier")) return null;
-  const locals = new Set<string>(from ? [from.name] : []);
   let readsRoute = false;
   walkScriptLocal(fn.body, (node) => {
     if (node.type !== "Identifier" || !isReference(node)) return;
@@ -116,8 +117,11 @@ function loopingRedirect(program: AnyNode, declaration: AnyNode): Redirect | nul
   });
   if (readsRoute) return null;
   if (fn.body.type !== "BlockStatement") return redirectCall(fn.body, bindings);
-  const result = scanStatements(fn.body.body, bindings, locals);
-  return result.kind === "redirect" ? result.redirect : null;
+  for (const client of [true, false]) {
+    const result = scanStatements(fn.body.body, bindings, client);
+    if (typeof result === "object") return result;
+  }
+  return null;
 }
 
 function middlewareFunction(declaration: AnyNode, bindings: Bindings): AnyNode {
@@ -132,69 +136,58 @@ function middlewareFunction(declaration: AnyNode, bindings: Bindings): AnyNode {
 
 // Each statement before the redirect runs again on the next navigation, so it may only read
 // values that stay the same between the two.
-function scanStatements(statements: AnyNode[], bindings: Bindings, locals: Set<string>): Scan {
+function scanStatements(statements: AnyNode[], bindings: Bindings, client: boolean): Scan {
   for (const statement of statements) {
-    const result = scanStatement(statement, bindings, locals);
-    if (result.kind !== "clean") return result;
+    const result = scanStatement(statement, bindings, client);
+    if (result !== "continue") return result;
   }
-  return { kind: "clean" };
+  return "continue";
 }
 
-function scanStatement(statement: AnyNode, bindings: Bindings, locals: Set<string>): Scan {
+function scanStatement(statement: AnyNode, bindings: Bindings, client: boolean): Scan {
   switch (statement.type) {
     case "EmptyStatement":
-      return { kind: "clean" };
+      return "continue";
     case "BlockStatement":
-      return scanStatements(statement.body, bindings, new Set(locals));
-    case "ReturnStatement": {
-      const redirect = statement.argument ? redirectCall(statement.argument, bindings) : null;
-      return redirect ? { kind: "redirect", redirect } : { kind: "unsafe" };
-    }
+      return scanStatements(statement.body, bindings, client);
+    case "ReturnStatement":
+      return redirectCall(statement.argument, bindings) ?? "stop";
     case "VariableDeclaration":
-      for (const declarator of statement.declarations) {
-        if (!declarator.init || !isStable(declarator.init, bindings, locals))
-          return { kind: "unsafe" };
-        for (const name of patternNames(declarator.id)) locals.add(name);
-      }
-      return { kind: "clean" };
-    case "ExpressionStatement":
-      return isConsoleCall(statement.expression, bindings, locals)
-        ? { kind: "clean" }
-        : { kind: "unsafe" };
-    case "IfStatement": {
-      if (!isStable(statement.test, bindings, locals)) return { kind: "unsafe" };
-      const branches = [statement.consequent, statement.alternate].filter(Boolean);
-      for (const branch of branches) {
-        const result = scanStatement(branch, bindings, new Set(locals));
-        if (result.kind === "redirect") return result;
-      }
-      // A branch that leaves the middleware ends this navigation's run before the redirect,
-      // and its stable condition takes it the same way on the next run.
-      return branches.every(
-        (branch) =>
-          alwaysExits(branch) || scanStatement(branch, bindings, new Set(locals)).kind === "clean",
+      return statement.declarations.every(
+        (declarator: AnyNode) =>
+          declarator.id.type === "Identifier" &&
+          (!declarator.init || isStaticValue(declarator.init)),
       )
-        ? { kind: "clean" }
-        : { kind: "unsafe" };
+        ? "continue"
+        : "stop";
+    case "IfStatement": {
+      const test = branchCondition(statement.test, client);
+      if (test === undefined) return "stop";
+      const branch = test ? statement.consequent : statement.alternate;
+      return branch ? scanStatement(branch, bindings, client) : "continue";
     }
     default:
-      return { kind: "unsafe" };
+      return "stop";
   }
 }
 
-function alwaysExits(statement: AnyNode): boolean {
-  if (statement.type === "ReturnStatement" || statement.type === "ThrowStatement") return true;
-  if (statement.type !== "BlockStatement" || !statement.body.length) return false;
-  if (containsLoopControl(statement)) return false;
-  return alwaysExits(statement.body[statement.body.length - 1]);
-}
-
-function containsLoopControl(node: AnyNode): boolean {
-  let found = false;
-  walkScriptLocal(node, (child) => {
-    if (child.type === "BreakStatement" || child.type === "ContinueStatement") found = true;
-  });
-  return found;
+function branchCondition(node: AnyNode, client: boolean): boolean | undefined {
+  const test = unwrap(node);
+  if (test.type === "Literal") return Boolean(test.value);
+  if (test.type === "UnaryExpression" && test.operator === "!") {
+    const operand = branchCondition(test.argument, client);
+    return operand === undefined ? undefined : !operand;
+  }
+  if (
+    test.type === "MemberExpression" &&
+    !test.computed &&
+    test.object.type === "MetaProperty" &&
+    test.object.meta.name === "import" &&
+    test.object.property.name === "meta"
+  ) {
+    if (test.property.name === "client") return client;
+    if (test.property.name === "server") return !client;
+  }
 }
 
 function redirectCall(node: AnyNode, bindings: Bindings): Redirect | null {
@@ -202,6 +195,7 @@ function redirectCall(node: AnyNode, bindings: Bindings): Redirect | null {
   if (call?.type === "AwaitExpression") call = unwrap(call.argument);
   if (call?.type !== "CallExpression" || !isNuxtCall(call, "navigateTo", bindings)) return null;
   if (call.arguments.length > 2) return null;
+  if (!call.arguments.every(isStaticValue)) return null;
   const target = staticTarget(unwrap(call.arguments[0]));
   if (!target) return null;
   const options = call.arguments[1] && unwrap(call.arguments[1]);
@@ -209,23 +203,30 @@ function redirectCall(node: AnyNode, bindings: Bindings): Redirect | null {
   return { call, target };
 }
 
-function staticTarget(node: AnyNode): string | null {
+function staticString(node: AnyNode): string | null {
   if (node?.type === "Literal" && typeof node.value === "string") return internalPath(node.value);
   if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
     return internalPath(node.quasis[0]?.value.cooked);
-  if (node?.type !== "ObjectExpression") return null;
+  return null;
+}
+
+function staticTarget(node: AnyNode): string | null {
+  if (node?.type !== "ObjectExpression") return staticString(node);
   let path: string | null = null;
   for (const property of node.properties) {
     if (property.type !== "Property" || property.computed || property.kind !== "init") return null;
     const key = propertyName(property);
-    if (key === "path") path = staticTarget(unwrap(property.value));
+    if (key === "path") path = staticString(unwrap(property.value));
     else if (key !== "query" && key !== "hash" && key !== "replace") return null;
   }
   return path;
 }
 
 function internalPath(value: unknown): string | null {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
+  return typeof value === "string" &&
+    value.startsWith("/") &&
+    !value.startsWith("//") &&
+    !value.startsWith("/\\")
     ? value
     : null;
 }
@@ -241,65 +242,27 @@ function isInternalRedirectOptions(node: AnyNode): boolean {
   );
 }
 
-function isStable(node: AnyNode, bindings: Bindings, locals: Set<string>): boolean {
+function isStaticValue(node: AnyNode): boolean {
   const value = unwrap(node);
-  if (!value) return true;
-  switch (value.type) {
+  switch (value?.type) {
     case "Literal":
-    case "Identifier":
-    case "MetaProperty":
-    case "ThisExpression":
-      return true;
+      return value.value === null || ["string", "boolean", "number"].includes(typeof value.value);
     case "TemplateLiteral":
-      return value.expressions.every((child: AnyNode) => isStable(child, bindings, locals));
-    case "MemberExpression":
-      return (
-        isStable(value.object, bindings, locals) &&
-        (!value.computed || isStable(value.property, bindings, locals))
-      );
-    case "ChainExpression":
-      return isStable(value.expression, bindings, locals);
-    case "UnaryExpression":
-      return value.operator !== "delete" && isStable(value.argument, bindings, locals);
-    case "BinaryExpression":
-    case "LogicalExpression":
-      return isStable(value.left, bindings, locals) && isStable(value.right, bindings, locals);
-    case "ConditionalExpression":
-      return [value.test, value.consequent, value.alternate].every((child) =>
-        isStable(child, bindings, locals),
-      );
+      return value.expressions.length === 0;
     case "ArrayExpression":
-      return value.elements.every(
-        (child: AnyNode) => child?.type !== "SpreadElement" && isStable(child, bindings, locals),
-      );
-    case "CallExpression":
-      return (
-        value.callee?.type === "Identifier" &&
-        STABLE_COMPOSABLES.has(value.callee.name) &&
-        !locals.has(value.callee.name) &&
-        isNuxtBinding(value.callee.name, bindings) &&
-        value.arguments.every(
-          (argument: AnyNode) =>
-            FUNCTION_TYPES.has(unwrap(argument)?.type) ||
-            unwrap(argument)?.type === "ObjectExpression" ||
-            isStable(argument, bindings, locals),
-        )
+      return value.elements.every(isStaticValue);
+    case "ObjectExpression":
+      return value.properties.every(
+        (property: AnyNode) =>
+          property.type === "Property" &&
+          !property.computed &&
+          property.kind === "init" &&
+          propertyName(property) !== "__proto__" &&
+          isStaticValue(property.value),
       );
     default:
       return false;
   }
-}
-
-function isConsoleCall(node: AnyNode, bindings: Bindings, locals: Set<string>): boolean {
-  const call = unwrap(node);
-  return (
-    call?.type === "CallExpression" &&
-    call.callee?.type === "MemberExpression" &&
-    call.callee.object?.type === "Identifier" &&
-    call.callee.object.name === "console" &&
-    !bindings.has("console") &&
-    call.arguments.every((argument: AnyNode) => isStable(argument, bindings, locals))
-  );
 }
 
 function isNuxtCall(node: AnyNode, name: string, bindings: Bindings): boolean {

@@ -1326,7 +1326,7 @@ export const ruleDocumentationMetadata = {
   "nuxt/routing/no-global-middleware-redirect-loop": {
     description:
       "Flags a global route middleware that redirects to a fixed route without checking where navigation is going.",
-    why: "Nuxt runs global middleware before every navigation, including the redirect it just issued. A redirect that does not depend on `to` runs again on the target route and loops until vue-router gives up.",
+    why: "Nuxt runs global middleware on the route it redirects to. Doctor reports a fixed redirect that the middleware reaches again on that route, and skips conditions and arguments that depend on mutable state or other values it cannot establish.",
     recommendedReplacement:
       "Return early when `to.path` (or `to.meta`) already matches the target, or move the redirect into named middleware.",
     examples: [
@@ -1334,9 +1334,9 @@ export const ruleDocumentationMetadata = {
         title: "Skip the redirect on its target",
         language: "ts",
         invalid:
-          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware(() => {\n  const user = useState('user')\n  if (!user.value) return navigateTo('/login')\n})",
+          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware(() => {\n  return navigateTo('/login')\n})",
         valid:
-          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware((to) => {\n  const user = useState('user')\n  if (to.path !== '/login' && !user.value) return navigateTo('/login')\n})",
+          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware((to) => {\n  if (to.path !== '/login') return navigateTo('/login')\n})",
       },
     ],
   },

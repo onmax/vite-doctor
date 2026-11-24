@@ -1,4 +1,6 @@
 import { resolve } from "pathe";
+import { parseScriptSync } from "../../../../core/internal/script.js";
+import { sha256 } from "../../../../core/internal/utils.js";
 import type {
   Diagnostic,
   DiagnosticEvidence,
@@ -55,10 +57,7 @@ export const noRedirectCycle = createRule({
         if (node.callee?.type !== "Identifier" || node.callee.name !== createRouter) return;
         const options = unwrap(node.arguments?.[0]);
         if (options?.type !== "ObjectExpression") return;
-        const routesProperty = options.properties.find(
-          (property: AnyNode) => property.type === "Property" && keyName(property) === "routes",
-        );
-        const routes = routesArray(program, routesProperty?.value);
+        const routes = routesArray(program, effectiveRoutes(options));
         const records = routes && routeRecords(routes.elements, undefined);
         if (!records) return;
         for (const cycle of redirectCycles(records)) {
@@ -121,6 +120,15 @@ function vueRouterImport(program: AnyNode): string | null {
       if (specifier.type === "ImportSpecifier" && imported === "createRouter")
         return specifier.local.name;
     }
+  }
+  return null;
+}
+
+function effectiveRoutes(options: AnyNode): AnyNode {
+  for (let index = options.properties.length - 1; index >= 0; index--) {
+    const property = options.properties[index];
+    if (property.type !== "Property" || property.computed) return null;
+    if (keyName(property) === "routes") return property.kind === "init" ? property.value : null;
   }
   return null;
 }
@@ -214,6 +222,8 @@ function targetFromJson(value: unknown): Target | null {
 
 /** Each redirect cycle once, starting at its earliest record. */
 function redirectCycles(records: RouteRecord[]): number[][] {
+  const names = records.flatMap(({ name }) => (name ? [name] : []));
+  if (new Set(names).size !== names.length) return [];
   const next = records.map((record) =>
     record.redirect ? resolveTarget(records, record.redirect) : null,
   );
@@ -241,8 +251,8 @@ function redirectCycles(records: RouteRecord[]): number[][] {
 // trailing slash. A target resolves only when no other record could take it.
 function resolveTarget(records: RouteRecord[], target: Target): number | null {
   if ("name" in target) {
-    const named = records.flatMap((record, index) => (record.name === target.name ? [index] : []));
-    return named.length === 1 ? named[0]! : null;
+    const index = records.findIndex((record) => record.name === target.name);
+    return target.name && index >= 0 && STATIC_PATH_RE.test(records[index]!.path) ? index : null;
   }
   const key = matchKey(target.path);
   const matches = records.flatMap((record, index) =>
@@ -264,22 +274,27 @@ function matchKey(path: string) {
 function reportNuxtRouteCycle(ctx: RuleContext, program: AnyNode) {
   const manifest = ctx.project.nuxt?.manifest;
   if (!manifest?.isCurrent || !manifest.routes || !manifest.routerOptionsFiles) return;
-  // A router.options `routes` function can replace every route Nuxt resolved.
-  for (const file of manifest.routerOptionsFiles) {
-    const text = ctx.fs.readText(file);
-    if (text === undefined || /\broutes\b/.test(text)) return;
-  }
   const records = nuxtRouteRecords(manifest.routes);
   if (!records) return;
   const current = resolve(ctx.project.root, ctx.file.path);
+  const meta = definePageMetaRedirect(program);
+  if (!meta) return;
+  let verified = false;
   for (const cycle of redirectCycles(records)) {
     const members = cycle.map((index) => records[index]!);
     const anchor = members.find(
       (record) => record.file && /\bdefinePageMeta\b/.test(ctx.fs.readText(record.file) ?? ""),
     );
     if (anchor?.file !== current) continue;
-    const meta = definePageMetaRedirect(program);
-    if (!meta) continue;
+    if (!verified) {
+      if (!manifest.routerOptionsFiles.every((file) => preservesNuxtRoutes(ctx, file))) return;
+      for (const { file, sourceHash } of manifest.routes) {
+        if (!file) continue;
+        const source = sourceHash && ctx.fs.readText(file);
+        if (source === undefined || !sourceHash || sha256(source) !== sourceHash) return;
+      }
+      verified = true;
+    }
     report(ctx, members, {
       range: ctx.range(meta),
       related: members.map((record, position) => ({
@@ -296,6 +311,44 @@ function reportNuxtRouteCycle(ctx: RuleContext, program: AnyNode) {
       ],
     });
   }
+}
+
+function preservesNuxtRoutes(ctx: RuleContext, file: string): boolean {
+  const text = ctx.fs.readText(file);
+  if (text === undefined) return false;
+  const { program, errors } = parseScriptSync(file, text, { sourceType: "module" });
+  if (errors.length) return false;
+  let options: AnyNode = null;
+  for (const statement of program.body as AnyNode[]) {
+    if (statement.type === "ExportDefaultDeclaration") options = unwrap(statement.declaration);
+    if (statement.type !== "ExportNamedDeclaration") continue;
+    const defaultExport = statement.specifiers.find(
+      (specifier: AnyNode) => (specifier.exported.name ?? specifier.exported.value) === "default",
+    );
+    if (!defaultExport) continue;
+    if (statement.source || defaultExport.local.type !== "Identifier") return false;
+    const name = defaultExport.local.name;
+    const references = new Set<number>();
+    walkScriptLocal(program, (node) => {
+      if (node.type === "Identifier" && node.name === name && isReference(node))
+        references.add(node.start);
+    });
+    if (references.size !== 2) return false;
+    for (const declaration of program.body as AnyNode[]) {
+      if (declaration.type !== "VariableDeclaration") continue;
+      for (const binding of declaration.declarations) {
+        if (binding.id.type === "Identifier" && binding.id.name === name)
+          options = unwrap(binding.init);
+      }
+    }
+  }
+  return (
+    options?.type === "ObjectExpression" &&
+    options.properties.every((property: AnyNode) => {
+      const key = property.type === "Property" && property.kind === "init" && keyName(property);
+      return key && key !== "routes" && key !== "__proto__";
+    })
+  );
 }
 
 // Nuxt hands vue-router a route's own path, name and alias unless page meta sets them at runtime.

@@ -51,11 +51,7 @@ test.each([
   ["an arrow that returns navigateTo", "() => navigateTo('/login')"],
   [
     "a condition that never reads the destination",
-    "() => {\n  const user = useState('user')\n  if (!user.value) return navigateTo('/login')\n}",
-  ],
-  [
-    "a condition that reads only from",
-    "(to, from) => {\n  if (from.path !== '/login') return navigateTo('/login')\n}",
+    "() => { if (true) return navigateTo('/login') }",
   ],
   [
     "an early return that never reads the destination",
@@ -63,10 +59,7 @@ test.each([
   ],
   ["a route location object", "() => navigateTo({ path: '/login' })"],
   ["a replace redirect", "() => navigateTo('/login', { replace: true })"],
-  [
-    "an else branch",
-    "() => {\n  const user = useState('user')\n  if (user.value) {\n    return\n  } else {\n    return navigateTo('/login')\n  }\n}",
-  ],
+  ["an else branch", "() => { if (false) { return } else { return navigateTo('/login') } }"],
   ["a function expression", "async function () {\n  return await navigateTo('/login')\n}"],
 ])("reports %s", async (_name, body) => {
   const result = await run(middleware(body));
@@ -129,6 +122,29 @@ test.each([
   const result = await run(middleware(body));
 
   expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  ["an unreachable redirect", "() => { if (false) return navigateTo('/login') }"],
+  [
+    "a redirect after an unconditional exit",
+    "() => { if (true) return; return navigateTo('/login') }",
+  ],
+  ["a shared guard flag", "() => { if (!useState('isLogin').value) return navigateTo('/login') }"],
+  ["a mutable module flag", "() => { if (someFlag.value) return navigateTo('/login') }"],
+  ["a side effect in options", "() => navigateTo('/login', { replace: (seen.value = true) })"],
+  [
+    "a side effect in the location",
+    "() => navigateTo({ path: '/login', query: { seen: (seen.value = true) } })",
+  ],
+])("does not report %s", async (_name, body) => {
+  expect((await run(middleware(body))).diagnostics).toEqual([]);
+});
+
+test("suggests comparing to.path with only the pathname", async () => {
+  const result = await run(middleware(`(to) => navigateTo('/login?next=/#welcome')`));
+
+  expect(result.diagnostics[0]?.suggestion).toContain(`to.path === "/login"`);
 });
 
 test("does not report a local navigateTo", async () => {

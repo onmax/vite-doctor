@@ -1,5 +1,5 @@
 import { getCallSites } from "node:util";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   autoRegisteredNuxtLayers,
@@ -22,6 +22,7 @@ import type {
   NuxtResolvedRoute,
 } from "../../core/index.js";
 import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
+import { sha256 } from "../../core/internal/utils.js";
 export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 
 export type NuxtDoctorModuleOptions = DoctorConfig;
@@ -69,6 +70,7 @@ type NuxtDoctorEvidence = {
   moduleSources?: NuxtModuleSource[];
   extensions?: string[];
   app?: { middleware?: unknown[]; pages?: unknown[] };
+  routeSourceHashes?: Map<string, string>;
   routerOptions?: { files?: unknown[] };
 };
 
@@ -91,6 +93,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     moduleSources: undefined as NuxtModuleSource[] | undefined,
     extensions: undefined as string[] | undefined,
     app: undefined as NuxtDoctorEvidence["app"],
+    routeSourceHashes: undefined as NuxtDoctorEvidence["routeSourceHashes"],
     routerOptions: undefined as NuxtDoctorEvidence["routerOptions"],
   };
 
@@ -207,6 +210,19 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   // Nuxt resolves middleware and pages before app:templates; later hooks may still amend them.
   nuxt.hook?.("app:templates", (app: NuxtDoctorEvidence["app"]) => {
     evidence.app = app;
+    if (app?.pages && nuxt.options.experimental?.scanPageMeta) {
+      evidence.routeSourceHashes = new Map();
+      for (const page of flattenPages(app.pages)) {
+        if (typeof page?.file !== "string") continue;
+        const file = resolve(nuxt.options.rootDir ?? process.cwd(), page.file);
+        if (evidence.routeSourceHashes.has(file)) continue;
+        try {
+          evidence.routeSourceHashes.set(file, sha256(readFileSync(file, "utf8")));
+        } catch {
+          continue;
+        }
+      }
+    }
   });
 
   // Modules registered after this one push their files into the same context.
@@ -406,8 +422,10 @@ export async function writeManifest(
     pages: evidence?.pages ?? [],
     middleware: evidence?.app ? serializeMiddleware(rootDir, evidence.app.middleware) : undefined,
     routes:
-      evidence?.app?.pages && nuxt.options.experimental?.scanPageMeta
-        ? serializeRoutes(rootDir, evidence.app.pages)
+      evidence?.app?.pages &&
+      evidence.routeSourceHashes &&
+      !Object.hasOwn(nuxt.options.router?.options ?? {}, "routes")
+        ? serializeRoutes(rootDir, evidence.app.pages, evidence.routeSourceHashes)
         : undefined,
     routerOptionsFiles: evidence?.routerOptions
       ? toArray(evidence.routerOptions.files)
@@ -519,7 +537,8 @@ function serializeMiddleware(
 // vue-router joins a relative child path onto its parent's full path.
 function serializeRoutes(
   rootDir: string,
-  pages: unknown[] = [],
+  pages: unknown[],
+  sourceHashes: Map<string, string>,
   parentPath?: string,
 ): NuxtResolvedRoute[] {
   return pages.flatMap((page: any) => {
@@ -532,11 +551,14 @@ function serializeRoutes(
     const alias = (Array.isArray(page?.alias) ? page.alias : [page?.alias]).filter(Boolean);
     const route: NuxtResolvedRoute = { path };
     if (typeof page?.name === "string") route.name = page.name;
-    if (typeof page?.file === "string") route.file = resolve(rootDir, page.file);
+    if (typeof page?.file === "string") {
+      route.file = resolve(rootDir, page.file);
+      route.sourceHash = sourceHashes.get(route.file);
+    }
     if (page?.redirect !== undefined) route.redirect = page.redirect;
     if (alias.length) route.alias = alias;
     if (dynamic instanceof Set && dynamic.size) route.dynamic = [...dynamic].map(String);
-    return [route, ...serializeRoutes(rootDir, toArray(page?.children), path)];
+    return [route, ...serializeRoutes(rootDir, toArray(page?.children), sourceHashes, path)];
   });
 }
 
