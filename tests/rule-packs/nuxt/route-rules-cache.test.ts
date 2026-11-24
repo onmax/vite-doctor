@@ -39,6 +39,7 @@ async function run(files: Record<string, string>) {
         file: diagnostic.file?.replace(/^.*\/(?:vue-doctor|vite-doctor-fixture)-[^/]+\//, ""),
         line: diagnostic.range?.line,
         why: diagnostic.why,
+        confidence: diagnostic.confidence,
         evidence: diagnostic.evidence,
       })),
     gaps: (result.project.evidenceGaps ?? []).filter(
@@ -97,9 +98,63 @@ test.each([
   });
 
   expect(result.diagnostics).toHaveLength(1);
-  expect(result.diagnostics[0]).toMatchObject({ file, line: script.split("\n").length + 1 });
+  expect(result.diagnostics[0]).toMatchObject({
+    file,
+    line: script.split("\n").length + 1,
+    confidence: script.includes(".context.") ? "heuristic-medium" : "manifest-backed",
+  });
   expect(result.diagnostics[0]?.why).toContain(kind);
   expect(result.diagnostics[0]?.evidence?.[0]).toMatchObject({ kind: "manifest" });
+});
+
+// Nitro's cached handler keeps `event.context` (nitropack/dist/runtime/internal/cache.mjs:255), but
+// adapters and Nitro also store per-deployment values there, such as `context.cloudflare.env`.
+test("reports an event.context read at heuristic confidence", async () => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: page("const apiUrl = useRequestEvent()?.context.cloudflare.env.API_URL"),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { swr: 60 },
+    }),
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]).toMatchObject({ confidence: "heuristic-medium" });
+  expect(result.diagnostics[0]?.why).toContain("if this field holds per-visitor data");
+  expect(result.diagnostics[0]?.evidence?.[1]?.summary).toContain("per visitor");
+});
+
+test("prefers a proven read over an event.context read on the same page", async () => {
+  const file = "app/pages/account.vue";
+  const script =
+    "const env = useRequestEvent()?.context.cloudflare.env\nconst headers = useRequestHeaders(['cookie'])";
+  const result = await run({
+    [file]: page(script),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { swr: 60 },
+    }),
+  });
+
+  expect(result.diagnostics).toMatchObject([{ line: 3, confidence: "manifest-backed" }]);
+});
+
+test("reports a read in a function not proven to run during server render at heuristic confidence", async () => {
+  const file = "app/pages/search.vue";
+  // The callback runs only when the button is clicked, but Doctor can't see inside useSearchBox.
+  const script = [
+    "import { useSearchBox } from '~/composables/search-box'",
+    "const { submit } = useSearchBox(() => useRequestURL().searchParams.get('q'))",
+  ].join("\n");
+  const result = await run({
+    [file]: page(script, '<button @click="submit">Search</button>'),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/search", file }], {
+      "/search": { prerender: true },
+    }),
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]).toMatchObject({ line: 3, confidence: "heuristic-medium" });
+  expect(result.diagnostics[0]?.why).toContain("in code that may run while the page renders");
 });
 
 test.each([

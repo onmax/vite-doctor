@@ -1,4 +1,4 @@
-import type { RuleContext } from "../../../../core/index.js";
+import type { Confidence, RuleContext } from "../../../../core/index.js";
 import {
   holdsRequestValue,
   staticMemberName,
@@ -51,7 +51,6 @@ const H3_READERS = new Set([
   "useSession",
 ]);
 const QUERY_FIELDS = new Set(["search", "searchParams"]);
-const SERVER_EVIDENCE = new Set(["setup-time", "unknown"]);
 
 type ReadKind = "headers" | "event" | "query";
 
@@ -60,6 +59,10 @@ interface RequestRead {
   kind: ReadKind;
   label: string;
   headers?: string[];
+  /** The read may run only in the browser: execution evidence is `unknown`. */
+  renderUnproven: boolean;
+  /** An `event.context` field, which may hold per-deployment rather than per-visitor data. */
+  visitorUnproven: boolean;
 }
 
 export const noRequestStateInCachedPage = createRule({
@@ -108,21 +111,35 @@ export const noRequestStateInCachedPage = createRule({
               ctx.file.relativePath,
               `ISR coverage for ${route} is unproven for the production Nitro preset`,
             );
-          const read = reads.find((candidate) => kinds.some((kind) => applies(candidate, kind)));
+          const applicable = reads.filter((candidate) =>
+            kinds.some((kind) => applies(candidate, kind)),
+          );
+          const read =
+            applicable.find(
+              (candidate) => !candidate.renderUnproven && !candidate.visitorUnproven,
+            ) ?? applicable[0];
           if (!read) continue;
           const kind = kinds.find((kind) => applies(read, kind))!;
+          const doubts = [
+            read.renderUnproven &&
+              "Doctor can't prove this code runs while the page renders on the server; it may only run later in the browser.",
+            read.visitorUnproven &&
+              "`event.context` holds whatever middleware, Nitro and the deployment adapter put there, such as `context.cloudflare.env`; Doctor can't tell whether this field is per visitor.",
+          ].filter((doubt): doubt is string => !!doubt);
+          const confidence: Confidence = doubts.length ? "heuristic-medium" : "manifest-backed";
           ctx.report(diagnostics.NUXT0106({ why: why(read, kind, route), fix: fix(read) }), {
             ruleId: RULE_ID,
             severity: ctx.severity,
             category: "ssr",
             file: ctx.file.path,
             range: ctx.range(read.node),
-            confidence: "manifest-backed",
+            confidence,
             evidence: [
               {
                 kind: "manifest",
                 summary: `Nitro's route rule matcher applies ${patterns.join(", ")} to ${route}, which merge to \`${kind}\`.`,
               },
+              ...doubts.map((summary) => ({ kind: "ast" as const, summary })),
             ],
           });
           return;
@@ -143,7 +160,8 @@ function requestReads(ctx: RuleContext, program: AnyNode): RequestRead[] {
   const event = sources(ctx, "useRequestEvent");
   const url = sources(ctx, "useRequestURL");
   walkScriptLocal(program, (node) => {
-    let read: Omit<RequestRead, "node"> | null = null;
+    let read: Omit<RequestRead, "node" | "renderUnproven" | "visitorUnproven"> | null = null;
+    let visitorUnproven = false;
     if (node.type === "CallExpression") {
       const callee = unwrapExpression(node.callee);
       const composable = importedName(ctx, callee, (source) => NUXT_SOURCES.test(source));
@@ -183,15 +201,19 @@ function requestReads(ctx: RuleContext, program: AnyNode): RequestRead[] {
     } else if (node.type === "MemberExpression") {
       const field = staticMemberName(node);
       const dependency = eventMemberDependency(node);
-      if (dependency && holdsRequestValue(node.object, event))
+      if (dependency && holdsRequestValue(node.object, event)) {
         read = {
           ...dependency,
           label: `useRequestEvent() is read for its ${dependency.kind === "headers" ? "headers" : "context"}`,
         };
-      else if (field && QUERY_FIELDS.has(field) && holdsRequestValue(node.object, url))
+        visitorUnproven = dependency.kind === "event";
+      } else if (field && QUERY_FIELDS.has(field) && holdsRequestValue(node.object, url))
         read = { kind: "query", label: `useRequestURL().${field} reads the query string` };
     }
-    if (read && runsDuringServerRender(ctx, node)) reads.push({ node, ...read });
+    if (!read || ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)) return;
+    const execution = classifyExecutionEvidence(ctx, node);
+    if (execution !== "setup-time" && execution !== "unknown") return;
+    reads.push({ node, ...read, renderUnproven: execution === "unknown", visitorUnproven });
   });
   return reads.sort((a, b) => a.node.start - b.node.start);
 }
@@ -224,13 +246,6 @@ function sources(ctx: RuleContext, composable: string) {
   };
 }
 
-function runsDuringServerRender(ctx: RuleContext, node: AnyNode) {
-  return (
-    !ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text) &&
-    SERVER_EVIDENCE.has(classifyExecutionEvidence(ctx, node))
-  );
-}
-
 function why(read: RequestRead, kind: SharedCacheKind, route: string) {
   const served = {
     cache: `Nitro caches the server-rendered response for ${route} (route rule \`cache\`) and serves it to every visitor until it expires.`,
@@ -246,9 +261,12 @@ function why(read: RequestRead, kind: SharedCacheKind, route: string) {
         : kind === "isr"
           ? "The visitor whose request fills the cache decides what everyone else sees, including anything rendered from their headers, cookies or session."
           : read.kind === "event"
-            ? "Nitro renders the cached response with a copy of the request that drops every header not listed in `cache.varies`, but it keeps the request's `event.context`, so the visitor who fills the cache decides what everyone else sees."
+            ? `Nitro renders the cached response with a copy of the request that drops every header not listed in \`cache.varies\`, but it keeps the request's \`event.context\`, so ${read.visitorUnproven ? "if this field holds per-visitor data, " : ""}the visitor who fills the cache decides what everyone else sees.`
             : "Nitro renders the cached response with a copy of the request that drops every header not listed in `cache.varies`, cookies included, so this read is empty while the cache renders and every visitor gets the anonymous page.";
-  return `${read.label} while the page renders on the server. ${served} ${consequence}`;
+  const when = read.renderUnproven
+    ? "in code that may run while the page renders on the server"
+    : "while the page renders on the server";
+  return `${read.label} ${when}. ${served} ${consequence}`;
 }
 
 function fix(read: RequestRead) {
