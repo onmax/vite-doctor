@@ -14,9 +14,9 @@ import type {
 } from "../primitives.js";
 import type { ScanSession } from "./scan-session.js";
 import { nativeMatch, sha256 } from "./utils.js";
-import { pushDiagnostic } from "./diagnostics.js";
+import { pushDiagnostic, scopedReportLocations } from "./diagnostics.js";
 import { sourceFacts, walkAstFacts } from "./facts.js";
-import { buildImportGraph, computeSccs } from "./import-graph.js";
+import { buildImportGraph, computeSccs, isRuntimeImportEdge } from "./import-graph.js";
 import { collectAutoImportEdges, sessionAutoImportEdges } from "./auto-import-edges.js";
 import { projectNuxtInventories } from "./workspace-nuxt.js";
 
@@ -564,7 +564,7 @@ function sessionImportGraph(session: ScanSession, index?: GraphIndex): ImportGra
   return graph;
 }
 
-function reportImportCycle(session: ScanSession, cycle: ImportCycle): void {
+function reportImportCycle(session: ScanSession, cycle: ImportCycle, graph: ImportGraph): void {
   const path = (file: string) => relative(session.root, file);
   const [first] = cycle.path;
   if (!first) return;
@@ -574,6 +574,7 @@ function reportImportCycle(session: ScanSession, cycle: ImportCycle): void {
   const group = others.length
     ? ` It is one loop in a group of ${cycle.files.length} files that import each other; ${others.length === 1 ? "the file off this loop is listed as a cycle member" : `the ${others.length} files off this loop are listed as cycle members`}.`
     : "";
+  const locations = session.scopedReport ? cycleScopeLocations(cycle, graph) : undefined;
   reportWorkspaceDiagnostic(session, {
     ruleId: "workspace/dead-code/circular-dependency",
     severity: "warn",
@@ -594,6 +595,7 @@ function reportImportCycle(session: ScanSession, cycle: ImportCycle): void {
       })),
       ...others.map((file) => ({ file, message: "Cycle member" })),
     ],
+    ...(locations?.length ? { [scopedReportLocations]: locations } : {}),
     // Keyed on the group rather than the loop, so reordering imports keeps baselined findings.
     fingerprint: sha256(
       `workspace/dead-code/circular-dependency:${cycle.files.map(path).join("\n")}`,
@@ -609,12 +611,32 @@ function reportImportCycle(session: ScanSession, cycle: ImportCycle): void {
   });
 }
 
+function cycleScopeLocations(cycle: ImportCycle, graph: ImportGraph) {
+  const members = new Set(cycle.files);
+  const onLoop = new Set(cycle.path);
+  return cycle.files.flatMap((file) =>
+    graph
+      .importsOf(file)
+      .flatMap((edge) =>
+        edge.to &&
+        edge.to !== file &&
+        members.has(edge.to) &&
+        edge.range &&
+        isRuntimeImportEdge(edge) &&
+        !onLoop.has(edge)
+          ? [{ file, range: edge.range }]
+          : [],
+      ),
+  );
+}
+
 function runCycleAndDuplicateExportRules(
   session: ScanSession,
   graph: WorkspaceGraph,
   index?: GraphIndex,
 ) {
-  for (const cycle of sessionImportGraph(session, index).cycles) reportImportCycle(session, cycle);
+  const imports = sessionImportGraph(session, index);
+  for (const cycle of imports.cycles) reportImportCycle(session, cycle, imports);
   const exportOwners = new Map<ExportFact, string>();
   for (const fact of graph.files.values()) {
     for (const item of fact.exports) if (!exportOwners.has(item)) exportOwners.set(item, fact.path);

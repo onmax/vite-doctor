@@ -168,6 +168,17 @@ test("a one-way auto-import is an edge but not a cycle", async () => {
   expect(cycles).toEqual([]);
 });
 
+test("a multiline re-export closes an auto-import cycle and retains its declaration range", async () => {
+  const declaration = 'export { useA }\n  from "./useA";';
+  const { graph } = await run({
+    "app/composables/useA.ts": useA,
+    "app/composables/useB.ts": `${declaration}\n`,
+  });
+  const path = graph.cycles[0]?.path;
+  expect(path?.map((edge) => edge.kind)).toEqual(["auto-import", "re-export"]);
+  expect(path?.[1]?.range).toMatchObject({ start: 0, end: declaration.length });
+});
+
 test("a local binding shadows the auto-import", async () => {
   const { cycles, autoImportEdges } = await run({
     "app/composables/useA.ts": useA,

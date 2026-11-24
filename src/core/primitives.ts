@@ -538,6 +538,12 @@ export interface ExportFact {
   range?: SourceRange;
 }
 
+export interface ReExportFact {
+  source: string;
+  typeOnly: boolean;
+  range?: SourceRange;
+}
+
 export interface DynamicImportFact {
   source: string | null;
   range?: SourceRange;
@@ -570,6 +576,7 @@ export interface FileFacts {
   sfc?: SfcBlockHashes;
   imports: ImportFact[];
   exports: ExportFact[];
+  reExports: ReExportFact[];
   dynamicImports: DynamicImportFact[];
   calls: CallFact[];
   templateRefs: TemplateFact[];
@@ -711,7 +718,7 @@ export interface ImportGraphEdge {
   /** Whether TypeScript erases the dependency: `import type` or `export type ... from`. */
   typeOnly: boolean;
   /**
-   * The import declaration, the first re-exported name, the `import()` call, or the file's first
+   * The import or re-export declaration, the `import()` call, or the file's first
    * unshadowed reference to the auto-imported identifier.
    */
   range?: SourceRange;

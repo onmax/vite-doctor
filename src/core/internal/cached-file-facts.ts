@@ -30,6 +30,10 @@ export function isCachedFileFacts(value: unknown): value is FileFacts {
         factKind(item.kind),
     ) &&
     facts(
+      value.reExports,
+      (item) => typeof item.source === "string" && typeof item.typeOnly === "boolean",
+    ) &&
+    facts(
       value.dynamicImports,
       (item) => item.source === null || typeof item.source === "string",
     ) &&
