@@ -292,6 +292,34 @@ export default defineEventHandler((event) => {
 });
 
 test.each([
+  [
+    "a property read before the copy",
+    "const current = patch.current; Object.assign(shared, patch); return current",
+  ],
+  ["a property read after the copy", "Object.assign(shared, patch); return patch.current"],
+  ["an overwrite after the copy", "Object.assign(shared, patch); patch.current = 'public'"],
+  [
+    "an overwrite through an alias after the copy",
+    "const alias = patch; Object.assign(shared, alias); patch.current = 'public'",
+  ],
+  [
+    "an overwrite after a spread snapshot",
+    "const snapshot = { ...patch }; patch.current = 'public'; Object.assign(shared, snapshot)",
+  ],
+])("reports request data copied by Object.assign with %s", async (_, copy) => {
+  const file = "server/api/session.get.ts";
+  expect(
+    await run({
+      [file]: `const shared = {}
+export default defineEventHandler((event) => {
+  const patch = { current: getCookie(event, 'session') }
+  ${copy}
+})`,
+    }),
+  ).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+});
+
+test.each([
   ["a later property", "Object.assign(shared, { ...patch, ['current']: 'public' })"],
   ["a later spread", "Object.assign(shared, { ...patch, ...{ current: 'public' } })"],
   ["a later source", "Object.assign(shared, patch, { current: 'public' })"],
@@ -302,6 +330,15 @@ test.each([
   ],
   ["a possible mutation in another function", "rewrite(patch); Object.assign(shared, patch)"],
   [
+    "a called closure declared after the copy",
+    "rewrite(); Object.assign(shared, patch); function rewrite() { patch.current = 'public' }",
+  ],
+  ["a method that overwrites its receiver", "patch.clear(); Object.assign(shared, patch)"],
+  [
+    "an overwrite in another source argument",
+    "Object.assign(shared, patch, (patch.current = 'public', {}))",
+  ],
+  [
     "a call to a shadowed Object.assign",
     "{ const Object = { assign: (_, value) => { value.current = 'public' } }; Object.assign({}, patch) }; Object.assign(shared, patch)",
   ],
@@ -310,7 +347,7 @@ test.each([
     await run({
       "server/api/session.get.ts": `const shared = {}
 export default defineEventHandler((event) => {
-  const patch = { current: getCookie(event, 'session') }
+  const patch = { current: getCookie(event, 'session'), clear() { this.current = 'public' } }
   ${copy}
 })`,
     }),

@@ -173,27 +173,38 @@ function writtenValues(reference: AnyNode, shape: Shape): AnyNode[] {
     isObjectAssign(parent.callee)
   ) {
     const slots = new Map<string, AnyNode>();
-    for (const source of parent.arguments.slice(1)) collectFixedProperties(source, slots);
+    for (const source of parent.arguments.slice(1)) collectFixedProperties(source, slots, parent);
     return [...slots.values()];
   }
   return [];
 }
 
-function collectFixedProperties(source: AnyNode, slots: Map<string, AnyNode>, depth = 0): void {
-  const object = unwrapExpression(source);
-  if (depth <= 5 && object?.type === "Identifier") {
+function collectFixedProperties(
+  source: AnyNode,
+  slots: Map<string, AnyNode>,
+  snapshot: AnyNode,
+  depth = 0,
+): void {
+  let object = unwrapExpression(source);
+  let declaration: AnyNode;
+  while (depth <= 5 && object?.type === "Identifier") {
     const binding = resolveLexicalBinding(object);
-    if (isUnmodifiedObjectSource(binding)) collectFixedProperties(binding.init, slots, depth + 1);
-    else slots.clear();
-    return;
+    if (!isLocalConst(binding)) break;
+    declaration = binding;
+    object = unwrapExpression(binding.init);
+    depth++;
   }
-  if (depth > 5 || object?.type !== "ObjectExpression") {
+  if (
+    depth > 5 ||
+    object?.type !== "ObjectExpression" ||
+    (declaration && !keepsSourceSlots(declaration, object, snapshot))
+  ) {
     slots.clear();
     return;
   }
   for (const property of object.properties) {
     if (property.type === "SpreadElement") {
-      collectFixedProperties(property.argument, slots, depth + 1);
+      collectFixedProperties(property.argument, slots, property, depth + 1);
       continue;
     }
     const key = staticPropertyKey(property.key, property.computed);
@@ -204,22 +215,29 @@ function collectFixedProperties(source: AnyNode, slots: Map<string, AnyNode>, de
   }
 }
 
-function isUnmodifiedObjectSource(binding: AnyNode, depth = 0): boolean {
-  if (
-    depth > 5 ||
-    binding?.type !== "VariableDeclarator" ||
-    binding.id?.type !== "Identifier" ||
-    binding.__doctorParent?.kind !== "const" ||
-    binding.__doctorParent.__doctorParent?.type === "ExportNamedDeclaration"
-  )
-    return false;
+function isLocalConst(binding: AnyNode) {
+  return (
+    binding?.type === "VariableDeclarator" &&
+    binding.id?.type === "Identifier" &&
+    binding.__doctorParent?.kind === "const" &&
+    binding.__doctorParent.__doctorParent?.type !== "ExportNamedDeclaration"
+  );
+}
+
+function keepsSourceSlots(
+  binding: AnyNode,
+  object: AnyNode,
+  snapshot: AnyNode,
+  allocation = binding,
+  depth = 0,
+): boolean {
+  if (depth > 5 || !isLocalConst(binding)) return false;
 
   let program = binding;
   while (program.__doctorParent) program = program.__doctorParent;
   return scriptNodesOfType(program, "Identifier").every((node) => {
     if (node.name !== binding.id.name || node === binding.id) return true;
-    let use = node;
-    while (unwrapExpression(use.__doctorParent) === node) use = use.__doctorParent;
+    const use = outerExpression(node);
     const parent = use.__doctorParent;
     if (!parent?.computed && parent?.key === use && parent.value !== use) return true;
     if (parent?.type === "MemberExpression" && !parent.computed && parent.property === use)
@@ -227,7 +245,18 @@ function isUnmodifiedObjectSource(binding: AnyNode, depth = 0): boolean {
     if (resolveLexicalBinding(node) !== binding) return true;
 
     if (parent?.type === "VariableDeclarator" && parent.init === use)
-      return isUnmodifiedObjectSource(parent, depth + 1);
+      return keepsSourceSlots(parent, object, snapshot, allocation, depth + 1);
+    if (parent?.type === "MemberExpression" && parent.object === use) {
+      const member = outerExpression(parent);
+      const access = member.__doctorParent;
+      if (
+        access?.type === "AssignmentExpression" &&
+        access.left === member &&
+        isLaterStatement(access, snapshot, allocation)
+      )
+        return true;
+      return isPlainPropertyRead(parent, access, object);
+    }
     if (parent?.type === "SpreadElement") return parent.__doctorParent?.type === "ObjectExpression";
     return (
       parent?.type === "CallExpression" &&
@@ -235,6 +264,64 @@ function isUnmodifiedObjectSource(binding: AnyNode, depth = 0): boolean {
       parent.arguments.indexOf(use) > 0
     );
   });
+}
+
+function outerExpression(node: AnyNode): AnyNode {
+  let outer = node;
+  while (unwrapExpression(outer.__doctorParent) === node) outer = outer.__doctorParent;
+  return outer;
+}
+
+function isLaterStatement(write: AnyNode, snapshot: AnyNode, allocation: AnyNode) {
+  const statement = write.__doctorParent;
+  const block = allocation.__doctorParent?.__doctorParent;
+  if (
+    block?.type !== "BlockStatement" ||
+    statement?.type !== "ExpressionStatement" ||
+    statement.__doctorParent !== block ||
+    nearestFunctionOrProgram(write) !== nearestFunctionOrProgram(snapshot)
+  )
+    return false;
+  let earlier = snapshot;
+  while (earlier.__doctorParent && earlier.__doctorParent !== block)
+    earlier = earlier.__doctorParent;
+  return (
+    earlier.__doctorParent === block &&
+    (earlier.type === "ExpressionStatement" || earlier.type === "VariableDeclaration") &&
+    (earlier.end ?? Infinity) <= (statement.start ?? -1)
+  );
+}
+
+function isPlainPropertyRead(property: AnyNode, consumer: AnyNode, object: AnyNode) {
+  const member = outerExpression(property);
+  if (
+    !consumer ||
+    (consumer.type === "AssignmentExpression" && consumer.left === member) ||
+    (consumer.type === "UnaryExpression" && consumer.operator === "delete") ||
+    (consumer.type === "CallExpression" && consumer.callee === member) ||
+    (consumer.type === "TaggedTemplateExpression" && consumer.tag === member) ||
+    (consumer.type === "Property" && consumer.__doctorParent?.type === "ObjectPattern") ||
+    ["UpdateExpression", "AssignmentPattern", "RestElement", "ArrayPattern"].includes(
+      consumer.type,
+    ) ||
+    ((consumer.type === "ForOfStatement" || consumer.type === "ForInStatement") &&
+      consumer.left === member)
+  )
+    return false;
+  const key = staticPropertyKey(property.property, property.computed);
+  if (key === undefined) return false;
+  for (let index = object.properties.length - 1; index >= 0; index--) {
+    const property = object.properties[index];
+    if (property.type === "SpreadElement") return false;
+    const candidate = staticPropertyKey(property.key, property.computed);
+    if (candidate === undefined) return false;
+    if (candidate === key)
+      return (
+        property.kind === "init" &&
+        (key !== "__proto__" || property.computed || property.shorthand || property.method)
+      );
+  }
+  return false;
 }
 
 function staticPropertyKey(node: AnyNode, computed: boolean, depth = 0): string | undefined {
