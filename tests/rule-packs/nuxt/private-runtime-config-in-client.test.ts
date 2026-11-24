@@ -113,6 +113,49 @@ describe("nuxt/runtime/no-private-runtime-config-in-client", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  test("stays quiet in components/islands, which Nuxt renders only on the server", async () => {
+    const { diagnostics } = await run({
+      "app/components/islands/Invoice.vue": page("const key = useRuntimeConfig().apiSecret"),
+    });
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  test("stays quiet for a component Nuxt resolved as server-only", async () => {
+    const withServerComponent = manifest.replace(
+      '"components":[]',
+      JSON.stringify({
+        components: [{ name: "Report", file: "app/components/Report.vue", mode: "server" }],
+      }).slice(1, -1),
+    );
+    const { diagnostics } = await runProjectFixture({
+      rules: [noPrivateRuntimeConfigInClient],
+      framework: "nuxt",
+      files: {
+        ".nuxt/doctor.manifest.json": withServerComponent,
+        "app/components/Report.vue": page("const key = useRuntimeConfig().apiSecret"),
+      },
+    });
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  test("lowers confidence for a component whose client rendering it cannot see", async () => {
+    const { diagnostics } = await run({
+      "app/components/Report.server.vue": page("").replace("<div />", "<SecretRow />"),
+      "app/components/SecretRow.vue": page("const key = useRuntimeConfig().apiSecret"),
+      "app/pages/index.vue": page("const key = useRuntimeConfig().apiSecret"),
+    });
+
+    const byFile = Object.fromEntries(
+      diagnostics.map((diagnostic) => [diagnostic.file.split("/app/")[1], diagnostic]),
+    );
+    expect(diagnostics).toHaveLength(2);
+    expect(byFile["components/SecretRow.vue"]?.confidence).toBe("heuristic-medium");
+    expect(byFile["components/SecretRow.vue"]?.why).toContain("only server components");
+    expect(byFile["pages/index.vue"]?.confidence).toBe("manifest-backed");
+  });
+
   test("stays quiet for a local useRuntimeConfig that shadows Nuxt's", async () => {
     const { diagnostics } = await run({
       "app/pages/index.vue": page(

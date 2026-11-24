@@ -1,7 +1,8 @@
+import { resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
 import { fileScriptScope, type ScriptScope } from "../../../../core/internal/script-scope.js";
 import { diagnostics } from "../../diagnostics.js";
-import { isRuntimeAppFile } from "./file-classification.js";
+import { isRuntimeAppFile, nuxtSourcePath, resolveSameFile } from "./file-classification.js";
 import { isNuxtAppExport } from "./nuxt-app-binding.js";
 import { scriptNodesOfType } from "./script-index.js";
 import { createRule, toPosixPath, type AnyNode } from "./shared.js";
@@ -14,6 +15,12 @@ const SERVER_ONLY_FILE_RE = /\.(?:server|island(?:\.global)?)\.[^/]+$/;
 // Components, pages, layouts, client plugins and route middleware run in the browser. Composables
 // and utils can be called from server-only code, so they stay out of scope.
 const CLIENT_CODE_RE = /(?:\.vue$|(?:^|\/)(?:plugins|middleware)\/)/;
+// Nuxt renders pages, layouts and the app root on every client navigation. Other components run in
+// the browser only when a client-rendered parent uses them, which this file Rule cannot see.
+const CLIENT_ENTRY_RE = /^(?:(?:pages|layouts)\/|(?:app|error)\.vue$)/;
+// Nuxt's default component dirs register components/islands with `island: true`, so every
+// component there renders only on the server (nuxt/dist/index.mjs normalizeDirs and scanComponents).
+const ISLANDS_DIR_RE = /^components\/islands\//;
 const CLIENT_FLAGS = new Set([
   "import.meta.client",
   "import.meta.browser",
@@ -51,6 +58,9 @@ export const noPrivateRuntimeConfigInClient = createRule({
       !isRuntimeAppFile(ctx)
     )
       return;
+    const sourcePath = nuxtSourcePath(ctx);
+    if (isServerComponent(ctx, sourcePath)) return;
+    const component = path.endsWith(".vue") && !CLIENT_ENTRY_RE.test(sourcePath ?? "");
     return {
       Program() {
         const scope = fileScriptScope(ctx);
@@ -65,11 +75,19 @@ export const noPrivateRuntimeConfigInClient = createRule({
           return;
         }
         const current = nuxt.manifest?.isCurrent === true;
+        const confidence = component
+          ? "heuristic-medium"
+          : current
+            ? "manifest-backed"
+            : "heuristic-high";
+        const unseenParents = component
+          ? " Doctor did not check which components render this one; if only server components do, the read never reaches the browser."
+          : "";
         for (const { key, node } of reads) {
           if (!declared.has(key)) continue;
           ctx.report(
             diagnostics.NUXT0102({
-              why: `runtimeConfig.${key} is private, so it is undefined in the browser even though its type is not. Nuxt sends only runtimeConfig.public and runtimeConfig.app to the client, and in development it warns "Could not access \`${key}\`" (NUXT_E1003).`,
+              why: `runtimeConfig.${key} is private, so it is undefined in the browser even though its type is not. Nuxt sends only runtimeConfig.public and runtimeConfig.app to the client, and in development it warns "Could not access \`${key}\`" (NUXT_E1003).${unseenParents}`,
               fix: `Move ${key} under runtimeConfig.public if it is safe to expose, or read it in a server route and fetch the result. Wrap reads that only run during SSR in if (import.meta.server).`,
             }),
             {
@@ -83,7 +101,7 @@ export const noPrivateRuntimeConfigInClient = createRule({
                 node.range[0],
                 node.range[1],
               ),
-              confidence: current ? "manifest-backed" : "heuristic-high",
+              confidence,
             },
           );
         }
@@ -91,6 +109,19 @@ export const noPrivateRuntimeConfigInClient = createRule({
     };
   },
 });
+
+/** A component Nuxt renders only on the server: its resolved entry says so, or it sits in islands/. */
+function isServerComponent(ctx: RuleContext, sourcePath: string | null): boolean {
+  if (!ctx.file.relativePath.endsWith(".vue")) return false;
+  const file = toPosixPath(resolve(ctx.project.root, ctx.file.path));
+  const entries = [...(ctx.project.nuxt?.components.values() ?? [])].filter(
+    (entry) =>
+      typeof entry?.file === "string" &&
+      resolveSameFile(toPosixPath(resolve(ctx.project.root, entry.file)), file),
+  );
+  if (entries.length) return entries.every((entry) => entry.mode === "server");
+  return sourcePath !== null && ISLANDS_DIR_RE.test(sourcePath);
+}
 
 function topLevelKeys(config: unknown): Set<string> | undefined {
   if (!config || typeof config !== "object" || Array.isArray(config)) return undefined;
