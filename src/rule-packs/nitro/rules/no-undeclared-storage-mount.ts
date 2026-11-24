@@ -144,7 +144,7 @@ function reportFile(
 }
 
 function storageBase(scope: ScriptScope, node: AnyNode) {
-  if (!isStorageCall(scope, node)) return undefined;
+  if (node?.type !== "CallExpression" || !isStorageCall(scope, node)) return undefined;
   const base = literalValue(node.arguments[0]);
   return typeof base === "string" ? base : undefined;
 }

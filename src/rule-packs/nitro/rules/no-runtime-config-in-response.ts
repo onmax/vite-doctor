@@ -3,7 +3,6 @@ import { fileTextScope, type ScriptScope } from "../../../core/internal/script-s
 import { isNitroHandlerFile } from "./nitro-config.js";
 import {
   constInitializer,
-  isFunction,
   nitroHandlerFunctions,
   reportNode,
   resolvedVariable,
@@ -89,21 +88,22 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
     isConfigCall(node) ||
     (node?.type === "Identifier" && configs.has(resolvedVariable(scope, node)));
   const leaks: AnyNode[] = [];
+  const expanding = new Set<AnyNode>();
   const leak = (value: AnyNode, directResponse = false): void => {
     const node = stripAwait(value);
     if (!node) return;
     if (isWholeConfig(node)) return void leaks.push(node);
     if (node.type === "ObjectExpression") {
-      const overwritten = new Set<string>();
-      const expanding = new Set<AnyNode>();
-      const visitProperties = (object: AnyNode) => {
+      const visitProperties = (object: AnyNode, overwritten: Set<string>) => {
         if (expanding.has(object)) return;
         expanding.add(object);
         for (const property of [...object.properties].reverse()) {
           if (property.type === "SpreadElement") {
             const argument = stripAwait(property.argument);
-            const objectLiteral = stripAwait(constInitializer(scope, argument)) ?? argument;
-            if (objectLiteral?.type === "ObjectExpression") visitProperties(objectLiteral);
+            const initializer = stripAwait(constInitializer(scope, argument));
+            if (argument?.type === "ObjectExpression") visitProperties(argument, overwritten);
+            else if (initializer?.type === "ObjectExpression")
+              visitProperties(initializer, new Set(overwritten));
             else leak(argument);
             continue;
           }
@@ -117,7 +117,7 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
         }
         expanding.delete(object);
       };
-      visitProperties(node);
+      visitProperties(node, new Set());
       return;
     }
     if (node.type === "ArrayExpression") {
@@ -159,18 +159,20 @@ function leakedConfigs(scope: ScriptScope): AnyNode[] {
   return leaks;
 }
 
-// JSON.stringify(config) and Response.json(config) serialize every key of the object.
 function isSerializer(scope: ScriptScope, call: AnyNode, directResponse: boolean) {
   const callee = unwrapExpression(call.callee);
   if (callee?.type !== "MemberExpression" || callee.computed) return false;
   const method = callee.property?.name;
   const replacer = unwrapExpression(call.arguments[1]);
-  const replacement = unwrapExpression(constInitializer(scope, replacer)) ?? replacer;
+  const hasStaticAllowlist =
+    replacer?.type === "ArrayExpression" &&
+    replacer.elements.every(
+      (element: AnyNode) =>
+        element?.type === "Literal" &&
+        (typeof element.value === "string" || typeof element.value === "number"),
+    );
   return (
-    (method === "stringify" &&
-      isGlobal(scope, callee.object, "JSON") &&
-      replacement?.type !== "ArrayExpression" &&
-      !isFunction(replacement)) ||
+    (method === "stringify" && isGlobal(scope, callee.object, "JSON") && !hasStaticAllowlist) ||
     (directResponse && method === "json" && isGlobal(scope, callee.object, "Response"))
   );
 }

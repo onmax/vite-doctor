@@ -320,3 +320,20 @@ test("an explicit root mount covers otherwise undeclared bases", async () => {
   });
   expect(result.diagnostics).toEqual([]);
 });
+
+test("checks item keys through asserted storage calls and reports each call once", async () => {
+  const result = await run({
+    "nuxt.config.ts":
+      "export default { nitro: { storage: { 'sessions:archive': { driver: 'memory' } } } }",
+    "server/routes/track.ts": `export default defineEventHandler(() => {
+  const store = useStorage('sessions') as Storage
+  store.getItem('live:alice')
+  ;(useStorage('sessions') as Storage).getItem('live:bob')
+  return (useStorage('sessions') as Storage).getItem('archive/alice')
+})`,
+  });
+  expect(result.diagnostics).toEqual([
+    { code: "NITRO0034", file: "server/routes/track.ts", line: 2 },
+    { code: "NITRO0034", file: "server/routes/track.ts", line: 4 },
+  ]);
+});

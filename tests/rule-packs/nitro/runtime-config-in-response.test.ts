@@ -57,6 +57,24 @@ test.each([
   ).toEqual([]);
 });
 
+test.each([
+  "return JSON.stringify(config, (_, value) => value)",
+  "const keys = ['public']; keys.push(...Object.keys(config)); return JSON.stringify(config, keys)",
+  "return JSON.stringify(config, [...Object.keys(config)])",
+  "const override = { debug: false }; Reflect.deleteProperty(override, 'debug'); return { debug: config, ...override }",
+  "const override = { debug: false }; Reflect.deleteProperty(override, 'debug'); return { ...{ debug: config }, ...override }",
+  "const response = { previous: false ? { ...response } : null }; return { ...response, cfg: config }",
+])("reports config despite uncertain filtering or recursive spreads: %s", async (body) => {
+  expect(
+    await run({
+      "server/api/config.ts": `export default defineEventHandler(() => {
+    const config = useRuntimeConfig()
+    ${body}
+  })`,
+    }),
+  ).toEqual([{ code: "NITRO0032", file: "server/api/config.ts", line: 3 }]);
+});
+
 test("ignores unused handler factories", async () => {
   expect(
     await run({
