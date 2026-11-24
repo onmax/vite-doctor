@@ -627,6 +627,8 @@ export interface ComponentUsageFact {
    */
   bindings: Array<{
     name: string;
+    /** The static key Vue compiles into the component VNode. */
+    vnodeKey: string;
     expression: string;
     model?: boolean;
     modifiers?: boolean;
@@ -635,7 +637,13 @@ export interface ComponentUsageFact {
   /** Object spreads, `v-bind="attrs"` and `v-on="handlers"`, and dynamic arguments such as `:[name]`. */
   spreads: Array<{ directive: "bind" | "on"; expression: string; range: SourceRange }>;
   /** `@event` listeners with a static argument, named as written. */
-  listeners: Array<{ event: string; expression?: string; range: SourceRange }>;
+  listeners: Array<{
+    event: string;
+    modifiers: string[];
+    vnodeKey: string;
+    expression?: string;
+    range: SourceRange;
+  }>;
   /** Other directives on the element, such as `if`, `show`, `slot`, `for`, or a custom directive. */
   directives: string[];
   /**
