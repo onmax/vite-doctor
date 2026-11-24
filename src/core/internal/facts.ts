@@ -7,6 +7,7 @@ import type {
   ExportFact,
   FileFacts,
   ImportFact,
+  ReExportFact,
   SourceFileHandle,
   TemplateFact,
   TemplateRootNode,
@@ -390,6 +391,7 @@ function createFileFacts(
 ): FileFacts {
   const imports: ImportFact[] = [];
   const exports: ExportFact[] = [];
+  const reExports: ReExportFact[] = [];
   const dynamicImports: DynamicImportFact[] = [];
   const calls: Array<{ name: string; range?: ReturnType<DoctorHelpers["rangeFromOffsets"]> }> = [];
   const macros: Array<{ name: string; range?: ReturnType<DoctorHelpers["rangeFromOffsets"]> }> = [];
@@ -404,6 +406,16 @@ function createFileFacts(
   if (scriptAst) {
     walkAstFacts(scriptAst, (node: any) => {
       component?.visitScript(node);
+      if (
+        (node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") &&
+        typeof node.source?.value === "string"
+      ) {
+        reExports.push({
+          source: node.source.value,
+          typeOnly: node.exportKind === "type",
+          range: nodeRange(session, file.path, text, node),
+        });
+      }
       if (node.type === "ImportDeclaration") {
         imports.push({
           source: String(node.source?.value ?? ""),
@@ -484,6 +496,7 @@ function createFileFacts(
     sfc: sfc?.blockHashes,
     imports,
     exports,
+    reExports,
     dynamicImports,
     calls,
     templateRefs,

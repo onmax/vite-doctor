@@ -282,6 +282,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0094", ruleId: "nuxt/routing/keepalive-requires-max" },
   { code: "NUXT0095", ruleId: "nuxt/fetch/no-ssr-refetch-of-shared-key" },
   { code: "NUXT0096", ruleId: "nuxt/imports/prefer-alias-over-relative-parent" },
+  { code: "NUXT0097", ruleId: "nuxt/state/no-diverging-usestate-init" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
