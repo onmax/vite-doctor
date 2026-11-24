@@ -1,7 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { buildNuxt, loadNuxt } from "nuxt/kit";
 import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
+import { runViteDoctor } from "../../../src/doctor.ts";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
 import { sha256 } from "../../../src/core/internal/utils.ts";
 import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
@@ -280,8 +283,7 @@ test("the Nuxt manifest records full route paths and static redirects", async ()
     const profileSource = `<script setup>definePageMeta({ redirect: { name: 'settings-account' } })</script>`;
     mkdirSync(join(root, "app/pages/settings"), { recursive: true });
     writeFileSync(profile, profileSource);
-    await nuxt.callHook("app:templates", {
-      middleware: [],
+    await nuxt.callHook("app:templatesGenerated", {
       pages: [
         {
           path: "/settings",
@@ -324,6 +326,49 @@ test("the Nuxt manifest records full route paths and static redirects", async ()
       },
     ]);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Nuxt prepare captures resolved redirect cycles and invalidates edited pages", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-nuxt-redirect-prepare-"));
+  const cwd = process.cwd();
+  let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
+  try {
+    symlinkSync(
+      fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+      join(root, "node_modules"),
+      "junction",
+    );
+    mkdirSync(join(root, "app/pages"), { recursive: true });
+    writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { nuxt: "*" } }));
+    writeFileSync(join(root, "app/pages/a.vue"), nuxtPage("/b"));
+    const nonAnchor = join(root, "app/pages/b.vue");
+    writeFileSync(nonAnchor, nuxtPage("/a"));
+    process.chdir(root);
+    nuxt = await loadNuxt({
+      cwd: root,
+      overrides: {
+        _prepare: true,
+        modules: [nuxtDoctorModule],
+        experimental: { scanPageMeta: true },
+        telemetry: false,
+      },
+    });
+    await buildNuxt(nuxt);
+    await nuxt.close();
+    nuxt = undefined;
+
+    const run = () => runViteDoctor({ root, framework: "nuxt", rules: RULE_ID, cache: false });
+    const prepared = await run();
+    expect(prepared.diagnostics.map(({ code, file }) => [code, relativeTo(root, file)])).toEqual([
+      ["VUE0053", "app/pages/a.vue"],
+    ]);
+    writeFileSync(nonAnchor, nuxtPage("/home"));
+    expect((await run()).diagnostics).toEqual([]);
+  } finally {
+    await nuxt?.close();
+    process.chdir(cwd);
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -995,6 +995,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia", "https://pinia.vuejs.org/");
   }
 
+  if (rule.id === "vue/reactivity/no-shallow-ref-deep-mutation") {
+    add(
+      "Vue reducing reactivity overhead for large immutable structures",
+      "https://vuejs.org/guide/best-practices/performance.html#reduce-reactivity-overhead-for-large-immutable-structures",
+    );
+    add("Vue triggerRef()", "https://vuejs.org/api/reactivity-advanced.html#triggerref");
+  }
+
+  if (rule.id === "vue/watch/no-property-read-source") {
+    add("Vue watch()", "https://vuejs.org/api/reactivity-core.html#watch");
+  }
+
   if (rule.id === "vue/router/no-redirect-cycle") {
     add(
       "Vue Router redirect and alias",
@@ -1105,7 +1117,11 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   }
 
   if (rule.framework === "nitro") {
-    add("Nitro handlers", "https://nitro.build/guide/routing");
+    add("Nitro handlers", "https://nitro.build/docs/routing");
+  }
+
+  if (rule.id === "nitro/cache/require-varies-for-header-read") {
+    add("Nitro cache", "https://nitro.build/guide/cache");
   }
 
   if (rule.framework === "vite" && rule.category === "env") {

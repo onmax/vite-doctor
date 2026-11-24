@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { build, createBuilder, type Logger } from "vite";
+import { build, createBuilder, resolveConfig, type Logger } from "vite";
 import { expect, test } from "vite-plus/test";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../src/extension.ts";
 import { doctor } from "../../src/plugin.ts";
@@ -36,6 +36,220 @@ test("a reused Plugin Surface diagnoses each resolved Vite build", async () => {
       "export const secret = import.meta.env.VITE_API_SECRET;\n",
     );
     await expect(build(config)).rejects.toThrow("vite/env/no-client-secret-pattern");
+  });
+});
+
+test("Pinia cycles use Vite's resolved extension order", async () => {
+  await withProject(async (root) => {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0" } }),
+    );
+    const xStore = (condition: string) => `
+import { defineStore } from 'pinia'
+import { useYStore } from './barrel'
+export const useXStore = defineStore('x', () => ({ name: ${condition} ? useYStore().name : 'fallback' }))
+`;
+    await writeFile(join(root, "x.ts"), xStore("!import.meta.env.SSR"));
+    await writeFile(join(root, "barrel.ts"), "export { useYStore } from './y'");
+    await writeFile(
+      join(root, "y.tsx"),
+      `
+import { defineStore } from 'pinia'
+import { useXStore } from './x'
+export const useYStore = defineStore('y', () => ({ name: useXStore().name }))
+`,
+    );
+    await writeFile(join(root, "y.jsx"), "export const useYStore = () => ({ name: 'helper' })");
+    await writeFile(join(root, "entry.ts"), "export { useXStore } from './x'");
+    const config = {
+      root,
+      configFile: false as const,
+      logLevel: "silent" as const,
+      plugins: [doctor({ rules: "pinia/stores/no-circular-setup-state-read", cache: false })],
+      build: {
+        write: false,
+        lib: { entry: join(root, "entry.ts"), formats: ["es" as const] },
+        rolldownOptions: { external: ["pinia"] },
+      },
+    };
+    await build(config);
+    await expect(
+      build({ ...config, resolve: { extensions: [".tsx", ".jsx", ".ts"] } }),
+    ).rejects.toThrow(/PINIA0003/);
+    const storeFirst = { resolve: { extensions: [".tsx", ".jsx", ".ts"] } };
+    const helperFirst = { resolve: { extensions: [".jsx", ".tsx", ".ts"] } };
+    await expect(
+      build({ ...config, environments: { client: storeFirst, ssr: helperFirst } }),
+    ).rejects.toThrow(/PINIA0003/);
+    await build({ ...config, environments: { client: helperFirst, ssr: storeFirst } });
+    await writeFile(join(root, "x.ts"), xStore("import.meta.env.SSR"));
+    const ssrCycle = { ...config, environments: { client: helperFirst, ssr: storeFirst } };
+    await build(ssrCycle);
+    await expect(build({ ...ssrCycle, build: { ...config.build, ssr: true } })).rejects.toThrow(
+      /PINIA0003/,
+    );
+    const app = await createBuilder({ ...ssrCycle, builder: { sharedPlugins: true } });
+    await expect(app.buildApp()).rejects.toThrow(/PINIA0003/);
+    const clientApp = await createBuilder({
+      ...ssrCycle,
+      builder: {
+        async buildApp(builder) {
+          await builder.build(builder.environments.client!);
+        },
+      },
+    });
+    await clientApp.buildApp();
+    await expect(clientApp.build(clientApp.environments.ssr!)).rejects.toThrow(/PINIA0003/);
+
+    await writeFile(join(root, "x.ts"), xStore("!import.meta.env.SSR"));
+    const legacyConfig = await resolveConfig({ ...config, ...storeFirst }, "build");
+    Reflect.deleteProperty(legacyConfig, "environments");
+    const [plugin] = config.plugins;
+    const { configResolved, buildStart } = plugin!;
+    if (typeof configResolved !== "function" || typeof buildStart !== "function") {
+      throw new Error("Expected callable Doctor hooks");
+    }
+    await configResolved.call({} as ThisParameterType<typeof configResolved>, legacyConfig);
+    const legacyContext = {
+      error(message: string): never {
+        throw new Error(message);
+      },
+    } as ThisParameterType<typeof buildStart>;
+    await expect(
+      buildStart.call(legacyContext, {} as Parameters<typeof buildStart>[0]),
+    ).rejects.toThrow(/PINIA0003/);
+
+    await writeFile(
+      join(root, "y.tsx"),
+      `
+import { defineStore } from 'pinia'
+import { useXStore } from './reverse'
+export const useYStore = defineStore('y', () => ({ name: useXStore().name }))
+`,
+    );
+    await writeFile(join(root, "reverse.jsx"), "export { useXStore } from './x'");
+    await writeFile(
+      join(root, "reverse.tsx"),
+      "export const useXStore = () => ({ name: 'helper' })",
+    );
+    const splitApp = await createBuilder({
+      ...config,
+      builder: { sharedPlugins: true },
+      environments: { client: storeFirst, secondClient: { ...helperFirst, consumer: "client" } },
+    });
+    await splitApp.buildApp();
+  });
+});
+
+test("an application shares its warning limit across the environments it builds", async () => {
+  await withProject(async (root) => {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0" } }),
+    );
+    const cycle = (name: string, condition: string) => `
+const use${name}A = defineStore('${name}-a', () => ({ name: ${condition} ? use${name}B().name : 'a' }))
+const use${name}B = defineStore('${name}-b', () => ({ name: use${name}A().name }))
+export { use${name}A }
+`;
+    const common = `import { defineStore } from 'pinia'\n${cycle("Client", "!import.meta.env.SSR")}`;
+    const config = {
+      root,
+      configFile: false as const,
+      logLevel: "silent" as const,
+      plugins: [
+        doctor({
+          rules: "pinia/stores/no-circular-setup-state-read",
+          config: { rules: { "pinia/stores/no-circular-setup-state-read": "warn" } },
+          cache: false,
+          maxWarnings: 1,
+        }),
+        { name: "fixture/noop-build-app", buildApp() {} },
+      ],
+      build: {
+        write: false,
+        lib: { entry: join(root, "entry.ts"), formats: ["es" as const] },
+        rolldownOptions: { external: ["pinia"] },
+      },
+      environments: { client: {}, ssr: { consumer: "server" as const } },
+    };
+    await writeFile(join(root, "entry.ts"), common + cycle("Server", "import.meta.env.SSR"));
+    await build(config);
+    const app = await createBuilder({ ...config, builder: { sharedPlugins: true } });
+    await expect(app.buildApp()).rejects.toThrow(/PINIA0003/);
+
+    const customApp = await createBuilder({
+      ...config,
+      builder: {
+        async buildApp(builder) {
+          await Promise.all(Object.values(builder.environments).map((env) => builder.build(env)));
+        },
+      },
+    });
+    const clientApp = await createBuilder({
+      ...config,
+      builder: {
+        async buildApp(builder) {
+          await builder.build(builder.environments.client!);
+        },
+      },
+    });
+    await expect(customApp.buildApp()).rejects.toThrow(/PINIA0003/);
+    await clientApp.buildApp();
+
+    const first = await createBuilder(config);
+    const second = await createBuilder(config);
+    await first.build(first.environments.client!);
+    await second.build(second.environments.ssr!);
+
+    const third = await createBuilder(config);
+    await third.build(third.environments.client!);
+    const fourth = await createBuilder(config);
+    await expect(third.build(third.environments.ssr!)).rejects.toThrow(/PINIA0003/);
+    await fourth.build(fourth.environments.ssr!);
+
+    await writeFile(
+      join(root, "entry.ts"),
+      `import { defineStore } from 'pinia'\n${cycle("Shared", "true")}`,
+    );
+    const sharedWarning = await createBuilder({ ...config, builder: { sharedPlugins: true } });
+    await sharedWarning.buildApp();
+  });
+});
+
+test("a build with a warning limit respects the Doctor plugin's environment filter", async () => {
+  await withProject(async (root) => {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0" } }),
+    );
+    await writeFile(
+      join(root, "entry.ts"),
+      `import { defineStore } from 'pinia'
+export const useA = defineStore('a', () => ({ name: useB().name }))
+export const useB = defineStore('b', () => ({ name: useA().name }))`,
+    );
+    const plugin = doctor({
+      rules: "pinia/stores/no-circular-setup-state-read",
+      config: { rules: { "pinia/stores/no-circular-setup-state-read": "warn" } },
+      cache: false,
+      maxWarnings: 0,
+    });
+    plugin.applyToEnvironment = ({ name }) => name === "client";
+    const config = {
+      root,
+      configFile: false as const,
+      logLevel: "silent" as const,
+      plugins: [plugin],
+      build: {
+        write: false,
+        lib: { entry: join(root, "entry.ts"), formats: ["es" as const] },
+        rolldownOptions: { external: ["pinia"] },
+      },
+    };
+    await build({ ...config, build: { ...config.build, ssr: true } });
+    await expect(build(config)).rejects.toThrow(/PINIA0003/);
   });
 });
 

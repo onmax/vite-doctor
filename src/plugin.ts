@@ -18,7 +18,9 @@ import {
 } from "./plugin-delta.js";
 import type { SurfaceRunInput, SurfaceRunOutcome } from "./plugin-run.js";
 import { RuntimeDiagnosticReports } from "./plugin-runtime-diagnostics.js";
-import type { Plugin, ResolvedConfig, ViteDevServer } from "vite";
+import type { BuildEnvironment, Plugin, ResolvedConfig, ViteDevServer } from "vite";
+
+type BuildTarget = Pick<BuildEnvironment, "name" | "config">;
 
 export interface ViteDoctorSurfaceOptions {
   enabled?: boolean;
@@ -59,12 +61,79 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
   let config: ResolvedConfig | undefined;
   let ran = false;
   let serveRun: ServeDoctorRun | undefined;
+  const checkedTargets = new WeakSet<BuildTarget>();
+  const warningBudgets = new WeakMap<Plugin, Set<string>>();
 
-  return {
+  function sessionPlugin(resolved: ResolvedConfig) {
+    return (
+      resolved.environments && resolved.plugins.find((candidate) => warningBudgets.has(candidate))
+    );
+  }
+
+  async function checkBuild(
+    resolved: ResolvedConfig,
+    fail: (message: string) => never,
+    targets?: BuildTarget[],
+  ) {
+    const { runSurfaceDoctor } = await import("./plugin-run.js");
+    const outcome = await runSurfaceDoctor(
+      surfaceRunInput(resolved, options, targets),
+      surfaceExtensions(resolved, options),
+    );
+    const maxWarnings = options.maxWarnings;
+    const session = maxWarnings === undefined ? undefined : sessionPlugin(resolved);
+    const sessionWarnings = session && warningBudgets.get(session);
+    if (sessionWarnings) for (const warning of outcome.warningKeys) sessionWarnings.add(warning);
+    const overBudget =
+      sessionWarnings && maxWarnings !== undefined && sessionWarnings.size > maxWarnings;
+    if ((outcome.shouldFail || overBudget) && (options.mode ?? "error") === "error") {
+      fail(outcome.report || "Vite Doctor checks failed.");
+    } else if (outcome.report) {
+      if (outcome.hasFindings) resolved.logger.warn(outcome.report);
+      else resolved.logger.info(outcome.report);
+    }
+  }
+
+  const buildApp = {
+    order: "post",
+    async handler(builder) {
+      if (options.enabled === false || !shouldRun(options.run ?? "build", "build")) return;
+      const targets = Object.values(builder.environments);
+      const configuredPlugin = sessionPlugin(builder.config) ?? plugin;
+      if (
+        targets.length === 0 ||
+        targets.some(
+          (target) => target.isBuilt !== false || !target.plugins.includes(configuredPlugin),
+        ) ||
+        builder.config.plugins.some((plugin) => plugin.buildApp && plugin.buildApp !== buildApp)
+      )
+        return;
+      await checkBuild(builder.config, (message) => this.error(message), targets);
+      for (const target of targets) checkedTargets.add(target);
+    },
+  } satisfies NonNullable<Plugin["buildApp"]>;
+
+  const plugin: Plugin = {
     name: "vite-doctor",
+    sharedDuringBuild: options.maxWarnings !== undefined,
     configResolved(resolved) {
       config = resolved;
       ran = false;
+      if (
+        resolved.command !== "build" ||
+        options.maxWarnings === undefined ||
+        !resolved.environments
+      )
+        return;
+      const plugins = resolved.plugins as Plugin[];
+      const index = plugins.indexOf(plugin);
+      if (index < 0) return;
+      const session = Object.create(
+        Object.getPrototypeOf(plugin),
+        Object.getOwnPropertyDescriptors(plugin),
+      ) as Plugin;
+      warningBudgets.set(session, new Set());
+      plugins[index] = session;
     },
     configureServer(server) {
       if (options.enabled === false || !shouldRun(options.run ?? "build", "serve")) return;
@@ -74,32 +143,23 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       serveRun = new ServeDoctorRun(server, options);
     },
     async buildStart() {
-      if (options.enabled === false || ran) return;
-      const resolved = config;
+      const target = this.environment;
+      if (options.enabled === false || (target ? checkedTargets.has(target) : ran)) return;
+      const resolved = target?.getTopLevelConfig() ?? config;
       if (!resolved || !shouldRun(options.run ?? "build", resolved.command)) return;
 
       if (resolved.command === "serve") {
         const run = serveRun;
-        if (run?.server.config !== resolved) return;
+        if (ran || run?.server.config !== resolved) return;
         ran = true;
         run.startAfterListening();
         return;
       }
-      ran = true;
-
-      const { runSurfaceDoctor } = await import("./plugin-run.js");
-      const outcome = await runSurfaceDoctor(
-        surfaceRunInput(resolved, options),
-        surfaceExtensions(resolved, options),
-      );
-      if (outcome.shouldFail && (options.mode ?? "error") === "error") {
-        this.error(outcome.report || "Vite Doctor checks failed.");
-        return;
-      }
-      if (!outcome.report) return;
-      if (outcome.hasFindings) resolved.logger.warn(outcome.report);
-      else resolved.logger.info(outcome.report);
+      await checkBuild(resolved, (message) => this.error(message), target ? [target] : undefined);
+      if (target) checkedTargets.add(target);
+      else ran = true;
     },
+    buildApp,
     closeBundle() {
       if (serveRun && this.environment?.getTopLevelConfig() === serveRun.server.config) {
         serveRun.cancel();
@@ -107,6 +167,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       }
     },
   };
+  return plugin;
 }
 
 /**
@@ -400,7 +461,11 @@ function surfaceConfig(
   return options.config ?? config.doctor;
 }
 
-function surfaceRunInput(config: ResolvedConfig, options: ViteDoctorSurfaceOptions) {
+function surfaceRunInput(
+  config: ResolvedConfig,
+  options: ViteDoctorSurfaceOptions,
+  targets?: BuildTarget[],
+) {
   return {
     options: {
       root: surfaceRoot(config, options),
@@ -415,7 +480,7 @@ function surfaceRunInput(config: ResolvedConfig, options: ViteDoctorSurfaceOptio
       cache: options.cache ?? true,
       format: options.format,
     },
-    vite: { inventory: viteInventory(config), evidence: viteRuntimeEvidence(config) },
+    vite: { inventory: viteInventory(config), evidence: viteRuntimeEvidence(config, targets) },
   } satisfies SurfaceRunInput;
 }
 
@@ -446,9 +511,10 @@ function viteInventory(config: ResolvedConfig) {
   };
 }
 
-function viteRuntimeEvidence(config: ResolvedConfig) {
+function viteRuntimeEvidence(config: ResolvedConfig, targets?: BuildTarget[]) {
   const prefixes = config.envPrefix ?? "VITE_";
-  const environments = Object.values(config.environments ?? {});
+  const namedEnvironments = Object.entries(config.environments ?? {});
+  const environments = namedEnvironments.map(([, environment]) => environment);
   const hasResolvedConsumers = environments.every(
     ({ consumer }) => consumer === "client" || consumer === "server",
   );
@@ -460,6 +526,24 @@ function viteRuntimeEvidence(config: ResolvedConfig) {
         .flatMap((environment) => Object.keys(environment.define ?? {})),
     ]),
   ];
+  const importEnvironments = targets
+    ? targets.map(({ name, config }) => [name, config] as const)
+    : namedEnvironments;
+  const importResolution = Object.fromEntries(
+    importEnvironments.map(([name, { consumer, resolve }]) => [
+      name,
+      { consumer, extensions: resolve.extensions },
+    ]),
+  );
+  const extensions = config.resolve?.extensions;
+  if (!importEnvironments.length && extensions) {
+    if (config.command === "serve" || !config.build?.ssr) {
+      importResolution.client = { consumer: "client", extensions };
+    }
+    if (config.command === "serve" || config.build?.ssr) {
+      importResolution.ssr = { consumer: "server", extensions };
+    }
+  }
   return {
     buildSsr: Boolean(config.build?.ssr),
     clientHmr:
@@ -468,6 +552,10 @@ function viteRuntimeEvidence(config: ResolvedConfig) {
         : undefined,
     ssrExternal: config.ssr?.external ?? [],
     ssrNoExternal: config.ssr?.noExternal ?? [],
+    importResolution: {
+      root: config.root,
+      environments: importResolution,
+    },
     envExposure: hasResolvedConsumers
       ? {
           root: config.root,

@@ -69,8 +69,8 @@ type NuxtDoctorEvidence = {
   composableScan?: { dirs: string; entries: Promise<unknown[]> };
   moduleSources?: NuxtModuleSource[];
   extensions?: string[];
-  app?: { middleware?: unknown[]; pages?: unknown[] };
-  routeSourceHashes?: Map<string, string>;
+  app?: { middleware?: unknown[] };
+  routes?: NuxtResolvedRoute[];
   routerOptions?: { files?: unknown[] };
 };
 
@@ -93,7 +93,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     moduleSources: undefined as NuxtModuleSource[] | undefined,
     extensions: undefined as string[] | undefined,
     app: undefined as NuxtDoctorEvidence["app"],
-    routeSourceHashes: undefined as NuxtDoctorEvidence["routeSourceHashes"],
+    routes: undefined as NuxtDoctorEvidence["routes"],
     routerOptions: undefined as NuxtDoctorEvidence["routerOptions"],
   };
 
@@ -207,22 +207,26 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     }));
   });
 
-  // Nuxt resolves middleware and pages before app:templates; later hooks may still amend them.
   nuxt.hook?.("app:templates", (app: NuxtDoctorEvidence["app"]) => {
     evidence.app = app;
-    if (app?.pages && nuxt.options.experimental?.scanPageMeta) {
-      evidence.routeSourceHashes = new Map();
-      for (const page of flattenPages(app.pages)) {
-        if (typeof page?.file !== "string") continue;
-        const file = resolve(nuxt.options.rootDir ?? process.cwd(), page.file);
-        if (evidence.routeSourceHashes.has(file)) continue;
-        try {
-          evidence.routeSourceHashes.set(file, sha256(readFileSync(file, "utf8")));
-        } catch {
-          continue;
-        }
+  });
+
+  nuxt.hook?.("app:templatesGenerated", (app: { pages?: unknown[] }) => {
+    evidence.routes = undefined;
+    if (!app?.pages || !nuxt.options.experimental?.scanPageMeta) return;
+    const rootDir = nuxt.options.rootDir ?? process.cwd();
+    const sourceHashes = new Map<string, string>();
+    for (const page of flattenPages(app.pages)) {
+      if (typeof page?.file !== "string") continue;
+      const file = resolve(rootDir, page.file);
+      if (sourceHashes.has(file)) continue;
+      try {
+        sourceHashes.set(file, sha256(readFileSync(file, "utf8")));
+      } catch {
+        continue;
       }
     }
+    evidence.routes = serializeRoutes(rootDir, app.pages, sourceHashes);
   });
 
   // Modules registered after this one push their files into the same context.
@@ -421,12 +425,9 @@ export async function writeManifest(
     serverHandlerMtimes: evidence?.serverHandlerMtimes,
     pages: evidence?.pages ?? [],
     middleware: evidence?.app ? serializeMiddleware(rootDir, evidence.app.middleware) : undefined,
-    routes:
-      evidence?.app?.pages &&
-      evidence.routeSourceHashes &&
-      !Object.hasOwn(nuxt.options.router?.options ?? {}, "routes")
-        ? serializeRoutes(rootDir, evidence.app.pages, evidence.routeSourceHashes)
-        : undefined,
+    routes: Object.hasOwn(nuxt.options.router?.options ?? {}, "routes")
+      ? undefined
+      : evidence?.routes,
     routerOptionsFiles: evidence?.routerOptions
       ? toArray(evidence.routerOptions.files)
           .map((file: any) => file?.path)

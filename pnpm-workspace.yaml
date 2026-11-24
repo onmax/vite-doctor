@@ -63,6 +63,7 @@ catalogs:
     consola: ^3.4.2
     detect-agent: ^1.2.0
     defu: ^6.1.7
+    mime: ^4.1.0
     pathe: ^2.0.3
     picocolors: ^1.1.1
     picomatch: ^4.0.7
