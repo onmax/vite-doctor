@@ -273,6 +273,57 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/runtime/no-runtime-config-in-response": {
+    description:
+      "Report Nitro handlers that return the whole object useRuntimeConfig() gives them: the config itself or a const bound to it, an object literal ending in a spread of it, or an object literal with it as a property value, also when serialized with JSON.stringify() or Response.json().",
+    why: "useRuntimeConfig() returns every runtimeConfig key, including the private ones that stay on the server and that Nitro fills from NITRO_ and NUXT_ environment variables, such as API secrets and database URLs. Nuxt only sends runtimeConfig.public and app to the browser; a handler that returns the whole object sends the rest to any client that calls the route. Doctor only checks what the handler's own return statements send. It does not report single keys or groups such as config.stripe, values nested deeper than one object literal, or properties a later spread or key can overwrite.",
+    recommendedReplacement:
+      "Return only the fields the client needs, such as config.public.siteUrl, and keep values meant for the client under runtimeConfig.public.",
+    examples: [
+      {
+        title: "Return the public value the client needs",
+        language: "ts",
+        invalid:
+          "export default defineEventHandler((event) => {\n  const config = useRuntimeConfig(event)\n  return { ok: true, config }\n})",
+        valid:
+          "export default defineEventHandler((event) => {\n  const config = useRuntimeConfig(event)\n  return { ok: true, site: config.public.siteUrl }\n})",
+      },
+    ],
+  },
+  "nitro/handler/require-waituntil-for-background-work": {
+    description:
+      "Report $fetch(), fetch(), event.fetch() and storage calls that a Nitro handler starts as a bare statement, without awaiting, returning or passing them to event.waitUntil(), on deployment presets where Nitro forwards waitUntil to the platform.",
+    why: "Cloudflare Workers and Vercel Functions can stop running once the response is sent, so a request or storage write the handler did not wait for can be cut off without an error. Nitro forwards event.waitUntil() to the platform's waitUntil on the Cloudflare presets (Nitro 2 and 3) and on Vercel (Nitro 3 only). Doctor reports only when the config names one of those presets statically and stays quiet for other or unknown presets. This is not a generic no-floating-promises check: a floating promise is fine in a long-lived Node.js server, and the fix here is event.waitUntil(), which only exists because of the platform. Doctor only counts calls it knows return a promise, and only statements in the handler body itself.",
+    recommendedReplacement:
+      "Pass the promise to event.waitUntil() so the platform keeps the request alive until it settles, or await it when the response depends on it.",
+    examples: [
+      {
+        title: "Keep the webhook alive with event.waitUntil()",
+        language: "ts",
+        invalid:
+          "export default defineEventHandler(async (event) => {\n  const order = await readBody(event)\n  $fetch('https://hooks.example.com/order', { method: 'POST', body: order })\n  return { ok: true }\n})",
+        valid:
+          "export default defineEventHandler(async (event) => {\n  const order = await readBody(event)\n  event.waitUntil($fetch('https://hooks.example.com/order', { method: 'POST', body: order }))\n  return { ok: true }\n})",
+      },
+    ],
+  },
+  "nitro/storage/no-undeclared-mount": {
+    description:
+      "Report useStorage() and useKV() calls whose base no production storage mount covers, and record the mounts Nitro config declares as the nitroStorage Project Inventory fact.",
+    why: "unstorage sends a key to the longest matching mount, then falls back to the root mount, which defaults to an in-memory driver. A mount declared only in devStorage does not apply in production. Doctor checks Nitro 2 storage and bundledStorage, Nitro 3 kv (or its storage alias), and the built-in mounts for the detected version and preset. A parent base can list its mounted descendants, but a specific item key only uses a mount that covers that key. Doctor records an evidence gap and skips the check when unreadable config, a module or layer, or a runtime storage mount could change the production mount table.",
+    recommendedReplacement:
+      "Declare a production mount for the base under nitro.storage (Nitro 2 and Nuxt) or kv (Nitro 3), or move the keys to a base you already mount.",
+    examples: [
+      {
+        title: "Mount the base for production, not only dev",
+        language: "ts",
+        invalid:
+          "// nuxt.config.ts\nexport default defineNuxtConfig({\n  nitro: { devStorage: { sessions: { driver: 'fs', base: './.data/sessions' } } },\n})\n\n// server/api/session.get.ts\nexport default defineEventHandler(() => useStorage('sessions').getKeys())",
+        valid:
+          "// nuxt.config.ts\nexport default defineNuxtConfig({\n  nitro: { storage: { sessions: { driver: 'redis', url: process.env.REDIS_URL } } },\n})\n\n// server/api/session.get.ts\nexport default defineEventHandler(() => useStorage('sessions').getKeys())",
+      },
+    ],
+  },
   "nitro/runtime/require-event-runtime-config-in-server": {
     description: "Checks that Nitro 2 server code passes the request event to useRuntimeConfig().",
     why: "Nitro 2 resolves event-scoped runtime configuration through the handler event, so omitting it can lose request-specific overrides.",
@@ -1406,6 +1457,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/routing/no-global-middleware-redirect-loop": {
+    description:
+      "Flags a global route middleware that redirects to a fixed route without checking where navigation is going.",
+    why: "Nuxt runs global middleware on the route it redirects to. Doctor reports a fixed redirect that the middleware reaches again on that route, and skips conditions and arguments that depend on mutable state or other values it cannot establish.",
+    recommendedReplacement:
+      "Return early when `to.path` (or `to.meta`) already matches the target, or move the redirect into named middleware.",
+    examples: [
+      {
+        title: "Skip the redirect on its target",
+        language: "ts",
+        invalid:
+          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware(() => {\n  return navigateTo('/login')\n})",
+        valid:
+          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware((to) => {\n  if (to.path !== '/login') return navigateTo('/login')\n})",
+      },
+    ],
+  },
   "nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup": {
     description:
       "Flags hash sensitive route fullpath in SSR markup in Nuxt routing code before it leaks into runtime behavior.",
@@ -1901,6 +1969,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vite/build/no-node-builtin-in-client-chunk": {
+    description:
+      "Reports project modules that import a Node built-in and end up in a chunk of a client environment of vite build, with the import chain from the client entry.",
+    why: "Vite can replace Node built-ins in a client environment with a browser stub instead of failing the build. On Rolldown (Vite 8+), Doctor uses Vite's resolution and final source maps to trace surviving static import bindings and split dynamic imports in JavaScript and TypeScript back to the exact Node import. It skips reads it cannot trace, including branches removed by tree shaking, and does not attribute a package's browser: false mapping to an unrelated Node import. The import chain comes from Vite's module graph; when it has no path from an entry, the Diagnostic says the evidence is partial. The CLI Surface has no Build Evidence.",
+    recommendedReplacement:
+      "Import the module only from server entries or server routes. Move the values the client needs into a module that imports no Node built-in, or load the server code behind an import.meta.env.SSR branch with a dynamic import() so the client build drops it.",
+    examples: [
+      {
+        title: "Keep server-only helpers out of client imports",
+        language: "ts",
+        invalid:
+          "// src/db.ts\nimport { readFileSync } from 'node:fs'\nexport const loadUsers = () => JSON.parse(readFileSync('users.json', 'utf8'))\n\n// src/main.ts (client entry)\nimport { loadUsers } from './db'\nrender(loadUsers())",
+        valid:
+          "// src/server.ts (server entry)\nimport { loadUsers } from './db'\nexport const users = loadUsers()\n\n// src/main.ts (client entry)\nconst users = await fetch('/api/users').then((response) => response.json())\nrender(users)",
+      },
+    ],
+  },
   "vite/config/no-url-pathname-as-fs-path": {
     description:
       "Reports new URL(..., import.meta.url).pathname used as a file path in Vite and Vitest config files and Node-side plugin code.",
@@ -1915,6 +2000,23 @@ export const ruleDocumentationMetadata = {
           "import { defineConfig } from 'vitest/config'\n\nexport default defineConfig({\n  resolve: {\n    alias: {\n      '#registry': new URL('./src/runtime/empty-registry.ts', import.meta.url).pathname,\n    },\n  },\n})",
         valid:
           "import { fileURLToPath } from 'node:url'\nimport { defineConfig } from 'vitest/config'\n\nexport default defineConfig({\n  resolve: {\n    alias: {\n      '#registry': fileURLToPath(new URL('./src/runtime/empty-registry.ts', import.meta.url)),\n    },\n  },\n})",
+      },
+    ],
+  },
+  "vite/define/no-loadenv-all-in-define": {
+    description:
+      "Reports Vite define entries that receive the whole result of loadEnv with an empty prefix, or the whole process.env.",
+    why: "loadEnv(mode, dir, '') returns variables from the .env files and process.env without prefix filtering. Vite inlines client define values and injects global defines into the browser in dev. Passing the whole environment, spreading it, or serializing it without a filtering replacer can expose secrets. Doctor checks resolvable client defines in the Vite config; it ignores SSR-only entries, entries replaced before reaching the client, and JSON.stringify calls whose replacer may filter the object.",
+    recommendedReplacement:
+      "Define only the public values the client needs, such as __API_URL__: JSON.stringify(env.API_URL), or keep the default VITE_ prefix and read those variables through import.meta.env.",
+    examples: [
+      {
+        title: "Define one public value",
+        language: "ts",
+        invalid:
+          "import { defineConfig, loadEnv } from 'vite'\n\nexport default defineConfig(({ mode }) => {\n  const env = loadEnv(mode, process.cwd(), '')\n  return {\n    define: { 'process.env': env },\n  }\n})",
+        valid:
+          "import { defineConfig, loadEnv } from 'vite'\n\nexport default defineConfig(({ mode }) => {\n  const env = loadEnv(mode, process.cwd(), '')\n  return {\n    define: { __API_URL__: JSON.stringify(env.API_URL) },\n  }\n})",
       },
     ],
   },
@@ -2012,16 +2114,33 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "vite/env/no-empty-env-prefix": {
-    description: "Flags empty env prefix in Vite env code before it leaks into runtime behavior.",
-    why: "Vite rejects an empty envPrefix to prevent exposing every environment variable to bundled client code, including secrets.",
+    description:
+      'Reports envPrefix: "" in Vite config, which Vite rejects when it resolves the config.',
+    why: "Vite's resolveEnvPrefix throws \"envPrefix option contains value ''\" for an empty string, alone or in an array, so vite dev and vite build fail while resolving the config and never load or expose any env variable. The empty prefix would match every variable, which is why Vite refuses it.",
     recommendedReplacement:
-      "Remove empty env prefix, or move it to the Vite runtime/API that owns that behavior.",
+      'Remove "" from envPrefix and keep the default VITE_ prefix or a narrow public prefix.',
     examples: [
       {
-        title: "Do not expose every env var",
+        title: "Keep a non-empty env prefix",
         language: "ts",
         invalid: "export default defineConfig({\n  envPrefix: '',\n})",
         valid: "export default defineConfig({\n  envPrefix: 'VITE_',\n})",
+      },
+    ],
+  },
+  "vite/env/no-unprefixed-client-env": {
+    description:
+      "Reports import.meta.env reads in client code of keys that miss every envPrefix and that no define entry sets, so Vite leaves them undefined.",
+    why: "Vite exposes env variables matching envPrefix (VITE_ by default), built-in keys, and import.meta.env.* client defines. Doctor uses resolved Vite evidence when available. Otherwise it reads the owning project's default vite.config file in Vite's lookup order and skips configurations it cannot resolve, including composed configs and known plugins or frameworks that manage env. Test, config, server and SSR entry files are skipped. Doctor also skips TEST, VITEST and the VITEST_* keys set for test-only branches when the owning package declares Vitest, has its own vitest.config file, configures tests through Vite+, or is selected by a static test.projects entry in the workspace root config. Secret-looking names are left to vite/env/no-client-secret-pattern unless the host config proves they are not exposed.",
+    recommendedReplacement:
+      "If the value is public and a prefix is configured, rename it with that prefix in both the .env file and the code. Keep secret values in server-only code.",
+    examples: [
+      {
+        title: "Use the env prefix Vite exposes",
+        language: "ts",
+        invalid: "// .env: API_URL=https://api.example.com\nconst apiUrl = import.meta.env.API_URL",
+        valid:
+          "// .env: VITE_API_URL=https://api.example.com\nconst apiUrl = import.meta.env.VITE_API_URL",
       },
     ],
   },
@@ -2139,6 +2258,23 @@ export const ruleDocumentationMetadata = {
           "async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) res.setHeader(name, value)\n  res.end(await response.text())\n}",
         valid:
           'async function writeResponse(res: ServerResponse, response: Response) {\n  res.statusCode = response.status\n  for (const [name, value] of response.headers) {\n    if (name !== "set-cookie") res.setHeader(name, value)\n  }\n  const cookies = response.headers.getSetCookie()\n  if (cookies.length > 0) res.setHeader("set-cookie", cookies)\n  res.end(await response.text())\n}',
+      },
+    ],
+  },
+  "vite/plugin/no-unreachable-hook": {
+    description:
+      'Reports configureServer, configurePreviewServer, handleHotUpdate and hotUpdate hooks on Vite plugin objects whose apply is "build".',
+    why: 'Vite filters plugins by apply before calling these hooks. Dev, preview, and createServer use the serve command, so they exclude plugins whose apply is "build". Doctor checks objects it can trace to Vite config plugins or a factory with a Vite Plugin return type, and skips spreads, unresolved computed keys, and objects with unproven apply values. It does not report build output hooks on apply: "serve" plugins, because those can run in dev.',
+    recommendedReplacement:
+      'Remove apply: "build" or change it to apply: "serve" if the hook should run, or delete the hook.',
+    examples: [
+      {
+        title: "Keep serve hooks on plugins that run in serve",
+        language: "ts",
+        invalid:
+          "import type { Plugin } from 'vite'\n\nexport function headers(): Plugin {\n  return {\n    name: 'headers',\n    apply: 'build',\n    configureServer(server) {\n      server.middlewares.use(setHeaders)\n    },\n  }\n}",
+        valid:
+          "import type { Plugin } from 'vite'\n\nexport function headers(): Plugin {\n  return {\n    name: 'headers',\n    apply: 'serve',\n    configureServer(server) {\n      server.middlewares.use(setHeaders)\n    },\n  }\n}",
       },
     ],
   },
@@ -2680,6 +2816,22 @@ export const ruleDocumentationMetadata = {
           '<script setup lang="ts">\nconst count = ref(1)\nconst doubled = ref(0)\nwatch(count, (value) => {\n  doubled.value = value * 2\n})\n</script>',
         valid:
           '<script setup lang="ts">\nconst count = ref(1)\nconst doubled = computed(() => count.value * 2)\n</script>',
+      },
+    ],
+  },
+  "vue/router/no-redirect-cycle": {
+    description: "Flags static route records whose redirects lead back to themselves.",
+    why: "vue-router follows record redirects without a limit, so a cycle of static redirects never resolves and navigation to any member hangs or overflows the stack.",
+    recommendedReplacement:
+      "Point one record in the cycle at a route that renders a component, or remove the redundant redirect.",
+    examples: [
+      {
+        title: "End the redirect chain at a page",
+        language: "ts",
+        invalid:
+          "createRouter({\n  history: createWebHistory(),\n  routes: [\n    { path: '/old', redirect: '/new' },\n    { path: '/new', redirect: '/old' },\n  ],\n})",
+        valid:
+          "createRouter({\n  history: createWebHistory(),\n  routes: [\n    { path: '/old', redirect: '/new' },\n    { path: '/new', component: NewPage },\n  ],\n})",
       },
     ],
   },

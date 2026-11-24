@@ -16,6 +16,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "PINIA0001", ruleId: "pinia/stores/unique-store-id" },
   { code: "PINIA0002", ruleId: "pinia/stores/store-name-matches-id" },
   { code: "PINIA0003", ruleId: "pinia/stores/no-circular-setup-state-read" },
+  { code: "PINIA0004", ruleId: "pinia/state/no-action-bypass" },
   { code: "SHAD0001", ruleId: "shadcn/no-restyle" },
   { code: "SHAD0002", ruleId: "shadcn/no-raw-colors" },
   { code: "SHAD0003", ruleId: "shadcn/no-arbitrary-values" },
@@ -115,6 +116,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0048", ruleId: "vue/state/no-external-shared-state-mutation" },
   { code: "VUE0049", ruleId: "vue/reactivity/no-shallow-ref-deep-mutation" },
   { code: "VUE0050", ruleId: "vue/watch/no-property-read-source" },
+  { code: "VUE0053", ruleId: "vue/router/no-redirect-cycle" },
 
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },
@@ -150,6 +152,12 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0028", ruleId: "vite/plugin/no-fragment-in-virtual-id" },
 
   { code: "VITE0029", ruleId: "vite/hmr/no-circular-import-at-hmr-boundary" },
+
+  { code: "VITE0030", ruleId: "vite/env/no-unprefixed-client-env" },
+  { code: "VITE0031", ruleId: "vite/define/no-loadenv-all-in-define" },
+  { code: "VITE0032", ruleId: "vite/plugin/no-unreachable-hook" },
+
+  { code: "VITE0033", ruleId: "vite/build/no-node-builtin-in-client-chunk" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
   { code: "TS0003", ruleId: "typescript/evidence/no-unknown-type-aliases" },
@@ -196,6 +204,9 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0029", ruleId: "nitro/cache/require-varies-for-header-read" },
   { code: "NITRO0030", ruleId: "nitro/middleware/no-implicit-response" },
   { code: "NITRO0031", ruleId: "nitro/routes/no-shadowed-file-handler" },
+  { code: "NITRO0032", ruleId: "nitro/runtime/no-runtime-config-in-response" },
+  { code: "NITRO0033", ruleId: "nitro/handler/require-waituntil-for-background-work" },
+  { code: "NITRO0034", ruleId: "nitro/storage/no-undeclared-mount" },
   { code: "NUXT0001", ruleId: "docus/appconfig/no-unknown-key" },
   { code: "NUXT0002", ruleId: "docus/layers/no-empty-app-vue-shadow" },
   { code: "NUXT0003", ruleId: "nuxt-better-auth/require-standard-auth-handler-mount" },
@@ -296,6 +307,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0102", ruleId: "nuxt/runtime/no-private-runtime-config-in-client" },
   { code: "NUXT0103", ruleId: "nuxt/fetch/handler-must-return" },
   { code: "NUXT0104", ruleId: "nuxt/plugins/no-island-disabled-dependency" },
+  { code: "NUXT0107", ruleId: "nuxt/routing/no-global-middleware-redirect-loop" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;

@@ -24,7 +24,7 @@ function runNuxt(
     files: {
       ...files,
       ".nuxt/doctor.manifest.json": JSON.stringify({
-        generatedAt: stale ? "2000-01-01T00:00:00.000Z" : new Date().toISOString(),
+        generatedAt: stale ? "2000-01-01T00:00:00.000Z" : "2100-01-01T00:00:00.000Z",
         autoImportEnabled: enabled,
         autoImports,
       }),
@@ -356,6 +356,15 @@ export const useUserStore = defineStore('user', {
     },
   );
 
+  test("resolves a relative directory import with metadata only", async () => {
+    const result = await run({
+      "stores/x.ts": x,
+      "stores/y/package.json": JSON.stringify({ private: true, sideEffects: false }),
+      "stores/y/index.ts": y.replace("from './x'", "from '../x'"),
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
   test("leaves a TSX and JSX collision unresolved without host evidence", async () => {
     const files = {
       "stores/x.ts": x,
@@ -366,7 +375,7 @@ export const useUserStore = defineStore('user', {
     expect((await run(files)).diagnostics).toHaveLength(0);
   });
 
-  test.each([".jsx", ".custom.jsx"])(
+  test.each([".jsx", ".custom.jsx", ".test.ts"])(
     "does not guess from Nuxt defaults with a configured %s helper",
     async (extension) => {
       const result = await runNuxt(
