@@ -237,7 +237,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
           this.meta.watchMode ||
           env?.config.consumer !== "client" ||
           output.sourcemap ||
-          output.plugins ||
+          (output.plugins && !(Array.isArray(output.plugins) && output.plugins.length === 0)) ||
           env.plugins.findLast(
             ({ outputOptions }) =>
               typeof outputOptions === "object" && outputOptions.order === "post",
@@ -256,7 +256,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         if (env?.config.consumer !== "client") return;
         const resolved = env.getTopLevelConfig();
         const { collectBuildEnvironment } = await import("./plugin-build-evidence.js");
-        const environment = collectBuildEnvironment(
+        const { environment, missingMaps } = collectBuildEnvironment(
           this,
           output,
           bundle,
@@ -265,6 +265,12 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
           privateMaps.delete(env) && output.sourcemap === "hidden",
           stubResolutions.get(env),
         );
+        if (missingMaps) {
+          resolved.logger.warnOnce(
+            `[vite-doctor] VITE0033 verification skipped for client output in ${env.name}: ` +
+              'source maps are unavailable. Set build.sourcemap: "hidden" to enable verification.',
+          );
+        }
         if (!environment.browserStubReads.length) return;
 
         const watch = watchReports.get(env);

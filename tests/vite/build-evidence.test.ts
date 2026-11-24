@@ -295,6 +295,45 @@ test("counts identical warnings in distinct client environments toward the budge
   });
 });
 
+test("enforces VITE0033 with an empty output plugin list", async () => {
+  await withProject({ "src/main.ts": liveFs }, async (root) => {
+    const { logger } = capture();
+    await expect(
+      build(
+        config(root, logger, {
+          plugins: [doctor({ rules: rule, cache: false, config: { rules: { [rule]: "error" } } })],
+          build: { rolldownOptions: { output: { plugins: [] } } },
+        }),
+      ),
+    ).rejects.toThrow("VITE0033");
+  });
+});
+
+test("explains how to enable VITE0033 when a later output hook prevents private maps", async () => {
+  await withProject({ "src/main.ts": liveFs }, async (root) => {
+    const { logger, warnings } = capture();
+    const options = config(root, logger, {
+      plugins: [doctor({ rules: rule, cache: false, config: { rules: { [rule]: "error" } } })],
+    });
+    options.plugins?.push({
+      name: "host-asset-names",
+      outputOptions: {
+        order: "post",
+        handler: (output) => ({ ...output, assetFileNames: "assets/[name][extname]" }),
+      },
+    });
+    const result = await build(options);
+    expect(warnings.join("\n")).toContain("VITE0033 verification skipped");
+    expect(warnings.join("\n")).toContain('build.sourcemap: "hidden"');
+    expect("output" in result && result.output.some((item) => item.fileName.endsWith(".map"))).toBe(
+      false,
+    );
+    await expect(
+      build({ ...options, build: { ...options.build, sourcemap: "hidden" } }),
+    ).rejects.toThrow("VITE0033");
+  });
+});
+
 test("preserves host hidden maps requested by a later output hook", async () => {
   await withProject({ "src/main.ts": liveFs }, async (root) => {
     const { logger, warnings } = capture();
