@@ -3,6 +3,8 @@ import { runProjectFixture } from "../../../src/core/testkit.ts";
 import { noModuleScopeRequestState } from "../../../src/rule-packs/nuxt/rules/nuxt/no-module-scope-request-state.ts";
 import { noRequestDataInModuleState } from "../../../src/rule-packs/nuxt/rules/nuxt/no-request-data-in-module-state.ts";
 import nuxtRulePack from "../../../src/rule-packs/nuxt/rules/nuxt.ts";
+import { defineDoctorExtension, runDoctor } from "../../../src/core/index.ts";
+import { withFixture, writeFileManifest } from "./nuxt-modern-rules-fixture.ts";
 
 async function run(files: Record<string, string>, rules = [noRequestDataInModuleState]) {
   const result = await runProjectFixture({ framework: "nuxt", files, rules });
@@ -222,4 +224,162 @@ export async function useUser(id: string) {
 
 test("ships in the Recommended Preset", () => {
   expect(nuxtRulePack.presets.recommended).toContain("nuxt/ssr/no-request-data-in-module-state");
+});
+
+test("a client-only reset does not hide a server write", async () => {
+  const file = "app/plugins/filter.ts";
+  expect(
+    await run(
+      {
+        [file]: `let filter = ref('')
+export default defineNuxtPlugin(() => {
+  filter.value = useRoute().fullPath
+  if (import.meta.client) filter = ref('')
+})`,
+      },
+      [noRequestDataInModuleState, noModuleScopeRequestState],
+    ),
+  ).toEqual([{ code: "NUXT0105", file, line: 1 }]);
+});
+
+test("a request-derived reassignment supersedes a member write only if selected", async () => {
+  const file = "app/plugins/filter.ts";
+  const files = {
+    [file]: `let filter = ref('')
+export default defineNuxtPlugin(() => {
+  filter.value = useRoute().fullPath
+  filter = ref(useRoute().fullPath)
+})`,
+  };
+  expect(await run(files)).toEqual([{ code: "NUXT0105", file, line: 1 }]);
+  expect(await run(files, [noRequestDataInModuleState, noModuleScopeRequestState])).toEqual([
+    { code: "NUXT0084", file, line: 1 },
+  ]);
+});
+
+test("setup-local declarations shadow plain script state regardless of block order", async () => {
+  const script = `<script>const filter = { value: '' }</script>`;
+  const setup = `<script setup>
+const filter = { value: '' }
+filter.value = useRoute().fullPath
+</script>`;
+  expect(
+    await run({ "app/pages/index.vue": script + setup, "app/pages/other.vue": setup + script }),
+  ).toEqual([]);
+});
+
+test.each([
+  ["import { ref as createRef } from 'vue'", "createRef", true],
+  ["import { ref } from './project-factory'", "ref", false],
+  ["const ref = () => ({ value: '' })", "ref", true],
+])("resolves plain-script factories with setup binding %s", async (binding, factory, reports) => {
+  const file = "app/pages/index.vue";
+  const result = await run({
+    [file]: `<script>
+const shared = ${factory}('')
+</script>
+<script setup>
+${binding}
+shared.value = useRoute().fullPath
+</script>`,
+  });
+  expect(result).toEqual(reports ? [{ code: "NUXT0105", file, line: 2 }] : []);
+});
+
+test("only SSR-running watchers can write request data during setup", async () => {
+  const file = "app/pages/index.vue";
+  expect(
+    await run({
+      [file]: `<script>
+const effect = ref('')
+const immediate = ref('')
+const mounted = ref('')
+const post = ref('')
+const deferred = ref('')
+</script>
+<script setup>
+const route = useRoute()
+watchEffect(() => { effect.value = route.fullPath })
+watch(() => route.fullPath, () => { immediate.value = route.fullPath }, { immediate: true })
+onMounted(() => { mounted.value = route.fullPath })
+watchPostEffect(() => { post.value = route.fullPath })
+watch(() => route.fullPath, () => { deferred.value = route.fullPath })
+onMounted(() => watchEffect(() => { mounted.value = route.fullPath }))
+watchEffect(() => { post.value = route.fullPath }, { flush: 'post' })
+</script>`,
+    }),
+  ).toEqual([
+    { code: "NUXT0105", file, line: 2 },
+    { code: "NUXT0105", file, line: 3 },
+  ]);
+});
+
+const registry = [
+  { name: "ref", as: "ref", from: "vue" },
+  { name: "useRoute", as: "pageRoute", from: "#app/composables/router" },
+  { name: "useRoute", as: "useRoute", from: "./app/utils/fake-router" },
+  { name: "fakeRef", as: "customRef", from: "./app/utils/fake-ref" },
+];
+
+test.each([
+  [
+    "route-specific SSR opt-out",
+    { routeRules: { "/spa/**": { ssr: false } } },
+    "nuxtRoute",
+    "ref",
+    true,
+    true,
+  ],
+  ["manifest auto-import alias", {}, "pageRoute", "ref", false, true],
+  ["project reader exported from #imports", {}, "useRoute", "ref", true, false],
+  ["project factory exported from #imports", {}, "pageRoute", "customRef", true, false],
+] as const)(
+  "uses manifest evidence for %s",
+  async (_, extra, reader, factory, explicit, expected) => {
+    const source = `<script>${explicit ? `import { ${factory}, ${reader} } from '#imports'` : ""}
+const filter = ${factory}('')
+</script>
+<script setup>
+filter.value = ${reader}().fullPath
+</script>`;
+    await withFixture({ "app/pages/index.vue": source }, {}, async (root) => {
+      await writeFileManifest(root, [], {
+        srcDir: "app",
+        generatedAt: new Date().toISOString(),
+        autoImportEnabled: true,
+        autoImports: [
+          ...registry,
+          { name: "useRoute", as: "nuxtRoute", from: "#app/composables/router" },
+        ],
+        ...extra,
+      });
+      const result = await runDoctor({
+        root,
+        framework: "nuxt",
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [nuxtRulePack] })],
+        rules: noRequestDataInModuleState.meta.id,
+        cache: false,
+      });
+      expect(result.project.nuxt?.autoImportsAuthoritative).toBe(true);
+      expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+        expected ? ["NUXT0105"] : [],
+      );
+    });
+  },
+);
+
+test("recommends keeping server-only request data out of hydration state", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    rules: [noRequestDataInModuleState],
+    files: {
+      "app/composables/useAuth.ts": `const auth = ref('')
+export function useAuth() {
+  if (import.meta.server) auth.value = useRequestHeader('authorization')
+}`,
+    },
+  });
+  expect(result.diagnostics[0]?.suggestion).toMatch(
+    /server-only.*useState.*hydration.*safe to send/i,
+  );
 });

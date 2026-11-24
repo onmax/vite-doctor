@@ -12,15 +12,15 @@ import {
   calleeName,
   holdsRequestValue,
   moduleNames,
-  resolvesToModuleBinding,
   unwrapExpression as unwrap,
 } from "../../../../core/internal/request-values.js";
-import { findStatementBinding } from "../../../../core/internal/script-index.js";
 import {
   blockRange,
   inRange,
   isRequestTimeWrite,
   moduleScriptRange,
+  resolvesToModuleState,
+  setupBinding,
   type SourceRange as Range,
 } from "./module-scope-state.js";
 
@@ -84,7 +84,7 @@ export const noModuleScopeRequestState = createRule({
           if (!binding || reported.has(binding.name)) return;
           const value = writtenValue(node, binding);
           if (!value || !isRequestTimeWrite(ctx, node, setup)) return;
-          if (!resolvesToModuleBinding(node, binding.name)) return;
+          if (!resolvesToModuleState(node, program, setup)) return;
           if (!isRequestScopedValue(value, setup)) return;
           reported.add(binding.name);
           const line = ctx.range(node)?.line;
@@ -95,7 +95,7 @@ export const noModuleScopeRequestState = createRule({
             "warn",
             "ssr",
             `${binding.name} lives at module scope and request-time code${line ? ` on line ${line}` : ""} stores request data in it. On the server every SSR request shares this module, so concurrent requests read and overwrite each other's value.`,
-            "Keep per-request state in useState() or the Pinia store state, or key it by the Nuxt app with a WeakMap<NuxtApp, ...> so each SSR request gets its own value.",
+            "Keep private data in request-local variables or server-only request context. Key non-serializable, non-sensitive state by the Nuxt app with a WeakMap<NuxtApp, ...>. Use useState() or Pinia only for serializable values safe to send to the browser in the hydration payload.",
           );
         });
       },
@@ -156,7 +156,8 @@ function isRequestScopedValue(value: AnyNode, setup: Range | null): boolean {
       node.type === "AwaitExpression" ||
       (node.type === "CallExpression" && isRequestScopedCall(node)) ||
       (node.type === "NewExpression" && node.callee?.name === "Promise"),
-    programBinding: (program, name) => setupBinding(program, name, setup),
+    programBinding: (program, name, reference) =>
+      inRange(reference, setup) ? setupBinding(program, name, setup) : null,
   });
 }
 
@@ -171,9 +172,4 @@ function isRequestScopedCall(node: AnyNode) {
   if (name.includes(".$")) return true;
   const method = name.split(".").at(-1)!;
   return name.includes(".") && PROMISE_METHODS.has(method);
-}
-
-function setupBinding(program: AnyNode, name: string, setup: Range | null) {
-  const binding = findStatementBinding(program, name);
-  return binding && inRange(binding, setup) ? binding : null;
 }

@@ -93,11 +93,43 @@ export async function applyPolicyFilters(session: ScanSession): Promise<void> {
   reportDefaultDeclarativeConfig(session);
   await applyReportEligibility(session);
   applySeverityFilter(session);
-  const result = applyDiagnosticPolicy(session);
+  const result = applyDiagnosticPolicy(session, preferModuleStateDiagnostics);
   session.diagnostics = result.diagnostics;
   session.suppressedDiagnostics = result.suppressedDiagnostics;
   if (result.staleBaseline) reportStaleBaseline(session, result.staleBaseline);
   if (result.baseline) reportResolvedBaselineEntries(session, result.baseline);
+}
+
+const moduleStateReplacements = new Map([
+  ["NUXT0105", "NUXT0084"],
+  ["NITRO0023", "NITRO0035"],
+]);
+
+function preferModuleStateDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
+  const overlapKey = ({ code, file, range }: Diagnostic) => {
+    if (!range) return undefined;
+    const preferred = moduleStateReplacements.get(code) ?? code;
+    if (preferred !== "NUXT0084" && preferred !== "NITRO0035") return undefined;
+    return JSON.stringify([preferred, file, range.start, range.end]);
+  };
+  const winners = new Map<string, Diagnostic>();
+  for (const diagnostic of diagnostics) {
+    const key = overlapKey(diagnostic);
+    if (!key) continue;
+    const winner = winners.get(key);
+    const rank = severityRank(diagnostic.severity);
+    if (
+      !winner ||
+      rank > severityRank(winner.severity) ||
+      (rank === severityRank(winner.severity) && !moduleStateReplacements.has(diagnostic.code))
+    )
+      winners.set(key, diagnostic);
+  }
+  if (!winners.size) return diagnostics;
+  return diagnostics.filter((diagnostic) => {
+    const key = overlapKey(diagnostic);
+    return !key || winners.get(key)?.code === diagnostic.code;
+  });
 }
 
 function reportStaleBaseline(session: ScanSession, baseline: StaleBaseline): void {

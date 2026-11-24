@@ -48,8 +48,13 @@ export function isClientOnlyPath(path: string) {
   return /\.client\.[cm]?[jt]sx?$/.test(path) || path.includes(".client.vue");
 }
 
-export function classifyExecutionEvidence(ctx: RuleContext, node: AnyNode): NuxtExecutionEvidence {
-  if (!node || typeof node !== "object") return computeExecutionEvidence(ctx, node);
+export function classifyExecutionEvidence(
+  ctx: RuleContext,
+  node: AnyNode,
+  watcherExecution?: (callback: AnyNode) => boolean | undefined,
+): NuxtExecutionEvidence {
+  if (watcherExecution || !node || typeof node !== "object")
+    return computeExecutionEvidence(ctx, node, watcherExecution);
   const cache = getEvidenceCache(ctx);
   const hit = cache.get(node);
   if (hit) return hit;
@@ -2512,10 +2517,18 @@ export function isInsideExportedFunction(text: string, offset: number) {
   return /export\s+(async\s+)?function\s+use[A-Z]\w+|export\s+const\s+use[A-Z]\w+\s*=/.test(before);
 }
 
-function computeExecutionEvidence(ctx: RuleContext, node: AnyNode): NuxtExecutionEvidence {
+function computeExecutionEvidence(
+  ctx: RuleContext,
+  node: AnyNode,
+  watcherExecution?: (callback: AnyNode) => boolean | undefined,
+): NuxtExecutionEvidence {
   if (
     isClientOnlyPath(ctx.file.relativePath) ||
-    ctx.helpers.isClientOnlyExecutionContext(node, ctx.file.text)
+    ctx.helpers.isClientOnlyExecutionContext(
+      node,
+      ctx.file.text,
+      watcherExecution && ((callback) => watcherExecution(callback) === true),
+    )
   )
     return "client-only";
   if (ctx.helpers.isNuxtServerFile(ctx.file.relativePath)) return "server-only";
@@ -2526,7 +2539,7 @@ function computeExecutionEvidence(ctx: RuleContext, node: AnyNode): NuxtExecutio
     ctx.helpers.isLikelyEventHandler(ctx.file.text, node.start ?? 0)
   )
     return "event-handler";
-  if (isLifecycleOrWatcherCallback(node)) return "lifecycle-only";
+  if (isLifecycleOrWatcherCallback(node, watcherExecution)) return "lifecycle-only";
   return nearestFunctionOrProgram(node)?.type === "Program" ? "setup-time" : "unknown";
 }
 
@@ -2853,12 +2866,22 @@ function nearestNamedFunction(node: AnyNode): string | null {
   return found?.id?.name ?? null;
 }
 
-function isLifecycleOrWatcherCallback(node: AnyNode) {
+function isLifecycleOrWatcherCallback(
+  node: AnyNode,
+  watcherExecution?: (callback: AnyNode) => boolean | undefined,
+) {
   const fn = nearestFunctionOrProgram(node);
   if (!fn) return false;
   return (
     findAncestor(fn, (parent) => {
       if (parent.type !== "CallExpression") return false;
+      if (watcherExecution) {
+        for (const argument of parent.arguments ?? []) {
+          if (!findAncestor(node, (current) => current === argument)) continue;
+          const runs = watcherExecution(argument);
+          if (runs !== undefined) return !runs;
+        }
+      }
       const name = parent.callee?.name ?? parent.callee?.property?.name;
       return LIFECYCLE_RE.test(name ?? "");
     }) !== null

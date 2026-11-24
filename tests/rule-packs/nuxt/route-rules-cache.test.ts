@@ -279,6 +279,20 @@ test.each([
   expect(result.diagnostics).toHaveLength(1);
 });
 
+test.each([
+  ["nuxt.useRequestHeader('cookie')", 1],
+  ["const nuxt = { useRequestHeader: (name: string) => name }; nuxt.useRequestHeader('cookie')", 0],
+])("resolves namespace reads in the correct SFC scope: %s", async (script, count) => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: `<script lang="ts">import * as nuxt from '#app'</script>\n${page(script)}`,
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { swr: 60 },
+    }),
+  });
+  expect(result.diagnostics).toHaveLength(count);
+});
+
 async function handler(files: Record<string, string>) {
   const result = await runRuleFixture({
     rule: noPersonalizedCachedHandler,
