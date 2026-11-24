@@ -414,6 +414,53 @@ function scanIsReliable(ctx: RuleContext, layer: NuxtAppSource, kind: "pages" | 
   );
 }
 
+export function conventionalPagesDirectory(ctx: RuleContext): string | undefined {
+  const layers = nuxtAppSources(ctx);
+  const [layer] = layers;
+  if (!layer || layers.length !== 1 || layer.root !== ctx.project.root) return undefined;
+  if (layer.srcDir !== layer.root && layer.srcDir !== join(layer.root, "app")) return undefined;
+  const sourceEntries = ctx.fs.readDir(layer.srcDir);
+  if (
+    !sourceEntries ||
+    [".nuxtignore", ".nuxtrc", "layers", "modules"].some((path) =>
+      ctx.fs.exists(join(layer.root, path)),
+    ) ||
+    ctx.fs.exists(join(layer.srcDir, "modules")) ||
+    sourceEntries.some((entry) => entry.name.startsWith("router.options."))
+  )
+    return undefined;
+  const config = configFile(ctx, layer.root);
+  if (config) {
+    const program = parseScript(config.file, config.text) as AnyNode;
+    if (
+      !program ||
+      program.body.some((statement: AnyNode) => statement.type !== "ExportDefaultDeclaration")
+    )
+      return undefined;
+    const object = exportedConfigObject(program, new Map());
+    if (
+      !object ||
+      object.properties.some((property: AnyNode) => {
+        if (property.type !== "Property" || property.computed || property.kind !== "init")
+          return true;
+        const name = propertyName(property);
+        return (
+          !name ||
+          name.startsWith("$") ||
+          /^(?:extends|theme|modules|_modules|hooks|router|rootDir|srcDir|dir|pagesDir|ignore|ignorePrefix|extensions|future)$/.test(
+            name,
+          ) ||
+          (name === "pages" && unwrap(property.value)?.value !== true)
+        );
+      })
+    )
+      return undefined;
+  } else if (NUXT_CONFIG_FILES.some((name) => ctx.fs.exists(join(layer.root, name)))) {
+    return undefined;
+  }
+  return join(layer.srcDir, "pages");
+}
+
 function currentManifest(ctx: RuleContext, layers: NuxtAppSource[], kind: NuxtAppInventoryKind) {
   const manifest = ctx.project.nuxt?.manifest;
   return manifest?.resolvedAppCurrent?.[kind] && layers[0]?.root === ctx.project.root

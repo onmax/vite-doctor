@@ -654,6 +654,12 @@ test.each(["pages", "hooked", "screens", "markdown"])(
       write(page("users"), template("<div>Users</div>"));
       write(page("users/[id]"), template("<div>User</div>"));
       write(page("[org]"), template("<NuxtPage />"));
+      if (directory === "pages") {
+        write(
+          page("items/[id]"),
+          template("<div>Item</div>", "definePageMeta({ keepalive: true })"),
+        );
+      }
       if (directory !== "pages") {
         write(
           page("product/[id]"),
@@ -702,11 +708,12 @@ test.each(["pages", "hooked", "screens", "markdown"])(
       ]);
       const filesWithUnboundedCaches = async () =>
         (await issues("NUXT0094")).map((item) => item.file);
-      const orgSettings = [expect.stringMatching(/\[org\]\/settings\.vue$/)];
-      expect.soft(await filesWithUnboundedCaches()).toEqual(orgSettings);
+      const expectedCaches = [expect.stringMatching(/\[org\]\/settings\.vue$/)];
+      if (directory === "pages") expectedCaches.push(expect.stringMatching(/items\/\[id\]\.vue$/));
+      expect.soft(await filesWithUnboundedCaches()).toEqual(expectedCaches);
 
       write("app/layouts/default.vue", template("<div><slot /></div>"));
-      expect.soft(await filesWithUnboundedCaches()).toEqual(orgSettings);
+      expect.soft(await filesWithUnboundedCaches()).toEqual(expectedCaches);
       expect(await issues("NUXT0098")).toHaveLength(1);
       rmSync(join(root, "app/layouts/default.vue"));
 
@@ -723,9 +730,13 @@ test.each(["pages", "hooked", "screens", "markdown"])(
 
       write(page("teams/[id]"), template("<div>Team</div>"));
       write("app/layouts/default.vue", template("<div><slot /></div>"));
-      expect(await filesWithUnboundedCaches()).toEqual([]);
+      expect(await filesWithUnboundedCaches()).toEqual(directory === "pages" ? expectedCaches : []);
       expect(await issues("NUXT0098")).toHaveLength(directory === "pages" ? 2 : 0);
       expect(await issues("NUXT0099")).toHaveLength(directory === "pages" ? 1 : 0);
+      if (directory === "pages") {
+        write("modules/routes.ts", "export default () => {}\n");
+        expect(await filesWithUnboundedCaches()).toEqual([]);
+      }
     } finally {
       try {
         await nuxt?.close();

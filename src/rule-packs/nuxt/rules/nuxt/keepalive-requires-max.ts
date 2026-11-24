@@ -1,8 +1,9 @@
-import { resolve } from "pathe";
+import { basename, dirname, join, resolve } from "pathe";
 import { gte, valid } from "semver";
 import { parseScriptScope } from "../../../../core/internal/script-scope.js";
 import type { DiagnosticEvidence, RuleContext } from "../../../../core/index.js";
 import { FUNCTION_TYPES, propertyName, unwrap } from "./nuxt-config-ast.js";
+import { conventionalPagesDirectory, isScannedNuxtFile } from "./page-structure.js";
 import {
   type AnyNode,
   createRule,
@@ -123,12 +124,13 @@ function routeParams(
   metaPath: AnyNode,
 ): RouteParams | null {
   const manifest = ctx.project.nuxt?.manifest;
-  if (manifest?.resolvedApp || (manifest?.isCurrent && manifest.pages?.length)) {
-    if (
-      manifest.resolvedApp &&
-      (!manifest.resolvedApp.pagesResolved || !manifest.resolvedAppCurrent?.pages)
-    )
-      return null;
+  if (
+    manifest &&
+    (manifest.resolvedApp
+      ? manifest.resolvedAppCurrent?.pages
+      : manifest.isCurrent && manifest.pages?.length)
+  ) {
+    if (manifest.resolvedApp && !manifest.resolvedApp.pagesResolved) return null;
     const file = resolve(ctx.project.root, ctx.file.path);
     const paths = [
       ...new Set(
@@ -150,6 +152,7 @@ function routeParams(
     };
   }
   if (!pagePath) return null;
+  if (manifest?.resolvedApp && !canInferStaleRoute(ctx, pagePath, metaPath)) return null;
   if (metaPath) {
     const value = unwrap(metaPath);
     if (value?.type !== "Literal" || typeof value.value !== "string") return null;
@@ -165,6 +168,39 @@ function routeParams(
       summary: `The file-based route pages/${pagePath} has dynamic segments.`,
     },
   };
+}
+
+function canInferStaleRoute(ctx: RuleContext, pagePath: string, metaPath: AnyNode): boolean {
+  const pages = conventionalPagesDirectory(ctx);
+  if (
+    !pages ||
+    !isScannedNuxtFile(pagePath) ||
+    pagePath.split("/").some((part) => part.startsWith("-") || part.startsWith("("))
+  )
+    return false;
+  if (metaPath) {
+    const value = unwrap(metaPath);
+    return (
+      value?.type === "Literal" && typeof value.value === "string" && value.value.startsWith("/")
+    );
+  }
+  for (let folder = dirname(pagePath); folder !== "."; folder = dirname(folder)) {
+    const parentDir = join(pages, dirname(folder));
+    const entries = ctx.fs.readDir(parentDir);
+    if (!entries) return false;
+    for (const entry of entries) {
+      if (entry.name.replace(/\.[^.]+$/, "") !== basename(folder) || !isScannedNuxtFile(entry.name))
+        continue;
+      const source = ctx.fs.readText(join(parentDir, entry.name));
+      if (
+        source === undefined ||
+        !entry.name.endsWith(".vue") ||
+        /definePageMeta|<script\b[^>]*\bsrc\s*=/.test(source)
+      )
+        return false;
+    }
+  }
+  return true;
 }
 
 function matches(text: string, pattern: RegExp): string[] {
