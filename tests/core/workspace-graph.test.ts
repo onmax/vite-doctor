@@ -52,6 +52,26 @@ test("follows named and star re-exports from a package entrypoint", async () => 
   );
 });
 
+test("counts an empty re-export in runtime cycles and reachability", async () => {
+  await withProject(
+    {
+      "package.json": JSON.stringify({ type: "module", main: "./src/entry.js" }),
+      "src/entry.js": 'export {} from "./b.js"',
+      "src/b.js": 'import "./entry.js"',
+    },
+    async (root) => {
+      const result = await runViteDoctor({ root, analyses: "dead-code,graph", cache: false });
+      expect(result.diagnostics.map((item) => item.ruleId)).toContain(
+        "workspace/dead-code/circular-dependency",
+      );
+      expect(result.graph?.cycles).toBe(1);
+      expect(result.diagnostics.map((item) => item.ruleId)).not.toContain(
+        "workspace/dead-code/unused-file",
+      );
+    },
+  );
+});
+
 test("counts dynamic imports and re-exports when diagnosing dependencies", async () => {
   await withProject(
     {
