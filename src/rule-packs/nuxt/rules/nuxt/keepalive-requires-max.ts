@@ -1,9 +1,9 @@
-import { basename, dirname, join, resolve } from "pathe";
+import { basename, dirname, join, relative, resolve } from "pathe";
 import { gte, valid } from "semver";
 import { parseScriptScope } from "../../../../core/internal/script-scope.js";
 import type { DiagnosticEvidence, RuleContext } from "../../../../core/index.js";
 import { FUNCTION_TYPES, propertyName, unwrap } from "./nuxt-config-ast.js";
-import { conventionalPagesDirectory, isScannedNuxtFile } from "./page-structure.js";
+import { conventionalPagesDirectory, isInsideDir, isScannedNuxtFile } from "./page-structure.js";
 import {
   type AnyNode,
   createRule,
@@ -124,14 +124,17 @@ function routeParams(
   metaPath: AnyNode,
 ): RouteParams | null {
   const manifest = ctx.project.nuxt?.manifest;
+  const file = resolve(ctx.project.root, ctx.file.path);
+  const pages = manifest?.resolvedApp && conventionalPagesDirectory(ctx);
+  const preparedDir = manifest?.resolvedApp?.inputs?.pages?.directories[0]?.directory;
   if (
     manifest &&
     (manifest.resolvedApp
-      ? manifest.resolvedAppCurrent?.pages
+      ? manifest.resolvedAppCurrent?.pages &&
+        (!pages || preparedDir === undefined || resolve(ctx.project.root, preparedDir) === pages)
       : manifest.isCurrent && manifest.pages?.length)
   ) {
     if (manifest.resolvedApp && !manifest.resolvedApp.pagesResolved) return null;
-    const file = resolve(ctx.project.root, ctx.file.path);
     const paths = [
       ...new Set(
         (manifest.pages ?? []).flatMap((page) => {
@@ -151,8 +154,12 @@ function routeParams(
       },
     };
   }
+  if (manifest?.resolvedApp) {
+    if (!pages || !isInsideDir(file, pages)) return null;
+    pagePath = relative(pages, file);
+    if (!canInferStaleRoute(ctx, pages, pagePath, metaPath)) return null;
+  }
   if (!pagePath) return null;
-  if (manifest?.resolvedApp && !canInferStaleRoute(ctx, pagePath, metaPath)) return null;
   if (metaPath) {
     const value = unwrap(metaPath);
     if (value?.type !== "Literal" || typeof value.value !== "string") return null;
@@ -170,37 +177,60 @@ function routeParams(
   };
 }
 
-function canInferStaleRoute(ctx: RuleContext, pagePath: string, metaPath: AnyNode): boolean {
-  const pages = conventionalPagesDirectory(ctx);
+function canInferStaleRoute(
+  ctx: RuleContext,
+  pages: string,
+  pagePath: string,
+  metaPath: AnyNode,
+): boolean {
   if (
-    !pages ||
     !isScannedNuxtFile(pagePath) ||
-    pagePath.split("/").some((part) => part.startsWith("-") || part.startsWith("("))
+    /[()@]|\.(?:client|server)\./.test(pagePath) ||
+    pagePath.split("/").some((part) => part.startsWith("-") || part.startsWith("."))
   )
     return false;
-  if (metaPath) {
-    const value = unwrap(metaPath);
-    return (
-      value?.type === "Literal" && typeof value.value === "string" && value.value.startsWith("/")
-    );
-  }
+  const entries = pageCandidates(ctx, join(pages, dirname(pagePath)), routeStem(pagePath));
+  if (entries?.length !== 1 || entries[0] !== basename(pagePath)) return false;
+  const path = unwrap(metaPath);
+  if (
+    metaPath &&
+    !(path?.type === "Literal" && typeof path.value === "string" && path.value.startsWith("/"))
+  )
+    return false;
   for (let folder = dirname(pagePath); folder !== "."; folder = dirname(folder)) {
     const parentDir = join(pages, dirname(folder));
-    const entries = ctx.fs.readDir(parentDir);
-    if (!entries) return false;
-    for (const entry of entries) {
-      if (entry.name.replace(/\.[^.]+$/, "") !== basename(folder) || !isScannedNuxtFile(entry.name))
-        continue;
-      const source = ctx.fs.readText(join(parentDir, entry.name));
+    const parents = pageCandidates(ctx, parentDir, basename(folder));
+    if (!parents || parents.length > 1) return false;
+    if (parents.length && !metaPath) {
+      const [parent] = parents;
+      const source = ctx.fs.readText(join(parentDir, parent!));
       if (
         source === undefined ||
-        !entry.name.endsWith(".vue") ||
+        parent !== `${basename(folder)}.vue` ||
         /definePageMeta|<script\b[^>]*\bsrc\s*=/.test(source)
       )
         return false;
     }
   }
   return true;
+}
+
+function routeStem(file: string) {
+  return basename(file)
+    .replace(/\.[^.]+$/, "")
+    .replace(/(?:\.(?:client|server))+$/, "");
+}
+
+function pageCandidates(ctx: RuleContext, dir: string, stem: string) {
+  return ctx.fs
+    .readDir(dir)
+    ?.flatMap((entry) =>
+      (entry.isFile() || entry.isSymbolicLink()) &&
+      isScannedNuxtFile(entry.name) &&
+      routeStem(entry.name) === stem
+        ? [entry.name]
+        : [],
+    );
 }
 
 function matches(text: string, pattern: RegExp): string[] {

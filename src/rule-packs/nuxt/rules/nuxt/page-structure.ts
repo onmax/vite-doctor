@@ -419,13 +419,25 @@ export function conventionalPagesDirectory(ctx: RuleContext): string | undefined
   const [layer] = layers;
   if (!layer || layers.length !== 1 || layer.root !== ctx.project.root) return undefined;
   if (layer.srcDir !== layer.root && layer.srcDir !== join(layer.root, "app")) return undefined;
-  const sourceEntries = ctx.fs.readDir(layer.srcDir);
+  const appDir = join(layer.root, "app");
+  const appEntries = ctx.fs.readDir(appDir);
+  if (!appEntries && ctx.fs.exists(appDir)) return undefined;
+  const legacy = ["app.vue", "App.vue", "assets", "layouts", "middleware", "pages", "plugins"];
+  const srcDir =
+    appEntries &&
+    (appEntries.some(
+      ({ name }) => name !== "spa-loading-template.html" && !name.startsWith("router.options"),
+    ) ||
+      !legacy.some((name) => ctx.fs.exists(join(layer.root, name))))
+      ? appDir
+      : layer.root;
+  const sourceEntries = srcDir === appDir ? appEntries : ctx.fs.readDir(srcDir);
   if (
     !sourceEntries ||
     [".nuxtignore", ".nuxtrc", "layers", "modules"].some((path) =>
       ctx.fs.exists(join(layer.root, path)),
     ) ||
-    ctx.fs.exists(join(layer.srcDir, "modules")) ||
+    ctx.fs.exists(join(srcDir, "modules")) ||
     sourceEntries.some((entry) => entry.name.startsWith("router.options."))
   )
     return undefined;
@@ -458,7 +470,7 @@ export function conventionalPagesDirectory(ctx: RuleContext): string | undefined
   } else if (NUXT_CONFIG_FILES.some((name) => ctx.fs.exists(join(layer.root, name)))) {
     return undefined;
   }
-  return join(layer.srcDir, "pages");
+  return join(srcDir, "pages");
 }
 
 function currentManifest(ctx: RuleContext, layers: NuxtAppSource[], kind: NuxtAppInventoryKind) {

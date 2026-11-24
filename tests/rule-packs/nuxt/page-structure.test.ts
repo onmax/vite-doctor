@@ -610,6 +610,68 @@ function runPreparedRules(root: string) {
   });
 }
 
+test.each(["pages", "app/pages"])(
+  "rechecks page selection after preparing %s",
+  async (pagesDir) => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-prepared-page-selection-"));
+    const cwd = process.cwd();
+    const write = (path: string, text: string) => {
+      const file = join(root, path);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, text);
+    };
+    const prepare = async () => {
+      const nuxt = await loadNuxt({
+        cwd: root,
+        overrides: { _prepare: true, modules: [nuxtDoctorModule], telemetry: false },
+      });
+      try {
+        await buildNuxt(nuxt);
+      } finally {
+        await nuxt.close();
+      }
+      return JSON.parse(
+        readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"),
+      ) as NuxtDoctorManifest;
+    };
+    const caches = async () =>
+      (await runPreparedRules(root)).diagnostics.filter((item) => item.code === "NUXT0094");
+    try {
+      symlinkSync(
+        fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+        join(root, "node_modules"),
+        "junction",
+      );
+      write("package.json", JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }));
+      write("nuxt.config.ts", "export default {}\n");
+      const page = `${pagesDir}/[id].vue`;
+      write(page, template("<div>Item</div>", "definePageMeta({ keepalive: true })"));
+      process.chdir(root);
+      await prepare();
+      expect(await caches()).toHaveLength(1);
+
+      write(`${pagesDir}/notes.vue`, template("<div>Notes</div>"));
+      expect(await caches()).toHaveLength(1);
+      if (pagesDir === "pages") rmSync(join(root, `${pagesDir}/notes.vue`));
+
+      const replacement = pagesDir === "pages" ? "app/pages/index.vue" : "app/pages/[id].ts";
+      write(
+        replacement,
+        replacement.endsWith(".ts")
+          ? "export default () => null\n"
+          : template("<div>New app</div>"),
+      );
+      expect(await caches()).toEqual([]);
+      const manifest = await prepare();
+      expect(manifest.pages?.map((entry) => entry.file)).toContain(join(root, replacement));
+      expect(manifest.pages?.map((entry) => entry.file)).not.toContain(join(root, page));
+    } finally {
+      process.chdir(cwd);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test.each(["pages", "hooked", "screens", "markdown"])(
   "checks prepared %s without metadata scanning",
   async (directory) => {
