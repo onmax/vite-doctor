@@ -15,9 +15,53 @@ const cycleRule = "workspace/dead-code/circular-dependency";
 const useA = "export function useA() {\n  return useB() + 1\n}\n";
 const useB = "export function useB(n = 0) {\n  return n > 0 ? useA() : 0\n}\n";
 
-async function run(files: Record<string, string>, { manifest = true } = {}) {
+interface RunOptions {
+  manifest?: boolean;
+  analyses?: string;
+  autoImports?: (root: string) => unknown[];
+  layers?: (root: string) => unknown[];
+  concurrent?: boolean;
+}
+
+function manifestFor(root: string, options: RunOptions) {
+  return JSON.stringify({
+    nuxtVersion: "4.4.6",
+    vueVersion: "3.5",
+    rootDir: root,
+    srcDir: join(root, "app"),
+    appDir: join(root, "app"),
+    buildDir: join(root, ".nuxt"),
+    generatedAt: new Date(Date.now() + 1000).toISOString(),
+    autoImportEnabled: true,
+    autoImports: [
+      { name: "ref", from: "vue", kind: "vue" },
+      { name: "useFetch", from: "#app/composables/fetch", kind: "nuxt" },
+      { name: "useA", from: join(root, "app/composables/useA.ts"), kind: "app" },
+      { name: "useB", from: join(root, "app/composables/useB.ts"), kind: "app" },
+      { name: "formatPrice", from: "~/utils/format", kind: "app" },
+      ...(options.autoImports?.(root) ?? []),
+    ],
+    components: [],
+    layers: options.layers?.(root) ?? [{ root, priority: 0 }],
+    routeRules: {},
+    serverHandlers: [],
+    modules: [],
+    moduleSources: [],
+  });
+}
+
+function writeFixture(root: string, files: Record<string, string>) {
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), text);
+  }
+}
+
+async function run(files: Record<string, string>, options: RunOptions = {}) {
+  const { manifest = true, concurrent = false } = options;
   const root = mkdtempSync(join(tmpdir(), "doctor-auto-import-edges-"));
   let captured: ImportGraph | undefined;
+  let capturedTwice: ImportGraph | undefined;
   const capture = createRule({
     meta: {
       id: "test/import-graph",
@@ -30,7 +74,12 @@ async function run(files: Record<string, string>, { manifest = true } = {}) {
     create(ctx) {
       return {
         async onWorkspaceEnd() {
-          captured = await ctx.inventory.importGraph();
+          if (concurrent)
+            [captured, capturedTwice] = await Promise.all([
+              ctx.inventory.importGraph(),
+              ctx.inventory.importGraph(),
+            ]);
+          else captured = await ctx.inventory.importGraph();
         },
       };
     },
@@ -40,38 +89,12 @@ async function run(files: Record<string, string>, { manifest = true } = {}) {
       "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "4.4.6" } }),
       ...files,
     };
-    if (manifest)
-      fixture[".nuxt/doctor.manifest.json"] = JSON.stringify({
-        nuxtVersion: "4.4.6",
-        vueVersion: "3.5",
-        rootDir: root,
-        srcDir: join(root, "app"),
-        appDir: join(root, "app"),
-        buildDir: join(root, ".nuxt"),
-        generatedAt: new Date(Date.now() + 1000).toISOString(),
-        autoImportEnabled: true,
-        autoImports: [
-          { name: "ref", from: "vue", kind: "vue" },
-          { name: "useFetch", from: "#app/composables/fetch", kind: "nuxt" },
-          { name: "useA", from: join(root, "app/composables/useA.ts"), kind: "app" },
-          { name: "useB", from: join(root, "app/composables/useB.ts"), kind: "app" },
-          { name: "formatPrice", from: "~/utils/format", kind: "app" },
-        ],
-        components: [],
-        layers: [{ root, priority: 0 }],
-        routeRules: {},
-        serverHandlers: [],
-        modules: [],
-        moduleSources: [],
-      });
-    for (const [file, text] of Object.entries(fixture)) {
-      mkdirSync(dirname(join(root, file)), { recursive: true });
-      writeFileSync(join(root, file), text);
-    }
+    if (manifest) fixture[".nuxt/doctor.manifest.json"] = manifestFor(root, options);
+    writeFixture(root, fixture);
     const result = await runViteDoctor({
       root,
       framework: "nuxt",
-      analyses: "graph,dead-code",
+      analyses: options.analyses ?? "graph,dead-code",
       rules: "test/import-graph,workspace/dead-code/*",
       cache: false,
       extensions: [
@@ -113,6 +136,7 @@ async function run(files: Record<string, string>, { manifest = true } = {}) {
         .filter((edge) => edge.kind === "auto-import")
         .map((edge) => `${rel(edge.from)} -${edge.specifier}-> ${rel(edge.to)}`),
       graph,
+      capturedTwice,
       rel,
       gaps: (result.project.evidenceGaps ?? []).map((gap) => gap.message),
     };
@@ -172,7 +196,7 @@ test("a multiline re-export closes an auto-import cycle and retains its declarat
   const declaration = 'export { useA }\n  from "./useA";';
   const { graph } = await run({
     "app/composables/useA.ts": useA,
-    "app/composables/useB.ts": `${declaration}\n`,
+    "app/composables/useB.ts": `${declaration}\nexport const useB = () => 1\n`,
   });
   const path = graph.cycles[0]?.path;
   expect(path?.map((edge) => edge.kind)).toEqual(["auto-import", "re-export"]);
@@ -226,4 +250,152 @@ test("without a current Nuxt manifest there are no auto-import edges and the gap
       ),
     ]),
   );
+});
+
+test("a class registered as both a value and a type keeps its runtime auto-import", async () => {
+  const { autoImportEdges, deadCode } = await run(
+    {
+      "app/utils/model.ts": "export class SharedModel {\n  id = 1\n}\n",
+      "app/pages/index.vue":
+        '<script setup lang="ts">\nconst model = new SharedModel()\n</script>\n<template>{{ model.id }}</template>\n',
+    },
+    {
+      autoImports: (root) => [
+        { name: "SharedModel", from: join(root, "app/utils/model.ts") },
+        { name: "SharedModel", from: join(root, "app/utils/model.ts"), type: true },
+      ],
+    },
+  );
+  expect(autoImportEdges).toEqual(["app/pages/index.vue -SharedModel-> app/utils/model.ts"]);
+  expect(deadCode).toEqual([]);
+});
+
+test("type queries and write-only targets are not runtime auto-import reads", async () => {
+  const { autoImportEdges, cycles } = await run({
+    "app/composables/useA.ts":
+      "export type B = typeof useB\nexport function useA() {\n  useB = 1\n  return 1\n}\n",
+    "app/composables/useB.ts": useB,
+  });
+  expect(autoImportEdges).toEqual(["app/composables/useB.ts -useA-> app/composables/useA.ts"]);
+  expect(cycles).toEqual([]);
+});
+
+test("an identifier spelled with a Unicode escape is still an auto-import read", async () => {
+  const { autoImportEdges, graph, rel } = await run({
+    "app/composables/useB.ts": "export function useB() {\n  return 1\n}\n",
+    "app/utils/run.ts": "export const run = () =>\n  use\\u0042()\n",
+  });
+  expect(autoImportEdges).toEqual(["app/utils/run.ts -useB-> app/composables/useB.ts"]);
+  const [edge] = graph.importsOf(graph.files.find((file) => rel(file) === "app/utils/run.ts")!);
+  expect(edge?.range).toMatchObject({ line: 2, column: 3 });
+  expect(edge!.range!.end - edge!.range!.start).toBe("use\\u0042".length);
+});
+
+test("a <script setup> local does not shadow an auto-import in the normal <script>", async () => {
+  const { autoImportEdges } = await run({
+    "app/composables/useB.ts": "export function useB() {\n  return 1\n}\n",
+    "app/components/Widget.vue": [
+      '<script lang="ts">',
+      "export const makeValue = () => useB()",
+      "</script>",
+      '<script setup lang="ts">',
+      "const useB = () => 42",
+      "const value = useB()",
+      "</script>",
+      "<template>{{ value }}</template>",
+      "",
+    ].join("\n"),
+    "app/pages/index.vue": [
+      '<script lang="ts">',
+      'import { useB as local } from "~/composables/useB"',
+      "export const makeValue = () => local()",
+      "</script>",
+      '<script setup lang="ts">',
+      'import { useA } from "~/composables/useA"',
+      "const value = useA()",
+      "</script>",
+      "<template>{{ value }}</template>",
+      "",
+    ].join("\n"),
+    "app/composables/useA.ts": "export const useA = () => 1\n",
+  });
+  expect(autoImportEdges).toEqual(["app/components/Widget.vue -useB-> app/composables/useB.ts"]);
+});
+
+test("an export removed after the manifest was generated withholds the edges and reports the gap", async () => {
+  const { autoImportEdges, cycles, gaps } = await run({
+    "app/composables/useA.ts": useA,
+    "app/composables/useB.ts": "export function useRenamed() {\n  return useA()\n}\n",
+  });
+  expect(autoImportEdges).toEqual([]);
+  expect(cycles).toEqual([]);
+  expect(gaps).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining(
+        "lists `useB` from app/composables/useB.ts, which no longer exports it",
+      ),
+    ]),
+  );
+});
+
+test("files in a layer's configured serverDir get no app auto-import edges", async () => {
+  const { autoImportEdges } = await run(
+    {
+      "app/composables/useB.ts": "export function useB() {\n  return 1\n}\n",
+      "backend/utils/useB.ts": "export function useB() {\n  return 2\n}\n",
+      "backend/api/test.ts": "export default () => useB()\n",
+      "app/pages/index.vue":
+        '<script setup lang="ts">\nconst value = useB()\n</script>\n<template>{{ value }}</template>\n',
+    },
+    { layers: (root) => [{ root, priority: 0, serverDir: join(root, "backend") }] },
+  );
+  expect(autoImportEdges).toEqual(["app/pages/index.vue -useB-> app/composables/useB.ts"]);
+});
+
+test("an auto-import keeps only its resolved destination live, not other exports of the name", async () => {
+  const { autoImportEdges, deadCode } = await run({
+    "app/composables/useB.ts": "export function useB() {\n  return 1\n}\n",
+    "app/legacy/old.ts": "export const useB = () => 2\n",
+    "app/pages/index.vue":
+      '<script setup lang="ts">\nconst values = [1].map(useB)\n</script>\n<template>{{ values }}</template>\n',
+  });
+  expect(autoImportEdges).toEqual(["app/pages/index.vue -useB-> app/composables/useB.ts"]);
+  expect(deadCode).toEqual([
+    "workspace/dead-code/unused-file app/legacy/old.ts",
+    "workspace/dead-code/unused-export app/legacy/old.ts",
+  ]);
+});
+
+test("concurrent import graph requests all see the completed auto-import edges", async () => {
+  const { graph, capturedTwice } = await run(
+    {
+      "app/components/Counter.vue":
+        '<script setup lang="ts">\nconst value = useA()\n</script>\n<template>{{ value }}</template>\n',
+      "app/composables/useA.ts": useA,
+      "app/composables/useB.ts": useB,
+    },
+    { analyses: "", concurrent: true },
+  );
+  expect(graph.cycles).toHaveLength(1);
+  expect(capturedTwice?.cycles).toHaveLength(1);
+});
+
+test("the default run's graph summary does not depend on an earlier cached graph analysis", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-auto-import-edges-cache-"));
+  try {
+    writeFixture(root, {
+      "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "4.4.6" } }),
+      ".nuxt/doctor.manifest.json": manifestFor(root, {}),
+      "app/composables/useA.ts": useA,
+      "app/composables/useB.ts": useB,
+    });
+    const options = { root, framework: "nuxt" as const, cache: true };
+    const cold = await runViteDoctor(options);
+    rmSync(join(root, ".vite-doctor"), { recursive: true, force: true });
+    await runViteDoctor({ ...options, analyses: "graph" });
+    const afterGraph = await runViteDoctor(options);
+    expect(afterGraph.graph).toEqual(cold.graph);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

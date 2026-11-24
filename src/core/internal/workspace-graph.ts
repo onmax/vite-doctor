@@ -17,7 +17,11 @@ import { nativeMatch, sha256 } from "./utils.js";
 import { pushDiagnostic, scopedReportLocations } from "./diagnostics.js";
 import { sourceFacts, walkAstFacts } from "./facts.js";
 import { buildImportGraph, computeSccs, isRuntimeImportEdge } from "./import-graph.js";
-import { collectAutoImportEdges, sessionAutoImportEdges } from "./auto-import-edges.js";
+import {
+  collectAutoImportEdges,
+  sessionAutoImportEdges,
+  type AutoImportEdge,
+} from "./auto-import-edges.js";
 import { projectNuxtInventories } from "./workspace-nuxt.js";
 
 export interface GraphIndex {
@@ -29,11 +33,15 @@ export interface GraphIndex {
 
 const graphIndexes = new WeakMap<WorkspaceGraph, GraphIndex>();
 
-/** Reads package manifests and entry files through `fs`, so the graph's inputs are tracked. */
+/**
+ * Reads package manifests and entry files through `fs`, so the graph's inputs are tracked. Only
+ * the `autoImports` passed in become edges, so the graph does not depend on what else collected.
+ */
 export function buildWorkspaceGraph(
   session: ScanSession,
   fs: RuleFileSystem,
   index: GraphIndex = createGraphIndex(session, fs),
+  autoImports: readonly AutoImportEdge[] = [],
 ): WorkspaceGraph {
   const files = new Map(session.facts.map((fact) => [fact.fileId, fact]));
   const fileIdsByPath = new Map(session.facts.map((fact) => [fact.path, fact.fileId]));
@@ -84,12 +92,9 @@ export function buildWorkspaceGraph(
       refsByExport.set(item.name, refs);
     }
   }
-  for (const edge of sessionAutoImportEdges(session)) {
+  // An auto-import resolves to one file, so it is not a name reference to every export of it.
+  for (const edge of autoImports)
     importEdges.push({ from: edge.from, to: edge.to, specifier: edge.name, kind: "auto-import" });
-    const refs = refsByExport.get(edge.name) ?? [];
-    refs.push({ fileId: edge.from, range: edge.range });
-    refsByExport.set(edge.name, refs);
-  }
 
   for (const edge of [...importEdges, ...exportEdges]) {
     if (edge.to === undefined) continue;
@@ -531,16 +536,6 @@ export async function importGraphInventory(session: ScanSession): Promise<Import
   return sessionImportGraph(session, index);
 }
 
-/** Collects the auto-import edges the graph analyses read, once File Facts are loaded. */
-export async function collectGraphAutoImports(
-  session: ScanSession,
-  index: GraphIndex,
-): Promise<void> {
-  const analyses = selectedAnalyses(session);
-  if (analyses.has("dead-code") || analyses.has("graph"))
-    await collectAutoImportEdges(session, (path) => index.resolveFile(path));
-}
-
 function sessionImportGraph(session: ScanSession, index?: GraphIndex): ImportGraph {
   let graph = importGraphs.get(session);
   if (!graph) {
@@ -783,6 +778,9 @@ function reachableFiles(graph: WorkspaceGraph): Set<number> {
     if (fact.exports.some((item) => graph.reverseIndex.refsByExport.has(item.name)))
       queue.push(fact.fileId);
   }
+  // Like a named import, an auto-import keeps its source live, but only the file it resolves to.
+  for (const edge of graph.importEdges)
+    if (edge.kind === "auto-import" && edge.to !== undefined) queue.push(edge.to);
   for (let index = 0; index < queue.length; index++) {
     const id = queue[index]!;
     if (live.has(id)) continue;

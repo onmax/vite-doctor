@@ -26,9 +26,9 @@ import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
 import { canMatchPrefilter } from "./rule-prefilter.js";
 import { workspaceNuxtRoots, workspaceProjectView, workspaceViewRoot } from "./workspace-nuxt.js";
 import { nuxtInventoryOwner, owningWorkspacePackage } from "./workspace-packages.js";
+import { collectAutoImportEdges } from "./auto-import-edges.js";
 import {
   buildWorkspaceGraph,
-  collectGraphAutoImports,
   createGraphIndex,
   importGraphInventory,
   runDuplicationRules,
@@ -295,7 +295,8 @@ export async function buildGraphPhase(session: ScanSession): Promise<void> {
   // A scoped report describes the reported files, so it skips the project graph summary unless an
   // analysis needs the graph.
   if (session.scopedReport && !graphAnalyses) return;
-  const key = graphKey(session);
+  // Graph analyses add auto-import edges, so each mode keeps its own summary.
+  const key = graphKey(session, graphAnalyses);
   if (!graphAnalyses) {
     const cached = session.cache.graph(key);
     if (cached) {
@@ -306,8 +307,10 @@ export async function buildGraphPhase(session: ScanSession): Promise<void> {
   session.facts = await sourceFacts(session);
   const frame = session.ruleInputs.frame();
   const index = createGraphIndex(session, frame.fs);
-  await collectGraphAutoImports(session, index);
-  session.graph = buildWorkspaceGraph(session, frame.fs, index);
+  const autoImports = graphAnalyses
+    ? await collectAutoImportEdges(session, (path) => index.resolveFile(path))
+    : [];
+  session.graph = buildWorkspaceGraph(session, frame.fs, index, autoImports);
   session.graphSummary = summarizeGraph(session.graph);
   session.cache.recordGraph(key, session.graphSummary, frame.readInputs());
 }
@@ -346,10 +349,11 @@ function projectChanged(project: ProjectInfo, before: unknown[]): boolean {
   return after.length !== before.length || after.some((value, index) => value !== before[index]);
 }
 
-function graphKey(session: ScanSession): string {
+function graphKey(session: ScanSession, autoImports: boolean): string {
   return sha256(
     JSON.stringify([
       session.contextKey,
+      autoImports,
       session.handles.map((file) => [
         file.path,
         file.hash,
