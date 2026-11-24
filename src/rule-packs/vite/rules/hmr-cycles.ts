@@ -42,10 +42,14 @@ export const noCircularImportAtHmrBoundary = createRule({
           const kind = boundary.endsWith(".vue")
             ? "a Vue SFC, which @vitejs/plugin-vue makes accept its own updates in dev"
             : "a module that calls import.meta.hot.accept";
+          const autoImports = loop.filter((item) => item.kind === "auto-import");
+          const viaAutoImports = autoImports.length
+            ? ` The loop runs through Nuxt auto-imports (${autoImports.map((item) => `\`${item.specifier}\``).join(", ")}), which Nuxt compiles to static imports in dev and build.`
+            : "";
           ctx.report(
             diagnostics.VITE0029({
-              why: `Circular import through the HMR boundary ${path(boundary)}: ${steps}. ${path(boundary)} is ${kind}. When an edit inside this cycle reaches it, Vite marks the update as within a circular import, and the browser re-imports ${path(boundary)}, which re-runs the modules in the cycle. If that re-import throws, for example because a module reads a binding of the cycle before it is initialized, Vite reloads the whole page instead of applying the update.`,
-              fix: `Break the cycle at the edge where a lower layer, such as a router or store, imports ${path(boundary)}: load the component lazily, as in \`component: () => import('${edge.specifier}')\` in a route record, or move what ${path(edge.from)} needs from ${path(boundary)} into a module that imports neither. Do not decline HMR with import.meta.hot.decline() or suppress this Diagnostic to hide the cycle.`,
+              why: `Circular import through the HMR boundary ${path(boundary)}: ${steps}.${viaAutoImports} ${path(boundary)} is ${kind}. When an edit inside this cycle reaches it, Vite marks the update as within a circular import, and the browser re-imports ${path(boundary)}, which re-runs the modules in the cycle. If that re-import throws, for example because a module reads a binding of the cycle before it is initialized, Vite reloads the whole page instead of applying the update.`,
+              fix: `${cycleFix(ctx, edge, autoImports, path)} Do not decline HMR with import.meta.hot.decline() or suppress this Diagnostic to hide the cycle.`,
               sources: edge.range
                 ? [`${edge.from}:${edge.range.line}:${edge.range.column}`]
                 : undefined,
@@ -56,7 +60,7 @@ export const noCircularImportAtHmrBoundary = createRule({
               related: loop.map((item) => ({
                 file: item.from,
                 ...(item.range ? { range: item.range } : {}),
-                message: `${item.kind === "re-export" ? "re-exports" : "imports"} '${item.specifier}' → ${path(item.to!)}`,
+                message: describeEdge(item, path),
               })),
               // Keyed on the group rather than the loop, so reordering imports keeps baselined findings.
               fingerprint: sha256(`${RULE_ID}:${cycle.files.map(path).join("\n")}`),
@@ -64,7 +68,7 @@ export const noCircularImportAtHmrBoundary = createRule({
                 {
                   kind: "graph",
                   file: boundary,
-                  summary: `${path(boundary)} accepts HMR updates and is in a group of ${cycle.files.length} files joined by static runtime imports or re-exports.`,
+                  summary: `${path(boundary)} accepts HMR updates and is in a group of ${cycle.files.length} files joined by static runtime imports, re-exports, or Nuxt auto-imports.`,
                 },
               ],
             },
@@ -74,6 +78,47 @@ export const noCircularImportAtHmrBoundary = createRule({
     };
   },
 });
+
+function describeEdge(edge: ImportGraphEdge, path: (file: string) => string): string {
+  if (edge.kind === "auto-import")
+    return `uses auto-imported \`${edge.specifier}\` → ${path(edge.to!)}`;
+  return `${edge.kind === "re-export" ? "re-exports" : "imports"} '${edge.specifier}' → ${path(edge.to!)}`;
+}
+
+/**
+ * Lazy loading only fits a component that a route record names, as in `component: Page`; any
+ * other edge, and every auto-import, is cut by moving what the importer needs.
+ */
+function cycleFix(
+  ctx: RuleContext,
+  edge: ImportGraphEdge,
+  autoImports: readonly ImportGraphEdge[],
+  path: (file: string) => string,
+): string {
+  const from = path(edge.from);
+  const to = path(edge.to!);
+  if (isRouteComponentImport(ctx, edge))
+    return `Break the cycle where ${from} imports the component ${to}: load it lazily in the route record, as in \`component: () => import('${edge.specifier}')\`, or move what ${from} needs from ${to} into a module that imports neither.`;
+  const cut =
+    edge.kind === "auto-import"
+      ? `uses auto-imported \`${edge.specifier}\` from ${to}`
+      : `imports ${to}`;
+  const lazy = autoImports.length
+    ? ` If ${autoImports.map((item) => `\`${item.specifier}\``).join(", ")} cannot move, call ${autoImports.length > 1 ? "them" : "it"} only inside functions, not at module top level, so the re-import does not read it before it is initialized; the cycle stays, but the update no longer throws.`
+    : "";
+  return `Break the cycle at the edge where ${from} ${cut}: move what ${from} needs into a module that neither side depends on.${lazy}`;
+}
+
+function isRouteComponentImport(ctx: RuleContext, edge: ImportGraphEdge): boolean {
+  if (edge.kind !== "import" || !edge.to!.endsWith(".vue")) return false;
+  const text = ctx.fs.readText(edge.from);
+  if (!text) return false;
+  const specifier = edge.specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const binding = new RegExp(`import\\s+([A-Za-z_$][\\w$]*)\\s+from\\s*["']${specifier}["']`).exec(
+    text,
+  )?.[1];
+  return binding !== undefined && new RegExp(`\\bcomponent\\s*:\\s*${binding}\\b`).test(text);
+}
 
 function isHmrBoundary(ctx: RuleContext, file: string): boolean {
   if (file.endsWith(".vue")) return true;

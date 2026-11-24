@@ -37,6 +37,7 @@ async function run(files: Record<string, string>) {
       file: relative(result.project.root, item.file),
       line: item.range?.line,
       message: item.message,
+      fix: JSON.stringify(item.suggestion),
       related: item.related?.map((entry) => ({
         file: relative(result.project.root, entry.file),
         line: entry.range?.line,
@@ -60,6 +61,7 @@ test("reports a static cycle through a Vue SFC at the import into the SFC", asyn
   });
   expect(diagnostics[0]!.message).toContain("src/router.ts → src/Page.vue → src/router.ts");
   expect(diagnostics[0]!.message).toContain("reloads the whole page");
+  expect(diagnostics[0]!.fix).toContain("component: () => import('./Page.vue')");
 });
 
 test("reports a cycle through a module that calls import.meta.hot.accept", async () => {
@@ -125,4 +127,107 @@ test("is Strict-only and reports nothing under the Recommended Preset", async ()
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+async function runNuxt(files: Record<string, string>) {
+  const root = mkdtempSync(join(tmpdir(), "doctor-hmr-cycle-nuxt-"));
+  try {
+    const fixture: Record<string, string> = {
+      "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "4.4.6" } }),
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        nuxtVersion: "4.4.6",
+        vueVersion: "3.5",
+        rootDir: root,
+        srcDir: join(root, "app"),
+        appDir: join(root, "app"),
+        buildDir: join(root, ".nuxt"),
+        generatedAt: new Date(Date.now() + 1000).toISOString(),
+        autoImportEnabled: true,
+        autoImports: [
+          { name: "useCart", from: join(root, "app/composables/useCart.ts"), kind: "app" },
+        ],
+        components: [],
+        layers: [{ root, priority: 0 }],
+        routeRules: {},
+        serverHandlers: [],
+        modules: [],
+        moduleSources: [],
+      }),
+      ...files,
+    };
+    for (const [file, text] of Object.entries(fixture)) {
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), text);
+    }
+    const result = await runViteDoctor({
+      root,
+      framework: "nuxt",
+      cache: false,
+      extends: ["auto", "vite/strict"],
+      rules: ruleId,
+    });
+    return result.diagnostics
+      .filter((item) => item.ruleId === ruleId)
+      .map((item) => ({
+        file: relative(root, item.file),
+        message: item.message,
+        fix: JSON.stringify(item.suggestion),
+        related: item.related?.map((entry) => ({
+          file: relative(root, entry.file),
+          message: entry.message,
+        })),
+      }));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("describes a Nuxt auto-import edge as one, and never lazy-loads an identifier", async () => {
+  const diagnostics = await runNuxt({
+    "app/pages/cart.vue":
+      '<script setup lang="ts">\nconst cart = useCart();\n</script>\n\n<template><p>{{ cart }}</p></template>\n',
+    "app/composables/useCart.ts":
+      'import CartPage from "../pages/cart.vue";\nexport function useCart() {\n  return { page: CartPage };\n}\n',
+  });
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({
+    file: "app/composables/useCart.ts",
+    related: [
+      {
+        file: "app/composables/useCart.ts",
+        message: "imports '../pages/cart.vue' → app/pages/cart.vue",
+      },
+      {
+        file: "app/pages/cart.vue",
+        message: "uses auto-imported `useCart` → app/composables/useCart.ts",
+      },
+    ],
+  });
+  expect(diagnostics[0]!.message).toContain("Nuxt compiles to static imports");
+  expect(diagnostics[0]!.fix).not.toContain("import('");
+  expect(diagnostics[0]!.fix).toContain("into a module that neither side depends on");
+});
+
+test("an auto-import edge into an HMR boundary is cut by moving code, not by import()", async () => {
+  const diagnostics = await runNuxt({
+    "app/composables/useCart.ts":
+      'import { total } from "../utils/total";\nexport function useCart() {\n  return { total };\n}\nif (import.meta.hot) import.meta.hot.accept();\n',
+    "app/utils/total.ts": "export const total = () => useCart();\n",
+  });
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({
+    file: "app/utils/total.ts",
+    related: [
+      {
+        file: "app/utils/total.ts",
+        message: "uses auto-imported `useCart` → app/composables/useCart.ts",
+      },
+      {
+        file: "app/composables/useCart.ts",
+        message: "imports '../utils/total' → app/utils/total.ts",
+      },
+    ],
+  });
+  expect(diagnostics[0]!.fix).not.toContain("import('use");
+  expect(diagnostics[0]!.fix).toContain("uses auto-imported `useCart`");
 });
