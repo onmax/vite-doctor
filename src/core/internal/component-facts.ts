@@ -105,7 +105,7 @@ export function createComponentFactsCollector(
     },
     finish(template, visitAttribute) {
       if (template) walkComponentTemplate(facts, template, references, rangeOf, visitAttribute);
-      facts.readsAttrs = references.has("$attrs") || referencesVueAttrsReader(scriptAst);
+      facts.readsAttrs ||= references.has("$attrs") || referencesVueAttrsReader(scriptAst);
       const imported = new Set(facts.imports.map((item) => item.local));
       facts.bindingReferences = [...references].filter((name) => imported.has(name)).sort();
       return facts;
@@ -711,7 +711,8 @@ function walkElement(
             : prop.name === "bind" && prop.arg?.isStatic && prop.arg.content === "is",
         )
       : undefined;
-  let knownDynamicExpression = false;
+  let dynamicLiteral = false;
+  let dynamicImport: string | undefined;
   if (dynamicIs?.type === TemplateNodeType.ATTRIBUTE) {
     if (dynamicIs.value)
       walk.facts.dynamicRenders.push({ wrappers, name: dynamicIs.value.content });
@@ -722,7 +723,8 @@ function walkElement(
     const binding = identifier && !elementScope.includes(identifier) ? identifier : undefined;
     const name =
       target?.type === "Literal" && typeof target.value === "string" ? target.value : undefined;
-    knownDynamicExpression = binding !== undefined || name !== undefined;
+    dynamicLiteral = name !== undefined;
+    if (walk.facts.imports.some((item) => item.local === binding)) dynamicImport = binding;
     walk.facts.dynamicRenders.push({ wrappers, binding, name });
   }
   const usage =
@@ -748,9 +750,9 @@ function walkElement(
       prop.exp &&
       prop.name !== "for" &&
       prop.name !== "slot" &&
-      (prop !== dynamicIs || !knownDynamicExpression)
+      (prop !== dynamicIs || !dynamicLiteral)
     )
-      readExpression(walk, prop.exp.content);
+      readExpression(walk, prop.exp.content, prop === dynamicIs ? dynamicImport : undefined);
     if (prop.name === "for" && prop.forParseResult)
       readExpression(walk, prop.forParseResult.source.content);
     if (prop.arg && !prop.arg.isStatic) readExpression(walk, prop.arg.content);
@@ -896,9 +898,16 @@ function capitalize(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-function readExpression(walk: TemplateWalk, content: string | undefined): void {
+function readExpression(
+  walk: TemplateWalk,
+  content: string | undefined,
+  trackedImport?: string,
+): void {
   if (!content) return;
-  for (const name of content.match(IDENTIFIER) ?? []) walk.references.add(name);
+  for (const name of content.match(IDENTIFIER) ?? []) {
+    if (name === "$attrs") walk.facts.readsAttrs = true;
+    if (name !== trackedImport) walk.references.add(name);
+  }
   if (!content.includes("==") && !content.includes("!=")) return;
   for (const match of content.matchAll(COMPARISON))
     walk.facts.comparisons.push({

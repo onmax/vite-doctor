@@ -1,6 +1,12 @@
-import { join } from "pathe";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { buildNuxt, loadNuxt } from "nuxt/kit";
+import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
+import { defineDoctorExtension, runDoctor } from "../../../src/core/index.ts";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
+import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import { vueRulePack } from "../../../src/rule-packs/vue/index.ts";
 import { noInvalidRootNesting } from "../../../src/rule-packs/vue/rules/vue/index.ts";
 import { parserMovesChild } from "../../../src/rule-packs/vue/rules/vue/html-nesting.ts";
@@ -265,6 +271,64 @@ test.each([
     },
   });
   expect(located(result)).toEqual(reports ? [["VUE0052", "app/components/Panel.vue", 5]] : []);
+});
+
+test("VUE0052 follows prepared Nuxt global registrations, not template auto-imports", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-global-components-"));
+  const cwd = process.cwd();
+  const write = (path: string, contents: string) => {
+    const file = join(root, path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, contents);
+  };
+  try {
+    symlinkSync(
+      fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+      join(root, "node_modules"),
+      "junction",
+    );
+    for (const [file, contents] of Object.entries({
+      "package.json": JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }),
+      "nuxt.config.ts": "export default {}",
+      "app/components/Card.vue": component("<div />"),
+      "app/components/Panel.global.vue": caller(["Card"], "<p><Card /></p>"),
+      "app/components/Section.vue": caller(["Card"], "<p><Card /></p>"),
+      "app/pages/index.vue": caller(
+        ["Panel", "Section"],
+        "<ClientOnly><Panel /><Section /></ClientOnly>",
+        "../components",
+      ).replace("/Panel.vue", "/Panel.global.vue"),
+      "app/pages/about.vue": component('<component is="Panel" /><component is="section" />'),
+    }))
+      write(file, contents);
+    process.chdir(root);
+    const nuxt = await loadNuxt({
+      cwd: root,
+      overrides: { _prepare: true, modules: [nuxtDoctorModule], telemetry: false },
+    });
+    try {
+      await buildNuxt(nuxt);
+    } finally {
+      await nuxt.close();
+    }
+    const scan = () =>
+      runDoctor({
+        root,
+        framework: "nuxt",
+        cache: false,
+        rules: noInvalidRootNesting.meta.id,
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
+      });
+    expect(located(await scan())).toEqual([["VUE0052", "app/components/Panel.global.vue", 5]]);
+    write(
+      "app/pages/about.vue",
+      component(`<component :is="'LazyPanel'" /><component :is="'section'" />`),
+    );
+    expect(located(await scan())).toEqual([["VUE0052", "app/components/Panel.global.vue", 5]]);
+  } finally {
+    process.chdir(cwd);
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test.each([false, true])(

@@ -247,7 +247,13 @@ export interface NuxtProjectInfo {
   autoImportEntries?: AutoImportEntry[];
   components: Map<
     string,
-    { name: string; file: string; mode?: "client" | "server" | "all"; sourceLayer?: string }
+    {
+      name: string;
+      file: string;
+      mode?: "client" | "server" | "all";
+      global?: true;
+      sourceLayer?: string;
+    }
   >;
   layers: Array<{
     name?: string;
@@ -780,8 +786,6 @@ export interface ComponentNode {
   >;
   /** A dynamic component outside a recognized client-only default slot may render other SFCs. */
   hasUnresolvedDynamicRender?: true;
-  /** Unresolved literal dynamic names outside recognized client-only slots. */
-  unresolvedDynamicNames?: string[];
   /** An import can render this SFC outside the tracked static and dynamic usages. */
   hasUntrackedImporter?: true;
   /**

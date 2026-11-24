@@ -297,6 +297,12 @@ test("VUE0051 distinguishes missing DOM inheritance from component event deliver
 
 test.each([
   [
+    "dynamic target reads $attrs",
+    multiRoot("", '<component :is="$attrs" /><span />'),
+    'id="root"',
+    false,
+  ],
+  [
     "aliased useAttrs",
     multiRoot(
       "import { useAttrs as readAttrs } from 'vue'\nconst attrs = readAttrs()",

@@ -162,7 +162,6 @@ function possibleSsrTargets(
     }
     const names = app && named.get(app);
     if (!names) return;
-    for (const name of node.unresolvedDynamicNames ?? []) yield* names.get(name) ?? [];
     for (const edge of node.renders) {
       if (edge.unresolvedNuxtName && !skipsHydration(edge))
         yield* names.get(edge.unresolvedNuxtName) ?? [];

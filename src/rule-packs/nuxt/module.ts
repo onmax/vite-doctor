@@ -410,6 +410,7 @@ export async function writeManifest(
           name: component.pascalName,
           file: component.filePath,
           mode: component._raw ? "all" : component.mode,
+          ...(component.global && { global: true }),
         })) ?? toArray(nuxt.options.components ?? nuxt._components),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({

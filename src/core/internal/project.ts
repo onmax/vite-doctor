@@ -398,7 +398,7 @@ async function detectNuxt(
     autoImportsAuthoritative: manifest?.autoImportEnabled !== undefined && manifestCurrent,
     autoImports: new Map(autoImportEntries.map((entry) => [entry.as ?? entry.name, entry])),
     autoImportEntries,
-    components: nuxtComponents(manifest?.components),
+    components: nuxtComponents(manifest?.components, manifestCurrent),
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
     productionBuildCache: manifestCurrent ? manifest?.productionBuildCache : undefined,
@@ -428,20 +428,29 @@ async function detectNuxt(
   };
 }
 
-function nuxtComponents(components: unknown[] | undefined): NuxtProjectInfo["components"] {
+function nuxtComponents(
+  components: unknown[] | undefined,
+  manifestCurrent: boolean,
+): NuxtProjectInfo["components"] {
   const registry: NuxtProjectInfo["components"] = new Map();
   const ambiguous = new Set<string>();
   for (const component of components ?? []) {
     if (typeof component !== "object" || !component) continue;
-    const { name, file, mode } = component as Record<string, unknown>;
+    const { name, file, mode, global } = component as Record<string, unknown>;
     if (typeof name !== "string" || typeof file !== "string") continue;
     const key = pascalCase(name);
     const entry = registry.get(key);
-    if (entry && (entry.file !== file || entry.mode !== mode)) ambiguous.add(key);
+    const globallyRegistered = manifestCurrent && global === true;
+    if (
+      entry &&
+      (entry.file !== file || entry.mode !== mode || !!entry.global !== globallyRegistered)
+    )
+      ambiguous.add(key);
     registry.set(key, {
       name,
       file,
       mode: mode === "client" || mode === "server" || mode === "all" ? mode : undefined,
+      ...(globallyRegistered && { global: true }),
     });
   }
   for (const key of ambiguous) registry.delete(key);
