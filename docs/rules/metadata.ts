@@ -1607,6 +1607,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/state/no-diverging-usestate-init": {
+    description:
+      "Finds a useState() key that two or more call sites initialize with different functions.",
+    why: "useState(key, init) runs init only while the key has no value yet, so when several call sites pass their own initializer for one key, whichever runs first decides the starting value and every other initializer is silently ignored. Which one runs first depends on the route and render order, so the state can start differently on different pages. clearNuxtState(key, { reset: true }) also resets to the first initializer registered. Doctor compares string-literal keys across the project and reports when their initializers differ after ignoring whitespace. Call sites that pass only a key read the state and are not reported, nor are dynamic keys.",
+    recommendedReplacement:
+      "Put the state in one composable, such as export const useCount = () => useState('count', () => 0), and call it everywhere instead of repeating useState(key, init). If the call sites mean different state, give each its own key rather than aligning the initializers.",
+    examples: [
+      {
+        title: "Initialize the state in one composable",
+        language: "ts",
+        invalid:
+          "// app/pages/index.vue\nconst count = useState('count', () => 0)\n\n// app/components/Counter.vue\nconst count = useState('count', () => 10)",
+        valid:
+          "// app/composables/useCount.ts\nexport const useCount = () => useState('count', () => 0)\n\n// app/pages/index.vue, app/components/Counter.vue\nconst count = useCount()",
+      },
+    ],
+  },
   "nuxt/state/no-nonserializable-usestate": {
     description: "Report unsupported live values stored in Nuxt payload state.",
     why: "Nuxt serializes payload state with devalue, which supports Map, Set, Date, and RegExp values. Functions and live sockets cannot be transferred to the client as payload state.",

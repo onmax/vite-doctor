@@ -40,6 +40,7 @@ export { noVueOrNitroContextInShared } from "./no-vue-or-nitro-context-in-shared
 export { noNestedSharedAutoimportAssumption } from "./no-nested-shared-autoimport-assumption.js";
 export { noSubdirPluginAutoRegistrationAssumption } from "./no-subdir-plugin-auto-registration-assumption.js";
 export { noNonSerializableUseState } from "./no-non-serializable-use-state.js";
+export { noDivergingUseStateInit } from "./no-diverging-usestate-init.js";
 export { requireStableAsyncDataKey } from "./require-stable-async-data-key.js";
 export { preferExplicitUseStateKeyInExportedComposables } from "./prefer-explicit-use-state-key-in-exported-composables.js";
 export { noComposableAfterAwait } from "./no-composable-after-await.js";
@@ -103,6 +104,7 @@ import { noVueOrNitroContextInShared } from "./no-vue-or-nitro-context-in-shared
 import { noNestedSharedAutoimportAssumption } from "./no-nested-shared-autoimport-assumption.js";
 import { noSubdirPluginAutoRegistrationAssumption } from "./no-subdir-plugin-auto-registration-assumption.js";
 import { noNonSerializableUseState } from "./no-non-serializable-use-state.js";
+import { noDivergingUseStateInit } from "./no-diverging-usestate-init.js";
 import { requireStableAsyncDataKey } from "./require-stable-async-data-key.js";
 import { preferExplicitUseStateKeyInExportedComposables } from "./prefer-explicit-use-state-key-in-exported-composables.js";
 import { noComposableAfterAwait } from "./no-composable-after-await.js";
@@ -168,6 +170,7 @@ const rules = [
   noNestedSharedAutoimportAssumption,
   noSubdirPluginAutoRegistrationAssumption,
   noNonSerializableUseState,
+  noDivergingUseStateInit,
   requireStableAsyncDataKey,
   preferExplicitUseStateKeyInExportedComposables,
   noComposableAfterAwait,
