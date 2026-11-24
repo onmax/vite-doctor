@@ -52,6 +52,26 @@ test("follows named and star re-exports from a package entrypoint", async () => 
   );
 });
 
+test("counts an empty re-export in runtime cycles and reachability", async () => {
+  await withProject(
+    {
+      "package.json": JSON.stringify({ type: "module", main: "./src/entry.js" }),
+      "src/entry.js": 'export {} from "./b.js"',
+      "src/b.js": 'import "./entry.js"',
+    },
+    async (root) => {
+      const result = await runViteDoctor({ root, analyses: "dead-code,graph", cache: false });
+      expect(result.diagnostics.map((item) => item.ruleId)).toContain(
+        "workspace/dead-code/circular-dependency",
+      );
+      expect(result.graph?.cycles).toBe(1);
+      expect(result.diagnostics.map((item) => item.ruleId)).not.toContain(
+        "workspace/dead-code/unused-file",
+      );
+    },
+  );
+});
+
 test("counts dynamic imports and re-exports when diagnosing dependencies", async () => {
   await withProject(
     {
@@ -271,7 +291,7 @@ test("pins the workspace graph for a monorepo with aliases and workspace package
         "workspace/dead-code/unused-file packages/core/src/lazy.ts File is not reachable from known package, framework, or manifest roots.",
         "workspace/dead-code/unused-export packages/core/src/lazy.ts Export "load" is not referenced by known imports or framework roots.",
         "workspace/dead-code/unlisted-dependency package.json Package "@acme/core" is imported but is not listed in package.json dependencies.",
-        "workspace/dead-code/circular-dependency packages/core/src/math.ts Circular dependency detected across 2 files.",
+        "workspace/dead-code/circular-dependency packages/core/src/helper.ts Circular import: packages/core/src/helper.ts → packages/core/src/math.ts → packages/core/src/helper.ts.",
         "workspace/dead-code/duplicate-export packages/core/src/extra.ts Export name "add" appears in multiple files.",
         "workspace/dead-code/duplicate-export packages/core/src/helper.ts Export name "helper" appears in multiple files.",
       ]

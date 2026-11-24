@@ -28,6 +28,7 @@ import { workspaceNuxtRoots, workspaceProjectView, workspaceViewRoot } from "./w
 import { nuxtInventoryOwner, owningWorkspacePackage } from "./workspace-packages.js";
 import {
   buildWorkspaceGraph,
+  importGraphInventory,
   runDuplicationRules,
   runHealthRules,
   runStructuralGraphRules,
@@ -469,6 +470,14 @@ function createRuleRun(
           );
         readsInventory = true;
         return componentUsageGraph(session);
+      },
+      importGraph() {
+        if (phase === "file")
+          throw new Error(
+            `Rule ${rule.meta.id} read the import graph from a file Rule. It covers every source file, so set meta.execution to "workspace".`,
+          );
+        readsInventory = true;
+        return importGraphInventory(session);
       },
     },
     helpers: session.helpers,
