@@ -793,53 +793,61 @@ test.each([
   expect(result.diagnostics).toHaveLength(count);
 });
 
-test("Nuxt module captures and refreshes Nitro's resolved handlers", async () => {
-  await withFixture({}, {}, async (root) => {
-    const hooks = new Map<string, (payload?: any) => unknown>();
-    const nitroHooks = new Map<string, () => unknown>();
-    const nuxt = {
-      _version: "4.5.1",
-      options: { rootDir: root, srcDir: "app", buildDir: ".nuxt", modules: [] },
-      hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
-      async callHook() {},
-    };
-    await nuxtDoctorModule({}, nuxt as any);
-    const nitro = {
-      options: {
-        dev: false,
-        preset: "node-server",
-        handlers: [{ handler: join(root, "custom/account.ts"), route: "/api/account" }],
-      },
-      scannedHandlers: [
-        {
-          handler: join(root, "layer/profile.ts"),
-          route: "/api/profile",
-          method: "get",
-          env: "prod",
+test.each([
+  [2, "rollup:before", "build:config"],
+  [3, "build:config", "rollup:before"],
+])(
+  "Nuxt module captures and refreshes Nitro %i's resolved handlers",
+  async (majorVersion, buildHook, otherHook) => {
+    await withFixture({}, {}, async (root) => {
+      const hooks = new Map<string, (payload?: any) => unknown>();
+      const nitroHooks = new Map<string, () => unknown>();
+      const nuxt = {
+        _version: "4.5.1",
+        options: { rootDir: root, srcDir: "app", buildDir: ".nuxt", modules: [] },
+        hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
+        async callHook() {},
+      };
+      await nuxtDoctorModule({}, nuxt as any);
+      const nitro = {
+        meta: { majorVersion },
+        options: {
+          dev: false,
+          preset: "node-server",
+          handlers: [{ handler: join(root, "custom/account.ts"), route: "/api/account" }],
         },
-        { handler: join(root, "layer/debug.ts"), route: "/api/admin", env: "dev" },
-        { handler: join(root, "layer/guard.ts"), middleware: true, env: ["prod", "prerender"] },
-      ],
-      hooks: { hook: (name: string, callback: () => unknown) => nitroHooks.set(name, callback) },
-    };
-    await hooks.get("nitro:init")!(nitro);
-    const readHandlers = () =>
-      JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"))
-        .resolvedServerHandlers;
-    expect(readHandlers()).toEqual([
-      { file: "layer/profile.ts", route: "/api/profile", method: "get" },
-      { file: "layer/guard.ts", middleware: true },
-      { file: "custom/account.ts", route: "/api/account" },
-    ]);
-    nitro.scannedHandlers = [];
-    await nitroHooks.get("compiled")!();
-    await hooks.get("prepare:types")!();
-    expect(readHandlers()).toEqual([{ file: "custom/account.ts", route: "/api/account" }]);
-    nitro.options.handlers = [];
-    await nitroHooks.get("rollup:before")!();
-    expect(readHandlers()).toEqual([]);
-  });
-});
+        scannedHandlers: [
+          {
+            handler: join(root, "layer/profile.ts"),
+            route: "/api/profile",
+            method: "get",
+            env: "prod",
+          },
+          { handler: join(root, "layer/debug.ts"), route: "/api/admin", env: "dev" },
+          { handler: join(root, "layer/guard.ts"), middleware: true, env: ["prod", "prerender"] },
+        ],
+        hooks: { hook: (name: string, callback: () => unknown) => nitroHooks.set(name, callback) },
+      };
+      await hooks.get("nitro:init")!(nitro);
+      const readHandlers = () =>
+        JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"))
+          .resolvedServerHandlers;
+      expect(readHandlers()).toEqual([
+        { file: "layer/profile.ts", route: "/api/profile", method: "get" },
+        { file: "layer/guard.ts", middleware: true },
+        { file: "custom/account.ts", route: "/api/account" },
+      ]);
+      nitro.scannedHandlers = [];
+      await nitroHooks.get("compiled")!();
+      await hooks.get("prepare:types")!();
+      expect(readHandlers()).toEqual([{ file: "custom/account.ts", route: "/api/account" }]);
+      nitro.options.handlers = [];
+      expect(nitroHooks.has(otherHook)).toBe(false);
+      await nitroHooks.get(buildHook)!();
+      expect(readHandlers()).toEqual([]);
+    });
+  },
+);
 
 test.each([
   "unguarded",
