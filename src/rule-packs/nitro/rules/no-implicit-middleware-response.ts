@@ -101,6 +101,7 @@ function isHandlerFactory(scope: ScriptScope, callee: AnyNode) {
 }
 
 function implicitResponses(scope: ScriptScope, handler: AnyNode): AnyNode[] {
+  if (handler.generator) return [];
   if (handler.expression || handler.body?.type !== "BlockStatement")
     return returnsAssignedValue(scope, handler.body) ? [handler.body] : [];
   const found: AnyNode[] = [];

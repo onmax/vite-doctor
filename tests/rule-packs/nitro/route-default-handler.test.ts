@@ -20,6 +20,24 @@ async function codes(
 }
 
 describe("NITRO0019 route file without a default handler", () => {
+  test.each(["plain.ts", "plain.get.prod.ts", "sitemap.xml.ts"])(
+    "reports %s even when Nitro 3 configures custom scan suffixes",
+    async (file) => {
+      expect(
+        await codes(
+          {
+            "nitro.config.ts":
+              "export default defineConfig({ serverDir: true, scanSuffixes: ['custom'] })",
+            [`server/routes/${file}`]: helper,
+            "server/routes/ignored.unknown.ts": helper,
+          },
+          "nitro",
+          { nitro: "3.0.261103-rc" },
+        ),
+      ).toEqual(["NITRO0019"]);
+    },
+  );
+
   test.each(["server/api/_db.ts", "server/routes/feed/helpers.mjs", "server/api/(admin)/utils.js"])(
     "reports helper module %s in a Nuxt server route directory",
     async (file) => {

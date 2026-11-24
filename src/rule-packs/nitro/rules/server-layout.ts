@@ -95,10 +95,11 @@ export function nitroScannedFile(
   const serverFile = nitroServerFile(ctx, file);
   if (!serverFile || !dirs.has(serverFile.dir) || !serverFile.path.includes("/")) return null;
   if (!isNitroScannedScript(ctx, serverFile.path)) return null;
-  if ((runtimeMajor(project, "nitro") ?? 2) >= 3) {
-    if (options.some(({ path }) => path.at(-1) === "scanSuffixes")) return null;
-    if (!nitro3ScanPath(serverFile.path, ROUTE_DIRS.has(serverFile.dir))) return null;
-  }
+  if (
+    (runtimeMajor(project, "nitro") ?? 2) >= 3 &&
+    !nitro3ScanPath(serverFile.path, ROUTE_DIRS.has(serverFile.dir))
+  )
+    return null;
   return serverFile;
 }
 

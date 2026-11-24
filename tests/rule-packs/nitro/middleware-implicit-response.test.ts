@@ -129,6 +129,11 @@ export default defineHandler((event) => event.context.requestId = crypto.randomU
 
   test.each([
     ["a block body", "defineEventHandler((event) => { event.context.user = getUser(event) })"],
+    ["a generator", "function* (event) { return event.context.locale = 'en' }"],
+    [
+      "an async generator",
+      "defineEventHandler({ async *handler(event) { return event.context.locale = 'en' } })",
+    ],
     [
       "an explicit createError",
       "defineEventHandler(() => { return createError({ statusCode: 401 }) })",
