@@ -1,4 +1,5 @@
 import {
+  FRAMEWORK_DIAGNOSTICS_EVIDENCE,
   createReport,
   diagnosticLocation,
   formatTextDiagnostic,
@@ -10,20 +11,32 @@ import type {
   DoctorExtensionInput,
   DoctorRunOptions,
   DoctorRunResult,
+  RuntimeFrameworkDiagnostic,
 } from "./core/index.js";
-import { runViteDoctor, shouldFailDoctorRun } from "./doctor.js";
+import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
+import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
+import { runViteDoctor, shouldFailDoctorRun, viteDoctorRunOptions } from "./doctor.js";
 import type { SurfaceDiagnostic, SurfaceEvidenceGap } from "./plugin-delta.js";
+import {
+  BUILD_EVIDENCE_RULE,
+  buildImportChain,
+  buildModuleFile,
+  readBuildEvidence,
+} from "./rule-packs/vite/rules/build-evidence.js";
 
 /** Structured-cloneable Doctor Run input prepared by the Vite Plugin Surface. */
 export interface SurfaceRunInput {
   options: Omit<DoctorRunOptions, "extensions">;
   vite: { inventory: Record<string, unknown>; evidence: Record<string, unknown> };
+  /** Framework diagnostics the dev server's browser clients reported, contributed as Runtime Evidence. */
+  frameworkDiagnostics?: RuntimeFrameworkDiagnostic[];
 }
 
 export interface SurfaceRunOutcome {
   report: string;
   shouldFail: boolean;
   hasFindings: boolean;
+  warningKeys: string[];
   /** The reported Diagnostics, so a serve-mode Plugin Surface can log what changed between runs. */
   diagnostics: SurfaceDiagnostic[];
   evidenceGaps: SurfaceEvidenceGap[];
@@ -35,10 +48,7 @@ export async function runSurfaceDoctor(
   input: SurfaceRunInput,
   extensions: DoctorExtensionInput[],
 ): Promise<SurfaceRunOutcome> {
-  const result = await runViteDoctor({
-    ...input.options,
-    extensions: [viteSurfaceExtension(input.vite), ...extensions],
-  });
+  const result = await runViteDoctor(surfaceDoctorOptions(input, extensions));
   const report = createReport(result, input.options.format).trimEnd();
   const shouldFail =
     reportStatus(result) === "incomplete" || shouldFailDoctorRun(result, input.options.maxWarnings);
@@ -48,6 +58,16 @@ export async function runSurfaceDoctor(
     report,
     shouldFail,
     hasFindings,
+    warningKeys:
+      input.options.maxWarnings === undefined
+        ? []
+        : result.diagnostics
+            .filter((diagnostic) => diagnostic.severity === "warn")
+            .map((diagnostic) =>
+              diagnostic.ruleId === BUILD_EVIDENCE_RULE && diagnostic.fingerprint
+                ? diagnostic.fingerprint
+                : diagnosticOccurrenceKey(diagnostic),
+            ),
     diagnostics: result.diagnostics.map((diagnostic) => surfaceDiagnostic(result, diagnostic)),
     evidenceGaps: (result.project.evidenceGaps ?? []).map((gap) => ({
       ...gap,
@@ -57,6 +77,55 @@ export async function runSurfaceDoctor(
       reportStatus({ ...result, project: { ...result.project, evidenceGaps: undefined } }) ===
       "incomplete",
   };
+}
+
+function surfaceDoctorOptions(input: SurfaceRunInput, extensions: DoctorExtensionInput[]) {
+  return { ...input.options, extensions: [viteSurfaceExtension(input), ...extensions] };
+}
+
+/** Without maps, consider files on the import chain, not exact diagnostic ranges. */
+export async function hasEnabledBuildEvidenceCandidate(
+  input: SurfaceRunInput,
+  extensions: DoctorExtensionInput[],
+  candidateIds: ReadonlySet<string>,
+): Promise<boolean> {
+  const evidence = readBuildEvidence(input.vite.evidence);
+  if (!evidence) return false;
+  const options = surfaceDoctorOptions(input, extensions);
+  const session = await createScanSession(
+    await viteDoctorRunOptions({ ...options, rules: BUILD_EVIDENCE_RULE }),
+  );
+  if (!session.enabledRules.some((rule) => rule.meta.id === BUILD_EVIDENCE_RULE)) return false;
+  const files = new Map(session.files.map((file) => [file.path, file]));
+  return evidence.environments.some(
+    (environment) =>
+      environment.consumer === "client" &&
+      [...candidateIds].some((id) => {
+        const file = buildModuleFile(evidence, id);
+        const candidate = file && files.get(file);
+        if (!candidate || !fileRuleConfig(session, BUILD_EVIDENCE_RULE, candidate.path).enabled)
+          return false;
+        if (!session.scopedReport || candidate.reportEligibility) return true;
+        return buildImportChain(environment, id)?.some((importer) => {
+          const path = buildModuleFile(evidence, importer);
+          return path !== undefined && Boolean(files.get(path)?.reportEligibility);
+        });
+      }),
+  );
+}
+
+/**
+ * Runs only the Build Evidence Rule, after a client bundle. The run before the build already
+ * reported everything else. Config and presets still decide whether the Rule is on.
+ */
+export async function runBuildEvidenceDoctor(
+  input: SurfaceRunInput,
+  extensions: DoctorExtensionInput[],
+): Promise<SurfaceRunOutcome> {
+  return runSurfaceDoctor(
+    { ...input, options: { ...input.options, rules: BUILD_EVIDENCE_RULE } },
+    extensions,
+  );
 }
 
 function surfaceDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic): SurfaceDiagnostic {
@@ -72,12 +141,17 @@ function surfaceDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic): Sur
   };
 }
 
-function viteSurfaceExtension(vite: SurfaceRunInput["vite"]): DoctorExtension {
+function viteSurfaceExtension({ vite, frameworkDiagnostics }: SurfaceRunInput): DoctorExtension {
   return {
     name: "vite-doctor/surface-vite",
     setup(api) {
       api.registerProjectInventoryContributor({ name: "vite", contribute: () => vite.inventory });
       api.registerRuntimeEvidenceContributor({ name: "vite", contribute: () => vite.evidence });
+      if (frameworkDiagnostics?.length)
+        api.registerRuntimeEvidenceContributor({
+          name: FRAMEWORK_DIAGNOSTICS_EVIDENCE,
+          contribute: () => ({ reports: frameworkDiagnostics }),
+        });
     },
   };
 }

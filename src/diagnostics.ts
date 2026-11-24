@@ -39,6 +39,8 @@ export const viteDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0030", ruleId: "vite/env/no-unprefixed-client-env" },
   { code: "VITE0031", ruleId: "vite/define/no-loadenv-all-in-define" },
   { code: "VITE0032", ruleId: "vite/plugin/no-unreachable-hook" },
+
+  { code: "VITE0033", ruleId: "vite/build/no-node-builtin-in-client-chunk" },
 ]);
 
 export const diagnostics = viteDiagnosticRegistry.diagnostics;

@@ -6,6 +6,7 @@ import { ruleDocumentationMetadata } from "./metadata.js";
 import { ruleNavigationTitles } from "./navigation-titles.js";
 import {
   resolvedBaselineDiagnosticMetadata,
+  runtimeFrameworkDiagnosticMetadata,
   workspaceDiagnosticMetadata,
 } from "../../src/core/diagnostic-metadata.js";
 import { mcpRecommendedRuleIds } from "../../src/rule-packs/mcp/presets.js";
@@ -262,6 +263,20 @@ function collectDiagnosticDocuments(): DiagnosticDocument[] {
       key: "diagnostics/DOC0039.md",
     },
     {
+      ...runtimeFrameworkDiagnosticMetadata,
+      title: `${runtimeFrameworkDiagnosticMetadata.code}: ${runtimeFrameworkDiagnosticMetadata.title}`,
+      docsUrl: "https://vite-doctor.onmax.me/vite",
+      pack: "vite-doctor/core",
+      framework: "vite",
+      source: "src/core/internal/runtime-diagnostics.ts",
+      sourceUrl: githubSourceUrl("src/core/internal/runtime-diagnostics.ts"),
+      rulePath: "",
+      fixable: "no",
+      examples: [],
+      path: "/diagnostics/DOC0040",
+      key: "diagnostics/DOC0040.md",
+    },
+    {
       code: "DOC0022",
       title: "DOC0022: Resolve the runtime graph",
       description:
@@ -474,12 +489,10 @@ function renderDiagnosticPage(diagnostic: DiagnosticDocument) {
     lines.push("## Verify the fix", "");
     if (diagnostic.ruleId === "typescript/strict/no-comments") lines.push(noCommentsSetup, "");
     lines.push(
-      "Run only this rule after editing so the report stays focused on the diagnostic you are closing:",
-      "",
-      "```bash",
-      renderRuleCommand({ id: diagnostic.ruleId, framework: diagnostic.framework }),
-      "```",
-      "",
+      ...renderRuleInstructions(
+        { id: diagnostic.ruleId, framework: diagnostic.framework },
+        "Run only this rule after editing so the report stays focused on the diagnostic you are closing:",
+      ),
     );
   }
   if (diagnostic.docsUrl) {
@@ -850,7 +863,7 @@ function renderRulePage(rule: RuleDocument) {
       "",
     );
   if (rule.id === "typescript/strict/no-comments") lines.push(noCommentsSetup, "");
-  lines.push("## Run this rule", "", "```bash", renderRuleCommand(rule), "```", "");
+  lines.push("## Run this rule", "", ...renderRuleInstructions(rule));
   if (rule.why) lines.push("## Why it matters", "", escapeMarkdownText(rule.why), "");
   if (rule.recommendedReplacement) {
     lines.push("## Recommended fix", "", escapeMarkdownText(rule.recommendedReplacement), "");
@@ -959,6 +972,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("eslint-plugin-vue max-props", "https://eslint.vuejs.org/rules/max-props.html");
   }
 
+  if (rule.id === "vite/build/no-node-builtin-in-client-chunk") {
+    add(
+      "Vite: module externalized for browser compatibility",
+      "https://vite.dev/guide/troubleshooting.html#module-externalized-for-browser-compatibility",
+    );
+    add("Vite Environment API", "https://vite.dev/guide/api-environment.html");
+  }
+
   if (rule.id === "vite/hmr/no-circular-import-at-hmr-boundary") {
     add("Vite HMR API", "https://vite.dev/guide/api-hmr.html");
     add(
@@ -978,6 +999,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
       "https://vuejs.org/guide/scaling-up/state-management.html#simple-state-management-with-reactivity-api",
     );
     add("Pinia", "https://pinia.vuejs.org/");
+  }
+
+  if (rule.id === "vue/reactivity/no-shallow-ref-deep-mutation") {
+    add(
+      "Vue reducing reactivity overhead for large immutable structures",
+      "https://vuejs.org/guide/best-practices/performance.html#reduce-reactivity-overhead-for-large-immutable-structures",
+    );
+    add("Vue triggerRef()", "https://vuejs.org/api/reactivity-advanced.html#triggerref");
+  }
+
+  if (rule.id === "vue/watch/no-property-read-source") {
+    add("Vue watch()", "https://vuejs.org/api/reactivity-core.html#watch");
   }
 
   if (rule.id === "vue/attrs/require-explicit-emits") {
@@ -1047,6 +1080,20 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");
   }
 
+  if (rule.id === "nuxt/runtime/no-private-runtime-config-in-client") {
+    add("Nuxt runtime config", "https://nuxt.com/docs/4.x/guide/going-further/runtime-config");
+  }
+
+  if (rule.id === "nuxt/fetch/handler-must-return") {
+    add("Nuxt useAsyncData", "https://nuxt.com/docs/4.x/api/composables/use-async-data");
+    add("Nuxt data fetching", "https://nuxt.com/docs/4.x/getting-started/data-fetching");
+  }
+
+  if (rule.id === "nuxt/plugins/no-island-disabled-dependency") {
+    add("Nuxt plugins", "https://nuxt.com/docs/4.x/guide/directory-structure/app/plugins");
+    add("NuxtIsland", "https://nuxt.com/docs/4.x/api/components/nuxt-island");
+  }
+
   if (rule.id === "nuxt/state/no-diverging-usestate-init") {
     add("Nuxt clearNuxtState", "https://nuxt.com/docs/4.x/api/utils/clear-nuxt-state");
     add("Nuxt state management", "https://nuxt.com/docs/4.x/getting-started/state-management");
@@ -1078,7 +1125,23 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
   }
 
   if (rule.framework === "nitro") {
-    add("Nitro handlers", "https://nitro.build/guide/routing");
+    add("Nitro handlers", "https://nitro.build/docs/routing");
+  }
+
+  if (rule.id === "nitro/cache/require-varies-for-header-read") {
+    add("Nitro cache", "https://nitro.build/guide/cache");
+  }
+
+  if (rule.id.startsWith("nitro/storage/")) {
+    add("Nitro KV storage", "https://nitro.build/docs/storage");
+  }
+
+  if (rule.id === "nitro/handler/require-waituntil-for-background-work") {
+    add("Cloudflare waitUntil", "https://developers.cloudflare.com/workers/runtime-apis/context/");
+    add(
+      "Vercel waitUntil",
+      "https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package",
+    );
   }
 
   if (rule.framework === "vite" && rule.category === "env") {
@@ -1292,6 +1355,18 @@ function rulePath(rule: Pick<RuleDocument, "id" | "category" | "pack">) {
 export const strictOnlyRulePresets: ReadonlyMap<string, string> = new Map([
   ["vite/imports/no-barrel-files", "vite/strict"],
 ]);
+
+function renderRuleInstructions(rule: Pick<RuleDocument, "id" | "framework">, intro?: string) {
+  if (rule.id === "vite/build/no-node-builtin-in-client-chunk") {
+    return [
+      "Enable the [Vite Doctor plugin](/vite) and rerun your Vite 8+ client build (`vite build`). This rule needs Build Evidence from the plugin; the standalone CLI cannot verify it.",
+      "",
+      'For watch builds, enable `build.sourcemap` (for example, `"hidden"`) so the rule can trace the rendered code.',
+      "",
+    ];
+  }
+  return [...(intro ? [intro, ""] : []), "```bash", renderRuleCommand(rule), "```", ""];
+}
 
 function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
   const strictPreset = strictOnlyRulePresets.get(rule.id);
