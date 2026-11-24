@@ -135,7 +135,10 @@ export const ruleNavigationTitles: Record<string, string> = {
   "mcp/tools/require-safety-hint": "Safety hints",
   "mcp/tools/valid-name": "Tool names",
   "pinia/state/no-action-bypass": "Action bypass",
+  "pinia/state/no-store-destructure": "Store destructuring",
   "pinia/stores/no-circular-setup-state-read": "Circular setup reads",
+  "pinia/stores/no-module-scope-store": "Module-scope stores",
+  "pinia/stores/no-unreturned-setup-state": "Unreturned state",
   "pinia/stores/store-name-matches-id": "Store names",
   "pinia/stores/unique-store-id": "Unique store ids",
 

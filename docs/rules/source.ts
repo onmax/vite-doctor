@@ -973,6 +973,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia actions", "https://pinia.vuejs.org/core-concepts/actions.html");
   }
 
+  if (rule.id === "pinia/state/no-store-destructure") {
+    add("Pinia storeToRefs()", "https://pinia.vuejs.org/api/pinia/functions/storeToRefs.html");
+  }
+
+  if (rule.id === "pinia/stores/no-module-scope-store") {
+    add("Pinia SSR", "https://pinia.vuejs.org/ssr/");
+  }
+
+  if (rule.id === "pinia/stores/no-unreturned-setup-state") {
+    add("Pinia state", "https://pinia.vuejs.org/core-concepts/state.html");
+  }
+
   if (rule.id === "vue/props/no-unused-props") {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }

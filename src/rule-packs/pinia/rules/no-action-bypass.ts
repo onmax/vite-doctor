@@ -1,13 +1,6 @@
 import { relative } from "pathe";
-import {
-  createRule,
-  type NuxtProjectInfo,
-  type RuleContext,
-  type SourceRange,
-} from "../../../core/index.js";
-import { isTransformedAppFile } from "../../../core/internal/auto-import-edges.js";
-import { analyzeScript, type ScriptScope } from "../../../core/internal/script-scope.js";
-import { createVueScriptForParsing, parseSfcFile } from "../../../core/internal/sfc.js";
+import { createRule, type RuleContext, type SourceRange } from "../../../core/index.js";
+import type { ScriptScope } from "../../../core/internal/script-scope.js";
 import {
   findLocalStateWrites,
   findSharedStateWrites,
@@ -19,37 +12,24 @@ import {
   type SharedStateWrite,
 } from "../../../core/internal/shared-state-writes.js";
 import { diagnostics } from "../diagnostics.js";
+import type { LocatedStore } from "./shared.js";
 import {
-  collectStoreModules,
-  isPiniaSource,
-  nuxtForFile,
-  readStoreDefinition,
-  resolvedCalleeImport,
-  storeResolver,
-  type LocatedStore,
-  type StoreModule,
-} from "./shared.js";
+  collectStores,
+  FUNCTIONS,
+  implicitImportsEnabled,
+  readProperties,
+  returnedObject,
+  stateFactory,
+  unwrap,
+  walk,
+  type AnyNode,
+  type CollectedStore,
+} from "./store-inventory.js";
 
-type AnyNode = any;
 type CollectionAt = (path: PropertyPath) => "array" | "map" | "set" | undefined;
 
 const RULE_ID = "pinia/state/no-action-bypass";
 const MAX_LISTED_WRITES = 3;
-const WRAPPERS = new Set([
-  "TSNonNullExpression",
-  "TSAsExpression",
-  "TSSatisfiesExpression",
-  "TSTypeAssertion",
-  "ParenthesizedExpression",
-]);
-const FUNCTIONS = new Set(["ArrowFunctionExpression", "FunctionExpression"]);
-const STATE_FACTORIES = new Map<string, "ref" | "reactive">([
-  ["ref", "ref"],
-  ["shallowRef", "ref"],
-  ["reactive", "reactive"],
-  ["shallowReactive", "reactive"],
-]);
-const VUE_SOURCES = new Set(["vue", "@vue/reactivity"]);
 
 interface StoreState {
   /** The node Diagnostics point at: the state key or the setup variable. */
@@ -101,50 +81,10 @@ export const noActionBypass = createRule({
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        const factoryAliases = new Map<NuxtProjectInfo, string[]>();
-        const modules = await collectStoreModules(
-          ctx,
-          await ctx.inventory.sourcePaths(),
-          (file, text) => {
-            if (text.includes("defineStore")) return true;
-            const nuxt = nuxtForFile(ctx, file);
-            if (!nuxt?.autoImportsAuthoritative) return false;
-            let aliases = factoryAliases.get(nuxt);
-            if (!aliases) {
-              aliases = [...nuxt.autoImports].flatMap(([name, entry]) =>
-                !entry.type && entry.name === "defineStore" && isPiniaSource(entry.from)
-                  ? [name]
-                  : [],
-              );
-              factoryAliases.set(nuxt, aliases);
-            }
-            return aliases.some((name) => text.includes(name));
-          },
-        );
-        const storeCalls = new Map<string, Array<[number, number]>>();
-        const located: LocatedStore[] = [];
-        const stores: AnalyzedStore[] = [];
-        for (const module of modules) {
-          const scope = await analyzeModule(module);
-          if (!scope) continue;
-          const ranges: Array<[number, number]> = [];
-          storeCalls.set(module.file, ranges);
-          const nuxt = nuxtForFile(ctx, module.file);
-          const implicit = implicitImportsEnabled(ctx, module.file);
-          walk(scope, scope.ast, (call, ancestors) => {
-            if (call.type !== "CallExpression" || !isDefineStoreCall(call, scope, nuxt, implicit))
-              return;
-            ranges.push(call.range);
-            const definition = readStoreDefinition(call, ancestors);
-            if (!definition) return;
-            const store = { store: definition, module };
-            located.push(store);
-            const analyzed = analyzeStore(ctx, store, scope, call);
-            if (analyzed) stores.push(analyzed);
-          });
-        }
+        const collection = await collectStores(ctx);
+        const { storeCalls, resolveUse, registeredNames } = collection;
+        const stores = collection.stores.flatMap((store) => analyzeStore(ctx, store) ?? []);
         if (!stores.length) return;
-        const { resolveUse, registeredNames } = storeResolver(ctx, located);
         const graph = await ctx.inventory.importGraph();
         for (const store of stores) {
           const writes = new Map<string, SharedStateWrite>();
@@ -203,64 +143,8 @@ export const noActionBypass = createRule({
   },
 });
 
-async function analyzeModule(module: StoreModule): Promise<ScriptScope | null> {
-  if (!module.file.endsWith(".vue"))
-    return analyzeScript(module.text, /\.[jt]sx$/.test(module.file) ? "tsx" : "ts");
-  const { descriptor } = await parseSfcFile(module.file, module.text);
-  const script = createVueScriptForParsing(descriptor, module.text);
-  return analyzeScript(script.text, script.lang === "jsx" || script.lang === "tsx" ? "tsx" : "ts");
-}
-
-function isDefineStoreCall(
-  call: AnyNode,
-  scope: ScriptScope,
-  nuxt: NuxtProjectInfo | undefined,
-  implicit: boolean,
-): boolean {
-  const callee = unwrap(call.callee);
-  const binding = calleeBinding(callee, scope, nuxt, implicit);
-  if (binding) return binding.name === "defineStore" && isPiniaSource(binding.from);
-  return (
-    implicit &&
-    !nuxt?.autoImportsAuthoritative &&
-    !nuxt?.autoImports.has("defineStore") &&
-    callee?.type === "Identifier" &&
-    callee.name === "defineStore" &&
-    scope.references.get(callee)?.resolved === null
-  );
-}
-
-function implicitImportsEnabled(ctx: RuleContext, file: string): boolean {
-  const nuxt = nuxtForFile(ctx, file);
-  return (
-    !nuxt ||
-    (nuxt.autoImportEnabled && isTransformedAppFile(file, relative(ctx.project.root, file), nuxt))
-  );
-}
-
-function calleeBinding(
-  callee: AnyNode,
-  scope: ScriptScope,
-  nuxt: ReturnType<typeof nuxtForFile>,
-  implicit: boolean,
-) {
-  return resolvedCalleeImport(
-    callee,
-    (identifier) => {
-      const reference = scope.references.get(identifier);
-      return implicit || reference?.resolved ? reference : undefined;
-    },
-    nuxt,
-  );
-}
-
-function analyzeStore(
-  ctx: RuleContext,
-  located: LocatedStore,
-  scope: ScriptScope,
-  call: AnyNode,
-): AnalyzedStore | undefined {
-  const exportNames = storeExportNames(scope, located, call);
+function analyzeStore(ctx: RuleContext, collected: CollectedStore): AnalyzedStore | undefined {
+  const { located, scope, call, exportNames } = collected;
   if (!exportNames.length) return undefined;
   const { file, text } = located.module;
   const setup = located.store.setup && unwrap(call.arguments[1]);
@@ -284,7 +168,7 @@ function analyzeOptionStore(
 ): Pick<AnalyzedStore, "state" | "collectionAt"> | undefined {
   const literal = returnedObject(propertyValue(options, "state"));
   if (!literal) return undefined;
-  const properties = effectiveProperties(literal);
+  const { properties } = readProperties(literal);
   const collectionAt: CollectionAt = ([key, ...path]) => {
     const property = key == null ? undefined : properties.get(key);
     return property?.kind === "init" ? stateCollections(scope, property.value)(path) : undefined;
@@ -294,7 +178,7 @@ function analyzeOptionStore(
     if (property.kind === "init")
       state.set(name, { declaration: property.key, actions: new Set() });
   }
-  for (const [name, property] of effectiveProperties(propertyValue(options, "actions"))) {
+  for (const [name, property] of readProperties(propertyValue(options, "actions")).properties) {
     const fn = unwrap(property.value);
     if (property.kind !== "init" || fn?.type !== "FunctionExpression") continue;
     const written = [
@@ -325,7 +209,7 @@ function analyzeSetupStore(
   const collections = new Map<string, CollectionAt>();
   const actions: Array<{ name: string; range: [number, number] }> = [];
   const variables: Array<{ name: string; variable: AnyNode; shape: "ref" | "reactive" }> = [];
-  for (const [name, property] of effectiveProperties(returned)) {
+  for (const [name, property] of readProperties(returned).properties) {
     if (property.kind !== "init") continue;
     const value = unwrap(property.value);
     if (FUNCTIONS.has(value?.type)) {
@@ -375,30 +259,6 @@ function analyzeSetupStore(
   };
 }
 
-/** `ref()` or `reactive()` from Vue, imported or auto-imported. */
-function stateFactory(
-  ctx: RuleContext,
-  file: string,
-  scope: ScriptScope,
-  init: AnyNode,
-): "ref" | "reactive" | undefined {
-  if (init?.type !== "CallExpression") return undefined;
-  const callee = unwrap(init.callee);
-  const nuxt = nuxtForFile(ctx, file);
-  const implicit = implicitImportsEnabled(ctx, file);
-  const binding = calleeBinding(callee, scope, nuxt, implicit);
-  if (binding) return VUE_SOURCES.has(binding.from) ? STATE_FACTORIES.get(binding.name) : undefined;
-  if (
-    implicit &&
-    !nuxt?.autoImportsAuthoritative &&
-    callee?.type === "Identifier" &&
-    scope.references.get(callee)?.resolved === null &&
-    !nuxt?.autoImports.has(callee.name)
-  )
-    return STATE_FACTORIES.get(callee.name);
-  return undefined;
-}
-
 /** Keys of object literals passed to `this.$patch()` inside an option-store action. */
 function thisPatchKeys(scope: ScriptScope, fn: AnyNode): string[] {
   const keys: string[] = [];
@@ -414,31 +274,6 @@ function thisPatchKeys(scope: ScriptScope, fn: AnyNode): string[] {
     }
   });
   return keys;
-}
-
-/** The names other modules import the store under. */
-function storeExportNames(scope: ScriptScope, located: LocatedStore, call: AnyNode): string[] {
-  const names = new Set<string>();
-  const binding = located.store.binding;
-  for (const statement of scope.ast.body as AnyNode[]) {
-    if (statement.type === "ExportDefaultDeclaration") {
-      const declaration = unwrap(statement.declaration);
-      if (
-        declaration === call ||
-        (binding && declaration?.type === "Identifier" && declaration.name === binding.name)
-      )
-        names.add("default");
-    }
-    if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type" || !binding)
-      continue;
-    for (const declarator of statement.declaration?.declarations ?? [])
-      if (declarator.id?.range?.[0] === binding.start) names.add(binding.name);
-    if (statement.source) continue;
-    for (const specifier of statement.specifiers ?? [])
-      if (specifier.exportKind !== "type" && exportedName(specifier.local) === binding.name)
-        names.add(exportedName(specifier.exported));
-  }
-  return [...names];
 }
 
 function report(
@@ -523,45 +358,6 @@ function describeWrite(write: SharedStateWrite): string {
   }
 }
 
-/** The object literal a state function returns, as with `state: () => ({ ... })`. */
-function returnedObject(value: AnyNode): AnyNode {
-  const fn = unwrap(value);
-  if (!FUNCTIONS.has(fn?.type)) return undefined;
-  const body =
-    fn.body?.type === "BlockStatement"
-      ? fn.body.body.findLast((statement: AnyNode) => statement.type === "ReturnStatement")
-          ?.argument
-      : fn.body;
-  const literal = unwrap(body);
-  return literal?.type === "ObjectExpression" ? literal : undefined;
-}
-
-function propertyValue(object: AnyNode, name: string): AnyNode {
-  const property = effectiveProperties(object).get(name);
-  return property?.kind === "init" ? property.value : undefined;
-}
-
-function effectiveProperties(node: AnyNode): Map<string, AnyNode> {
-  const properties = new Map<string, AnyNode>();
-  function collect(value: AnyNode) {
-    const object = unwrap(value);
-    if (object?.type !== "ObjectExpression") {
-      properties.clear();
-      return;
-    }
-    for (const property of object.properties) {
-      if (property.type === "SpreadElement") collect(property.argument);
-      else {
-        const name = ownPropertyName(property);
-        if (name !== null) properties.set(name, property);
-        else if (property.computed) properties.clear();
-      }
-    }
-  }
-  collect(node);
-  return properties;
-}
-
 function writesProperty(write: SharedStateWrite, property: string): boolean {
   return write.path[0] === property || write.assignedKeys?.includes(property) === true;
 }
@@ -571,27 +367,7 @@ function memberName(node: AnyNode): string | undefined {
   return node.property?.type === "Literal" ? String(node.property.value) : undefined;
 }
 
-function exportedName(node: AnyNode): string {
-  return node?.type === "Identifier" ? node.name : String(node?.value);
-}
-
-function unwrap(node: AnyNode): AnyNode {
-  while (node && WRAPPERS.has(node.type)) node = node.expression;
-  return node;
-}
-
-function walk(
-  scope: ScriptScope,
-  node: AnyNode,
-  visit: (node: AnyNode, ancestors: AnyNode[]) => boolean | void,
-  ancestors: AnyNode[] = [],
-) {
-  if (!node || typeof node.type !== "string" || visit(node, ancestors) === false) return;
-  ancestors.push(node);
-  for (const key of scope.visitorKeys[node.type] ?? []) {
-    const value = node[key];
-    for (const child of Array.isArray(value) ? value : [value])
-      walk(scope, child, visit, ancestors);
-  }
-  ancestors.pop();
+function propertyValue(object: AnyNode, name: string): AnyNode {
+  const property = readProperties(object).properties.get(name);
+  return property?.kind === "init" ? property.value : undefined;
 }
