@@ -14,8 +14,6 @@ import {
 } from "./store-inventory.js";
 
 const RULE_ID = "pinia/stores/no-module-scope-store";
-// A module that creates or activates Pinia itself, such as a SPA entry or a test setup, can call
-// stores at its top level after `app.use(pinia)`.
 
 export const noModuleScopeStore = createRule({
   meta: {
@@ -58,12 +56,12 @@ export const noModuleScopeStore = createRule({
           if (call.context !== "module") continue;
           const argument = call.call.arguments[0];
           if (argument && !isMissingInstance(call, argument)) continue;
-          if (hasPriorActivation(ctx, call)) continue;
+          const nuxt = nuxtForFile(ctx, call.file);
+          const ssr = Boolean(nuxt) && nuxt?.ssr !== false;
+          if (!ssr && hasPriorActivation(ctx, call)) continue;
           const id = call.store.located.store.id;
           const callee = unwrap(call.call.callee);
           const name = call.text.slice(callee.range[0], callee.range[1]);
-          const nuxt = nuxtForFile(ctx, call.file);
-          const ssr = Boolean(nuxt) && nuxt?.ssr !== false;
           const byName = call.byName
             ? ` Doctor found no import of the store here, so it matched the call to the only store exported under that name, as an auto-import from @pinia/nuxt or unplugin-auto-import would resolve it.`
             : "";

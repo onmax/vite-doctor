@@ -165,6 +165,18 @@ const value = counter.count
     expect(result.diagnostics[0]!.why).toContain("every request shares the store");
   });
 
+  test.each([true, false])("respects Nuxt SSR setting (%s) after prior activation", async (ssr) => {
+    const result = await runNuxt(rule, {
+      "nuxt.config.ts": `export default defineNuxtConfig({ ssr: ${ssr} })`,
+      "stores/counter.ts": counterSetup,
+      "app/counter.ts": `import { useCounterStore } from '../stores/counter'
+import { createPinia as make, setActivePinia as activate } from 'pinia'
+activate(make())
+export const counter = useCounterStore()`,
+    });
+    expect(result.diagnostics.map((item) => item.code)).toEqual(ssr ? ["PINIA0006"] : []);
+  });
+
   test.each([
     ["<script setup>", component("const counter = useCounterStore()")],
     [
@@ -294,6 +306,20 @@ ${body}
     expect(result.diagnostics.map((item) => item.code)).toEqual(["PINIA0007"]);
   });
 
+  test.each([
+    ["{ count: 0 }", "model.value.count++", []],
+    ["[]", "model.value.push(1)", []],
+    ["{ count: 0 }", "model.value = { count: 1 }", ["PINIA0007"]],
+  ])("tracks changes to a returned ref value: %s, %s", async (initial, write, codes) => {
+    const result = await run(rule, {
+      "stores/search.ts": store(
+        `  const model = ref(${initial})`,
+        `{ model: model.value, increment() { ${write} } }`,
+      ),
+    });
+    expect(result.diagnostics.map((item) => item.code)).toEqual(codes);
+  });
+
   test("records an evidence gap when the return object has an unknown spread", async () => {
     const result = await run(rule, {
       "stores/search.ts": store(
@@ -311,6 +337,7 @@ describe("Pinia store state regressions", () => {
     ["import { useCounterStore as counter } from '../stores/counter'", "counter()"],
     ["import { counter } from '../stores/barrel'", "counter()"],
     ["import counter from '../stores/default'", "counter()"],
+    ["import counter from '../stores/local-default'", "counter()"],
     ["import counter from '../stores/direct-default'", "counter()"],
     ["import * as stores from '../stores/counter'", "stores.useCounterStore()"],
     [counterSetup.replace("export const", "const"), "useCounterStore()"],
@@ -319,6 +346,7 @@ describe("Pinia store state regressions", () => {
       "stores/counter.ts": counterSetup,
       "stores/barrel.ts": "export { useCounterStore as counter } from './counter'",
       "stores/default.ts": "export { useCounterStore as default } from './counter'",
+      "stores/local-default.ts": `${counterSetup.replace("export const", "const")}\nexport default useCounterStore`,
       "stores/direct-default.ts": counterSetup.replace(
         "export const useCounterStore =",
         "export default",
@@ -335,6 +363,24 @@ describe("Pinia store state regressions", () => {
       "components/counter.ts": code,
     });
     expect(moduleScope.diagnostics.map((item) => item.code)).toEqual(["PINIA0006"]);
+  });
+
+  test("does not resolve reassigned store bindings for local calls or identifier default exports", async () => {
+    const definition = `import { defineStore } from 'pinia'
+let readCounter = defineStore('counter', { state: () => ({ count: 0 }) })
+readCounter = () => ({ count: 1 })`;
+    const local = await run(pinia.noModuleScopeStore, {
+      "stores/counter.ts": `${definition}\nreadCounter()`,
+    });
+    expect(local.diagnostics).toEqual([]);
+    const imported = await run(pinia.noStoreDestructure, {
+      "stores/counter.ts": `${definition}\nexport default readCounter`,
+      "components/Counter.vue": `<script setup lang="ts">
+import readCounter from '../stores/counter'
+const { count } = readCounter()
+</script>`,
+    });
+    expect(imported.diagnostics).toEqual([]);
   });
 
   test.each([

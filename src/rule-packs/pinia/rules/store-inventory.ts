@@ -1,12 +1,12 @@
 import { relative } from "pathe";
 import type { NuxtProjectInfo, RuleContext, SourceRange } from "../../../core/index.js";
-import { isTransformedAppFile } from "../../../core/internal/auto-import-edges.js";
 import { analyzeScript, type ScriptScope } from "../../../core/internal/script-scope.js";
 import { ownPropertyName } from "../../../core/internal/shared-state-writes.js";
 import { createVueScriptForParsing, parseSfcFile } from "../../../core/internal/sfc.js";
 import {
   collectStoreModules,
   isPiniaSource,
+  isTransformedAppFile,
   nuxtForFile,
   readStoreDefinition,
   resolvedCalleeImport,
@@ -539,7 +539,12 @@ function useTarget(
     if (name !== undefined)
       return { kind: "import", name, source: String(definition.parent.source.value) };
   }
-  if (!member && definition.type === "Variable" && local.has(definition.name.range[0]))
+  if (
+    !member &&
+    definition.type === "Variable" &&
+    definition.parent.kind === "const" &&
+    local.has(definition.name.range[0])
+  )
     return { kind: "local", start: definition.name.range[0] };
   return undefined;
 }

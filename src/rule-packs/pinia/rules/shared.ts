@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, relative, resolve } from "pathe";
+import { basename, dirname, isAbsolute, relative, resolve } from "pathe";
 import type { AutoImportEntry, NuxtProjectInfo, RuleContext } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseScriptScope, type ScopeReference } from "../../../core/internal/script-scope.js";
@@ -28,7 +28,7 @@ export interface SetupStoreUse {
 
 const CLIENT = 1;
 const SERVER = 2;
-export const setupRuntimes = [CLIENT, SERVER];
+export const setupRuntimes = { client: CLIENT, server: SERVER } as const;
 
 export type SetupStoreUseTarget =
   /** A store defined in the same file under `name`. */
@@ -55,7 +55,26 @@ export interface LocatedStore<S extends StoreDefinition = StoreDefinition> {
   module: StoreModule;
 }
 
+/** The extension order Vite resolved for one environment, from Runtime Evidence. */
+export interface EnvironmentResolution {
+  root: string;
+  runtime: number;
+  extensions: string[];
+}
+
 const VITE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
+const NUXT_EXTENSIONS = [
+  ".mjs",
+  ".js",
+  ".cjs",
+  ".mts",
+  ".ts",
+  ".cts",
+  ".tsx",
+  ".jsx",
+  ".vue",
+  ".json",
+];
 
 const TRANSPARENT_WRAPPERS = new Set([
   "ParenthesizedExpression",
@@ -601,9 +620,16 @@ function walk(
 export function storeResolver<S extends StoreDefinition>(
   ctx: RuleContext,
   stores: LocatedStore<S>[],
+  host?: EnvironmentResolution,
 ) {
   const byFile = new Map<string, LocatedStore<S>[]>();
   const programs = new Map<string, StoreModule["program"]>();
+  const frameworks = new Map(
+    ctx.project.workspacePackages?.map((item) => [
+      resolve(ctx.project.root, item.root),
+      item.framework,
+    ]),
+  );
   for (const store of stores) {
     const file = store.module.file;
     const local = byFile.get(file) ?? [];
@@ -612,16 +638,51 @@ export function storeResolver<S extends StoreDefinition>(
     programs.set(file, store.module.program);
   }
 
+  function isFile(candidate: string) {
+    return byFile.has(candidate) || ctx.fs.stat(candidate)?.isFile();
+  }
+
+  function extensionFile(base: string, extensions: string[], resolved: boolean) {
+    if (resolved) return extensions.map((extension) => `${base}${extension}`).find(isFile);
+    const dir = dirname(base);
+    const filename = basename(base);
+    const prefix = `${filename}.`;
+    const candidates = ctx.fs
+      .readDir(dir)
+      ?.filter((entry) => entry.name.startsWith(prefix) && isFile(resolve(dir, entry.name)));
+    if (!candidates?.length) return undefined;
+    if (candidates.length > 1) return null;
+    const candidate = candidates[0]!.name;
+    return extensions.includes(candidate.slice(filename.length)) ? resolve(dir, candidate) : null;
+  }
+
+  function fileForBase(base: string, extensions: string[], resolved: boolean) {
+    if (isFile(base)) return base;
+    const ts = base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
+    if (ts !== base && isFile(ts)) return ts;
+    const file = extensionFile(base, extensions, resolved);
+    if (file !== undefined) return file;
+    return extensionFile(`${base}/index`, extensions, resolved);
+  }
+
   function moduleFile(from: string, source: string) {
-    const matches = new Set(
-      [...new Set(importBases(ctx, from, source))].flatMap((base) => {
-        const file = importCandidates(base).find(
-          (candidate) => byFile.has(candidate) || ctx.fs.stat(candidate)?.isFile(),
-        );
-        return file ? [file] : [];
-      }),
-    );
-    return matches.size === 1 ? matches.values().next().value : undefined;
+    const framework = frameworks.get(packageRoot(ctx, from)) ?? ctx.project.framework;
+    const defaults = framework === "nuxt" ? NUXT_EXTENSIONS : VITE_EXTENSIONS;
+    const relativePath = host ? relative(host.root, from) : undefined;
+    const order =
+      relativePath !== undefined &&
+      relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !isAbsolute(relativePath)
+        ? host?.extensions
+        : undefined;
+    let match: string | undefined;
+    for (const base of importBases(ctx, from, source)) {
+      const file = fileForBase(base, order ?? defaults, Boolean(order));
+      if (file === null || (file && match && file !== match)) return undefined;
+      match ??= file;
+    }
+    return match;
   }
 
   function program(file: string) {
@@ -642,10 +703,19 @@ export function storeResolver<S extends StoreDefinition>(
     );
   }
 
-  function localExport(file: string, body: AnyNode[], local: string, seen: Set<string>) {
+  function localExport(
+    file: string,
+    body: AnyNode[],
+    local: string,
+    seen: Set<string>,
+    immutable = false,
+  ) {
     for (const statement of body) {
-      const store = declarationStore(file, statement.declaration ?? statement, local);
-      if (store) return store;
+      const declaration = statement.declaration ?? statement;
+      if (!immutable || declaration.kind === "const") {
+        const store = declarationStore(file, declaration, local);
+        if (store) return store;
+      }
       if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
       const imported = statement.specifiers.find((entry: AnyNode) => entry.local.name === local);
       const name =
@@ -676,7 +746,7 @@ export function storeResolver<S extends StoreDefinition>(
       if (name === "default" && statement.type === "ExportDefaultDeclaration") {
         const declaration = unwrap(statement.declaration);
         if (declaration?.type === "Identifier")
-          return localExport(file, body, declaration.name, path);
+          return localExport(file, body, declaration.name, path, true);
         const id = declaration?.type === "CallExpression" ? readStoreId(declaration) : undefined;
         return (
           (id && byFile.get(file)?.find((entry) => entry.store.idStart === id.idStart)) || null
@@ -854,14 +924,25 @@ function importBases(ctx: RuleContext, from: string, specifier: string): string[
   return [];
 }
 
-function importCandidates(base: string): string[] {
-  const ts = base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
-  return [
-    base,
-    ...(ts === base ? [] : [ts]),
-    ...VITE_EXTENSIONS.map((extension) => `${base}${extension}`),
-    ...VITE_EXTENSIONS.map((extension) => `${base}/index${extension}`),
-  ];
+/** Whether Nuxt's app auto-import transform covers `file`; Nitro scans server code itself. */
+export function isTransformedAppFile(
+  file: string,
+  relativePath: string,
+  nuxt: NuxtProjectInfo,
+): boolean {
+  if (/(^|\/)server\//.test(relativePath)) return false;
+  const transform = nuxt.manifest?.isCurrent ? nuxt.manifest.autoImportTransform : undefined;
+  if (!transform) return true;
+  if (transform.include.some((pattern) => matchesPattern(file, pattern))) return true;
+  return !transform.exclude.some((pattern) => matchesPattern(file, pattern));
+}
+
+function matchesPattern(file: string, pattern: { source: string; flags: string }): boolean {
+  try {
+    return new RegExp(pattern.source, pattern.flags).test(file);
+  } catch {
+    return false;
+  }
 }
 
 export function nuxtForFile(ctx: RuleContext, file: string) {

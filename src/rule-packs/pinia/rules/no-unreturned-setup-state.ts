@@ -65,8 +65,8 @@ export const noUnreturnedSetupState = createRule({
           if (setup?.body?.type !== "BlockStatement") continue;
           const candidates = unreturnedCandidates(ctx, store, setup);
           if (!candidates.length) continue;
-          const returned = setupReturn(store.scope, setup);
-          if (!returned || !readProperties(returned).complete) {
+          const returned = readProperties(setupReturn(store.scope, setup));
+          if (!returned.complete) {
             ctx.project.evidenceGaps = [
               ...(ctx.project.evidenceGaps ?? []),
               {
@@ -77,7 +77,16 @@ export const noUnreturnedSetupState = createRule({
             ];
             continue;
           }
-          for (const candidate of candidates) report(ctx, store, candidate);
+          const exposedValues = returnedRefValues(store.scope, returned.properties.values());
+          for (const candidate of candidates) {
+            const writes =
+              candidate.shape === "ref" && exposedValues.has(candidate.declaration)
+                ? candidate.writes.filter(
+                    (write) => !write.path.length && write.kind !== "mutating-call",
+                  )
+                : candidate.writes;
+            if (writes.length) report(ctx, store, { ...candidate, writes });
+          }
         }
       },
     };
@@ -89,6 +98,24 @@ interface Candidate {
   declaration: AnyNode;
   shape: "ref" | "reactive";
   writes: LocalStateWrite[];
+}
+
+function returnedRefValues(scope: CollectedStore["scope"], properties: Iterable<AnyNode>) {
+  const declarations = new Set<AnyNode>();
+  for (const property of properties) {
+    if (property.kind !== "init") continue;
+    const value = unwrap(property.value);
+    if (
+      value?.type !== "MemberExpression" ||
+      (value.computed ? value.property.value : value.property.name) !== "value"
+    )
+      continue;
+    const object = unwrap(value.object);
+    if (object?.type !== "Identifier") continue;
+    for (const id of scope.references.get(object)?.resolved?.identifiers ?? [])
+      declarations.add(id);
+  }
+  return declarations;
 }
 
 /**
