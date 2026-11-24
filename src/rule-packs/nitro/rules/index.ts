@@ -24,6 +24,9 @@ import { requireAbsoluteGeneratedPaths } from "./require-absolute-generated-path
 import { noProcessEnvInServer } from "./no-process-env-in-server.js";
 import { preferNitroH3Import } from "./prefer-nitro-h3-import.js";
 import { declareNitroDependency } from "./declare-nitro-dependency.js";
+import { noRuntimeConfigInResponse } from "./no-runtime-config-in-response.js";
+import { requireWaitUntilForBackgroundWork } from "./require-waituntil-for-background-work.js";
+import { noUndeclaredStorageMount } from "./no-undeclared-storage-mount.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -51,6 +54,9 @@ export {
   noProcessEnvInServer,
   preferNitroH3Import,
   declareNitroDependency,
+  noRuntimeConfigInResponse,
+  requireWaitUntilForBackgroundWork,
+  noUndeclaredStorageMount,
 };
 
 const rules = [
@@ -77,9 +83,11 @@ const rules = [
   noProcessEnvInServer,
   preferNitroH3Import,
   declareNitroDependency,
+  noRuntimeConfigInResponse,
+  requireWaitUntilForBackgroundWork,
 ];
 
-const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache];
+const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache, noUndeclaredStorageMount];
 
 const nitroRulePack = defineRulePack({
   name: "vite-doctor/nitro",

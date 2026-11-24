@@ -150,7 +150,7 @@ function isIgnoredByNuxtDefaults(path: string) {
   );
 }
 
-function configFiles(base: string) {
+export function configFiles(base: string) {
   return ["ts", "mts", "cts", "js", "mjs", "cjs"].map((extension) => `${base}.${extension}`);
 }
 
@@ -197,6 +197,43 @@ function viteConfigOptions(program: any): StaticConfigOption[] {
     collectNitroPluginOptions(property.value, pluginNames, namespaceNames, options);
   }
   return options;
+}
+
+/**
+ * The Nitro option objects of a vite.config program that registers the nitro() plugin: the
+ * top-level `nitro` key and each nitro() call's argument. `null` stands for options Doctor cannot
+ * read statically. Undefined when the config does not register the plugin.
+ */
+export function viteNitroOptionObjects(program: any): Array<any | null> | undefined {
+  const config = viteNitroConfig(program);
+  if (!config) return undefined;
+  const { properties, pluginsProperty, pluginNames, namespaceNames } = config;
+  const objects: Array<any | null> = [];
+  for (const property of properties) {
+    if (property.type !== "Property" || property.computed) {
+      objects.push(null);
+      continue;
+    }
+    const key = propertyKey(property.key);
+    if (key === "nitro") objects.push(unwrapConfig(property.value) ?? null);
+    if (key !== "plugins" || property !== pluginsProperty) continue;
+    const visit = (node: any) => {
+      if (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
+        return visit(node.expression);
+      if (node?.type === "ArrayExpression") return node.elements.forEach(visit);
+      if (node?.type !== "CallExpression") return;
+      if (!isNitroPluginCallee(node.callee, pluginNames, namespaceNames)) return;
+      objects.push(
+        node.arguments.length === 0
+          ? { type: "ObjectExpression", properties: [] }
+          : node.arguments.length === 1
+            ? (unwrapConfig(node.arguments[0]) ?? null)
+            : null,
+      );
+    };
+    visit(property.value);
+  }
+  return objects;
 }
 
 export function hasViteNitroPlugin(program: Record<string, unknown>): boolean {
@@ -286,7 +323,7 @@ function isNitroPluginCallee(node: any, names: Set<string>, namespaces: Set<stri
   );
 }
 
-function unwrapConfig(node: any): any {
+export function unwrapConfig(node: any): any {
   while (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
     node = node.expression;
   if (
@@ -332,13 +369,13 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
   }
 }
 
-function propertyKey(node: any): string | null {
+export function propertyKey(node: any): string | null {
   if (node?.type === "Identifier") return node.name;
   if (node?.type === "Literal" && typeof node.value === "string") return node.value;
   return null;
 }
 
-function literalValue(node: any): string | boolean | null {
+export function literalValue(node: any): string | boolean | null {
   while (node?.type === "TSAsExpression" || node?.type === "TSSatisfiesExpression")
     node = node.expression;
   if (
