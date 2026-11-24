@@ -113,6 +113,64 @@ describe("nuxt/state/no-diverging-usestate-init", () => {
     expect(diagnostics).toHaveLength(1);
   });
 
+  test.each([false, true])(
+    "keeps adjacent SFC script blocks separate (setup first: %s)",
+    async (setupFirst) => {
+      const call = "useNuxtState('count', () => 1)";
+      const script = "<script>import { useState as useNuxtState } from '#app'</script>";
+      const setup = `<script setup>const count = ${call}</script>`;
+      const source = setupFirst ? setup + script : script + setup;
+      const diagnostics = await run({
+        "app/composables/count.ts": "useState('count', () => 0)",
+        "app/pages/count.vue": source,
+      });
+
+      const start = source.indexOf(call);
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]?.related?.[0]?.range).toEqual({
+        start,
+        end: start + call.length,
+        line: 1,
+        column: start + 1,
+      });
+    },
+  );
+
+  test("setup locals shadow module imports without affecting calls in the module", async () => {
+    const diagnostics = await run({
+      "app/composables/count.ts": "useState('count', () => 0)",
+      "app/pages/count.vue": `<script>
+import { useState } from '#app'
+export const useCount = () => useState('count', () => 2)
+</script>
+<script setup>
+const useState = (_key, init) => init()
+const count = useState('count', () => 1)
+</script>`,
+    });
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.related).toHaveLength(1);
+    expect(diagnostics[0]?.related?.[0]?.message).toContain("() => 2");
+  });
+
+  test("only setup imports are visible to the module script", async () => {
+    const diagnostics = await run({
+      "app/composables/count.ts": "useState('count', () => 0); useState('other', () => 0)",
+      "app/pages/count.vue": `<script>
+export const useCount = () => useNuxtState('count', () => 1)
+export const useOther = () => useState('other', () => 1)
+</script>
+<script setup>
+import { useState as useNuxtState } from '#app'
+import { useState } from './local-state'
+</script>`,
+    });
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.why).toContain("useState('count')");
+  });
+
   test("ignores lexical shadowing of implicit and explicit imports", async () => {
     const diagnostics = await run({
       "app/pages/a.vue": page("useState('count', () => 0)"),
@@ -219,5 +277,13 @@ describe("nuxt/state/no-diverging-usestate-init", () => {
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.why).toContain(left);
     expect(diagnostics[0]?.why).toContain(right);
+  });
+
+  test("distinguishes an overflowing number literal from null", async () => {
+    const diagnostics = await run({
+      "app/pages/a.vue": page("useState('count', () => 1e309)"),
+      "app/pages/b.vue": page("useState('count', () => null)"),
+    });
+    expect(diagnostics).toHaveLength(1);
   });
 });

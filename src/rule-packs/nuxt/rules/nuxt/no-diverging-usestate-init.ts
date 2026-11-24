@@ -8,9 +8,11 @@ import {
 import {
   analyzeScript,
   scopeDialect,
+  type ScriptScope,
   type ScopeReference,
+  type ScopeVariable,
 } from "../../../../core/internal/script-scope.js";
-import { createVueScriptForParsing, parseSfcFile } from "../../../../core/internal/sfc.js";
+import { parseSfcFile } from "../../../../core/internal/sfc.js";
 import { workspaceViewRoot } from "../../../../core/internal/workspace-nuxt.js";
 import { diagnostics } from "../../diagnostics.js";
 import { scriptNodesOfType } from "./script-index.js";
@@ -126,32 +128,27 @@ async function collectStateInits(ctx: RuleContext): Promise<StateInit[]> {
       continue;
     const text = ctx.fs.readText(file);
     if (!text) continue;
-    const script = file.endsWith(".vue")
-      ? createVueScriptForParsing((await parseSfcFile(file, text)).descriptor, text)
-      : { text, lang: undefined };
-    const scope = analyzeScript(
-      script.text,
-      scopeDialect(file, script.lang === "tsx" || script.lang === "jsx"),
-    );
-    if (!scope) continue;
-    for (const call of scriptNodesOfType(scope.ast, "CallExpression")) {
-      if (
-        call.callee?.type !== "Identifier" ||
-        !isNuxtUseState(scope.references.get(call.callee), nuxt)
-      )
-        continue;
-      const [keyNode, init] = call.arguments ?? [];
-      const key = literalKey(keyNode);
-      if (key === undefined || !init || init.type === "SpreadElement") continue;
-      if (init.type === "Identifier" && init.name === "undefined") continue;
-      inits.push({
-        key,
-        file,
-        displayPath: relative(project.root, file),
-        range: ctx.helpers.rangeFromOffsets(file, text, call.start, call.end),
-        source: text.slice(init.start, init.end),
-        normalized: initializerShape(init),
-      });
+    for (const { scope, offset, outerBindings } of await stateScripts(file, text)) {
+      if (!scope) continue;
+      for (const call of scriptNodesOfType(scope.ast, "CallExpression")) {
+        if (
+          call.callee?.type !== "Identifier" ||
+          !isNuxtUseState(scope.references.get(call.callee), nuxt, outerBindings)
+        )
+          continue;
+        const [keyNode, init] = call.arguments ?? [];
+        const key = literalKey(keyNode);
+        if (key === undefined || !init || init.type === "SpreadElement") continue;
+        if (init.type === "Identifier" && init.name === "undefined") continue;
+        inits.push({
+          key,
+          file,
+          displayPath: relative(project.root, file),
+          range: ctx.helpers.rangeFromOffsets(file, text, offset + call.start, offset + call.end),
+          source: text.slice(offset + init.start, offset + init.end),
+          normalized: initializerShape(init),
+        });
+      }
     }
   }
   // Script files first: a composable is the likelier home for the state than a component.
@@ -164,16 +161,62 @@ async function collectStateInits(ctx: RuleContext): Promise<StateInit[]> {
   );
 }
 
+interface StateScript {
+  scope: ScriptScope | null;
+  offset: number;
+  outerBindings?: ReadonlyMap<string, ScopeVariable>;
+}
+
+async function stateScripts(file: string, text: string): Promise<StateScript[]> {
+  if (!file.endsWith(".vue"))
+    return [{ scope: analyzeScript(text, scopeDialect(file)), offset: 0 }];
+
+  const {
+    descriptor: { script, scriptSetup },
+  } = await parseSfcFile(file, text);
+  const parseBlock = (block: NonNullable<typeof script>) => ({
+    scope: analyzeScript(
+      block.content,
+      scopeDialect(file, block.lang === "tsx" || block.lang === "jsx"),
+    ),
+    offset: block.loc.start.offset,
+  });
+  const module = script && parseBlock(script);
+  const setup = scriptSetup && parseBlock(scriptSetup);
+  if (!module || !setup) return module ? [module] : setup ? [setup] : [];
+
+  const moduleBindings = topLevelBindings(module.scope);
+  const setupImports = new Map(
+    [...(topLevelBindings(setup.scope) ?? [])].filter(([, binding]) =>
+      binding.defs.some((definition) => definition.type === "ImportBinding"),
+    ),
+  );
+  return [
+    { ...module, outerBindings: setupImports },
+    { ...setup, outerBindings: moduleBindings },
+  ];
+}
+
+function topLevelBindings(scope: ScriptScope | null) {
+  return scope?.scopeManager.scopes.find((scope) => scope.type === "module")?.set;
+}
+
 function isInside(root: string, file: string): boolean {
   const path = relative(root, file);
   return path !== ".." && !path.startsWith("../") && !isAbsolute(path);
 }
 
-function isNuxtUseState(reference: ScopeReference | undefined, nuxt: NuxtProjectInfo): boolean {
+function isNuxtUseState(
+  reference: ScopeReference | undefined,
+  nuxt: NuxtProjectInfo,
+  outerBindings: StateScript["outerBindings"],
+): boolean {
   if (!reference) return false;
-  if (!reference.resolved)
-    return nuxt.autoImportEnabled && isNuxtAutoImport(reference.identifier.name, nuxt);
-  return reference.resolved.defs.some((definition) => {
+  const name = reference.identifier.name;
+  const outer = outerBindings?.get(name);
+  const binding = reference.resolved ?? (outer?.isValueVariable ? outer : undefined);
+  if (!binding) return nuxt.autoImportEnabled && isNuxtAutoImport(name, nuxt);
+  return binding.defs.some((definition) => {
     if (definition.type !== "ImportBinding") return false;
     const { node, parent } = definition;
     if (
@@ -213,6 +256,7 @@ function initializerShape(node: AnyNode): string {
   return JSON.stringify(node, function (key, value: unknown) {
     if (key === "start" || key === "end" || key === "range" || key === "loc") return undefined;
     if (key === "raw" && this.type === "Literal") return undefined;
+    if (typeof value === "number" && !Number.isFinite(value)) return { number: String(value) };
     return typeof value === "bigint" ? value.toString() : value;
   });
 }
