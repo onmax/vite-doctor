@@ -33,6 +33,18 @@ interface ReadSite {
 }
 
 const VITE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
+const NUXT_EXTENSIONS = [
+  ".mjs",
+  ".js",
+  ".cjs",
+  ".mts",
+  ".ts",
+  ".cts",
+  ".tsx",
+  ".jsx",
+  ".vue",
+  ".json",
+];
 const REMEDIATION =
   "Defer every reported read to a computed() getter or an action that runs after setup, or break the cycle by moving a useStore() call out of setup.";
 
@@ -109,6 +121,12 @@ function storeEdges(ctx: RuleContext, stores: LocatedStore[]): StoreEdge[] {
 function storeResolver(ctx: RuleContext, stores: LocatedStore[]) {
   const byFile = new Map<string, LocatedStore[]>();
   const programs = new Map<string, StoreModule["program"]>();
+  const frameworks = new Map(
+    ctx.project.workspacePackages?.map((item) => [
+      resolve(ctx.project.root, item.root),
+      item.framework,
+    ]),
+  );
   for (const store of stores) {
     const file = store.module.file;
     const local = byFile.get(file) ?? [];
@@ -118,9 +136,11 @@ function storeResolver(ctx: RuleContext, stores: LocatedStore[]) {
   }
 
   function moduleFile(from: string, source: string) {
+    const framework = frameworks.get(packageRoot(ctx, from)) ?? ctx.project.framework;
+    const extensions = framework === "nuxt" ? NUXT_EXTENSIONS : VITE_EXTENSIONS;
     const matches = new Set(
       importBases(ctx, from, source).flatMap((base) => {
-        const file = importCandidates(base).find(
+        const file = importCandidates(base, extensions).find(
           (candidate) => byFile.has(candidate) || ctx.fs.stat(candidate)?.isFile(),
         );
         return file ? [file] : [];
@@ -283,13 +303,13 @@ function importBases(ctx: RuleContext, from: string, specifier: string): string[
   return bases;
 }
 
-function importCandidates(base: string): string[] {
+function importCandidates(base: string, extensions: string[]): string[] {
   const ts = base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
   return [
     base,
     ...(ts === base ? [] : [ts]),
-    ...VITE_EXTENSIONS.map((extension) => `${base}${extension}`),
-    ...VITE_EXTENSIONS.map((extension) => `${base}/index${extension}`),
+    ...extensions.map((extension) => `${base}${extension}`),
+    ...extensions.map((extension) => `${base}/index${extension}`),
   ];
 }
 

@@ -356,6 +356,29 @@ export const useUserStore = defineStore('user', {
     },
   );
 
+  test("uses the host's extension order for a TSX and JSX collision", async () => {
+    const files = {
+      "stores/x.ts": x,
+      "stores/y.tsx": "export const useYStore = () => ({ name: 'helper' })",
+      "stores/y.jsx": y,
+    };
+    expect((await runNuxt(files, [])).diagnostics).toHaveLength(0);
+    expect((await run(files)).diagnostics).toHaveLength(1);
+  });
+
+  test("resolves an extensionless Nuxt import to a CTS file before an index", async () => {
+    const result = await runNuxt(
+      {
+        "stores/x.ts": x,
+        "stores/y.cts": y,
+        "stores/y/index.tsx": "export const useYStore = () => ({ name: 'helper' })",
+      },
+      [],
+    );
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.related?.[0]?.file).toMatch(/stores\/y\.cts$/);
+  });
+
   test("ignores a stale Nuxt store registration when #imports points to a helper", async () => {
     const result = await runNuxt(
       {
