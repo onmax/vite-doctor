@@ -5,8 +5,19 @@ import { createRule } from "./shared.js";
 
 const RULE_ID = "vue/attrs/no-multi-root-fallthrough";
 
-// Vue keeps these off `attrs`: runtime-core `isReservedProp`, plus `vue:` vnode hooks.
-const RESERVED = new Set(["key", "ref", "ref_for", "ref_key"]);
+const RESERVED = new Set([
+  "",
+  "key",
+  "ref",
+  "ref_for",
+  "ref_key",
+  "onVnodeBeforeMount",
+  "onVnodeMounted",
+  "onVnodeBeforeUpdate",
+  "onVnodeUpdated",
+  "onVnodeBeforeUnmount",
+  "onVnodeUnmounted",
+]);
 
 export const noMultiRootFallthrough = createRule({
   meta: {
@@ -36,10 +47,11 @@ export const noMultiRootFallthrough = createRule({
             if (!dropped.length) continue;
             const name = displayName(node);
             const names = dropped.map((attribute) => attribute.name).join(", ");
+            const hasListeners = dropped.some((attribute) => attribute.listener);
             ctx.report(
               diagnostics.VUE0051({
-                why: `<${edge.usage.tag}> passes ${names} to ${name}, which declares none of them as props or emits. ${name} renders ${facts.rootNodes} root nodes and neither binds $attrs nor sets inheritAttrs: false, so Vue cannot tell which root should receive them: it drops them and warns "Extraneous non-props attributes were passed to component but could not be automatically inherited because component renders fragment or text or teleport root nodes".`,
-                fix: `Bind the attributes on the root of ${name} that should receive them with v-bind="$attrs", wrap its template in one root element, or declare them as props or emits. If ${name} should not receive them, remove them from this usage.`,
+                why: `<${edge.usage.tag}> passes ${names} to ${name}, which declares none of them as props or emits. ${name} renders ${facts.rootNodes} root nodes without reading $attrs or disabling inheritance, so Vue does not automatically attach them to a root and warns in development.${hasListeners ? " A component emit can still invoke its caller's listener even if Vue cannot attach that listener to a DOM root." : ""}`,
+                fix: `Bind $attrs on the root of ${name} that should receive them, or wrap its template in one root element. Declare inputs the component consumes as props.${hasListeners ? " If a listener handles an event the component emits, declare the event in emits and keep the caller's handler." : ""}`,
               }),
               {
                 file: edge.from,
@@ -76,26 +88,40 @@ export const noMultiRootFallthrough = createRule({
 function fallthroughAttributes(
   facts: ComponentFacts,
   usage: ComponentUsageFact,
-): Array<{ name: string; range: SourceRange }> {
+): Array<{ name: string; range: SourceRange; listener: boolean }> {
   if (!facts.props) return [];
   const props = new Set(facts.props.map((prop) => prop.name));
   for (const model of facts.models) {
-    props.add(model.name);
-    props.add(model.name === "modelValue" ? "modelModifiers" : `${model.name}Modifiers`);
+    props.add(camelize(model.name));
+    props.add(model.name === "modelValue" ? "modelModifiers" : camelize(`${model.name}Modifiers`));
   }
-  const dropped: Array<{ name: string; range: SourceRange }> = [];
-  for (const { name, range } of [...usage.attributes, ...usage.bindings]) {
-    if (!RESERVED.has(name) && !props.has(camelize(name))) dropped.push({ name, range });
-  }
-  if (facts.emits) {
-    const emits = new Set(facts.emits.map(camelize));
-    for (const { event, range } of usage.listeners) {
-      // Vue never warns about `update:*` model listeners; `vue:` and `vnode-` are vnode hooks.
-      if (/^(?:update:|vue:|vnode-?[A-Za-z])/.test(event)) continue;
-      const key = camelize(event);
-      const handlerProp = `on${key.charAt(0).toUpperCase()}${key.slice(1)}`;
-      if (!emits.has(key) && !props.has(handlerProp)) dropped.push({ name: `@${event}`, range });
-    }
+  const emits = facts.emits && new Set(facts.emits);
+  const candidates = [
+    ...usage.attributes.map(({ name, range }) => ({ name, vnodeKey: name, range })),
+    ...usage.bindings,
+    ...usage.listeners.map(({ event, modifiers, vnodeKey, range }) => ({
+      name: `@${[event, ...modifiers].join(".")}`,
+      vnodeKey,
+      range,
+    })),
+  ];
+  const dropped: Array<{ name: string; range: SourceRange; listener: boolean }> = [];
+  for (const { name, vnodeKey, range } of candidates) {
+    if (RESERVED.has(vnodeKey) || props.has(camelize(vnodeKey))) continue;
+    const listener = /^on[^a-z]/.test(vnodeKey);
+    if (listener && (!emits || isEmitListener(emits, vnodeKey) || vnodeKey.startsWith("onUpdate:")))
+      continue;
+    dropped.push({ name, range, listener });
   }
   return dropped.sort((a, b) => a.range.start - b.range.start);
+}
+
+function isEmitListener(emits: Set<string>, key: string): boolean {
+  const handler = key.slice(2);
+  const name = handler === "Once" ? handler : handler.replace(/Once$/, "");
+  return (
+    emits.has(name.charAt(0).toLowerCase() + name.slice(1)) ||
+    emits.has(name.replace(/\B([A-Z])/g, "-$1").toLowerCase()) ||
+    emits.has(name)
+  );
 }

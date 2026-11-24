@@ -88,9 +88,12 @@ function componentFacts(value: unknown): boolean {
       (item) =>
         typeof item.tag === "string" &&
         Array.isArray(item.attributes) &&
-        Array.isArray(item.bindings) &&
+        facts(item.bindings, (binding) => typeof binding.vnodeKey === "string") &&
         Array.isArray(item.spreads) &&
-        Array.isArray(item.listeners) &&
+        facts(
+          item.listeners,
+          (listener) => typeof listener.vnodeKey === "string" && strings(listener.modifiers),
+        ) &&
         strings(item.directives) &&
         strings(item.scope) &&
         typeof item.inFor === "boolean" &&

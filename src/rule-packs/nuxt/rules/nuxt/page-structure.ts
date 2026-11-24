@@ -361,7 +361,7 @@ export function templateRootShape(root: TemplateRootNode): RootShape {
     }
     const [first] = node.branches;
     roots.push({
-      type: node.branches.some((branch) => branch.tagType === 2) ? "slot" : "element",
+      type: node.branches.every((branch) => branch.tagType === 2) ? "slot" : "element",
       start: first!.loc.start.offset,
       end: first!.loc.end.offset,
     });

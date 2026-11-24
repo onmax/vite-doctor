@@ -10,6 +10,7 @@ import type {
   TemplateRootNode,
 } from "../primitives.js";
 
+import { analyzeScriptProgram } from "./script-scope.js";
 import {
   findTemplateDirective,
   TemplateNodeType,
@@ -37,8 +38,7 @@ const DECLARATION_MACROS = new Set([
   "withDefaults",
 ]);
 const OPTION_KEYS_WITHOUT_LOGIC = new Set(["name", "inheritAttrs"]);
-// Reading attrs during render stops Vue's fallthrough warning; these are the ways to reach them.
-const ATTRS_READERS = ["$attrs", "useAttrs", "getCurrentInstance"];
+const VUE_ATTRS_READERS = new Set(["useAttrs", "getCurrentInstance"]);
 const MEMBER_PATH = String.raw`[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*`;
 const COMPARISON = new RegExp(
   String.raw`(?<![\w$.])(${MEMBER_PATH})\s*(?:===|!==|==|!=)\s*(${MEMBER_PATH})(?![\w$(\[])`,
@@ -96,12 +96,40 @@ export function createComponentFactsCollector(
     },
     finish(template, visitAttribute) {
       if (template) walkComponentTemplate(facts, template, references, rangeOf, visitAttribute);
-      facts.readsAttrs = ATTRS_READERS.some((name) => references.has(name));
+      facts.readsAttrs = references.has("$attrs") || referencesVueAttrsReader(scriptAst);
       const imported = new Set(facts.imports.map((item) => item.local));
       facts.bindingReferences = [...references].filter((name) => imported.has(name)).sort();
       return facts;
     },
   };
+}
+
+function referencesVueAttrsReader(program: AnyNode): boolean {
+  const specifiers = new Set(
+    (program?.body ?? [])
+      .filter(
+        (node: AnyNode) =>
+          node.type === "ImportDeclaration" &&
+          node.importKind !== "type" &&
+          node.source.value === "vue",
+      )
+      .flatMap((node: AnyNode) => node.specifiers)
+      .filter(
+        (node: AnyNode) =>
+          node.type === "ImportSpecifier" &&
+          node.importKind !== "type" &&
+          VUE_ATTRS_READERS.has(node.imported.name ?? node.imported.value),
+      ),
+  );
+  if (!specifiers.size) return false;
+  const { scopes } = analyzeScriptProgram(program, "module");
+  return scopes.some((scope) =>
+    scope.variables.some(
+      (variable) =>
+        variable.defs.some((definition) => specifiers.has(definition.node)) &&
+        variable.references.some((reference) => reference.isValueReference && reference.isRead()),
+    ),
+  );
 }
 
 function readScriptDeclarations(
@@ -121,11 +149,14 @@ function readScriptDeclarations(
       (declaration.type === "TSInterfaceDeclaration" ||
         declaration.type === "TSTypeAliasDeclaration")
     )
-      types.set(declaration.id.name, declaration);
+      types.set(declaration.id.name, types.has(declaration.id.name) ? undefined : declaration);
   }
   let declaresProps = false;
   let declaresEmits = false;
   let plainScriptCode = false;
+  let normalOptions: AnyNode =
+    descriptor?.script?.src || (descriptor?.script && !program) ? null : undefined;
+  let setupOptions: AnyNode = descriptor?.scriptSetup && !program ? null : undefined;
   for (const statement of body) {
     const inSetup = setup !== undefined && statement.start >= setup[0] && statement.end <= setup[1];
     if (isTypeOnlyStatement(statement)) continue;
@@ -135,17 +166,43 @@ function readScriptDeclarations(
     }
     if (!inSetup) {
       if (statement.type === "ExportDefaultDeclaration")
-        mergeInheritAttrs(facts, componentOptions(statement.declaration));
+        normalOptions = componentOptions(statement.declaration);
       if (!isOptionsWithoutLogic(statement)) facts.ownLogic = plainScriptCode = true;
       continue;
     }
     if (isMacroCall(statement, "defineProps")) declaresProps = true;
     if (isMacroCall(statement, "defineEmits")) declaresEmits = true;
+    if (
+      statement.type === "ExpressionStatement" &&
+      isMacroCall(statement, "defineOptions") &&
+      statement.expression.arguments?.length
+    )
+      setupOptions = statement.expression.arguments[0];
     if (!readMacroStatement(facts, statement, types, rangeOf)) facts.ownLogic = true;
   }
-  // Without the macro, a component declares no props or emits unless a plain <script> may.
-  if (!declaresProps && !plainScriptCode) facts.props = [];
-  if (!declaresEmits && !plainScriptCode) facts.emits = [];
+  const option = (name: string) => {
+    const fromSetup = setupOptions === undefined ? "absent" : readOption(setupOptions, name);
+    return fromSetup === "absent" && normalOptions !== undefined
+      ? readOption(normalOptions, name)
+      : fromSetup;
+  };
+  const inherit = option("inheritAttrs");
+  facts.inheritAttrs =
+    inherit === "absent"
+      ? true
+      : inherit !== "unknown" &&
+          inherit.value?.type === "Literal" &&
+          typeof inherit.value.value === "boolean"
+        ? inherit.value.value
+        : undefined;
+  const delegated = option("mixins") !== "absent" || option("extends") !== "absent";
+  if (delegated) {
+    facts.props = undefined;
+    facts.emits = undefined;
+  } else {
+    if (!declaresProps && !plainScriptCode && option("props") === "absent") facts.props = [];
+    if (!declaresEmits && !plainScriptCode && option("emits") === "absent") facts.emits = [];
+  }
 }
 
 function componentOptions(declaration: AnyNode): AnyNode {
@@ -154,26 +211,23 @@ function componentOptions(declaration: AnyNode): AnyNode {
     : declaration;
 }
 
-// compiler-sfc spreads the normal script's options before `defineOptions()`, so an option either
-// one sets survives an object from the other that leaves it out.
-function mergeInheritAttrs(facts: ComponentFacts, options: AnyNode): void {
-  const inherit = inheritAttrsOption(options);
-  if (inherit === false || facts.inheritAttrs !== false) facts.inheritAttrs = inherit;
-}
-
-/** The static `inheritAttrs` option; `undefined` when the options are not a readable object. */
-function inheritAttrsOption(options: AnyNode): boolean | undefined {
-  if (options?.type !== "ObjectExpression") return undefined;
-  let spread = false;
-  for (const property of options.properties ?? []) {
-    if (property.type !== "Property") spread = true;
-    else if (propertyKey(property) === "inheritAttrs")
-      return property.value?.type === "Literal" && typeof property.value.value === "boolean"
-        ? property.value.value
-        : undefined;
-    else if (property.computed) spread = true;
+function readOption(options: AnyNode, name: string): "absent" | "unknown" | { value: AnyNode } {
+  if (options?.type !== "ObjectExpression") return "unknown";
+  for (let index = options.properties.length - 1; index >= 0; index--) {
+    const property = options.properties[index];
+    if (property.type === "SpreadElement") {
+      const spread = readOption(property.argument, name);
+      if (spread !== "absent") return spread;
+      continue;
+    }
+    const key =
+      property.computed && property.key?.type === "Literal"
+        ? String(property.key.value)
+        : propertyKey(property);
+    if (key === name) return { value: property.value };
+    if (property.computed && key === undefined) return "unknown";
   }
-  return spread ? undefined : true;
+  return "absent";
 }
 
 function isMacroCall(statement: AnyNode, name: string): boolean {
@@ -293,19 +347,14 @@ function readMacroCall(
     facts.emits = readEmits(call, types);
     return true;
   }
-  if (name === "defineOptions") {
-    mergeInheritAttrs(facts, call.arguments?.[0]);
-    return true;
-  }
   if (name === "defineModel") {
-    if (id && id.type !== "Identifier") return false;
     const first = call.arguments?.[0];
     const modelName =
       first?.type === "Literal" && typeof first.value === "string" ? first.value : "modelValue";
     const options = first?.type === "ObjectExpression" ? first : call.arguments?.[1];
     facts.models.push({
       name: modelName,
-      binding: id?.name,
+      binding: id?.type === "Identifier" ? id.name : undefined,
       default: hasProperty(options, "default"),
       range: rangeOf(call.start, call.end),
     });
@@ -704,11 +753,21 @@ function readUsageDirective(
       usage.spreads.push({ directive: prop.name, expression, range });
       return;
     }
+    const modifiers = prop.modifiers.map((modifier) => modifier.content);
     if (prop.name === "bind") {
-      usage.bindings.push({ name: argument, expression: expression || argument, range });
+      let vnodeKey = modifiers.includes("camel") ? camelize(argument) : argument;
+      if (modifiers.includes("prop")) vnodeKey = `.${vnodeKey}`;
+      if (modifiers.includes("attr")) vnodeKey = `^${vnodeKey}`;
+      usage.bindings.push({ name: argument, vnodeKey, expression: expression || argument, range });
       return;
     }
-    usage.listeners.push({ event: argument, expression: expression || undefined, range });
+    usage.listeners.push({
+      event: argument,
+      modifiers,
+      vnodeKey: listenerKey(argument, modifiers),
+      expression: expression || undefined,
+      range,
+    });
     return;
   }
   if (prop.name === "model") {
@@ -718,6 +777,7 @@ function readUsageDirective(
     }
     usage.bindings.push({
       name: argument ?? "modelValue",
+      vnodeKey: argument ?? "modelValue",
       expression,
       model: true,
       modifiers: prop.modifiers.length > 0,
@@ -726,6 +786,26 @@ function readUsageDirective(
     return;
   }
   usage.directives.push(prop.name);
+}
+
+function listenerKey(event: string, modifiers: string[]): string {
+  const name = event.startsWith("vue:") ? `vnode-${event.slice(4)}` : event;
+  let key = name ? `on${capitalize(camelize(name))}` : "";
+  if (key.toLowerCase() === "onclick") {
+    if (modifiers.includes("right")) key = "onContextmenu";
+    else if (modifiers.includes("middle")) key = "onMouseup";
+  }
+  return (
+    key +
+    modifiers
+      .filter((modifier) => ["once", "capture", "passive"].includes(modifier))
+      .map(capitalize)
+      .join("")
+  );
+}
+
+function capitalize(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 function readExpression(walk: TemplateWalk, content: string | undefined): void {

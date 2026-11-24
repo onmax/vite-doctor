@@ -236,3 +236,141 @@ import Dynamic from './Dynamic.vue'
 
   expect(result.diagnostics).toEqual([]);
 });
+
+test("VUE0051 matches the VNode keys Vue uses for props, emits and reserved hooks", async () => {
+  const result = await runRuleFixture({
+    rule: noMultiRootFallthrough,
+    files: {
+      "src/Panel.vue": multiRoot(
+        "defineProps(['onClickOnce', 'onContextmenu'])\ndefineEmits(['save', 'Foo', 'item-ready'])",
+      ),
+      "src/App.vue": caller(
+        "Panel",
+        `<Panel :onSave="save" onSaveOnce="save" :onVnodeMounted="mounted"
+          @click.once="click" @click.right="right" @foo="foo" @item-ready.once="ready"
+          @vue:mounted="mounted" @vue:foo="foo" @save.capture="save" />`,
+      ),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.why).toContain("@vue:foo, @save.capture");
+  expect(result.diagnostics[0]?.why).not.toMatch(
+    /onSave|onVnodeMounted|@click|@item-ready|@foo|@vue:mounted/,
+  );
+});
+
+test("VUE0051 distinguishes missing DOM inheritance from component event delivery", async () => {
+  const result = await runRuleFixture({
+    rule: noMultiRootFallthrough,
+    files: {
+      "src/Panel.vue": multiRoot("", `<button @click="$emit('select')" /><main />`),
+      "src/App.vue": caller("Panel", `<Panel class="panel" @select="select" />`),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.why).toContain("can still invoke");
+  expect(result.diagnostics[0]?.suggestion).toContain("declare the event in emits");
+  expect(result.diagnostics[0]?.suggestion).not.toMatch(/remove/i);
+});
+
+test.each([
+  [
+    "aliased useAttrs",
+    multiRoot(
+      "import { useAttrs as readAttrs } from 'vue'\nconst attrs = readAttrs()",
+      '<header /><main v-bind="attrs" />',
+    ),
+    'class="panel"',
+    false,
+  ],
+  [
+    "aliased instance reader",
+    multiRoot(
+      "import { getCurrentInstance as current } from 'vue'\nconst attrs = current()?.attrs",
+      '<header /><main v-bind="attrs" />',
+    ),
+    'class="panel"',
+    false,
+  ],
+  [
+    "unrelated helper",
+    multiRoot("import { useAttrs } from './helpers'\nuseAttrs()"),
+    'class="panel"',
+    true,
+  ],
+  [
+    "shadowed helper",
+    multiRoot(
+      "import { useAttrs } from 'vue'\nfunction setupLocal(useAttrs: () => void) { useAttrs() }\nsetupLocal(() => {})",
+    ),
+    'class="panel"',
+    true,
+  ],
+  [
+    "later static spread",
+    multiRoot("defineOptions({ inheritAttrs: true, ...{ inheritAttrs: false } })"),
+    'class="panel"',
+    false,
+  ],
+  [
+    "later unknown spread",
+    multiRoot("import rest from './options'\ndefineOptions({ inheritAttrs: true, ...rest })"),
+    'class="panel"',
+    false,
+  ],
+  [
+    "later computed key",
+    multiRoot("defineOptions({ inheritAttrs: true, ['inheritAttrs']: false })"),
+    'class="panel"',
+    false,
+  ],
+  [
+    "setup overrides normal options",
+    `${multiRoot("defineOptions({ inheritAttrs: true })")}<script lang="ts">export default { inheritAttrs: false }</script>`,
+    'class="panel"',
+    true,
+  ],
+  ["empty defineOptions", multiRoot("defineOptions()"), 'class="panel"', true],
+  [
+    "local mixins",
+    multiRoot("defineOptions({ mixins: [{ props: ['title'], emits: ['save'] }] })"),
+    'title="x" @save="save"',
+    false,
+  ],
+  [
+    "external script",
+    `<script src="./options.js"></script><template><header /><main /></template>`,
+    'title="x" @save="save"',
+    false,
+  ],
+  [
+    "destructured model",
+    multiRoot("const [model, modifiers] = defineModel()"),
+    'v-model="value"',
+    false,
+  ],
+  [
+    "merged interfaces",
+    multiRoot(
+      "interface Props { first: string }\ninterface Props { second: string }\ndefineProps<Props>()",
+    ),
+    'first="x"',
+    false,
+  ],
+  [
+    "unreadable emits with a handler binding",
+    multiRoot("import events from './events'\ndefineEmits(events)"),
+    ':onSave="save"',
+    false,
+  ],
+  ["non-breaking space root", multiRoot("", "&nbsp;<main />"), 'class="panel"', true],
+] as const)("VUE0051 uses complete evidence: %s", async (_name, component, attrs, reports) => {
+  const result = await runRuleFixture({
+    rule: noMultiRootFallthrough,
+    files: {
+      "src/Panel.vue": component,
+      "src/App.vue": caller("Panel", `<Panel ${attrs} />`),
+    },
+  });
+  expect(result.diagnostics).toHaveLength(reports ? 1 : 0);
+});

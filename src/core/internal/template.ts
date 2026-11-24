@@ -133,7 +133,7 @@ export function templateRoots(root: TemplateRootNode): TemplateRoot[] {
   const roots: TemplateRoot[] = [];
   let pendingComments = 0;
   for (const child of root.children) {
-    if (child.type === TemplateNodeType.TEXT && !child.content.trim()) continue;
+    if (child.type === TemplateNodeType.TEXT && /^[\t\r\n\f ]*$/.test(child.content)) continue;
     if (child.type === TemplateNodeType.COMMENT) {
       roots.push({ type: "comment", node: child });
       pendingComments++;
