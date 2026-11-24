@@ -17,9 +17,8 @@ const go = () => router.push("/");
 `;
 
 const app = {
-  "src/main.ts": 'import { router } from "./router";\nrouter.start();\n',
   "src/router.ts":
-    'export const before = 1;\nimport Page from "./Page.vue";\nexport const router = { routes: [{ path: "/", component: Page }], push(path: string) {}, start() {} };\n',
+    'import { createRouter as makeRouter, createMemoryHistory } from "vue-router";\nimport Page /* home */ from "./Page.vue";\nexport const router = makeRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: Page }] });\n',
   "src/Page.vue": page,
 };
 
@@ -64,6 +63,30 @@ test("reports a static cycle through a Vue SFC at the import into the SFC", asyn
   expect(diagnostics[0]!.fix).toContain("component: () => import('./Page.vue')");
 });
 
+test.each([
+  [
+    "a non-route component registry",
+    'import { h } from "vue";\nimport Page from "./Page.vue";\nconst dialog = { component: Page };\nexport const router = { push: () => h(dialog.component) };',
+  ],
+  [
+    "a shadowed component binding",
+    'import { createRouter, createMemoryHistory } from "vue-router";\nimport Page from "./Page.vue";\nfunction makeRouter(Page: object) { return createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: Page }] }); }\nexport const router = makeRouter({ render: () => Page });',
+  ],
+  [
+    "a shadowed createRouter binding",
+    'import { createRouter } from "vue-router";\nimport Page from "./Page.vue";\nfunction makeRouter(createRouter: (options: object) => object) { return createRouter({ routes: [{ path: "/", component: Page }] }); }\nexport const router = makeRouter((options) => options);',
+  ],
+  [
+    "a component also used outside the route",
+    'import { createRouter, createMemoryHistory } from "vue-router";\nimport Page from "./Page.vue";\nexport const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: Page }] });\nexport const dialog = { component: Page };',
+  ],
+])("uses generic advice for %s", async (_name, router) => {
+  const diagnostics = await run({ ...app, "src/router.ts": router });
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]!.fix).not.toContain("component: () => import");
+  expect(diagnostics[0]!.fix).toContain("move what src/router.ts needs");
+});
+
 test("reports a cycle through a module that calls import.meta.hot.accept", async () => {
   const diagnostics = await run({
     "src/store.ts": 'import { render } from "./view";\nexport const state = { render };\n',
@@ -78,7 +101,7 @@ test("a lazy route component breaks the cycle", async () => {
     await run({
       ...app,
       "src/router.ts":
-        'export const router = { routes: [{ path: "/", component: () => import("./Page.vue") }], push(path: string) {}, start() {} };\n',
+        'import { createRouter, createMemoryHistory } from "vue-router";\nexport const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: () => import("./Page.vue") }] });\n',
     }),
   ).toEqual([]);
 });
@@ -208,11 +231,12 @@ test("describes a Nuxt auto-import edge as one, and never lazy-loads an identifi
   expect(diagnostics[0]!.fix).toContain("into a module that neither side depends on");
 });
 
-test("an auto-import edge into an HMR boundary is cut by moving code, not by import()", async () => {
+test("deferring an early auto-import read does not break the cycle", async () => {
   const diagnostics = await runNuxt({
     "app/composables/useCart.ts":
-      'import { total } from "../utils/total";\nexport function useCart() {\n  return { total };\n}\nif (import.meta.hot) import.meta.hot.accept();\n',
-    "app/utils/total.ts": "export const total = () => useCart();\n",
+      'import { total } from "../utils/total";\nexport const useCart = () => ({ total });\nif (import.meta.hot) import.meta.hot.accept();\n',
+    "app/utils/total.ts":
+      "function readCart() { return useCart(); }\nexport const total = readCart();\n",
   });
   expect(diagnostics).toHaveLength(1);
   expect(diagnostics[0]).toMatchObject({
@@ -230,4 +254,6 @@ test("an auto-import edge into an HMR boundary is cut by moving code, not by imp
   });
   expect(diagnostics[0]!.fix).not.toContain("import('use");
   expect(diagnostics[0]!.fix).toContain("uses auto-imported `useCart`");
+  expect(diagnostics[0]!.fix).toContain("until after module initialization");
+  expect(diagnostics[0]!.fix).toContain("does not break the cycle or guarantee HMR succeeds");
 });

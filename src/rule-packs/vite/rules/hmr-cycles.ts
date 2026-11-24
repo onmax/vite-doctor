@@ -6,7 +6,9 @@ import {
   type RuleContext,
 } from "../../../core/index.js";
 import { isRuntimeImportEdge } from "../../../core/internal/import-graph.js";
+import { analyzeScript, scopeDialect } from "../../../core/internal/script-scope.js";
 import { sha256 } from "../../../core/internal/utils.js";
+import { walkScriptLocal, type AnyNode } from "../../../core/rule-authoring.js";
 import { diagnostics } from "../../../diagnostics.js";
 
 const RULE_ID = "vite/hmr/no-circular-import-at-hmr-boundary";
@@ -97,27 +99,77 @@ function cycleFix(
 ): string {
   const from = path(edge.from);
   const to = path(edge.to!);
-  if (isRouteComponentImport(ctx, edge))
-    return `Break the cycle where ${from} imports the component ${to}: load it lazily in the route record, as in \`component: () => import('${edge.specifier}')\`, or move what ${from} needs from ${to} into a module that imports neither.`;
+  if (isRouteComponentImport(ctx, edge)) {
+    const specifier = JSON.stringify(edge.specifier).slice(1, -1).replaceAll("'", "\\'");
+    return `Break the cycle where ${from} imports the component ${to}: replace its static import with a lazy loader in the route record, as in \`component: () => import('${specifier}')\`, or move what ${from} needs from ${to} into a module that imports neither.`;
+  }
   const cut =
     edge.kind === "auto-import"
       ? `uses auto-imported \`${edge.specifier}\` from ${to}`
       : `imports ${to}`;
-  const lazy = autoImports.length
-    ? ` If ${autoImports.map((item) => `\`${item.specifier}\``).join(", ")} cannot move, call ${autoImports.length > 1 ? "them" : "it"} only inside functions, not at module top level, so the re-import does not read it before it is initialized; the cycle stays, but the update no longer throws.`
+  const deferred = autoImports.length
+    ? ` If module evaluation reads an auto-imported binding (${autoImports.map((item) => `\`${item.specifier}\``).join(", ")}) before it is initialized, defer that read until after module initialization. This can avoid that specific error, but does not break the cycle or guarantee HMR succeeds.`
     : "";
-  return `Break the cycle at the edge where ${from} ${cut}: move what ${from} needs into a module that neither side depends on.${lazy}`;
+  return `Break the cycle at the edge where ${from} ${cut}: move what ${from} needs into a module that neither side depends on.${deferred}`;
 }
 
 function isRouteComponentImport(ctx: RuleContext, edge: ImportGraphEdge): boolean {
-  if (edge.kind !== "import" || !edge.to!.endsWith(".vue")) return false;
+  if (edge.kind !== "import" || !edge.to!.endsWith(".vue") || !/\.[cm]?[jt]sx?$/.test(edge.from))
+    return false;
   const text = ctx.fs.readText(edge.from);
-  if (!text) return false;
-  const specifier = edge.specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const binding = new RegExp(`import\\s+([A-Za-z_$][\\w$]*)\\s+from\\s*["']${specifier}["']`).exec(
-    text,
-  )?.[1];
-  return binding !== undefined && new RegExp(`\\bcomponent\\s*:\\s*${binding}\\b`).test(text);
+  if (!text?.includes("vue-router")) return false;
+  const script = analyzeScript(text, scopeDialect(edge.from));
+  if (!script) return false;
+
+  let found = false;
+  walkScriptLocal(script.ast, (node) => {
+    if (found || node.type !== "CallExpression" || node.callee.type !== "Identifier") return;
+    const factory = script.references.get(node.callee)?.resolved?.defs[0];
+    if (
+      factory?.type !== "ImportBinding" ||
+      factory.parent.type !== "ImportDeclaration" ||
+      factory.parent.source.value !== "vue-router" ||
+      factory.parent.importKind === "type" ||
+      factory.node.type !== "ImportSpecifier" ||
+      factory.node.importKind === "type" ||
+      (factory.node.imported.type === "Identifier"
+        ? factory.node.imported.name
+        : factory.node.imported.value) !== "createRouter"
+    )
+      return;
+
+    const routes = objectPropertyValue(node.arguments[0], "routes");
+    if (routes?.type !== "ArrayExpression") return;
+    found = routes.elements.some((record: AnyNode) => {
+      const component = objectPropertyValue(record, "component");
+      if (component?.type !== "Identifier") return false;
+      const binding = script.references.get(component)?.resolved;
+      const definition = binding?.defs[0];
+      return (
+        binding?.references.length === 1 &&
+        definition?.type === "ImportBinding" &&
+        definition.node.type === "ImportDefaultSpecifier" &&
+        definition.parent.type === "ImportDeclaration" &&
+        definition.parent.importKind !== "type" &&
+        definition.parent.source.value === edge.specifier &&
+        definition.parent.specifiers.length === 1
+      );
+    });
+  });
+  return found;
+}
+
+function objectPropertyValue(object: AnyNode, key: string): AnyNode {
+  if (object?.type !== "ObjectExpression") return undefined;
+  let match;
+  for (const property of object.properties) {
+    if (property.type !== "Property" || property.computed) return undefined;
+    const name = property.key.type === "Identifier" ? property.key.name : property.key.value;
+    if (name !== key) continue;
+    if (match || property.kind !== "init" || property.method) return undefined;
+    match = property.value;
+  }
+  return match;
 }
 
 function isHmrBoundary(ctx: RuleContext, file: string): boolean {
