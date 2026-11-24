@@ -256,7 +256,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         if (env?.config.consumer !== "client") return;
         const resolved = env.getTopLevelConfig();
         const { collectBuildEnvironment } = await import("./plugin-build-evidence.js");
-        const { environment, missingMapFiles } = collectBuildEnvironment(
+        const { environment, missingMapIds } = collectBuildEnvironment(
           this,
           output,
           bundle,
@@ -265,7 +265,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
           privateMaps.delete(env) && output.sourcemap === "hidden",
           stubResolutions.get(env),
         );
-        if (!environment.browserStubReads.length && !missingMapFiles.size) return;
+        if (!environment.browserStubReads.length && !missingMapIds.size) return;
 
         const watch = watchReports.get(env);
         const reports = watch ?? buildReports;
@@ -275,11 +275,11 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
           const { hasEnabledBuildEvidenceCandidate, runBuildEvidenceDoctor } =
             await import("./plugin-run.js");
           if (
-            missingMapFiles.size &&
+            missingMapIds.size &&
             (await hasEnabledBuildEvidenceCandidate(
               surfaceRunInput(resolved, options, undefined, evidence),
               extensions,
-              missingMapFiles,
+              missingMapIds,
             ))
           ) {
             resolved.logger.warnOnce(

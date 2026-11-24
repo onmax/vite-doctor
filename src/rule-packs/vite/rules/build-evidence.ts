@@ -63,6 +63,38 @@ export function buildModuleFile(evidence: ViteBuildEvidence, id: string): string
   return isAbsolute(path) ? path : resolve(evidence.root, path);
 }
 
+/** The shortest importer path from an entry module of the environment to `id`, entry first. */
+export function buildImportChain(
+  environment: ViteBuildEnvironment,
+  id: string,
+): string[] | undefined {
+  const entries = new Set(environment.entries);
+  const via = new Map<string, string>();
+  const seen = new Set([id]);
+  let frontier = [id];
+  while (frontier.length) {
+    const next: string[] = [];
+    for (const current of frontier) {
+      if (entries.has(current)) {
+        const chain = [current];
+        for (let at = current; at !== id;) {
+          at = via.get(at)!;
+          chain.push(at);
+        }
+        return chain;
+      }
+      for (const importer of environment.importers[current] ?? []) {
+        if (seen.has(importer)) continue;
+        seen.add(importer);
+        via.set(importer, current);
+        next.push(importer);
+      }
+    }
+    frontier = next;
+  }
+  return undefined;
+}
+
 function isEnvironment(value: unknown): value is ViteBuildEnvironment {
   if (!isRecord(value) || typeof value.name !== "string") return false;
   if (value.consumer !== undefined && value.consumer !== "client" && value.consumer !== "server")

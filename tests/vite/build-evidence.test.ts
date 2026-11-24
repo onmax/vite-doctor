@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -384,6 +385,81 @@ test.each<{
       expect(warnings.some((message) => message.includes("VITE0033 verification skipped"))).toBe(
         skipped,
       );
+    },
+  );
+});
+
+test("warns about missing maps when a changed client import reaches an unchanged reader", async () => {
+  await withProject(
+    {
+      "src/main.ts": 'console.log("client");\n',
+      "src/db.ts": db,
+      "src/unrelated.ts": 'console.log("unrelated");\n',
+    },
+    async (root) => {
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
+      git("init", "-q");
+      git("add", "-A");
+      git(
+        "-c",
+        "user.name=Doctor",
+        "-c",
+        "user.email=doctor@example.test",
+        "commit",
+        "-qm",
+        "base",
+      );
+      const entry = join(root, "src/main.ts");
+      await writeFile(entry, 'import { loadUsers } from "./db";\nconsole.log(loadUsers());\n');
+      const { logger, warnings } = capture();
+      const options = (disabled = false) =>
+        config(root, logger, {
+          plugins: [
+            doctor({
+              rules: rule,
+              cache: false,
+              changed: true,
+              config: {
+                rules: { [rule]: "error" },
+                ...(disabled && {
+                  overrides: [{ files: ["src/db.ts"], rules: { [rule]: "off" } }],
+                }),
+              },
+            }),
+            {
+              name: "host-asset-names",
+              outputOptions: {
+                order: "post",
+                handler: (output) => ({ ...output, assetFileNames: "assets/[name][extname]" }),
+              },
+            },
+          ],
+        });
+
+      await expect(
+        build({ ...options(), build: { write: false, sourcemap: "hidden" } }),
+      ).rejects.toThrow(/VITE0033[\s\S]*through index\.html → src\/main\.ts → src\/db\.ts/);
+      await build(options());
+      expect(warnings.join("\n")).toContain("VITE0033 verification skipped");
+
+      warnings.length = 0;
+      await build(options(true));
+      expect(warnings.join("\n")).not.toContain("VITE0033 verification skipped");
+
+      git("add", "src/main.ts");
+      git(
+        "-c",
+        "user.name=Doctor",
+        "-c",
+        "user.email=doctor@example.test",
+        "commit",
+        "-qm",
+        "entry",
+      );
+      await writeFile(join(root, "src/unrelated.ts"), 'console.log("changed");\n');
+      warnings.length = 0;
+      await build(options());
+      expect(warnings.join("\n")).not.toContain("VITE0033 verification skipped");
     },
   );
 });

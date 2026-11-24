@@ -17,7 +17,12 @@ import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
 import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
 import { runViteDoctor, shouldFailDoctorRun, viteDoctorRunOptions } from "./doctor.js";
 import type { SurfaceDiagnostic, SurfaceEvidenceGap } from "./plugin-delta.js";
-import { BUILD_EVIDENCE_RULE } from "./rule-packs/vite/rules/build-evidence.js";
+import {
+  BUILD_EVIDENCE_RULE,
+  buildImportChain,
+  buildModuleFile,
+  readBuildEvidence,
+} from "./rule-packs/vite/rules/build-evidence.js";
 
 /** Structured-cloneable Doctor Run input prepared by the Vite Plugin Surface. */
 export interface SurfaceRunInput {
@@ -78,23 +83,34 @@ function surfaceDoctorOptions(input: SurfaceRunInput, extensions: DoctorExtensio
   return { ...input.options, extensions: [viteSurfaceExtension(input), ...extensions] };
 }
 
+/** Without maps, consider files on the import chain, not exact diagnostic ranges. */
 export async function hasEnabledBuildEvidenceCandidate(
   input: SurfaceRunInput,
   extensions: DoctorExtensionInput[],
-  candidates: ReadonlySet<string>,
+  candidateIds: ReadonlySet<string>,
 ): Promise<boolean> {
+  const evidence = readBuildEvidence(input.vite.evidence);
+  if (!evidence) return false;
   const options = surfaceDoctorOptions(input, extensions);
   const session = await createScanSession(
     await viteDoctorRunOptions({ ...options, rules: BUILD_EVIDENCE_RULE }),
   );
-  return (
-    session.enabledRules.some((rule) => rule.meta.id === BUILD_EVIDENCE_RULE) &&
-    session.files.some(
-      (file) =>
-        candidates.has(file.path) &&
-        (!session.scopedReport || file.reportEligibility) &&
-        fileRuleConfig(session, BUILD_EVIDENCE_RULE, file.path).enabled,
-    )
+  if (!session.enabledRules.some((rule) => rule.meta.id === BUILD_EVIDENCE_RULE)) return false;
+  const files = new Map(session.files.map((file) => [file.path, file]));
+  return evidence.environments.some(
+    (environment) =>
+      environment.consumer === "client" &&
+      [...candidateIds].some((id) => {
+        const file = buildModuleFile(evidence, id);
+        const candidate = file && files.get(file);
+        if (!candidate || !fileRuleConfig(session, BUILD_EVIDENCE_RULE, candidate.path).enabled)
+          return false;
+        if (!session.scopedReport || candidate.reportEligibility) return true;
+        return buildImportChain(environment, id)?.some((importer) => {
+          const path = buildModuleFile(evidence, importer);
+          return path !== undefined && Boolean(files.get(path)?.reportEligibility);
+        });
+      }),
   );
 }
 

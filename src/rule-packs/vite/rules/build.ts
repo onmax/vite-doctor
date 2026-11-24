@@ -10,6 +10,7 @@ import { diagnostics } from "../../../diagnostics.js";
 import {
   buildModuleFile,
   buildDiagnosticFingerprint,
+  buildImportChain,
   readBuildEvidence,
   type ViteBuildEnvironment,
   type ViteBuildEvidence,
@@ -76,7 +77,7 @@ export const noNodeBuiltinInClientChunk = createRule({
                 .map((read) => read.chunk),
             ),
           ].join(", ");
-          const chain = importChain(module.environment, module.id);
+          const chain = buildImportChain(module.environment, module.id);
           const steps = chain?.map((id) => displayId(evidence, id, path)).join(" → ");
           const environment = module.environment.name;
           const facts: DiagnosticEvidence[] = [
@@ -135,35 +136,6 @@ function clientStubReaders(evidence: ViteBuildEvidence): ClientModule[] {
     modules.push(...readers.values());
   }
   return modules;
-}
-
-/** The shortest importer path from an entry module of the environment to `id`, entry first. */
-function importChain(environment: ViteBuildEnvironment, id: string): string[] | undefined {
-  const entries = new Set(environment.entries);
-  const via = new Map<string, string>();
-  const seen = new Set([id]);
-  let frontier = [id];
-  while (frontier.length) {
-    const next: string[] = [];
-    for (const current of frontier) {
-      if (entries.has(current)) {
-        const chain = [current];
-        for (let at = current; at !== id;) {
-          at = via.get(at)!;
-          chain.push(at);
-        }
-        return chain;
-      }
-      for (const importer of environment.importers[current] ?? []) {
-        if (seen.has(importer)) continue;
-        seen.add(importer);
-        via.set(importer, current);
-        next.push(importer);
-      }
-    }
-    frontier = next;
-  }
-  return undefined;
 }
 
 function chainLocations(
