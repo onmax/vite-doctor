@@ -1,17 +1,31 @@
 import type { RuleContext, TemplateExpressionNode } from "../../../../core/index.js";
 import { perFile } from "../../../../core/internal/script-scope.js";
+import { parseTemplateHandler } from "../../../../core/internal/template.js";
 import {
   templateDirectiveBindings,
   templateExpressionReferences,
   TemplateNodeType,
   walkTemplate,
 } from "../../../../core/rule-authoring.js";
+import type { AnyNode } from "./shared.js";
+import { memberName, unwrapTs } from "./vue-api.js";
+
+export type PropertyPath = ReadonlyArray<string | undefined>;
+
+export function matchesPrefix(prefix: PropertyPath, path: PropertyPath): boolean {
+  return (
+    prefix.length <= path.length &&
+    prefix.every(
+      (key, index) => key === undefined || path[index] === undefined || key === path[index],
+    )
+  );
+}
 
 interface TemplateNames {
   /** Read while the template renders, outside `v-for` and slot locals. */
   reads: Set<string>;
-  /** Assigned anywhere in the template, event handlers and `v-model` included. */
-  writes: Set<string>;
+  /** Paths assigned anywhere in the template; an empty path replaces the binding. */
+  writes: Map<string, PropertyPath[]>;
 }
 
 /**
@@ -23,8 +37,8 @@ export function renderTemplateReads(ctx: RuleContext): Set<string> {
 }
 
 /** Names the template assigns, as in `@click="items = []"` or `v-model="items"`. */
-export function templateWrites(ctx: RuleContext): Set<string> {
-  return templateNames(ctx).writes;
+export function templateWrites(ctx: RuleContext, name: string): readonly PropertyPath[] {
+  return templateNames(ctx).writes.get(name) ?? [];
 }
 
 function templateNames(ctx: RuleContext): TemplateNames {
@@ -33,7 +47,7 @@ function templateNames(ctx: RuleContext): TemplateNames {
 
 function collectTemplateNames(ctx: RuleContext): TemplateNames {
   const reads = new Set<string>();
-  const writes = new Set<string>();
+  const writes = new Map<string, PropertyPath[]>();
   const root = ctx.file.templateAst;
   if (!root) return { reads, writes };
   const empty = new Set<string>();
@@ -44,16 +58,24 @@ function collectTemplateNames(ctx: RuleContext): TemplateNames {
   function collect(
     expression: TemplateExpressionNode | undefined,
     locals: Set<string>,
-    render = true,
+    mode: "render" | "handler" | "model" = "render",
   ) {
-    const ast = expression && ctx.helpers.parseTemplateExpression(expression);
-    if (!ast) return undefined;
-    for (const { id, mode } of templateExpressionReferences(ast)) {
+    const ast =
+      expression &&
+      (mode === "handler"
+        ? parseTemplateHandler(expression)
+        : ctx.helpers.parseTemplateExpression(expression));
+    if (!ast) return;
+    for (const { id, mode: access } of templateExpressionReferences(ast)) {
       if (locals.has(id.name)) continue;
-      if (mode !== "r") writes.add(id.name);
-      if (render && mode !== "w") reads.add(id.name);
+      if (mode !== "handler" && access !== "w") reads.add(id.name);
+      const path =
+        access !== "r" ? [] : templateWritePath(id, mode === "model" ? unwrapTs(ast) : undefined);
+      if (!path) continue;
+      let paths = writes.get(id.name);
+      if (!paths) writes.set(id.name, (paths = []));
+      paths.push(path);
     }
-    return ast;
   }
   walkTemplate(root, (node, parent) => {
     const scope = parent && scopes.get(parent);
@@ -76,11 +98,35 @@ function collectTemplateNames(ctx: RuleContext): TemplateNames {
     if (node.arg && !node.arg.isStatic) collect(node.arg, loop);
     if (node.name === "for") collect(node.forParseResult?.source, outer);
     else if (node.name === "if" || node.name === "else-if") collect(node.exp, outer);
-    else if (node.name === "on") collect(node.exp, loop, false);
-    else if (node.name === "model") {
-      const ast = collect(node.exp, loop) as { type: string; name?: string } | undefined;
-      if (ast?.type === "Identifier" && !loop.has(ast.name!)) writes.add(ast.name!);
-    } else if (node.name !== "slot") collect(node.exp, loop);
+    else if (node.name === "on") collect(node.exp, loop, "handler");
+    else if (node.name === "model") collect(node.exp, loop, "model");
+    else if (node.name !== "slot") collect(node.exp, loop);
   });
   return { reads, writes };
+}
+
+function templateWritePath(id: AnyNode, model: AnyNode): PropertyPath | undefined {
+  const path: (string | undefined)[] = [];
+  let node = id;
+  for (let parent = node.__doctorParent; parent; parent = node.__doctorParent) {
+    if (unwrapTs(parent) === node) {
+      node = parent;
+      continue;
+    }
+    if (parent.type === "MemberExpression" && parent.object === node) {
+      path.push(memberName(parent));
+      node = parent;
+      continue;
+    }
+    if (
+      (parent.type === "AssignmentExpression" && parent.left === node) ||
+      (parent.type === "UpdateExpression" && parent.argument === node) ||
+      (parent.type === "UnaryExpression" &&
+        parent.operator === "delete" &&
+        parent.argument === node)
+    )
+      return path;
+    break;
+  }
+  return unwrapTs(node) === model ? path : undefined;
 }

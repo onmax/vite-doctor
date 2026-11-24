@@ -10,7 +10,7 @@ async function run(script: string) {
   const result = await runVueSfcRuleFixture(
     noPropertyReadWatchSource,
     `<script setup lang="ts">
-import { reactive, shallowReactive, watch } from 'vue'
+import { reactive, ref, shallowReactive, watch, type Ref } from 'vue'
 ${script}
 </script>`,
   );
@@ -22,14 +22,18 @@ test("VUE0050 is recommended", () => {
 });
 
 test.each([
-  ["const props = defineProps<{ user: User }>()", "watch(props.user, cb)", ["props.user"]],
+  ["const props = defineProps<{ user: string }>()", "watch(props.user, cb)", ["props.user"]],
   [
     "const props = withDefaults(defineProps<{ id?: string }>(), { id: '' })",
     "watch(props.id, cb)",
     ["props.id"],
   ],
-  ["const props = defineProps(['user'])", "watch(props.user.id, cb)", ["props.user.id"]],
-  ["const props = defineProps(['user'])", "watch(props['user'], cb)", ["props['user']"]],
+  [
+    "const props = defineProps<{ user: { id: number } }>()",
+    "watch(props.user.id, cb)",
+    ["props.user.id"],
+  ],
+  ["const props = defineProps({ user: String })", "watch(props['user'], cb)", ["props['user']"]],
   [
     "const state = reactive({ filters: { query: '' }, page: 1 })",
     "watch([state.filters.query, () => state.page], cb)",
@@ -63,6 +67,19 @@ watch(props.user, cb)
 });
 
 test.each([
+  ["const props = defineProps<{ source: Ref<number> }>()", "watch(props.source, cb)"],
+  ["const props = defineProps(['user'])", "watch(props.user.id, cb)"],
+  ["const state = reactive({ getter: () => 1 })", "watch(state.getter, cb)"],
+  ["const state = reactive({ get source() { return () => 1 } })", "watch(state.source, cb)"],
+  [
+    "const state = reactive({ inner: shallowReactive({ source: ref(1) }) })",
+    "watch(state.inner.source, cb)",
+  ],
+  ["const state = reactive({ filters: { query: '' } })", "watch(state.filters, cb)"],
+  [
+    "const state = reactive({ source: null as null | Ref<number> }); state.source = ref(1)",
+    "watch(state.source, cb)",
+  ],
   ["const props = defineProps<{ user: User }>()", "watch(() => props.user, cb)"],
   ["const props = defineProps<{ user: User }>()", "watch(props, cb)"],
   ["const state = reactive({ nested: {} })", "watch(state, cb)"],

@@ -7,7 +7,7 @@ const RULE_ID = "vue/reactivity/no-shallow-ref-deep-mutation";
 
 function component(script: string, template = "<p>{{ todos.length }}</p>") {
   return `<script setup lang="ts">
-import { computed, onMounted, reactive, shallowRef, triggerRef, watch } from 'vue'
+import { computed, onMounted, reactive, ref, shallowRef, triggerRef, watch, watchEffect, watchPostEffect, watchSyncEffect } from 'vue'
 ${script}
 </script>
 <template>${template}</template>`;
@@ -42,6 +42,31 @@ test.each([
     "a Map changes in a timer",
     `const todos = shallowRef(new Map<string, boolean>())\nsetTimeout(() => todos.value.set('a', true), 10)`,
     "todos.value",
+  ],
+  [
+    "two calls share the same deferred caller",
+    `const todos = shallowRef([])\nfunction push(t: string) { todos.value.push(t) }\nfunction add() { push('a'); push('b') }`,
+    "todos.value",
+  ],
+  [
+    "a post-flush effect changes the array",
+    `const todos = shallowRef([])\nwatchPostEffect(() => { todos.value.push('seed') })`,
+    "todos.value",
+  ],
+  [
+    "a non-immediate watcher changes the array",
+    `const todos = shallowRef([]); const count = ref(0)\nwatch(count, () => todos.value.push('a'), { immediate: false })`,
+    "todos.value",
+  ],
+  [
+    "a native promise callback changes the array",
+    `const todos = shallowRef([])\nPromise.resolve().then(() => todos.value.push('a'))`,
+    "todos.value",
+  ],
+  [
+    "an unrelated property is assigned during setup",
+    `const todos = shallowRef({ items: [], other: [] }); todos.value.other = reactive([])\nfunction add() { todos.value.items.push('a') }`,
+    "todos.value.items",
   ],
 ])("VUE0049 reports when %s", async (_name, script, target) => {
   const diagnostics = await run(component(script));
@@ -82,6 +107,20 @@ test.each([
     `todos.value.push('first')\n;['a', 'b'].forEach((t) => todos.value.push(t))`,
   ],
   ["setup calls the function synchronously", `function seed() { todos.value.push('a') }\nseed()`],
+  ["an immediate effect seeds the array", `watchEffect(() => { todos.value.push('seed') })`],
+  ["a sync effect seeds the array", `watchSyncEffect(() => { todos.value.push('seed') })`],
+  [
+    "an immediate one-shot watch seeds the array",
+    `watch(ref(0), () => { todos.value.push('seed') }, { immediate: true, once: true })`,
+  ],
+  [
+    "a user-defined then runs inline",
+    `const inline = { then(fn: () => void) { fn() } }; inline.then(() => todos.value.push('seed'))`,
+  ],
+  [
+    "an await is on another branch",
+    `async function seed(defer: boolean) { if (defer) await Promise.resolve(); todos.value.push('seed') }; seed(false)`,
+  ],
   [
     "the function replaces .value instead",
     `function add(t: string) { todos.value = [...todos.value, t] }`,
@@ -112,6 +151,14 @@ test.each([
     "a nested property is not a literal",
     `const todos = shallowRef({ items: reactive<string[]>([]) })\nfunction add(t: string) { todos.value.items.push(t) }`,
   ],
+  [
+    "a nested receiver is replaced during setup",
+    `const todos = shallowRef({ items: [] }); todos.value.items = reactive([])\nfunction add() { todos.value.items.push('a') }`,
+  ],
+  [
+    "an accessor updates a separate ref",
+    `const size = ref(0); const todos = shallowRef({ get size() { return size.value }, set size(n) { size.value = n } }); function add() { todos.value.size++ }`,
+  ],
 ])("VUE0049 stays quiet when the inner value may be reactive: %s", async (_name, script) => {
   expect(await run(component(script, "<p>{{ todos }}</p>"))).toEqual([]);
 });
@@ -121,21 +168,48 @@ test("VUE0049 stays quiet when nothing reads the ref reactively", async () => {
     await run(
       component(
         `const todos = shallowRef<string[]>([])\nfunction add(t: string) { todos.value.push(t); console.log(todos.value) }`,
-        `<button @click="add('a')">Add</button>`,
+        `<button @click="console.log(todos.length); add('a')">Add</button>`,
       ),
     ),
   ).toEqual([]);
 });
 
-test("VUE0049 stays quiet when the template assigns the ref", async () => {
-  expect(
-    await run(
-      component(
-        `const todos = shallowRef<string[]>([])\nfunction add(t: string) { todos.value.push(t) }`,
-        `<p>{{ todos.length }}</p><button @click="todos = other">Swap</button>`,
+test.each(["todos = replacement", "todos = replacement; add()"])(
+  "VUE0049 sees template replacement: %s",
+  async (handler) => {
+    expect(
+      await run(
+        component(
+          `const todos = shallowRef<string[]>([])\nconst replacement = reactive<string[]>([])\nfunction add() { todos.value.push('a') }`,
+          `<p>{{ todos.length }}</p><button @click="${handler}">Swap</button>`,
+        ),
       ),
+    ).toEqual([]);
+  },
+);
+
+test.each([`@click="todos.items = replacement; add()"`, `v-model="todos.items"`])(
+  "VUE0049 sees a template replacement of a nested receiver: %s",
+  async (directive) => {
+    expect(
+      await run(
+        component(
+          `const todos = shallowRef({ items: [] }); const replacement = reactive([]); function add() { todos.value.items.push('a') }`,
+          `<p>{{ todos.items.length }}</p><Picker ${directive} />`,
+        ),
+      ),
+    ).toEqual([]);
+  },
+);
+
+test("VUE0049 ignores a handler assignment to a template local", async () => {
+  const diagnostics = await run(
+    component(
+      `const todos = shallowRef([]); function add() { todos.value.push('a') }`,
+      `<p>{{ todos.length }}</p><button @click="let todos = []; todos = []; add()">Add</button>`,
     ),
-  ).toEqual([]);
+  );
+  expect(diagnostics).toHaveLength(1);
 });
 
 test("VUE0049 stays quiet for ref() and a shadowed shallowRef", async () => {

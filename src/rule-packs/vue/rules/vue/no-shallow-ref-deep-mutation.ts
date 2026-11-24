@@ -2,7 +2,12 @@ import type { SFCDescriptor } from "@vue/compiler-sfc";
 import type { RuleContext } from "../../../../core/index.js";
 import { scriptMayName, type ScopeVariable } from "../../../../core/internal/script-scope.js";
 import { AnyNode, createRule, namePattern, report } from "./shared.js";
-import { renderTemplateReads, templateWrites } from "./template-reads.js";
+import {
+  matchesPrefix,
+  renderTemplateReads,
+  templateWrites,
+  type PropertyPath,
+} from "./template-reads.js";
 import {
   constBinding,
   indexedScript,
@@ -30,11 +35,9 @@ const LATER_VUE_CALLBACKS = new Set([
   "onActivated",
   "onDeactivated",
   "nextTick",
-  "watch",
-  "watchEffect",
   "watchPostEffect",
-  "watchSyncEffect",
 ]);
+const WATCH_CALLBACKS = new Set(["watch", "watchEffect"]);
 const LATER_GLOBALS = new Set([
   "setTimeout",
   "setInterval",
@@ -42,7 +45,8 @@ const LATER_GLOBALS = new Set([
   "requestIdleCallback",
   "queueMicrotask",
 ]);
-const LATER_METHODS = new Set(["then", "catch", "finally", "addEventListener"]);
+const PROMISE_METHODS = new Set(["then", "catch", "finally"]);
+const PROMISE_FACTORIES = new Set(["resolve", "reject", "all", "allSettled", "any", "race"]);
 const ARRAY_MUTATORS = new Set([
   "push",
   "pop",
@@ -115,8 +119,7 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
       const variable = constBinding(script, declarator);
       if (!variable) continue;
       const values = [call.arguments[0]];
-      const mutations: Array<{ node: AnyNode; path: string[]; method?: string; target: AnyNode }> =
-        [];
+      const mutations: Mutation[] = [];
       const assignedIn = new Set<AnyNode>();
       const declarationOwner = script.owner(declarator);
       let readReactively = false;
@@ -138,11 +141,19 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
       const name = declarator.id.name;
       const descriptor = ctx.file.sfc?.descriptor as SFCDescriptor | undefined;
       const templateScope = !declarationOwner && !!descriptor?.scriptSetup;
-      // The template can replace the value with one that is already reactive.
-      if (templateScope && templateWrites(ctx).has(name)) continue;
+      const writes = templateScope ? templateWrites(ctx, name) : [];
+      if (writes.some((path) => !path.length)) continue;
       if (!readReactively && !(templateScope && renderTemplateReads(ctx).has(name))) continue;
       for (const mutation of mutations) {
         if (assignedIn.has(script.owner(mutation.node))) continue;
+        const receiver = mutation.method ? [...mutation.path, mutation.method] : mutation.path;
+        if (writes.some((path) => matchesPrefix(path, receiver))) continue;
+        if (
+          mutations.some(
+            (write) => !write.method && matchesPrefix([...write.path, write.key], receiver),
+          )
+        )
+          continue;
         if (!values.every((value) => mutatesPlainValue(script, value, mutation))) continue;
         if (!runsAfterSetup(script, mutation.node, declarationOwner)) continue;
         result.push({
@@ -158,9 +169,18 @@ function deepMutations(ctx: RuleContext): DeepMutation[] {
   return result;
 }
 
+interface Mutation {
+  kind: "mutation";
+  node: AnyNode;
+  path: PropertyPath;
+  key?: string;
+  method?: string;
+  target: AnyNode;
+}
+
 type Use =
   | { kind: "value-assignment"; value: AnyNode }
-  | { kind: "mutation"; node: AnyNode; path: string[]; method?: string; target: AnyNode }
+  | Mutation
   | { kind: "trigger" | "watch-source" | "read" | "escape" | "other" };
 
 /**
@@ -217,7 +237,7 @@ function memberMutation(
   script: IndexedScript,
   value: AnyNode,
 ): Extract<Use, { kind: "mutation" }> | undefined {
-  const path: string[] = [];
+  const path: (string | undefined)[] = [];
   let node = value;
   for (;;) {
     const [parent, child] = valueParent(script, node);
@@ -230,10 +250,9 @@ function memberMutation(
         (next?.type === "UnaryExpression" &&
           next.operator === "delete" &&
           next.argument === nextChild);
-      if (written) return { kind: "mutation", node: next, path, target: parent };
+      if (written) return { kind: "mutation", node: next, path, key: name, target: parent };
       if (next?.type === "CallExpression" && next.callee === nextChild && name !== undefined)
         return { kind: "mutation", node: next, path, method: name, target: child };
-      if (name === undefined) return undefined;
       path.push(name);
       node = parent;
       continue;
@@ -247,19 +266,15 @@ function memberMutation(
  * A value that could be reactive itself, such as `shallowRef(reactive({}))`, tracks its own
  * changes, so the rule stays quiet unless every value the ref is given is known to be plain.
  */
-function mutatesPlainValue(
-  script: IndexedScript,
-  value: AnyNode,
-  mutation: { path: string[]; method?: string },
-): boolean {
+function mutatesPlainValue(script: IndexedScript, value: AnyNode, mutation: Mutation): boolean {
   let node = unwrapTs(value);
   for (const key of mutation.path) {
-    if (node?.type !== "ObjectExpression") return false;
+    if (node?.type !== "ObjectExpression" || key === undefined) return false;
     let found: AnyNode;
     for (const property of node.properties) {
       if (property.type !== "Property" || property.kind !== "init") return false;
       const name = property.computed ? undefined : (property.key.name ?? property.key.value);
-      if (name === undefined) return false;
+      if (name === undefined || name === "__proto__") return false;
       if (String(name) === key) found = property.value;
     }
     node = unwrapTs(found);
@@ -275,7 +290,13 @@ function mutatesPlainValue(
 
 function plainKind(script: IndexedScript, node: AnyNode): string | undefined {
   if (node?.type === "ObjectExpression") {
-    return node.properties.every((property: AnyNode) => property.type === "Property")
+    return node.properties.every(
+      (property: AnyNode) =>
+        property.type === "Property" &&
+        property.kind === "init" &&
+        !property.computed &&
+        (property.key.name ?? property.key.value) !== "__proto__",
+    )
       ? "object"
       : undefined;
   }
@@ -330,34 +351,120 @@ function runsLater(
   const binding = functionBinding(script, fn, parent);
   if (!binding || seen.has(fn)) return false;
   seen.add(fn);
-  for (const reference of binding.references) {
-    if (reference.init) continue;
-    const [use, used] = valueParent(script, reference.identifier);
-    if (use?.type === "CallExpression" && use.callee === used) {
-      if (!laterPath(script, use, declarationOwner, seen)) return false;
-    } else if (use?.type === "CallExpression" && use.arguments.includes(used)) {
-      if (!callsLater(script, use, used)) return false;
-    } else if (!isHandlerUse(script, use, used)) return false;
+  try {
+    for (const reference of binding.references) {
+      if (reference.init) continue;
+      const [use, used] = valueParent(script, reference.identifier);
+      if (use?.type === "CallExpression" && use.callee === used) {
+        if (!laterPath(script, use, declarationOwner, seen)) return false;
+      } else if (use?.type === "CallExpression" && use.arguments.includes(used)) {
+        if (!callsLater(script, use, used)) return false;
+      } else if (!isHandlerUse(script, use, used)) return false;
+    }
+    return true;
+  } finally {
+    seen.delete(fn);
   }
-  return true;
 }
 
 function awaitsBefore(script: IndexedScript, fn: AnyNode, at: AnyNode): boolean {
-  return script
-    .nodes("AwaitExpression")
-    .some((node) => script.owner(node) === fn && node.range[1] <= at.range[0]);
+  for (
+    let child = at, parent = script.parent(child);
+    parent && parent !== fn;
+    child = parent, parent = script.parent(child)
+  ) {
+    if (script.owner(child) !== fn) return false;
+    if (parent.type !== "BlockStatement" && parent.type !== "Program") continue;
+    for (const statement of parent.body) {
+      if (statement === child) break;
+      if (
+        statement.type === "ExpressionStatement" &&
+        unwrapTs(statement.expression)?.type === "AwaitExpression"
+      )
+        return true;
+      if (
+        statement.type === "VariableDeclaration" &&
+        statement.declarations.some(
+          (declaration: AnyNode) => unwrapTs(declaration.init)?.type === "AwaitExpression",
+        )
+      )
+        return true;
+    }
+  }
+  return false;
 }
 
 /** Whether `call` runs its function argument `argument` later, as a hook, timer, or listener. */
 function callsLater(script: IndexedScript, call: AnyNode, argument: AnyNode): boolean {
+  const watcher = vueApiCall(script, call.callee, WATCH_CALLBACKS);
+  if (watcher === "watch") {
+    if (call.arguments[1] !== argument) return false;
+    if (call.arguments.length < 3) return true;
+    const options = watchOptions(call.arguments[2]);
+    return (
+      !!options &&
+      (!options.has("immediate") || options.get("immediate")?.value === false) &&
+      (!options.has("flush") || ["pre", "post"].includes(options.get("flush")?.value))
+    );
+  }
+  if (watcher === "watchEffect")
+    return (
+      call.arguments[0] === argument &&
+      watchOptions(call.arguments[1])?.get("flush")?.value === "post"
+    );
   const api = vueApiCall(script, call.callee, LATER_VUE_CALLBACKS);
-  if (api) return api === "watch" ? call.arguments[1] === argument : true;
+  if (api) return call.arguments[0] === argument;
   const callee = unwrapTs(call.callee);
   if (callee?.type === "Identifier")
-    return LATER_GLOBALS.has(callee.name) && !script.references.get(callee)?.resolved;
+    return (
+      call.arguments[0] === argument &&
+      LATER_GLOBALS.has(callee.name) &&
+      !script.references.get(callee)?.resolved
+    );
   const method = memberName(callee);
-  if (method === "addEventListener") return call.arguments[1] === argument;
-  return !!method && LATER_METHODS.has(method);
+  if (method === "addEventListener")
+    return (
+      call.arguments[1] === argument &&
+      ["window", "document"].some((name) => isGlobal(script, callee.object, name))
+    );
+  return (
+    !!method &&
+    PROMISE_METHODS.has(method) &&
+    (call.arguments[0] === argument || (method === "then" && call.arguments[1] === argument)) &&
+    isNativePromise(script, callee.object)
+  );
+}
+
+function watchOptions(node: AnyNode): Map<string, AnyNode> | undefined {
+  node = unwrapTs(node);
+  if (node?.type !== "ObjectExpression") return undefined;
+  const options = new Map<string, AnyNode>();
+  for (const property of node.properties) {
+    if (property.type !== "Property" || property.computed || property.kind !== "init")
+      return undefined;
+    const key = property.key.name ?? property.key.value;
+    if (typeof key !== "string" || key === "__proto__") return undefined;
+    options.set(key, unwrapTs(property.value));
+  }
+  return options;
+}
+
+function isGlobal(script: IndexedScript, node: AnyNode, name: string): boolean {
+  node = unwrapTs(node);
+  return (
+    node?.type === "Identifier" && node.name === name && !script.references.get(node)?.resolved
+  );
+}
+
+function isNativePromise(script: IndexedScript, node: AnyNode): boolean {
+  node = unwrapTs(node);
+  if (node?.type === "NewExpression") return isGlobal(script, node.callee, "Promise");
+  if (node?.type !== "CallExpression") return false;
+  const callee = unwrapTs(node.callee);
+  const method = memberName(callee);
+  if (!method) return false;
+  if (PROMISE_FACTORIES.has(method) && isGlobal(script, callee.object, "Promise")) return true;
+  return PROMISE_METHODS.has(method) && isNativePromise(script, callee.object);
 }
 
 function functionBinding(
