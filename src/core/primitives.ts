@@ -301,6 +301,7 @@ export interface NuxtProjectInfo {
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
     pages?: NuxtDoctorManifest["pages"];
     resolvedApp?: NuxtDoctorManifest["resolvedApp"];
+    resolvedAppCurrent?: boolean;
     prerenderRoutes?: string[];
     buildManifest?: {
       hasBuildManifest: boolean;
@@ -392,6 +393,7 @@ export interface NuxtDoctorManifest {
     mainComponent?: string;
     layouts: Record<string, string>;
     pagesResolved?: boolean;
+    inputs?: { directories: string[]; files: string[]; signature: string };
   };
   prerenderRoutes?: string[];
   buildManifest?: {

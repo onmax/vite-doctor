@@ -440,6 +440,16 @@ describe("nuxt/routing/navigate-to-external", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  test("checks classic templates only when the instance does not shadow the auto-import", async () => {
+    const button = template(`<button @click="navigateTo('https://example.test')" />`);
+    const diagnostics = await run(id, {
+      "app/pages/plain.vue": `<script>export default { name: 'Page' }</script>${button}`,
+      "app/pages/method.vue": `<script>export default { methods: { navigateTo() {} } }</script>${button}`,
+      "app/pages/mixin.vue": `<script>import mixin from './mixin'; export default { mixins: [mixin] }</script>${button}`,
+    });
+    expect(diagnostics.map((item) => item.file)).toEqual([expect.stringMatching(/plain\.vue$/)]);
+  });
+
   test("uses the nearest script or template binding and follows Nuxt import aliases", async () => {
     const diagnostics = await run(id, {
       "app/pages/index.vue": page(
@@ -497,6 +507,8 @@ test("uses prepared routes across layers and Nuxt's effective layout registratio
       "app/app.vue": template("<NuxtPage />"),
       "app/pages/users.vue": template("<div>Users</div>"),
       "app/pages/users/[id].vue": template("<div>User</div>"),
+      "app/pages/groups.vue": template("<div>Groups</div>"),
+      "app/pages/groups/[id].vue": template("<div>Group</div>"),
       "app/pages/teams.vue": template("<div>Teams</div>"),
       "base/app/pages/teams/[id].vue": template("<div>Team</div>"),
       "app/shells/default.vue": template("<div><slot /></div>"),
@@ -512,7 +524,15 @@ test("uses prepared routes across layers and Nuxt's effective layout registratio
       cwd: root,
       overrides: {
         _prepare: true,
-        modules: [nuxtDoctorModule],
+        modules: [
+          nuxtDoctorModule,
+          (_options, instance) => {
+            instance.hook("pages:resolved", (pages) => {
+              const child = pages.find((page) => page.path === "/groups")?.children?.shift();
+              if (child) pages.push({ ...child, path: "/group/:id" });
+            });
+          },
+        ],
         telemetry: false,
         hooks: {
           "pages:extend"(pages) {
@@ -532,6 +552,10 @@ test("uses prepared routes across layers and Nuxt's effective layout registratio
       expect.arrayContaining([
         expect.objectContaining({ file: join(root, "app/pages/users/[id].vue"), parentFile: null }),
         expect.objectContaining({
+          file: join(root, "app/pages/groups/[id].vue"),
+          parentFile: null,
+        }),
+        expect.objectContaining({
           file: join(root, "base/app/pages/teams/[id].vue"),
           parentFile: join(root, "app/pages/teams.vue"),
         }),
@@ -540,33 +564,16 @@ test("uses prepared routes across layers and Nuxt's effective layout registratio
     expect(manifest.resolvedApp?.layouts).toEqual({
       default: join(root, "app/shells/default.vue"),
     });
-    const rules = [
-      rule("nuxt/routing/parent-page-requires-nuxtpage"),
-      rule("nuxt/layouts/app-renders-nuxtlayout"),
-    ];
-    const report = await runDoctor({
-      root,
-      framework: "nuxt",
-      cache: false,
-      extensions: [
-        defineDoctorExtension({
-          name: "fixture",
-          rulePacks: [
-            defineRulePack({
-              name: "fixture",
-              version: "0.0.0",
-              rules,
-              presets: { recommended: rules.map((rule) => rule.meta.id) },
-            }),
-          ],
-        }),
-      ],
-    });
+    const report = await runPreparedRules(root);
     const nested = report.diagnostics.filter((item) => item.code === "NUXT0098");
     expect(nested.map((item) => item.file)).toEqual([expect.stringMatching(/pages\/teams\.vue$/)]);
     const layout = report.diagnostics.filter((item) => item.code === "NUXT0099");
     expect(layout).toHaveLength(1);
     expect(layout[0]?.related?.[0]?.file).toMatch(/shells\/default\.vue$/);
+    rmSync(join(root, "app/shells/default.vue"));
+    expect(
+      (await runPreparedRules(root)).diagnostics.some((item) => item.code === "NUXT0099"),
+    ).toBe(false);
   } finally {
     try {
       await nuxt?.close();
@@ -576,3 +583,84 @@ test("uses prepared routes across layers and Nuxt's effective layout registratio
     }
   }
 });
+
+function runPreparedRules(root: string) {
+  const rules = [
+    rule("nuxt/routing/parent-page-requires-nuxtpage"),
+    rule("nuxt/layouts/app-renders-nuxtlayout"),
+  ];
+  return runDoctor({
+    root,
+    framework: "nuxt",
+    cache: false,
+    extensions: [
+      defineDoctorExtension({
+        name: "fixture",
+        rulePacks: [
+          defineRulePack({
+            name: "fixture",
+            version: "0.0.0",
+            rules,
+            presets: { recommended: rules.map((rule) => rule.meta.id) },
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+test.each(["pages", "screens"])(
+  "checks prepared %s without metadata scanning",
+  async (directory) => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-prepared-page-structure-"));
+    const cwd = process.cwd();
+    let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
+    const write = (path: string, text: string) => {
+      const file = join(root, path);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, text);
+    };
+    const page = (path: string) => `app/${directory}/${path}.vue`;
+    try {
+      symlinkSync(
+        fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+        join(root, "node_modules"),
+        "junction",
+      );
+      write("package.json", JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }));
+      write(
+        "nuxt.config.ts",
+        `export default { experimental: { scanPageMeta: false, typedPages: false }${directory === "screens" ? ", dir: { pages: 'screens' }" : ""} }`,
+      );
+      write("app/app.vue", template("<NuxtPage />"));
+      write(page("teams"), template("<div>Teams</div>"));
+      write(page("users"), template("<div>Users</div>"));
+      write(page("users/[id]"), template("<div>User</div>"));
+      process.chdir(root);
+      nuxt = await loadNuxt({
+        cwd: root,
+        overrides: { _prepare: true, modules: [nuxtDoctorModule], telemetry: false },
+      });
+      await buildNuxt(nuxt);
+      await nuxt.close();
+      nuxt = undefined;
+      const issues = async (code: string) =>
+        (await runPreparedRules(root)).diagnostics.filter((item) => item.code === code);
+      expect((await issues("NUXT0098")).map((item) => item.file)).toEqual([
+        expect.stringMatching(/users\.vue$/),
+      ]);
+
+      write(page("teams/[id]"), template("<div>Team</div>"));
+      write("app/layouts/default.vue", template("<div><slot /></div>"));
+      expect(await issues("NUXT0098")).toHaveLength(directory === "pages" ? 2 : 0);
+      expect(await issues("NUXT0099")).toHaveLength(directory === "pages" ? 1 : 0);
+    } finally {
+      try {
+        await nuxt?.close();
+      } finally {
+        process.chdir(cwd);
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  },
+);

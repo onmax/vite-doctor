@@ -1,5 +1,6 @@
 import { relative, resolve } from "pathe";
 import { isNuxtManifestCurrent } from "./runtime-graph.js";
+import { nuxtAppInputSignature } from "./nuxt-app-inputs.js";
 import type { NuxtDoctorManifest, NuxtKeyedComposable, NuxtModuleSource } from "../primitives.js";
 
 export interface NuxtProjectInventory {
@@ -20,6 +21,7 @@ export interface NuxtProjectInventory {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   pages: NonNullable<NuxtDoctorManifest["pages"]>;
   resolvedApp?: NuxtDoctorManifest["resolvedApp"];
+  resolvedAppCurrent: boolean;
   prerenderRoutes: string[];
   buildManifest?: {
     hasBuildManifest: boolean;
@@ -40,6 +42,7 @@ export function createNuxtProjectInventory(
   fallbackImportsDirs: string[] = [],
   isCurrent = isNuxtManifestCurrent(root, manifest),
 ): NuxtProjectInventory {
+  const inputs = manifest?.resolvedApp?.inputs;
   return {
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
@@ -65,6 +68,11 @@ export function createNuxtProjectInventory(
     })),
     pages: manifest?.pages ?? [],
     resolvedApp: manifest?.resolvedApp,
+    resolvedAppCurrent: Boolean(
+      isCurrent &&
+      inputs?.signature &&
+      inputs.signature === nuxtAppInputSignature(root, inputs.directories, inputs.files),
+    ),
     prerenderRoutes: manifest?.prerenderRoutes ?? [],
     buildManifest: manifest?.buildManifest,
     evidence: {

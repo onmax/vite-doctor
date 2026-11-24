@@ -1,8 +1,10 @@
 import type { SFCDescriptor } from "@vue/compiler-sfc";
 import type { AST } from "vue-eslint-parser";
 import type { RuleContext } from "../../../../core/index.js";
+import { camelize } from "../../../../core/internal/component-facts.js";
 import { fileScriptScope, type ScopeVariable } from "../../../../core/internal/script-scope.js";
 import { diagnostics } from "../../diagnostics.js";
+import { unwrap } from "./nuxt-config-ast.js";
 import { AnyNode, createRule, isRuntimeAppFile } from "./shared.js";
 import { scriptNodesOfType } from "./script-index.js";
 
@@ -47,10 +49,24 @@ export const navigateToExternal = createRule({
         }
       },
       async SFC(sfc) {
-        const { script, template } = sfc.descriptor as SFCDescriptor;
-        if (script || !template || template.src || (template.lang && template.lang !== "html"))
+        const { script, scriptSetup, template } = sfc.descriptor as SFCDescriptor;
+        if (script?.src || !template || template.src || (template.lang && template.lang !== "html"))
           return;
         const bindings = scope.scopeManager.scopes.find((item) => item.type === "module")?.set;
+        const instanceBindings = script ? classicInstanceBindings(scope.ast) : new Set<string>();
+        const isTemplateBinding = (name: string) => {
+          const binding = bindings?.get(name);
+          const setupBinding =
+            scriptSetup &&
+            binding?.defs.some(
+              ({ name: declaration }) =>
+                declaration.range[0] >= scriptSetup.loc.start.offset &&
+                declaration.range[1] <= scriptSetup.loc.end.offset,
+            );
+          if (setupBinding) return isNuxtBinding(ctx, name, binding);
+          if (binding?.isValueVariable) return false;
+          return instanceBindings && !instanceBindings.has(name) && isNuxtBinding(ctx, name, null);
+        };
         const [{ parseForESLint }, tsParser] = await Promise.all([
           import("vue-eslint-parser"),
           import("@typescript-eslint/parser"),
@@ -76,7 +92,7 @@ export const navigateToExternal = createRule({
               !variable &&
               call?.type === "CallExpression" &&
               call.callee === id &&
-              isNuxtBinding(ctx, id.name, bindings?.get(id.name))
+              isTemplateBinding(id.name)
             )
               check(call, offset);
           }
@@ -85,6 +101,51 @@ export const navigateToExternal = createRule({
     };
   },
 });
+
+const STATIC_OPTIONS = new Set([
+  "name",
+  "inheritAttrs",
+  "components",
+  "directives",
+  "emits",
+  "expose",
+]);
+const BINDING_OPTIONS = new Set(["props", "methods", "computed", "inject"]);
+
+function classicInstanceBindings(ast: AnyNode): Set<string> | undefined {
+  const declaration = ast.body.find((node: AnyNode) => node.type === "ExportDefaultDeclaration");
+  const options = objectEntries(unwrap(declaration?.declaration));
+  if (!options) return undefined;
+  const names = new Set<string>();
+  for (const [key, value] of options) {
+    if (STATIC_OPTIONS.has(key)) continue;
+    if (!BINDING_OPTIONS.has(key)) return undefined;
+    if ((key === "props" || key === "inject") && value?.type === "ArrayExpression") {
+      for (const item of value.elements) {
+        if (item?.type !== "Literal" || typeof item.value !== "string") return undefined;
+        names.add(key === "props" ? camelize(item.value) : item.value);
+      }
+    } else {
+      const entries = objectEntries(value);
+      if (!entries) return undefined;
+      for (const [name] of entries) names.add(key === "props" ? camelize(name) : name);
+    }
+  }
+  return names;
+}
+
+function objectEntries(node: AnyNode): Array<[string, AnyNode]> | undefined {
+  if (node?.type !== "ObjectExpression") return undefined;
+  const entries: Array<[string, AnyNode]> = [];
+  for (const property of node.properties) {
+    if (property.type !== "Property" || property.computed || property.kind !== "init")
+      return undefined;
+    const name = property.key.name ?? property.key.value;
+    if (typeof name !== "string" || name === "__proto__") return undefined;
+    entries.push([name, unwrap(property.value)]);
+  }
+  return entries;
+}
 
 function visitTemplate(
   node: AST.VElement | AST.VText | AST.VExpressionContainer,

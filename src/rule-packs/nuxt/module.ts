@@ -1,6 +1,7 @@
 import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { nuxtAppInputSignature } from "../../core/internal/nuxt-app-inputs.js";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
@@ -12,7 +13,7 @@ import {
   importModule,
   resolvePath,
 } from "nuxt/kit";
-import type { Nuxt, NuxtModule } from "nuxt/schema";
+import type { Nuxt, NuxtApp, NuxtModule } from "nuxt/schema";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
 import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
@@ -188,21 +189,40 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     evidence.composableScan = undefined;
   });
 
-  nuxt.hook?.("pages:resolved", (pages: any[]) => {
-    evidence.pages = flattenPages(pages);
-  });
-
-  nuxt.hook?.("app:templatesGenerated", (app: any) => {
+  nuxt.hook?.("app:templatesGenerated", (app: NuxtApp) => {
+    const pagesResolved = Array.isArray(app.pages) || nuxt.options.pages?.enabled === false;
+    evidence.pages = pagesResolved ? flattenPages(app.pages) : undefined;
     evidence.resolvedApp = {
-      mainComponent: app.mainComponent,
+      mainComponent: app.mainComponent ?? undefined,
       layouts: Object.fromEntries(
-        Object.entries(app.layouts as Record<string, { file: string }>).map(([name, layout]) => [
-          name,
-          layout.file,
-        ]),
+        Object.entries(app.layouts).map(([name, layout]) => [name, layout.file]),
       ),
-      pagesResolved: evidence.pages !== undefined,
+      pagesResolved,
     };
+    const layers = getLayerDirectories(nuxt);
+    const root = nuxt.options.rootDir;
+    const directories = [
+      ...new Set(layers.flatMap((layer) => [layer.appPages, layer.appLayouts])),
+    ].map((directory) => relative(root, directory));
+    const files = [
+      ...new Set([
+        app.mainComponent,
+        ...Object.values(evidence.resolvedApp.layouts),
+        ...(evidence.pages?.map((page) => page.file) ?? []),
+        ...layers.flatMap((layer) => [
+          join(layer.root, ".nuxtignore"),
+          ...["App", "app", "router.options"].flatMap((name) =>
+            (nuxt.options.extensions as string[]).map((extension) =>
+              join(layer.app, name + extension),
+            ),
+          ),
+        ]),
+      ]),
+    ]
+      .filter((file): file is string => typeof file === "string" && isAbsolute(file))
+      .map((file) => relative(root, file));
+    const signature = nuxtAppInputSignature(root, directories, files);
+    if (signature) evidence.resolvedApp.inputs = { directories, files, signature };
   });
 
   nuxt.hook?.("prerender:routes", (ctx: any) => {
@@ -487,7 +507,7 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
 }
 
 function flattenPages(
-  pages: any[] | undefined,
+  pages: NuxtApp["pages"],
   parentFile: string | null = null,
 ): NonNullable<NuxtDoctorManifest["pages"]> {
   return toArray(pages).flatMap((page) => [

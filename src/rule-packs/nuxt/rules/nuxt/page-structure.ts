@@ -415,7 +415,9 @@ function scanIsReliable(ctx: RuleContext, layer: NuxtAppSource, kind: "pages" | 
 
 function currentManifest(ctx: RuleContext, layers: NuxtAppSource[]) {
   const manifest = ctx.project.nuxt?.manifest;
-  return manifest?.isCurrent && layers[0]?.root === ctx.project.root ? manifest : undefined;
+  return manifest?.resolvedAppCurrent && layers[0]?.root === ctx.project.root
+    ? manifest
+    : undefined;
 }
 
 export interface PageRoute {
@@ -427,7 +429,7 @@ export interface PageRoute {
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
   const manifest = currentManifest(ctx, layers);
   const pages = manifest?.pages ?? [];
-  if (manifest?.resolvedApp?.pagesResolved || pages.some((page) => page.parentFile !== undefined))
+  if (manifest?.resolvedApp?.pagesResolved)
     return pages.flatMap((page): PageRoute[] =>
       page.file
         ? [
@@ -502,6 +504,12 @@ export function mainApp(ctx: RuleContext, layers: NuxtAppSource[]): string | nul
       return undefined;
     return file;
   }
+  if (
+    layers.some((layer) =>
+      /app:resolve|app:templates/.test(configFile(ctx, layer.root)?.text ?? ""),
+    )
+  )
+    return null;
   const owners = layers.map((layer) =>
     (ctx.fs.readDir(layer.srcDir) ?? []).filter(
       (entry) => entry.isFile() && /^[Aa]pp\.(?:vue|[cm]?[jt]sx?)$/.test(entry.name),
