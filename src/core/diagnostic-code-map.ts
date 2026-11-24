@@ -114,6 +114,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0046", ruleId: "vue/template/require-toggle-inside-transition" },
   { code: "VUE0047", ruleId: "vue/attrs/require-explicit-emits" },
   { code: "VUE0048", ruleId: "vue/state/no-external-shared-state-mutation" },
+  { code: "VUE0049", ruleId: "vue/reactivity/no-shallow-ref-deep-mutation" },
+  { code: "VUE0050", ruleId: "vue/watch/no-property-read-source" },
 
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },
   { code: "VITE0002", ruleId: "vite/assets/no-public-src-import" },
@@ -149,6 +151,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VITE0028", ruleId: "vite/plugin/no-fragment-in-virtual-id" },
 
   { code: "VITE0029", ruleId: "vite/hmr/no-circular-import-at-hmr-boundary" },
+
+  { code: "VITE0033", ruleId: "vite/build/no-node-builtin-in-client-chunk" },
   { code: "TS0001", ruleId: "typescript/evidence/no-chained-type-assertions" },
   { code: "TS0002", ruleId: "typescript/evidence/no-object-parameters" },
   { code: "TS0003", ruleId: "typescript/evidence/no-unknown-type-aliases" },
@@ -192,6 +196,12 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NITRO0026", ruleId: "nitro/runtime/no-process-env-in-server" },
   { code: "NITRO0027", ruleId: "nitro/h3/prefer-nitro-h3" },
   { code: "NITRO0028", ruleId: "nitro/dependencies/declare-nitro" },
+  { code: "NITRO0029", ruleId: "nitro/cache/require-varies-for-header-read" },
+  { code: "NITRO0030", ruleId: "nitro/middleware/no-implicit-response" },
+  { code: "NITRO0031", ruleId: "nitro/routes/no-shadowed-file-handler" },
+  { code: "NITRO0032", ruleId: "nitro/runtime/no-runtime-config-in-response" },
+  { code: "NITRO0033", ruleId: "nitro/handler/require-waituntil-for-background-work" },
+  { code: "NITRO0034", ruleId: "nitro/storage/no-undeclared-mount" },
   { code: "NUXT0001", ruleId: "docus/appconfig/no-unknown-key" },
   { code: "NUXT0002", ruleId: "docus/layers/no-empty-app-vue-shadow" },
   { code: "NUXT0003", ruleId: "nuxt-better-auth/require-standard-auth-handler-mount" },
@@ -289,6 +299,9 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0095", ruleId: "nuxt/fetch/no-ssr-refetch-of-shared-key" },
   { code: "NUXT0096", ruleId: "nuxt/imports/prefer-alias-over-relative-parent" },
   { code: "NUXT0097", ruleId: "nuxt/state/no-diverging-usestate-init" },
+  { code: "NUXT0102", ruleId: "nuxt/runtime/no-private-runtime-config-in-client" },
+  { code: "NUXT0103", ruleId: "nuxt/fetch/handler-must-return" },
+  { code: "NUXT0104", ruleId: "nuxt/plugins/no-island-disabled-dependency" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
