@@ -134,6 +134,14 @@ export function nuxtPagePath(ctx: RuleContext): string | null {
   return isInside(file, pagesDir) && file !== pagesDir ? relative(pagesDir, file) : null;
 }
 
+/** The file's path inside its Nuxt app's source directory, or null outside one. */
+export function nuxtSourcePath(ctx: RuleContext): string | null {
+  const file = toPosixPath(resolve(ctx.project.root, ctx.file.path));
+  const source = owningNuxtAppSource(ctx, file);
+  if (!source || file === source.srcDir || !isInside(file, source.srcDir)) return null;
+  return relative(source.srcDir, file);
+}
+
 export function resolveSameFile(a: string, b: string) {
   return toPosixPath(a) === toPosixPath(b);
 }

@@ -286,6 +286,34 @@ shared.value = useRoute().fullPath
   expect(result).toEqual(reports ? [{ code: "NUXT0105", file, line: 2 }] : []);
 });
 
+test("uses static-block bindings rather than outer setup constants", async () => {
+  const file = "app/pages/index.vue";
+  expect(
+    await run(
+      {
+        [file]: `<script>
+const latest = ref('')
+let lastRoute = ''
+</script>
+<script setup>
+const enabled = false
+class Handler {
+  static {
+    const enabled = true
+    latest.value = enabled && useRoute().fullPath
+    lastRoute = enabled && useRoute().fullPath
+  }
+}
+</script>`,
+      },
+      [noRequestDataInModuleState, noModuleScopeRequestState],
+    ),
+  ).toEqual([
+    { code: "NUXT0105", file, line: 2 },
+    { code: "NUXT0084", file, line: 3 },
+  ]);
+});
+
 test("only SSR-running watchers can write request data during setup", async () => {
   const file = "app/pages/index.vue";
   expect(

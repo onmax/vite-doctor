@@ -98,6 +98,7 @@ function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, dep
   const parent = node.__doctorParent;
   if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed)
     return false;
+  let child = node;
   for (let current = parent; current; current = current.__doctorParent) {
     if (sources.parameter && FUNCTION_TYPES.has(current.type)) {
       const index = current.params.findIndex((param: AnyNode) =>
@@ -108,19 +109,22 @@ function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, dep
     const declarator =
       current.type === "Program"
         ? (sources.programBinding?.(current, node.name, node) ?? null)
-        : nearerBinding(current, node.name);
+        : nearerBinding(current, child, node.name);
     if (declarator?.type === "VariableDeclarator")
       return Boolean(declarator.init) && flows(declarator.init, sources, depth + 1);
     if (declarator) return false;
+    child = current;
   }
   return false;
 }
 
 /** Whether `node` refers to the program-scope binding `name` rather than a nearer declaration. */
 export function resolvesToModuleBinding(node: AnyNode, name: string) {
+  let child = node;
   for (let current = node.__doctorParent; current; current = current.__doctorParent) {
     if (current.type === "Program") return true;
-    if (nearerBinding(current, name)) return false;
+    if (nearerBinding(current, child, name)) return false;
+    child = current;
   }
   return false;
 }
@@ -133,10 +137,12 @@ function resolveBinding(
   node: AnyNode,
   programBinding: NonNullable<RequestValueSources["programBinding"]>,
 ): AnyNode {
+  let child = node;
   for (let current = node.__doctorParent; current; current = current.__doctorParent) {
     if (current.type === "Program") return programBinding(current, node.name, node);
-    const binding = nearerBinding(current, node.name);
+    const binding = nearerBinding(current, child, node.name);
     if (binding) return binding;
+    child = current;
   }
   return null;
 }
@@ -170,21 +176,28 @@ function staticValue(
     if (left === UNKNOWN_VALUE || shortCircuits(node.operator, left)) return left;
     return staticValue(node.right, programBinding, depth + 1);
   }
-  if (node.type === "Identifier") {
-    const binding = programBinding
-      ? resolveBinding(node, programBinding)
-      : resolveLexicalBinding(node);
-    if (
-      binding?.type === "VariableDeclarator" &&
-      binding.id.type === "Identifier" &&
-      binding.__doctorParent?.kind === "const"
-    )
-      return staticValue(binding.init, programBinding, depth + 1);
-  }
+  const binding = provenConstBinding(node, programBinding);
+  if (binding) return staticValue(binding.init, programBinding, depth + 1);
   return UNKNOWN_VALUE;
 }
 
-function nearerBinding(scope: AnyNode, name: string): AnyNode {
+export function provenConstBinding(
+  node: AnyNode,
+  programBinding?: RequestValueSources["programBinding"],
+): AnyNode {
+  if (node.type !== "Identifier") return null;
+  const binding = programBinding
+    ? resolveBinding(node, programBinding)
+    : resolveLexicalBinding(node);
+  return binding?.type === "VariableDeclarator" &&
+    binding.id.type === "Identifier" &&
+    binding.__doctorParent?.kind === "const" &&
+    binding.end <= node.start
+    ? binding
+    : null;
+}
+
+function nearerBinding(scope: AnyNode, child: AnyNode, name: string): AnyNode {
   if (FUNCTION_TYPES.has(scope.type)) {
     if (scope.type === "FunctionExpression" && scope.id?.name === name) return scope;
     return (
@@ -192,6 +205,10 @@ function nearerBinding(scope: AnyNode, name: string): AnyNode {
       findFunctionVar(scope.body, name)
     );
   }
+  if (scope.type === "ClassExpression" && scope.id?.name === name) return scope;
+  if (scope.type === "SwitchStatement" && child === scope.discriminant) return null;
+  if (scope.type === "StaticBlock" || scope.type === "TSModuleBlock")
+    return findStatementBinding(scope, name) ?? findFunctionVar(scope.body, name);
   if (SCOPE_TYPES.has(scope.type)) return findStatementBinding(scope, name);
   if (scope.type === "CatchClause" && patternNames(scope.param).includes(name)) return scope.param;
   return null;

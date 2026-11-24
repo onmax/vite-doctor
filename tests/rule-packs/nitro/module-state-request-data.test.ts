@@ -56,6 +56,65 @@ export default defineEventHandler((event) => {
   ).toEqual([6, 7].map((line) => ({ code: "NITRO0035", file, line })));
 });
 
+const cookie = "getCookie(event, 'locale')";
+test.each([
+  [
+    "a static block",
+    false,
+    `class Handler { static { const enabled = true; latest = enabled && ${cookie} } }`,
+    true,
+  ],
+  [
+    "a class expression",
+    false,
+    `const Handler = class enabled { static { latest = enabled && ${cookie} } }`,
+    true,
+  ],
+  ["a TypeScript enum", false, `enum enabled { On }; latest = enabled && ${cookie}`, true],
+  [
+    "a switch discriminant",
+    true,
+    `switch (latest = enabled && ${cookie}) { default: const enabled = false }`,
+    true,
+  ],
+  [
+    "a switch case",
+    true,
+    `switch (0) { default: const enabled = false; latest = enabled && ${cookie} }`,
+    false,
+  ],
+])("uses the runtime binding for a logical write in %s", async (_, outer, source, reports) => {
+  const file = "server/api/locale.get.ts";
+  expect(
+    await run({
+      [file]: `let latest
+const enabled = ${outer}
+export default defineEventHandler((event) => {
+  ${source}
+})`,
+    }),
+  ).toEqual(reports ? [{ code: "NITRO0035", file, line: 1 }] : []);
+});
+
+test("keeps the reachable scalar copy inside a shadowing static block", async () => {
+  const file = "server/api/locale.get.ts";
+  expect(
+    await run({
+      [file]: `const latest = {}
+const enabled = false
+export default defineEventHandler((event) => {
+  class Handler {
+    static {
+      const enabled = true
+      const patch = { current: enabled && ${cookie} }
+      Object.assign(latest, patch)
+    }
+  }
+})`,
+    }),
+  ).toEqual([{ code: "NITRO0035", file, line: 1 }]);
+});
+
 test.each([
   [
     "a module let assigned from the request query in a route",

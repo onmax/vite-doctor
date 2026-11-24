@@ -1,10 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { buildNuxt, loadNuxt } from "nuxt/kit";
 import { dirname, join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
 import { createAgentReport, createJsonReport, detectProject } from "../../src/core/index.ts";
 import { hostDoctorExtensions, runViteDoctor, viteDoctorExtensions } from "../../src/doctor.ts";
 import { workspaceProjectView } from "../../src/core/internal/workspace-nuxt.ts";
+import nuxtDoctorModule from "../../src/rule-packs/nuxt/module.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -333,6 +336,120 @@ test("a workspace with several Nuxt apps runs Nuxt Rules on each app with its in
   expect(result.project.evidenceGaps ?? []).toEqual([]);
   expect(JSON.parse(createJsonReport(result)).workspacePackages).toHaveLength(5);
 });
+
+test("island plugin registration gaps identify each affected Nuxt app", async () => {
+  const auth = "export default defineNuxtPlugin({ name: 'auth', env: { islands: false } })";
+  const api = "export default defineNuxtPlugin({ name: 'api', dependsOn: ['auth'] })";
+  const root = multiNuxtMonorepo({
+    "packages/app-a/app/components/Chart.server.vue": button,
+    "packages/app-a/app/plugins/auth.ts": auth,
+    "packages/app-a/app/plugins/api.ts": api,
+    "packages/app-b/web/components/Chart.server.vue": button,
+    "packages/app-b/web/plugins/auth.ts": auth,
+    "packages/app-b/web/plugins/api.ts": api,
+  });
+  rmSync(join(root, "packages/app-b/.nuxt/doctor.manifest.json"));
+  const scan = async () => {
+    const result = await runViteDoctor({ root, cache: false, runtimeTarget: { nuxt: "4.5.2" } });
+    expect(result.diagnostics.map(({ code }) => code)).not.toContain("NUXT0104");
+    return (result.project.evidenceGaps ?? [])
+      .filter(
+        ({ source }) => source === "nuxt/plugins/no-island-disabled-dependency/island-registration",
+      )
+      .flatMap(({ files }) => files)
+      .sort();
+  };
+  expect(await scan()).toEqual([
+    "packages/app-a/.nuxt/doctor.manifest.json",
+    "packages/app-b/.nuxt/doctor.manifest.json",
+  ]);
+
+  writeFileSync(
+    join(root, "packages/app-a/nuxt.config.ts"),
+    "export default defineNuxtConfig({ experimental: { componentIslands: false } })",
+  );
+  expect(await scan()).toEqual([
+    "packages/app-a/.nuxt/doctor.manifest.json",
+    "packages/app-b/.nuxt/doctor.manifest.json",
+  ]);
+  mkdirSync(join(root, "packages/app-a/.nuxt"), { recursive: true });
+  writeFileSync(
+    join(root, "packages/app-a/.nuxt/doctor.manifest.json"),
+    JSON.stringify({
+      generatedAt: new Date(Date.now() + 10_000).toISOString(),
+      componentIslands: false,
+    }),
+  );
+  expect(await scan()).toEqual(["packages/app-b/.nuxt/doctor.manifest.json"]);
+
+  rmSync(join(root, "packages/app-b/web/plugins/auth.ts"));
+  expect(await scan()).toEqual([]);
+});
+
+test.each([
+  { path: "../shared/auth.ts", alias: "" },
+  { path: "../shared/auth", alias: "" },
+  { path: "#shared-auth", alias: "alias: { '#shared-auth': '../shared/auth' }," },
+])(
+  "checks the shared plugin registered as $path only for its Nuxt app",
+  async ({ path, alias }) => {
+    const root = multiNuxtMonorepo({
+      "packages/shared/package.json": JSON.stringify({ name: "@workspace/shared" }),
+      "packages/shared/auth.ts":
+        "export default defineNuxtPlugin({ name: 'auth', env: { islands: false } })",
+      "packages/app-a/nuxt.config.ts": `export default defineNuxtConfig({ ${alias} plugins: ['${path}'] })`,
+      "packages/app-a/app/components/Chart.server.vue": button,
+      "packages/app-a/app/plugins/api.ts":
+        "export default defineNuxtPlugin({ name: 'api', dependsOn: ['auth'] })",
+      "packages/app-b/web/components/Chart.server.vue": button,
+      "packages/app-b/web/plugins/api.ts":
+        "export default defineNuxtPlugin({ name: 'api', dependsOn: ['auth'] })",
+    });
+    const scan = () => runViteDoctor({ root, cache: false, runtimeTarget: { nuxt: "4.5.2" } });
+    const result = await scan();
+    expect(result.diagnostics.map(({ code }) => code)).not.toContain("NUXT0104");
+    expect(
+      result.project.evidenceGaps
+        ?.filter(
+          ({ source }) =>
+            source === "nuxt/plugins/no-island-disabled-dependency/island-registration",
+        )
+        .flatMap(({ files }) => files),
+    ).toEqual(["packages/app-a/.nuxt/doctor.manifest.json"]);
+
+    const app = join(root, "packages/app-a");
+    symlinkSync(
+      fileURLToPath(new URL("../../node_modules", import.meta.url)),
+      join(root, "node_modules"),
+      "junction",
+    );
+    const cwd = process.cwd();
+    let nuxt: Awaited<ReturnType<typeof loadNuxt>> | undefined;
+    try {
+      process.chdir(app);
+      nuxt = await loadNuxt({
+        cwd: app,
+        overrides: { _prepare: true, telemetry: false, modules: [nuxtDoctorModule] },
+      });
+      await buildNuxt(nuxt);
+      const prepared = await scan();
+      expect(prepared.diagnostics.filter(({ code }) => code === "NUXT0104")).toMatchObject([
+        {
+          file: expect.stringMatching(/packages\/app-a\/app\/plugins\/api\.ts$/),
+          related: [{ file: expect.stringMatching(/packages\/shared\/auth\.ts$/) }],
+        },
+      ]);
+      expect(
+        prepared.project.evidenceGaps?.filter(({ source }) =>
+          source.startsWith("nuxt/plugins/no-island-disabled-dependency/"),
+        ) ?? [],
+      ).toEqual([]);
+    } finally {
+      await nuxt?.close();
+      process.chdir(cwd);
+    }
+  },
+);
 
 test("Nuxt manifest Rules review each Nuxt app's inventory", async () => {
   const root = multiNuxtMonorepo({
