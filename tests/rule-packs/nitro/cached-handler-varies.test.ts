@@ -214,6 +214,32 @@ export default defineCachedHandler((event) => event.req.headers.get('${header}')
     ).toEqual([]);
   });
 
+  test.each(["...viteSettings", "clearScreen: false"])(
+    "keeps POST bypass evidence for a custom route suffix with %s",
+    async (settings) => {
+      const cachedRead = `import { defineCachedHandler } from 'nitro/cache'
+export default defineCachedHandler((event) => event.req.headers.get('x-locale'))`;
+      const diagnostics = await run(
+        {
+          "vite.config.ts": `import { nitro } from 'nitro/vite'
+const viteSettings = { clearScreen: false }
+export default { plugins: [nitro({ serverDir: true, scanSuffixes: ['custom'] })], ${settings} }`,
+          "server/routes/page.custom.post.ts": cachedRead,
+          "server/routes/page.custom.get.ts": cachedRead.replace("x-locale", "x-get"),
+          "server/utils/page.custom.post.ts": cachedRead.replace("x-locale", "x-util"),
+        },
+        "nitro",
+        nitro3,
+      );
+      expect(diagnostics).toHaveLength(2);
+      for (const header of ["x-get", "x-util"]) {
+        expect(diagnostics).toContainEqual(
+          expect.objectContaining({ code: "NITRO0029", why: expect.stringContaining(header) }),
+        );
+      }
+    },
+  );
+
   test.each([
     "extends: './base'",
     "$production: { cache: { defaults: { varies: ['x-tenant'] } } }",

@@ -2,12 +2,11 @@ import type { RuleContext } from "../../../core/index.js";
 import { fileTextScope, type ScriptScope } from "../../../core/internal/script-scope.js";
 import { type AnyNode, createRule, report } from "./shared.js";
 import {
-  hasCustomScanIgnore,
   hasUnresolvedNitroConfig,
-  nitro3ScanPath,
-  nitroRouteFile,
+  nitro3RouteMethod,
   nitroServerFile,
   readStaticConfigOptions,
+  type NitroServerFile,
 } from "./server-layout.js";
 
 const RULE_ID = "nitro/cache/require-varies-for-header-read";
@@ -63,7 +62,8 @@ export const requireVariesForHeaderRead = createRule({
     prefilter: { names: [...NITRO2_HANDLERS, NITRO3_HANDLER] },
   },
   create(ctx) {
-    if (!isServerSource(ctx)) return;
+    const serverFile = serverSource(ctx);
+    if (!serverFile) return;
     return {
       Program() {
         const scope = fileTextScope(ctx);
@@ -72,20 +72,26 @@ export const requireVariesForHeaderRead = createRule({
           if (node.type !== "CallExpression") return;
           const version = cachedHandlerVersion(scope, node.callee);
           if (!version) return;
-          checkCachedHandler(ctx, scope, node, version);
+          checkCachedHandler(ctx, scope, node, version, serverFile);
         });
       },
     };
   },
 });
 
-function isServerSource(ctx: RuleContext) {
+function serverSource(ctx: RuleContext) {
   const path = ctx.file.relativePath.replace(/\\/g, "/");
-  if (/\.d\.[cm]?ts$|\.(?:spec|test)\.[cm]?[jt]sx?$/.test(path)) return false;
-  return Boolean(nitroServerFile(ctx, ctx.file.path));
+  if (/\.d\.[cm]?ts$|\.(?:spec|test)\.[cm]?[jt]sx?$/.test(path)) return null;
+  return nitroServerFile(ctx, ctx.file.path);
 }
 
-function checkCachedHandler(ctx: RuleContext, scope: ScriptScope, call: AnyNode, version: Version) {
+function checkCachedHandler(
+  ctx: RuleContext,
+  scope: ScriptScope,
+  call: AnyNode,
+  version: Version,
+  serverFile: NitroServerFile,
+) {
   const handler = unwrap(call.arguments?.[0]);
   if (!FUNCTION_TYPES.has(handler?.type)) return;
   const event = handler.params?.[0];
@@ -99,11 +105,8 @@ function checkCachedHandler(ctx: RuleContext, scope: ScriptScope, call: AnyNode,
           statement.type === "ExportDefaultDeclaration" && unwrap(statement.declaration) === call,
       )
     ) {
-      const route = nitroRouteFile(ctx, ctx.file.path);
-      if (route && !hasCustomScanIgnore(ctx)) {
-        const method = nitro3ScanPath(ctx, route.path.slice(route.dir.length + 1), true)?.method;
-        if (method && method !== "get" && method !== "head") return;
-      }
+      const method = nitro3RouteMethod(serverFile);
+      if (method && method !== "get" && method !== "head") return;
     }
   }
   const kept = keptHeaders(call.arguments?.[1], version);

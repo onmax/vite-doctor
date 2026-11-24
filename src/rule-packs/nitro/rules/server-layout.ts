@@ -99,6 +99,27 @@ export function nitroScannedFile(
 }
 
 export function nitro3ScanPath(ctx: RuleContext, path: string, route: boolean) {
+  const { name, method, env } = nitro3PathParts(path, route);
+  const suffix = name.match(LAST_SUFFIX)?.[1];
+  if (suffix) {
+    const reserved = NITRO3_METHODS.has(suffix) || NITRO3_ENVS.has(suffix);
+    if (
+      !(route && reserved) &&
+      !mime.getType(suffix) &&
+      !(!reserved && ORDER_PREFIX.test(name.slice(0, -suffix.length - 1))) &&
+      !hasStaticScanSuffix(ctx, suffix)
+    )
+      return undefined;
+  }
+  return { name, method, env };
+}
+
+export function nitro3RouteMethod(file: NitroServerFile): string | undefined {
+  if (!ROUTE_DIRS.has(file.dir) || !SCANNED_SCRIPT.test(file.path)) return undefined;
+  return nitro3PathParts(file.path.slice(file.dir.length + 1), true).method;
+}
+
+function nitro3PathParts(path: string, route: boolean) {
   let name = path.replace(SCANNED_SCRIPT, "");
   let env: string | undefined;
   let method: string | undefined;
@@ -113,17 +134,6 @@ export function nitro3ScanPath(ctx: RuleContext, path: string, route: boolean) {
       method = methodSuffix;
       name = name.slice(0, -method.length - 1);
     }
-  }
-  const suffix = name.match(LAST_SUFFIX)?.[1];
-  if (suffix) {
-    const reserved = NITRO3_METHODS.has(suffix) || NITRO3_ENVS.has(suffix);
-    if (
-      !(route && reserved) &&
-      !mime.getType(suffix) &&
-      !(!reserved && ORDER_PREFIX.test(name.slice(0, -suffix.length - 1))) &&
-      !hasStaticScanSuffix(ctx, suffix)
-    )
-      return undefined;
   }
   return { name, method, env };
 }
