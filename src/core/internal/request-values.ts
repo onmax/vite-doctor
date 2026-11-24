@@ -229,8 +229,21 @@ function setupMemberWrite(
     return false;
   };
 
-  let latest: AnyNode = null;
-  let value: AnyNode = null;
+  const isCall = (node: AnyNode) => node.type === "CallExpression" || node.type === "NewExpression";
+  const mayWrite = (operation: AnyNode) => {
+    if (isCall(operation)) {
+      const callee = unwrapExpression(operation.callee);
+      return (
+        operation.arguments.some(isObject) ||
+        (callee?.type === "MemberExpression" && isObject(callee.object))
+      );
+    }
+    if (operation.type === "UnaryExpression" && operation.operator !== "delete") return false;
+    return affectsMember(operation.left ?? operation.argument);
+  };
+
+  const setupOperations: AnyNode[] = [];
+  const functionOperations = new Map<AnyNode, AnyNode[]>();
   for (const operation of scriptNodesOfType(
     program,
     "AssignmentExpression",
@@ -241,19 +254,45 @@ function setupMemberWrite(
     "CallExpression",
     "NewExpression",
   )) {
-    if (operation.end > reference.start || operation.end <= (latest?.end ?? object.end)) continue;
-    if (operation.type === "CallExpression" || operation.type === "NewExpression") {
-      const callee = unwrapExpression(operation.callee);
-      if (
-        !operation.arguments.some((argument: AnyNode) => isObject(argument)) &&
-        !(callee?.type === "MemberExpression" && isObject(callee.object))
-      )
-        continue;
-    } else {
-      if (operation.type === "UnaryExpression" && operation.operator !== "delete") continue;
-      if (!affectsMember(operation.left ?? operation.argument)) continue;
+    let scope = operation.__doctorParent;
+    while (scope && scope !== program && !FUNCTION_TYPES.has(scope.type)) {
+      scope = scope.__doctorParent;
     }
+    if (scope === program) {
+      if (operation.end <= reference.start && operation.end > object.end)
+        setupOperations.push(operation);
+    } else if (scope) {
+      let operations = functionOperations.get(scope);
+      if (!operations) functionOperations.set(scope, (operations = []));
+      operations.push(operation);
+    }
+  }
+
+  const callMayWrite = (call: AnyNode) => {
+    const pending = [call];
+    const visited = new Set<AnyNode>();
+    while (pending.length > 0) {
+      const invocation = pending.pop();
+      for (const expression of [invocation.callee, ...invocation.arguments]) {
+        const fn = localFunction(expression, sources.programBinding);
+        if (!fn || visited.has(fn)) continue;
+        visited.add(fn);
+        for (const operation of functionOperations.get(fn) ?? []) {
+          if (sources.isSkippedOperation?.(operation)) continue;
+          if (mayWrite(operation)) return true;
+          if (isCall(operation)) pending.push(operation);
+        }
+      }
+    }
+    return false;
+  };
+
+  let latest: AnyNode = null;
+  let value: AnyNode = null;
+  for (const operation of setupOperations) {
+    if (latest && operation.end <= latest.end) continue;
     if (sources.isSkippedOperation?.(operation)) continue;
+    if (!mayWrite(operation) && !(isCall(operation) && callMayWrite(operation))) continue;
 
     latest = operation;
     const statement = enclosingExpression(operation).__doctorParent;
@@ -269,6 +308,31 @@ function setupMemberWrite(
         : UNKNOWN_VALUE;
   }
   return value;
+}
+
+function localFunction(
+  expression: AnyNode,
+  programBinding: RequestValueSources["programBinding"],
+): AnyNode {
+  let node = unwrapExpression(expression);
+  const seen = new Set<AnyNode>();
+  while (node?.type === "Identifier") {
+    const binding = programBinding
+      ? resolveBinding(node, programBinding)
+      : resolveLexicalBinding(node);
+    if (!binding || seen.has(binding)) return null;
+    if (binding.type === "FunctionDeclaration" || binding.type === "FunctionExpression")
+      return binding;
+    if (
+      binding.type !== "VariableDeclarator" ||
+      binding.id.type !== "Identifier" ||
+      binding.__doctorParent?.kind !== "const"
+    )
+      return null;
+    seen.add(binding);
+    node = unwrapExpression(binding.init);
+  }
+  return FUNCTION_TYPES.has(node?.type) ? node : null;
 }
 
 function enclosingExpression(node: AnyNode): AnyNode {

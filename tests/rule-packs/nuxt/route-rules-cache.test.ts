@@ -1,4 +1,4 @@
-import { expect, test } from "vite-plus/test";
+import { describe, expect, test } from "vite-plus/test";
 import { runProjectFixture, runRuleFixture } from "../../../src/core/testkit.ts";
 import nuxtRulePack from "../../../src/rule-packs/nuxt/rules/nuxt.ts";
 import { noPersonalizedCachedHandler } from "../../../src/rule-packs/nuxt/rules/nuxthub.ts";
@@ -142,26 +142,59 @@ test("reports a rendered context value separately from a stripped header", async
   expect(result.diagnostics[0]?.why).toContain("if this field holds per-visitor data");
 });
 
-test.each(["alias.theme = 'light'", "Object.assign(alias, { theme: 'light' })"])(
-  "does not trace a rendered cookie past a helper writing through a captured alias: %s",
-  async (write) => {
-    const file = "app/pages/account.vue";
-    const result = await run({
-      [file]: page(
-        `const preferences = { theme: useCookie('theme').value }
+describe.each(["alias.theme = 'light'", "Object.assign(alias, { theme: 'light' })"])(
+  "helper writing through a captured alias: %s",
+  (write) => {
+    test.each([
+      ["called before the read", "resetTheme()", "", 0],
+      ["called after the read", "", "resetTheme()", 1],
+      ["never called", "", "", 1],
+      ["called only on the client", "if (import.meta.client) resetTheme()", "", 1],
+    ])("traces a rendered cookie when the helper is %s", async (_, before, after, count) => {
+      const file = "app/pages/account.vue";
+      const result = await run({
+        [file]: page(
+          `const preferences = { theme: useCookie('theme').value }
 function resetTheme() { ${write} }
 const alias = preferences
-resetTheme()
-const rendered = preferences.theme`,
-        "<div>{{ rendered }}</div>",
-      ),
-      ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
-        "/account": { swr: 60 },
-      }),
+${before}
+const rendered = preferences.theme
+${after}`,
+          "<div>{{ rendered }}</div>",
+        ),
+        ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+          "/account": { swr: 60 },
+        }),
+      });
+      expect(result.diagnostics).toHaveLength(count);
     });
-    expect(result.diagnostics).toHaveLength(0);
   },
 );
+
+test.each([
+  ["hoisted declaration", "", "function resetTheme() { preferences.theme = 'light' }"],
+  [
+    "nested call through a const alias",
+    "const overwrite = () => { preferences.theme = 'light' }; const alias = overwrite; const resetTheme = () => alias()",
+    "",
+  ],
+])("accounts for a pre-read helper write through a %s", async (_, before, after) => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: page(
+      `const preferences = { theme: useCookie('theme').value }
+${before}
+resetTheme()
+const rendered = preferences.theme
+${after}`,
+      "<div>{{ rendered }}</div>",
+    ),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { swr: 60 },
+    }),
+  });
+  expect(result.diagnostics).toHaveLength(0);
+});
 
 test.each(["const alias = alias", "const alias = other; const other = alias"])(
   "traces rendered cookies past an uncalled helper with a cyclic alias: %s",
