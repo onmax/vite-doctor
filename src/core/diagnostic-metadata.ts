@@ -40,6 +40,18 @@ export const resolvedBaselineDiagnosticMetadata = {
   category: "baseline",
 } as const satisfies DiagnosticMetadata;
 
+export const runtimeFrameworkDiagnosticMetadata = {
+  code: "DOC0040",
+  ruleId: "doctor/runtime/framework-diagnostic",
+  title: "Fix a diagnostic the framework reported at runtime",
+  description:
+    "While the Vite dev server ran, the framework reported a diagnostic from the browser through `nostics`, such as Nuxt's `NUXT_E3004`.",
+  why: "The framework saw the problem happen, so Doctor reports its code, message, fix, and docs link unchanged. Doctor places the Diagnostic at the call site only when the dev server's module graph and source map prove the source position; otherwise the Diagnostic stays at the project root and its evidence says the location is partial. Only browser reports reach Doctor: reports from server-side rendering print to the terminal but are never sent to the dev server. A report lasts until the dev server restarts, or until its file is saved.",
+  fix: "Follow the framework's fix and docs link in the Diagnostic, then reload the page that reported it. The Diagnostic's message starts with the framework's own code.",
+  severity: "warn",
+  category: "runtime",
+} as const satisfies DiagnosticMetadata;
+
 export const workspaceDiagnosticMetadata = [
   {
     code: "DOC0001",
@@ -170,6 +182,7 @@ const explainableMetadata: Array<DiagnosticMetadata & { analysis?: WorkspaceDiag
     ...workspaceDiagnosticMetadata,
     defaultConfigDiagnosticMetadata,
     resolvedBaselineDiagnosticMetadata,
+    runtimeFrameworkDiagnosticMetadata,
   ];
 
 export const diagnosticMetadataByCode = new Map(

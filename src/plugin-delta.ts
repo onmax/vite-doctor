@@ -94,6 +94,8 @@ export interface DeltaLogOptions {
   root: string;
   /** Files whose change started the run, for the log header. */
   changed: readonly string[];
+  /** A framework diagnostic reported at runtime also started the run. */
+  reported?: boolean;
   mode: "warn" | "error";
   maxWarnings?: number;
 }
@@ -135,7 +137,7 @@ export function formatDelta(
     resolved.length && `${resolved.length} resolved`,
   ].filter(Boolean);
   const lines = [
-    `Vite Doctor: ${counts.length ? counts.join(", ") : "evidence changed"} after changes to ${changedFiles(options)}`,
+    `Vite Doctor: ${counts.length ? counts.join(", ") : "evidence changed"} after ${runCause(options)}`,
   ];
   for (const gap of addedGaps)
     lines.push(`Evidence missing: ${gap.message} ${relativeFiles(options.root, gap.files)}`);
@@ -159,6 +161,14 @@ export function formatDelta(
         ? "warn"
         : "info";
   return { level, message: lines.join("\n") };
+}
+
+function runCause(options: DeltaLogOptions): string {
+  const causes = [
+    options.changed.length ? `changes to ${changedFiles(options)}` : undefined,
+    options.reported ? "a framework runtime report" : undefined,
+  ].filter(Boolean);
+  return causes.join(" and ") || "changes";
 }
 
 function changedFiles({ root, changed }: DeltaLogOptions): string {
