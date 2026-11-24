@@ -667,6 +667,72 @@ test("scopes prepared routes and conventional fallbacks to each Nuxt app", async
   }
 });
 
+test("uses the workspace package's prepared route table from either run root", async () => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-prepared-workspace-owner-"));
+  const cwd = process.cwd();
+  const site = "packages/site";
+  const appRoot = join(root, site);
+  const write = (path: string, text: string) => {
+    const file = join(root, path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, text);
+  };
+  try {
+    symlinkSync(
+      fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+      join(root, "node_modules"),
+      "junction",
+    );
+    write("package.json", JSON.stringify({ private: true, workspaces: ["packages/*"] }));
+    write(
+      `${site}/package.json`,
+      JSON.stringify({ name: "site", type: "module", dependencies: { nuxt: "^4.0.0" } }),
+    );
+    write(`${site}/nuxt.config.ts`, "export default { app: { pageTransition: true } }");
+    write(`${site}/app/pages/index.vue`, template("<h1>Site</h1><p>Welcome</p>"));
+    write(`${site}/app/pages/draft.vue`, template("<h1>Draft</h1><p>Unpublished</p>"));
+
+    process.chdir(appRoot);
+    const nuxt = await loadNuxt({
+      cwd: appRoot,
+      overrides: {
+        _prepare: true,
+        modules: [
+          nuxtDoctorModule,
+          (_options, instance) => {
+            instance.hook("pages:extend", (pages) => {
+              const draft = pages.findIndex((page) => page.path === "/draft");
+              if (draft !== -1) pages.splice(draft, 1);
+            });
+          },
+        ],
+        telemetry: false,
+      },
+    });
+    try {
+      await buildNuxt(nuxt);
+    } finally {
+      await nuxt.close();
+    }
+
+    const expectRegisteredPageOnly = async (runRoot: string) => {
+      const { diagnostics } = await runPreparedRules(runRoot);
+      expect(
+        diagnostics.map(({ code, file }) => [code, relative(appRoot, file!)]),
+        `Doctor Run from ${runRoot}`,
+      ).toEqual([["NUXT0100", "app/pages/index.vue"]]);
+    };
+    await expectRegisteredPageOnly(appRoot);
+    await expectRegisteredPageOnly(root);
+
+    write("nuxt.config.ts", "export default {}");
+    await expectRegisteredPageOnly(root);
+  } finally {
+    process.chdir(cwd);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test.each(["pages", "app/pages"])(
   "rechecks page selection after preparing %s",
   async (pagesDir) => {

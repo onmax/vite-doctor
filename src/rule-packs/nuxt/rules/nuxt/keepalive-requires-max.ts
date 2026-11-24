@@ -2,6 +2,7 @@ import { basename, dirname, join, relative, resolve } from "pathe";
 import { gte, valid } from "semver";
 import { parseScriptScope } from "../../../../core/internal/script-scope.js";
 import type { DiagnosticEvidence, RuleContext } from "../../../../core/index.js";
+import { nuxtInventoryRoot } from "./file-classification.js";
 import { FUNCTION_TYPES, propertyName, unwrap } from "./nuxt-config-ast.js";
 import {
   conventionalPagesDirectory,
@@ -138,13 +139,12 @@ function routeParams(
       : manifest.isCurrent && manifest.pages?.length)
   ) {
     if (manifest.resolvedApp && !manifest.resolvedApp.pagesResolved) return null;
+    const root = nuxtInventoryRoot(ctx);
     const paths = [
       ...new Set(
         (manifest.pages ?? []).flatMap((page) => {
           const path = manifest.resolvedApp ? page.fullPath : (page.fullPath ?? page.path);
-          return path && page.file && resolveSameFile(resolve(ctx.project.root, page.file), file)
-            ? [path]
-            : [];
+          return path && page.file && resolveSameFile(resolve(root, page.file), file) ? [path] : [];
         }),
       ),
     ];
