@@ -1,13 +1,21 @@
 import { relative } from "pathe";
-import { createRule } from "../../../core/index.js";
+import { createRule, type RuleContext } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
-import { nuxtForFile } from "./shared.js";
-import { collectStores, findStoreCalls, storeRange } from "./store-inventory.js";
+import { isPiniaSource, nuxtForFile } from "./shared.js";
+import {
+  calleeBinding,
+  collectStores,
+  findStoreCalls,
+  implicitImportsEnabled,
+  storeRange,
+  unwrap,
+  type AnyNode,
+  type StoreCall,
+} from "./store-inventory.js";
 
 const RULE_ID = "pinia/stores/no-module-scope-store";
 // A module that creates or activates Pinia itself, such as a SPA entry or a test setup, can call
 // stores at its top level after `app.use(pinia)`.
-const PINIA_SETUP = /\b(?:createPinia|setActivePinia|createTestingPinia)\s*\(/;
 
 export const noModuleScopeStore = createRule({
   meta: {
@@ -47,10 +55,13 @@ export const noModuleScopeStore = createRule({
         const collection = await collectStores(ctx);
         if (!collection.stores.length) return;
         for (const call of await findStoreCalls(ctx, collection)) {
-          if (call.context !== "module" || call.call.arguments.length) continue;
-          if (PINIA_SETUP.test(call.text)) continue;
+          if (call.context !== "module") continue;
+          const argument = call.call.arguments[0];
+          if (argument && !isMissingInstance(call, argument)) continue;
+          if (hasPriorActivation(ctx, call)) continue;
           const id = call.store.located.store.id;
-          const name = call.call.callee.name ?? "useStore";
+          const callee = unwrap(call.call.callee);
+          const name = call.text.slice(callee.range[0], callee.range[1]);
           const nuxt = nuxtForFile(ctx, call.file);
           const ssr = Boolean(nuxt) && nuxt?.ssr !== false;
           const byName = call.byName
@@ -84,3 +95,83 @@ export const noModuleScopeStore = createRule({
     };
   },
 });
+
+function isMissingInstance(call: StoreCall, argument: AnyNode): boolean {
+  const node = unwrap(argument);
+  return (
+    (node.type === "Literal" && !node.value) ||
+    (node.type === "UnaryExpression" && node.operator === "void") ||
+    (node.type === "Identifier" &&
+      node.name === "undefined" &&
+      !call.source.scope.references.get(node)?.resolved?.defs.length)
+  );
+}
+
+function hasPriorActivation(ctx: RuleContext, call: StoreCall): boolean {
+  const { scope } = call.source;
+  const nuxt = nuxtForFile(ctx, call.file);
+  const implicit = implicitImportsEnabled(ctx, call.file);
+  function api(node: AnyNode) {
+    return node?.type === "CallExpression"
+      ? calleeBinding(unwrap(node.callee), scope, nuxt, implicit)
+      : undefined;
+  }
+  function initializer(value: AnyNode, before: number) {
+    const node = unwrap(value);
+    if (node?.type !== "Identifier") return node;
+    const definitions = scope.references.get(node)?.resolved?.defs;
+    const definition = definitions?.length === 1 ? definitions[0] : undefined;
+    return definition?.type === "Variable" &&
+      definition.parent.kind === "const" &&
+      definition.node.id === definition.name &&
+      definition.node.range[1] < before
+      ? unwrap(definition.node.init)
+      : undefined;
+  }
+  function testingPinia(node: AnyNode) {
+    const binding = api(node);
+    return binding?.from === "@pinia/testing" && binding.name === "createTestingPinia";
+  }
+  function piniaInstance(value: AnyNode, before: number) {
+    const init = initializer(value, before);
+    const binding = api(init);
+    return (binding?.name === "createPinia" && isPiniaSource(binding.from)) || testingPinia(init);
+  }
+  let active = false;
+  for (const statement of scope.ast.body as AnyNode[]) {
+    if (statement.range[1] > call.call.range[0]) break;
+    if (call.contextOf(statement) !== "module") continue;
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type === "VariableDeclaration") {
+      if (declaration.declarations.some((item: AnyNode) => testingPinia(unwrap(item.init))))
+        active = true;
+      continue;
+    }
+    if (statement.type !== "ExpressionStatement") continue;
+    const expression = unwrap(statement.expression);
+    if (expression?.type !== "CallExpression" || expression.optional) continue;
+    const binding = api(expression);
+    if (testingPinia(expression)) active = true;
+    else if (binding?.name === "setActivePinia" && isPiniaSource(binding.from))
+      active = piniaInstance(expression.arguments[0], expression.range[0]);
+    else {
+      const callee = unwrap(expression.callee);
+      if (
+        callee?.type !== "MemberExpression" ||
+        callee.optional ||
+        callee.computed ||
+        callee.property.name !== "use"
+      )
+        continue;
+      const receiver = api(initializer(callee.object, expression.range[0]));
+      if (
+        receiver?.from === "vue" &&
+        ["createApp", "createSSRApp"].includes(receiver.name) &&
+        piniaInstance(expression.arguments[0], expression.range[0])
+      )
+        active = true;
+    }
+  }
+  return active;
+}

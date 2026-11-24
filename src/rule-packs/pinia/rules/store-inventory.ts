@@ -281,23 +281,23 @@ function readInventory(
   }
   const read = readProperties(options);
   const gaps: string[] = read.complete ? [] : ["the store options use a spread or computed key"];
-  const state = read.properties.get("state");
-  if (state) {
-    const literal = returnedObject(state.value);
-    const properties = literal && readProperties(literal);
-    if (!properties?.complete)
-      gaps.push("Doctor cannot read every key the state() function returns");
-    for (const [name, property] of properties?.properties ?? [])
-      inventory.keys.set(name, { kind: "state", node: property.key });
-  }
   for (const [option, kind] of [
-    ["getters", "getter"],
+    ["state", "state"],
     ["actions", "action"],
+    ["getters", "getter"],
   ] as const) {
     const value = read.properties.get(option);
-    if (!value) continue;
-    const properties = readProperties(value.value);
-    if (!properties.complete) gaps.push(`Doctor cannot read every key of ${option}`);
+    if (!value) {
+      if (!read.complete) inventory.keys.clear();
+      continue;
+    }
+    const properties = readProperties(
+      option === "state" ? returnedObject(scope, value.value) : value.value,
+    );
+    if (!properties.complete) {
+      gaps.push(`Doctor cannot read every key of ${option}`);
+      inventory.keys.clear();
+    }
     for (const [name, property] of properties.properties)
       inventory.keys.set(name, { kind, node: property.key });
   }
@@ -377,16 +377,9 @@ export function setupReturn(scope: ScriptScope, setup: AnyNode): AnyNode {
 }
 
 /** The object literal a state function returns, as with `state: () => ({ ... })`. */
-export function returnedObject(value: AnyNode): AnyNode {
+export function returnedObject(scope: ScriptScope, value: AnyNode): AnyNode {
   const fn = unwrap(value);
-  if (!FUNCTIONS.has(fn?.type)) return undefined;
-  const body =
-    fn.body?.type === "BlockStatement"
-      ? fn.body.body.findLast((statement: AnyNode) => statement.type === "ReturnStatement")
-          ?.argument
-      : fn.body;
-  const literal = unwrap(body);
-  return literal?.type === "ObjectExpression" ? literal : undefined;
+  return FUNCTIONS.has(fn?.type) ? setupReturn(scope, fn) : undefined;
 }
 
 /**
@@ -450,31 +443,26 @@ function storeExportNames(scope: ScriptScope, located: LocatedStore, call: AnyNo
 
 /**
  * Calls to project stores in the run's source files, resolved to their definitions the same way
- * setup-store cycles resolve them, with where each call runs. `extra` keeps files that mention
- * one of its names although they call no store.
+ * setup-store cycles resolve them, with where each call runs.
  */
 export async function findStoreCalls(
   ctx: RuleContext,
   collection: StoreCollection,
-  visitFile?: (file: string, text: string, source: AnalyzedSource) => void,
-  extra: string[] = [],
 ): Promise<StoreCall[]> {
-  const names = new Set<string>(extra);
+  const names = new Set<string>();
   for (const store of collection.stores)
     for (const name of store.exportNames) if (name !== "default") names.add(name);
   for (const nuxt of [ctx.project.nuxt, ...(ctx.project.workspaceNuxt ?? []).map((i) => i.nuxt)])
-    for (const [name, entry] of nuxt?.autoImports ?? [])
-      if (!entry.type && names.has(entry.name)) names.add(name);
-  if (!names.size) return [];
-  const pattern = new RegExp(`\\b(?:${[...names].map(escapeRegExp).join("|")})\\b`);
+    for (const [name, entry] of nuxt?.autoImports ?? []) if (!entry.type) names.add(name);
+  const pattern = names.size ? new RegExp([...names].map(escapeRegExp).join("|")) : undefined;
   const calls: StoreCall[] = [];
   for (const file of await ctx.inventory.sourcePaths()) {
     if (/\.mdc?$/.test(file)) continue;
     const text = ctx.fs.readText(file);
-    if (!text || !pattern.test(text)) continue;
-    const source = collection.scopes.get(file) ?? (await analyzeSource(file, text));
+    const cached = collection.scopes.get(file);
+    if (!text || (!cached && !text.includes("import") && !pattern?.test(text))) continue;
+    const source = cached ?? (await analyzeSource(file, text));
     if (!source) continue;
-    visitFile?.(file, text, source);
     const { scope } = source;
     const implicit = implicitImportsEnabled(ctx, file);
     const local = new Map(
@@ -488,12 +476,15 @@ export async function findStoreCalls(
         .map((store) => unwrap(store.call.arguments[1])),
     );
     const parents = new WeakMap<AnyNode, AnyNode>();
+    const contextOf = (node: AnyNode) =>
+      callContext(node, parents, source, setups, (fn) =>
+        isComponentSetup(ctx, file, source, fn, parents),
+      );
     walk(scope, scope.ast, (node, ancestors) => {
       if (ancestors.length) parents.set(node, ancestors.at(-1));
       if (node.type !== "CallExpression") return;
       const callee = unwrap(node.callee);
-      if (callee?.type !== "Identifier" || !names.has(callee.name)) return;
-      const target = useTarget(scope.references.get(callee), callee.name, local, implicit);
+      const target = useTarget(scope, callee, local, implicit ? names : undefined);
       if (!target) return;
       const resolved = collection.resolveUse(file, target);
       const store = resolved && collection.byLocated.get(resolved.store);
@@ -505,9 +496,9 @@ export async function findStoreCalls(
         call: node,
         store,
         byName: resolved.byName,
-        context: callContext(node, parents, source, setups),
+        context: contextOf(node),
         parents,
-        contextOf: (other) => callContext(other, parents, source, setups),
+        contextOf,
       });
     });
   }
@@ -515,45 +506,55 @@ export async function findStoreCalls(
 }
 
 function useTarget(
-  reference: AnyNode,
-  name: string,
+  scope: ScriptScope,
+  callee: AnyNode,
   local: Map<number, CollectedStore>,
-  implicit: boolean,
+  implicitNames: Set<string> | undefined,
 ): SetupStoreUseTarget | undefined {
+  const member = callee?.type === "MemberExpression";
+  const identifier = member ? unwrap(callee.object) : callee;
+  if (identifier?.type !== "Identifier") return undefined;
+  const reference = scope.references.get(identifier);
   if (!reference?.isValueReference) return undefined;
   const variable = reference.resolved;
-  if (!variable) return implicit ? { kind: "auto-import", name } : undefined;
+  if (!variable) {
+    if (member || !implicitNames?.has(identifier.name)) return undefined;
+    return { kind: "auto-import", name: identifier.name };
+  }
   if (variable.defs.length !== 1) return undefined;
   const definition = variable.defs[0];
   if (
     definition.type === "ImportBinding" &&
     definition.parent.type === "ImportDeclaration" &&
-    definition.parent.importKind !== "type" &&
-    definition.node.type === "ImportSpecifier" &&
-    definition.node.importKind !== "type"
-  )
-    return {
-      kind: "import",
-      name: exportedName(definition.node.imported),
-      source: String(definition.parent.source.value),
-    };
-  if (definition.type === "Variable" && local.has(definition.name.range[0]))
+    definition.parent.importKind !== "type"
+  ) {
+    const binding = definition.node;
+    let name: string | undefined;
+    if (member && binding.type === "ImportNamespaceSpecifier") {
+      if (!callee.computed) name = callee.property.name;
+      else if (typeof callee.property.value === "string") name = callee.property.value;
+    } else if (!member && binding.type === "ImportDefaultSpecifier") name = "default";
+    else if (!member && binding.type === "ImportSpecifier" && binding.importKind !== "type")
+      name = exportedName(binding.imported);
+    if (name !== undefined)
+      return { kind: "import", name, source: String(definition.parent.source.value) };
+  }
+  if (!member && definition.type === "Variable" && local.has(definition.name.range[0]))
     return { kind: "local", start: definition.name.range[0] };
   return undefined;
 }
 
 /** Where `node` runs: the innermost function or class around it decides. */
-export function callContext(
+function callContext(
   node: AnyNode,
   parents: WeakMap<AnyNode, AnyNode>,
   source: AnalyzedSource,
   setups: Set<AnyNode>,
+  componentSetup: (fn: AnyNode) => boolean,
 ): CallContext {
   for (let parent = parents.get(node); parent; parent = parents.get(parent)) {
     if (!DEFERRED.has(parent.type) && parent.type !== "StaticBlock") continue;
-    return setups.has(parent) || (source.script && isComponentSetup(parent, parents))
-      ? "setup"
-      : "other";
+    return setups.has(parent) || componentSetup(parent) ? "setup" : "other";
   }
   const offset = node.range[0];
   if (!source.script && !source.scriptSetup) return "module";
@@ -565,21 +566,42 @@ function within(offset: number, range: [number, number] | undefined) {
   return range !== undefined && offset >= range[0] && offset < range[1];
 }
 
-/** `setup()` of the component an SFC's `<script>` exports, directly or through `defineComponent()`. */
-function isComponentSetup(fn: AnyNode, parents: WeakMap<AnyNode, AnyNode>): boolean {
+function isComponentSetup(
+  ctx: RuleContext,
+  file: string,
+  source: AnalyzedSource,
+  fn: AnyNode,
+  parents: WeakMap<AnyNode, AnyNode>,
+): boolean {
   if (!FUNCTIONS.has(fn.type)) return false;
-  const property = parents.get(fn);
-  if (property?.type !== "Property" || property.value !== fn || property.computed) return false;
-  if (ownPropertyName(property) !== "setup") return false;
-  let owner = parents.get(property);
-  if (owner?.type !== "ObjectExpression") return false;
-  for (owner = parents.get(owner); owner && WRAPPERS.has(owner.type); owner = parents.get(owner));
-  if (owner?.type === "CallExpression") {
-    const callee = unwrap(owner.callee);
-    if (callee?.type !== "Identifier" || callee.name !== "defineComponent") return false;
-    for (owner = parents.get(owner); owner && WRAPPERS.has(owner.type); owner = parents.get(owner));
-  }
-  return owner?.type === "ExportDefaultDeclaration";
+  const { expression, parent } = enclosing(fn, parents);
+  const isDefineComponent = (node: AnyNode) => {
+    const nuxt = nuxtForFile(ctx, file);
+    const binding = calleeBinding(
+      unwrap(node.callee),
+      source.scope,
+      nuxt,
+      implicitImportsEnabled(ctx, file),
+    );
+    return binding
+      ? binding.from === "vue" && binding.name === "defineComponent"
+      : Boolean(nuxt) && vueApiCall(ctx, file, source.scope, node) === "defineComponent";
+  };
+  if (parent?.type === "CallExpression")
+    return parent.arguments[0] === expression && isDefineComponent(parent);
+  if (parent?.type !== "Property" || parent.value !== expression || parent.kind !== "init")
+    return false;
+  if (ownPropertyName(parent) !== "setup") return false;
+  const options = parents.get(parent);
+  if (
+    options?.type !== "ObjectExpression" ||
+    readProperties(options).properties.get("setup") !== parent
+  )
+    return false;
+  const owner = enclosing(options, parents);
+  if (owner.parent?.type === "CallExpression")
+    return owner.parent.arguments[0] === owner.expression && isDefineComponent(owner.parent);
+  return within(fn.range[0], source.script) && owner.parent?.type === "ExportDefaultDeclaration";
 }
 
 /** The outermost transparent wrapper around `node` and the node that contains it. */

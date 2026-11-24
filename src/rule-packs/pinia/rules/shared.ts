@@ -642,6 +642,25 @@ export function storeResolver<S extends StoreDefinition>(
     );
   }
 
+  function localExport(file: string, body: AnyNode[], local: string, seen: Set<string>) {
+    for (const statement of body) {
+      const store = declarationStore(file, statement.declaration ?? statement, local);
+      if (store) return store;
+      if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
+      const imported = statement.specifiers.find((entry: AnyNode) => entry.local.name === local);
+      const name =
+        imported?.type === "ImportDefaultSpecifier"
+          ? "default"
+          : imported?.type === "ImportSpecifier" && imported.importKind !== "type"
+            ? exportName(imported.imported)
+            : undefined;
+      if (!name) continue;
+      const target = moduleFile(file, statement.source.value);
+      return (target && exported(target, name, seen)) || null;
+    }
+    return null;
+  }
+
   // `null` means the export might exist but cannot be proven to be a store; `undefined` means absent.
   function exported(
     file: string,
@@ -654,6 +673,15 @@ export function storeResolver<S extends StoreDefinition>(
     if (!body) return null;
     const path = new Set(seen).add(key);
     for (const statement of body) {
+      if (name === "default" && statement.type === "ExportDefaultDeclaration") {
+        const declaration = unwrap(statement.declaration);
+        if (declaration?.type === "Identifier")
+          return localExport(file, body, declaration.name, path);
+        const id = declaration?.type === "CallExpression" ? readStoreId(declaration) : undefined;
+        return (
+          (id && byFile.get(file)?.find((entry) => entry.store.idStart === id.idStart)) || null
+        );
+      }
       if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
       const declaration = statement.declaration;
       if (declaration?.id?.name === name) return null;
@@ -675,20 +703,10 @@ export function storeResolver<S extends StoreDefinition>(
           const target = moduleFile(file, statement.source.value);
           return (target && exported(target, local, path)) || null;
         }
-        for (const binding of body) {
-          const store = declarationStore(file, binding.declaration ?? binding, local);
-          if (store) return store;
-          if (binding.type !== "ImportDeclaration" || binding.importKind === "type") continue;
-          const imported = binding.specifiers.find(
-            (entry: StoreModule["program"]) => entry.local.name === local,
-          );
-          if (imported?.type !== "ImportSpecifier" || imported.importKind === "type") continue;
-          const target = moduleFile(file, binding.source.value);
-          return (target && exported(target, exportName(imported.imported), path)) || null;
-        }
-        return null;
+        return localExport(file, body, local, path);
       }
     }
+    if (name === "default") return undefined;
     let match: LocatedStore<S> | undefined;
     for (const statement of body) {
       if (statement.type !== "ExportAllDeclaration" || statement.exportKind === "type") continue;

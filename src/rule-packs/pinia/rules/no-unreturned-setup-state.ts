@@ -77,10 +77,7 @@ export const noUnreturnedSetupState = createRule({
             ];
             continue;
           }
-          for (const candidate of candidates) {
-            if (candidate.references.some((node: AnyNode) => contains(returned, node))) continue;
-            report(ctx, store, candidate);
-          }
+          for (const candidate of candidates) report(ctx, store, candidate);
         }
       },
     };
@@ -91,7 +88,6 @@ interface Candidate {
   name: string;
   declaration: AnyNode;
   shape: "ref" | "reactive";
-  references: AnyNode[];
   writes: LocalStateWrite[];
 }
 
@@ -139,7 +135,6 @@ function unreturnedCandidates(
         name: declarator.id.name,
         declaration: declarator.id,
         shape,
-        references,
         writes,
       });
     }
@@ -161,10 +156,6 @@ function containedUse(
     parent.arguments[0] === expression &&
     vueApiCall(ctx, store.located.module.file, store.scope, parent) === "watch"
   );
-}
-
-function contains(outer: AnyNode, inner: AnyNode) {
-  return inner.range[0] >= outer.range[0] && inner.range[1] <= outer.range[1];
 }
 
 function report(ctx: RuleContext, store: CollectedStore, candidate: Candidate) {

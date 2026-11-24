@@ -259,9 +259,9 @@ ${body}
       "{ query, setQuery }",
     ],
     [
-      "state returned inside a computed()",
-      "  const query = ref('')\n  function setQuery(value: string) {\n    query.value = value\n  }",
-      "{ query: computed(() => query.value), setQuery }",
+      "state returned under another key",
+      "  const query = ref('')",
+      "{ value: query, reset() { query.value = '' } }",
     ],
     [
       "a ref only read once during setup",
@@ -279,6 +279,21 @@ ${body}
     expect(result.diagnostics).toEqual([]);
   });
 
+  test.each([
+    "{ increment() { count.value++ } }",
+    "{ increment() { count.value++ }, doubled: computed(() => count.value * 2) }",
+    "{ increment() { count.value++ }, doubled }",
+    "{ increment() { count.value++ }, snapshot: count.value }",
+  ])("reports written state not exposed by %s", async (returned) => {
+    const result = await run(rule, {
+      "stores/search.ts": store(
+        "  const count = ref(0)\n  const doubled = computed(() => count.value * 2)",
+        returned,
+      ),
+    });
+    expect(result.diagnostics.map((item) => item.code)).toEqual(["PINIA0007"]);
+  });
+
   test("records an evidence gap when the return object has an unknown spread", async () => {
     const result = await run(rule, {
       "stores/search.ts": store(
@@ -288,5 +303,116 @@ ${body}
     });
     expect(result.diagnostics).toEqual([]);
     expect(result.project.evidenceGaps?.[0]?.message).toContain("query");
+  });
+});
+
+describe("Pinia store state regressions", () => {
+  test.each([
+    ["import { useCounterStore as counter } from '../stores/counter'", "counter()"],
+    ["import { counter } from '../stores/barrel'", "counter()"],
+    ["import counter from '../stores/default'", "counter()"],
+    ["import counter from '../stores/direct-default'", "counter()"],
+    ["import * as stores from '../stores/counter'", "stores.useCounterStore()"],
+    [counterSetup.replace("export const", "const"), "useCounterStore()"],
+  ])("resolves store calls through %s", async (preamble, call) => {
+    const files = {
+      "stores/counter.ts": counterSetup,
+      "stores/barrel.ts": "export { useCounterStore as counter } from './counter'",
+      "stores/default.ts": "export { useCounterStore as default } from './counter'",
+      "stores/direct-default.ts": counterSetup.replace(
+        "export const useCounterStore =",
+        "export default",
+      ),
+    };
+    const code = `${preamble}\nconst { count } = ${call}`;
+    const destructure = await run(pinia.noStoreDestructure, {
+      ...files,
+      "components/Counter.vue": `<script setup lang="ts">\n${code}\n</script>`,
+    });
+    expect(destructure.diagnostics.map((item) => item.code)).toEqual(["PINIA0005"]);
+    const moduleScope = await run(pinia.noModuleScopeStore, {
+      ...files,
+      "components/counter.ts": code,
+    });
+    expect(moduleScope.diagnostics.map((item) => item.code)).toEqual(["PINIA0006"]);
+  });
+
+  test.each([
+    ["state: () => ({ count: 0 }), actions: { ...unknownActions }", undefined],
+    ["state() { if (condition) return { total: 0 }; return { count: 0 } }", undefined],
+    [
+      "state: () => ({ count: 0 }), actions: { ...unknownActions }, getters: { count: () => 1 }",
+      "getter",
+    ],
+    ["state: () => ({ count: 0 }), actions: { count() {} }, getters: { count: () => 1 }", "getter"],
+  ])("classifies effective keys in %s", async (options, kind) => {
+    const result = await run(pinia.noStoreDestructure, {
+      "stores/counter.ts": `import { defineStore } from 'pinia'; export const useCounterStore = defineStore('counter', { ${options} })`,
+      "components/Counter.vue": component("const { count } = useCounterStore()"),
+    });
+    if (kind) expect(result.diagnostics[0]?.why).toContain(`"count" (${kind})`);
+    else {
+      expect(result.diagnostics).toEqual([]);
+      expect(result.project.evidenceGaps).toHaveLength(1);
+    }
+  });
+
+  test.each([
+    ["import { createPinia } from 'pinia'; const pinia = createPinia(); useCounterStore()", 1],
+    [
+      "import { createPinia } from 'pinia'; const app = createApp({}); useCounterStore(); app.use(createPinia())",
+      1,
+    ],
+    ["useCounterStore(null); useCounterStore(undefined)", 2],
+    [
+      "import { createPinia as makePinia } from 'pinia'; const app = createApp({}); const pinia = makePinia(); app.use(pinia); useCounterStore()",
+      0,
+    ],
+    [
+      "import { createPinia } from 'pinia'; const app = createApp({}); if (condition) app.use(createPinia()); useCounterStore()",
+      1,
+    ],
+    [
+      "import { createPinia as make, setActivePinia as activate } from 'pinia'; activate(make()); useCounterStore()",
+      0,
+    ],
+    [
+      "import { createTestingPinia as testing } from '@pinia/testing'; const pinia = testing(); useCounterStore()",
+      0,
+    ],
+  ])("recognizes activation order for %s", async (code, count) => {
+    const result = await run(pinia.noModuleScopeStore, {
+      "stores/counter.ts": counterSetup,
+      "components/counter.ts": `import { useCounterStore } from '../stores/counter'; import { createApp } from 'vue'; ${code}`,
+    });
+    expect(result.diagnostics).toHaveLength(count);
+  });
+
+  test.each([
+    ["counter.ts", "{ setup() { const { count } = useCounterStore(); return { count } } }"],
+    ["Counter.vue", "{ setup() { const { count } = useCounterStore(); return { count } } }"],
+    [
+      "counter.ts",
+      "() => { const { count } = useCounterStore(); const read = () => { const { count } = useCounterStore(); return count }; return () => count + read() }",
+    ],
+  ])("recognizes Vue setup in %s: %s", async (file, setup) => {
+    const code = `import { useCounterStore } from '../stores/counter'; import { defineComponent as component } from 'vue'; export default component(${setup})`;
+    const result = await run(pinia.noStoreDestructure, {
+      "stores/counter.ts": counterSetup,
+      [`components/${file}`]: file.endsWith(".vue") ? `<script lang="ts">${code}</script>` : code,
+    });
+    expect(result.diagnostics.map((item) => item.code)).toEqual(["PINIA0005"]);
+  });
+
+  test("ignores an unrelated function named defineComponent", async () => {
+    const result = await run(pinia.noStoreDestructure, {
+      "stores/counter.ts": counterSetup,
+      "components/Counter.vue": `<script lang="ts">
+import { useCounterStore } from '../stores/counter'
+function defineComponent(options: unknown) { return options }
+export default defineComponent({ setup() { const { count } = useCounterStore(); return { count } } })
+</script>`,
+    });
+    expect(result.diagnostics).toEqual([]);
   });
 });

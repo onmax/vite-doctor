@@ -166,7 +166,7 @@ function analyzeOptionStore(
   scope: ScriptScope,
   options: AnyNode,
 ): Pick<AnalyzedStore, "state" | "collectionAt"> | undefined {
-  const literal = returnedObject(propertyValue(options, "state"));
+  const literal = returnedObject(scope, propertyValue(options, "state"));
   if (!literal) return undefined;
   const { properties } = readProperties(literal);
   const collectionAt: CollectionAt = ([key, ...path]) => {
