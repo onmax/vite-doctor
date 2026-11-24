@@ -61,9 +61,13 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       return node.facts.imports.find((item) => candidates.includes(item.local));
     };
     const inClientOnlySlot = (wrappers: ComponentUsageFact["wrappers"]) =>
-      wrappers.some(({ tag, defaultSlot, shadowed }) => {
+      wrappers.some(({ tag, defaultSlot, slotObject, shadowed }) => {
         if (!defaultSlot || shadowed) return false;
         const binding = findBinding(tag);
+        if (!binding && excludedFromComponentTransform)
+          return (
+            slotObject && /^(?:ClientOnly|client-only|LazyClientOnly|lazy-client-only)$/.test(tag)
+          );
         const name = binding?.source === "#components" ? binding.imported : pascalCase(tag);
         if (
           binding?.source === "vue-client-only" ||
@@ -72,7 +76,6 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
           return true;
         if (!nuxt || name !== "ClientOnly" || (binding && binding.source !== "#components"))
           return false;
-        if (!binding && excludedFromComponentTransform) return false;
         const registered = registry?.get(name);
         const locallyRegistered = node.facts.localComponents?.some((localName) =>
           tagCandidates(tag).includes(localName),

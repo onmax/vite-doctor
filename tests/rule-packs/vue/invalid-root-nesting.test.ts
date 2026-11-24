@@ -282,7 +282,7 @@ test.each([
 });
 
 test(
-  "VUE0052 follows Nuxt's static ClientOnly transform but not literal is lookup",
+  "VUE0052 distinguishes Nuxt's ClientOnly loader, slot pruning, and literal is lookup",
   { timeout: 90000 },
   async () => {
     const root = mkdtempSync(join(tmpdir(), "doctor-client-only-"));
@@ -323,6 +323,8 @@ const ready = true
 </script>
 <template>
   <ClientOnly><template v-if="ready" #default><p><Card />excluded-marker</p></template></ClientOnly>
+  <ClientOnly><p v-if="ready"><Card />pruned-marker</p></ClientOnly>
+  <ClientOnly><template v-if="ready" #other><i /></template><p><Card />dynamic-slots-marker</p></ClientOnly>
 </template>`,
       })) {
         const file = join(root, path);
@@ -344,6 +346,9 @@ const ready = true
       expect(html).toContain("<p><div>card</div>literal-is-marker</p>");
       const excluded = readFileSync(join(root, ".output/public/excluded/index.html"), "utf8");
       expect(excluded).toContain("<p><div>card</div>excluded-marker</p>");
+      expect(excluded).toContain("<section><!--[--><!--]--></section>");
+      expect(excluded).not.toContain("pruned-marker");
+      expect(excluded).toContain("<p><div>card</div>dynamic-slots-marker</p>");
       const result = await runDoctor({
         root,
         framework: "nuxt",
@@ -353,6 +358,7 @@ const ready = true
       });
       expect(located(result)).toEqual([
         ["VUE0052", "app/pages/excluded.vue", 10],
+        ["VUE0052", "app/pages/excluded.vue", 12],
         ["VUE0052", "app/pages/index.vue", 11],
       ]);
     } finally {

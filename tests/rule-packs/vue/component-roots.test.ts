@@ -84,7 +84,11 @@ import Two from './Two.vue'
     ["Two", undefined, []],
     ["Two", { tag: "ul", element: true }, []],
     ["Card", undefined, []],
-    ["Two", { tag: "Card", element: false }, [{ tag: "Card", defaultSlot: true, shadowed: false }]],
+    [
+      "Two",
+      { tag: "Card", element: false },
+      [{ tag: "Card", defaultSlot: true, slotObject: true, shadowed: false }],
+    ],
   ]);
 });
 

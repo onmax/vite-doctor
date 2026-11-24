@@ -818,6 +818,13 @@ function walkElement(
       {
         tag: element.tag,
         defaultSlot,
+        slotObject: !element.children.some(
+          (child) =>
+            child.type === TemplateNodeType.ELEMENT &&
+            child.tagType === 3 &&
+            findTemplateDirective(child, "slot") &&
+            (findTemplateDirective(child, "if") || findTemplateDirective(child, "for")),
+        ),
         shadowed: tagCandidates(element.tag).some((tag) => elementScope.includes(tag)),
       },
     ];
