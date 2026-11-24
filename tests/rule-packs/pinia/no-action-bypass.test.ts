@@ -434,22 +434,49 @@ Object.assign(cart, { items: [] }, { total: 0 })`,
     },
   );
 
+  test.each([false, true])(
+    "resolves a Nuxt directory registration with metadata only (host order: %s)",
+    async (hostOrder) => {
+      const result = await runNuxt(
+        {
+          "stores/cart/package.json": JSON.stringify({
+            name: "fixture-cart",
+            type: "module",
+            private: true,
+            sideEffects: false,
+          }),
+          "stores/cart/index.ts": setupCart,
+          "a.ts": nuxtWriter("useCartStore", "import { useCartStore } from '#imports'"),
+          "b.ts": nuxtWriter("useCartStore"),
+        },
+        [{ name: "useCartStore", from: "~/stores/cart" }],
+        { extensionOrders: hostOrder ? [[".ts", ".js"]] : undefined },
+      );
+      expect(result.project.nuxt?.autoImportsAuthoritative).toBe(true);
+      expect(result.diagnostics).toHaveLength(1);
+    },
+  );
+
   test.each([
-    { entry: null, count: 1 },
-    { entry: {}, count: 0 },
-    { entry: { module: "./entry.js" }, count: 0 },
-    { entry: { main: "./entry.js" }, count: 0 },
-    { entry: { exports: "./entry.js" }, count: 0 },
+    { entry: null, indexJs: true, count: 1 },
+    { entry: {}, indexJs: true, count: 0 },
+    { entry: { module: "./entry.js" }, indexJs: true, count: 0 },
+    { entry: { main: "./entry.js" }, indexJs: false, count: 0 },
+    { entry: { exports: "./entry.js" }, indexJs: false, count: 0 },
+    { entry: { browser: { "./index.js": "./entry.js" } }, indexJs: false, count: 0 },
+    { entry: { customEntry: "./entry.js" }, indexJs: false, count: 0 },
   ])(
-    "resolves a Nuxt directory registration with package metadata $entry",
-    async ({ entry, count }) => {
+    "resolves a Nuxt directory with package metadata $entry (index.js: $indexJs)",
+    async ({ entry, indexJs, count }) => {
       const result = await runNuxt(
         {
           ...(entry && {
             "stores/cart/package.json": JSON.stringify({ name: "fixture-cart", ...entry }),
           }),
           "stores/cart/index.ts": setupCart,
-          "stores/cart/index.js": "export const useCartStore = () => ({ items: [] })",
+          ...(indexJs && {
+            "stores/cart/index.js": "export const useCartStore = () => ({ items: [] })",
+          }),
           "stores/cart/entry.js": "export const useCartStore = () => ({ items: [] })",
           "a.ts": nuxtWriter("useCartStore", "import { useCartStore } from '#imports'"),
           "b.ts": nuxtWriter("useCartStore"),

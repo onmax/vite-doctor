@@ -1,4 +1,4 @@
-import { basename, dirname, isAbsolute, relative, resolve } from "pathe";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "pathe";
 import type { AutoImportEntry, NuxtProjectInfo, RuleContext } from "../../../core/index.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseScriptScope, type ScopeReference } from "../../../core/internal/script-scope.js";
@@ -741,8 +741,34 @@ export function storeResolver<S extends StoreDefinition>(
     if (ts !== base && isFile(ts)) return ts;
     const file = extensionFile(base, extensions, resolved, own);
     if (file !== undefined) return file;
-    if (ctx.fs.exists(`${base}/package.json`)) return null;
-    return extensionFile(`${base}/index`, extensions, resolved, own);
+    const manifestPath = `${base}/package.json`;
+    const index = extensionFile(`${base}/index`, extensions, resolved, own);
+    if (!ctx.fs.exists(manifestPath)) return index;
+    if (!index) return null;
+    const manifest = ctx.fs.readJson(manifestPath);
+    if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) return null;
+    if (
+      ["exports", "browser", "main", "module", "jsnext:main", "jsnext"].some((key) =>
+        Object.hasOwn(manifest, key),
+      )
+    )
+      return null;
+
+    function maySelectOtherEntry(entry: string) {
+      const target = join(base, entry);
+      if (ctx.fs.exists(target)) return target !== index;
+      const ts = target.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
+      if (ts !== target && isFile(ts)) return ts !== index;
+      const tsx = target.replace(/\.js$/, ".tsx");
+      if (tsx !== target && isFile(tsx)) return tsx !== index;
+      const candidate = extensionFile(target, extensions, resolved, own);
+      return candidate !== undefined && candidate !== index;
+    }
+
+    const entries = ["index.js", "index.json", "index.node", ...Object.values(manifest)];
+    if (entries.some((entry) => typeof entry === "string" && entry && maySelectOtherEntry(entry)))
+      return null;
+    return index;
   }
 
   function ordersFor(file: string) {

@@ -356,6 +356,15 @@ export const useUserStore = defineStore('user', {
     },
   );
 
+  test("resolves a relative directory import with metadata only", async () => {
+    const result = await run({
+      "stores/x.ts": x,
+      "stores/y/package.json": JSON.stringify({ private: true, sideEffects: false }),
+      "stores/y/index.ts": y.replace("from './x'", "from '../x'"),
+    });
+    expect(result.diagnostics).toHaveLength(1);
+  });
+
   test("leaves a TSX and JSX collision unresolved without host evidence", async () => {
     const files = {
       "stores/x.ts": x,
