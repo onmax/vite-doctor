@@ -3152,4 +3152,38 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "vue/reactivity/no-shallow-ref-deep-mutation": {
+    description:
+      "Finds in-place changes to a plain object, array, `Map`, or `Set` inside a `const` `shallowRef()`, such as `list.value.push(item)`. Doctor looks for a template, `computed()`, or watcher in the same file that reads the ref, and for a change that can run after setup, such as one in a mounted hook, a post-flush watcher, a timer, or a template event handler. It leaves synchronous setup writes, accessors, and receivers that may have been replaced with reactive values alone. A `triggerRef()` call for the ref, a `.value` assignment in the same function, a template that replaces the ref's value, or passing the ref to code Doctor cannot follow keeps it quiet. Refs imported from another file are not followed.",
+    why: "A `shallowRef()` tracks only its `.value` property: the getter tracks `value` and only the `.value` setter or `triggerRef()` triggers. The object inside stays a plain object, so pushing to an array or setting a property in it notifies nothing. The template, `computed()` values, and watchers that read the ref keep showing the old contents until something unrelated re-runs them, and a `computed()` keeps returning its cached result.",
+    recommendedReplacement:
+      "Call `triggerRef(ref)` after changing the value in place, or assign a new object or array to `.value`, such as `list.value = [...list.value, item]`. Use `ref()` when the value should track nested changes.",
+    examples: [
+      {
+        title: "Replace the value or trigger the ref",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nimport { shallowRef } from 'vue'\n\nconst todos = shallowRef<string[]>([])\n\nfunction add(todo: string) {\n  todos.value.push(todo)\n}\n</script>\n\n<template>\n  <button @click=\"add('Write docs')\">Add</button>\n  <p>{{ todos.length }} todos</p>\n</template>",
+        valid:
+          "<script setup lang=\"ts\">\nimport { shallowRef } from 'vue'\n\nconst todos = shallowRef<string[]>([])\n\nfunction add(todo: string) {\n  todos.value = [...todos.value, todo]\n}\n</script>\n\n<template>\n  <button @click=\"add('Write docs')\">Add</button>\n  <p>{{ todos.length }} todos</p>\n</template>",
+      },
+    ],
+  },
+  "vue/watch/no-property-read-source": {
+    description:
+      "Finds direct property reads passed as a `watch()` source or as an entry in a source array, when the property is known to hold a primitive. Doctor looks at `defineProps()` declarations and local `const` objects initialized with `reactive()` and a literal. It leaves refs, getter functions, intentional deep watches of reactive objects, and unresolved values alone. Destructured props are covered by `vue/reactivity/defineprops-watch-getter`.",
+    why: "`watch(props.userId, cb)` evaluates `props.userId` once and passes its current value. A primitive is not a valid watch source, so Vue cannot subscribe to changes to the property. A getter lets Vue track the property read and run the callback when the value changes.",
+    recommendedReplacement:
+      "Pass a getter, `watch(() => props.userId, cb)`. In a source array, wrap only the primitive property read: `watch([() => props.userId, otherSource], cb)`.",
+    examples: [
+      {
+        title: "Watch a prop through a getter",
+        language: "vue",
+        invalid:
+          "<script setup lang=\"ts\">\nimport { watch } from 'vue'\n\nconst props = defineProps<{ userId: string }>()\n\nwatch(props.userId, (id) => loadUser(id))\n</script>",
+        valid:
+          "<script setup lang=\"ts\">\nimport { watch } from 'vue'\n\nconst props = defineProps<{ userId: string }>()\n\nwatch(() => props.userId, (id) => loadUser(id))\n</script>",
+      },
+    ],
+  },
 } satisfies Record<string, RuleDocumentationMetadata>;
