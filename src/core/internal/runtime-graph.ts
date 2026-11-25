@@ -75,7 +75,10 @@ export function resolveRuntimeGraph(
     edges.push(edge("project", packages.vue));
   }
   // Without Nitro, a package that declares h3 runs its own, such as an h3 server on srvx.
-  if (!packages.h3 && declaredRuntimes(readPackageManifest(rootManifest)).includes("h3")) {
+  if (
+    !packages.h3 &&
+    declaredRuntimes(readPackageManifest(rootManifest), rootManifest).includes("h3")
+  ) {
     packages.h3 = resolveProjectRuntime("h3", rootManifest);
     edges.push(edge("project", packages.h3));
   }

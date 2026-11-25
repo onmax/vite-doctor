@@ -251,3 +251,45 @@ test("an h3 1.x package keeps the rules that apply to h3 1.x", async () => {
   const ip = result.diagnostics.find((item) => item.code === "H30006");
   expect(ip?.suggestion).not.toContain("trustProxy");
 });
+
+test("server files follow the framework of the workspace package that owns them", async () => {
+  const ipHandler = (wrap: string) =>
+    `${wrap}((event) => rateLimit(getHeader(event, "x-forwarded-for")))\n`;
+  const root = fixture({
+    "package.json": JSON.stringify({
+      name: "root",
+      type: "module",
+      workspaces: ["apps/*"],
+      dependencies: { h3: "^2.0.8", srvx: "^1.0.6" },
+    }),
+    "node_modules/h3/package.json": h3Manifest("2.0.8"),
+    "server/api/ip.ts": `import { H3 } from "h3"\nexport const app = new H3()\n${ipHandler("export default ")}`,
+    "apps/web/package.json": JSON.stringify({
+      name: "web",
+      dependencies: { nuxt: "5.0.0-beta.2", vue: "3.5.18" },
+    }),
+    "apps/web/node_modules/nuxt/package.json": JSON.stringify({
+      name: "nuxt",
+      version: "5.0.0-beta.2",
+      dependencies: { nitro: "3.0.0-beta.4", vue: "3.5.18" },
+    }),
+    "apps/web/node_modules/nuxt/node_modules/nitro/package.json": JSON.stringify({
+      name: "nitro",
+      version: "3.0.0-beta.4",
+      dependencies: { h3: "2.0.0-rc.26" },
+    }),
+    "apps/web/node_modules/nuxt/node_modules/nitro/node_modules/h3/package.json":
+      h3Manifest("2.0.0-rc.26"),
+    "apps/web/node_modules/vue/package.json": JSON.stringify({ name: "vue", version: "3.5.18" }),
+    "apps/web/nuxt.config.ts": "export default defineNuxtConfig({})\n",
+    "apps/web/server/api/ip.ts": ipHandler("export default defineEventHandler"),
+  });
+
+  const result = await runViteDoctor({ root, cache: false });
+  expect(h3Codes(result, "apps/web/server/api/ip.ts")).toEqual(["H30006"]);
+  expect(
+    result.diagnostics.filter(
+      (item) => item.code.startsWith("H3") && item.file === join(root, "server/api/ip.ts"),
+    ),
+  ).toEqual([]);
+});

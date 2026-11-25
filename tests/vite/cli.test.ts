@@ -1249,7 +1249,7 @@ export default defineHandler((event) => {
         [
           ".",
           "--rules",
-          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,h3/migration/no-removed-send,h3/migration/prefer-redirect-response,h3/migration/prefer-with-base",
+          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,h3/migration/no-removed-exports,h3/migration/prefer-redirect-response,h3/migration/prefer-with-base",
           "--format",
           "json",
           "--no-cache",
@@ -1492,7 +1492,7 @@ test.each([
 
       expect(report.applicability.activated).toEqual(
         expect.arrayContaining([
-          "h3/migration/no-removed-send",
+          "h3/migration/no-removed-exports",
           "h3/migration/prefer-redirect-response",
         ]),
       );
@@ -1503,7 +1503,7 @@ test.each([
           .map((item: { ruleId: string }) => item.ruleId),
       ).toEqual(
         expect.arrayContaining([
-          "h3/migration/no-removed-send",
+          "h3/migration/no-removed-exports",
           "h3/migration/prefer-redirect-response",
         ]),
       );
@@ -1534,7 +1534,7 @@ test.each([
     expect(report.target).toEqual({ source, requested: ["h3@2"], runtime: { h3: "2.0.0-0" } });
     expect(report.applicability.activated).toEqual(
       expect.arrayContaining([
-        "h3/migration/no-removed-send",
+        "h3/migration/no-removed-exports",
         "h3/migration/prefer-redirect-response",
       ]),
     );

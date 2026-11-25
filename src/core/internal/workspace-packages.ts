@@ -16,6 +16,7 @@ interface PackageManifest {
   devDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   scripts?: Record<string, string>;
   exports?: unknown;
 }
@@ -127,7 +128,7 @@ function describePackage(
     ...manifest?.devDependencies,
   };
   const framework = detectPackageFramework(directory, manifest, packages);
-  const runtimes = declaredRuntimes(manifest);
+  const runtimes = declaredRuntimes(manifest, join(directory, "package.json"));
   const nuxtIntegration = framework !== "nuxt" && shipsNuxtModule(manifest, packages);
   const ssr =
     framework === "nuxt" || !shipsVue(manifest)
@@ -428,6 +429,14 @@ function readManifest(file: string): PackageManifest | null {
       ) {
         manifest[key] = dependencies as Record<string, string>;
       }
+    }
+    if (isRecord(value.peerDependenciesMeta)) {
+      manifest.peerDependenciesMeta = Object.fromEntries(
+        Object.entries(value.peerDependenciesMeta).map(([name, meta]) => [
+          name,
+          { optional: isRecord(meta) && meta.optional === true },
+        ]),
+      );
     }
     return manifest;
   } catch {

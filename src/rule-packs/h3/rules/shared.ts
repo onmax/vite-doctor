@@ -154,8 +154,9 @@ const appChainMethods = new Set([...appRouteMethods, "mount", "register"]);
 
 /**
  * Whether an expression refers to an h3 app or router: `new H3()`, `createApp()`,
- * `createRouter()`, a chain of app methods on one, or a binding initialized from one and never
- * reassigned.
+ * `createRouter()`, a chain of app methods on one, a binding initialized from one and never
+ * reassigned, a parameter typed `H3`, or a `this.app` class field whose every initializer and
+ * assignment in the class is one of these.
  */
 export function isH3AppReceiver(ctx: RuleContext, node: AnyNode, depth = 0): boolean {
   const expression = unwrap(node);
@@ -171,9 +172,121 @@ export function isH3AppReceiver(ctx: RuleContext, node: AnyNode, depth = 0): boo
       isH3AppReceiver(ctx, callee.object, depth + 1)
     );
   }
+  if (expression.type === "MemberExpression") return isH3AppField(ctx, expression, depth);
   if (expression.type !== "Identifier") return false;
-  const init = constantInit(resolveVariable(ctx, expression));
-  return init ? isH3AppReceiver(ctx, init, depth + 1) : false;
+  const variable = resolveVariable(ctx, expression);
+  const init = constantInit(variable);
+  if (init) return isH3AppReceiver(ctx, init, depth + 1);
+  return isH3AppParameter(ctx, variable);
+}
+
+function isH3AppParameter(ctx: RuleContext, variable: ScopeVariable | null): boolean {
+  const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
+  if (definition?.type !== "Parameter") return false;
+  if (variable!.references.some((reference) => reference.isWrite())) return false;
+  return isH3AppType(ctx, definition.name.typeAnnotation);
+}
+
+/** Whether a type annotation names h3's `H3` or `H3Core` class, imported as a value or a type. */
+function isH3AppType(ctx: RuleContext, annotation: AnyNode): boolean {
+  const type = annotation?.type === "TSTypeAnnotation" ? annotation.typeAnnotation : annotation;
+  if (type?.type !== "TSTypeReference") return false;
+  const name = type.typeName;
+  if (name?.type === "Identifier") {
+    const variable = resolveVariable(ctx, name);
+    return appClasses.has(String(variable && h3Import(variable, true)));
+  }
+  if (name?.type !== "TSQualifiedName" || name.left?.type !== "Identifier") return false;
+  const namespace = resolveVariable(ctx, name.left);
+  return (
+    appClasses.has(name.right?.name ?? "") &&
+    !!namespace &&
+    h3Import(namespace, true) === namespaceImport
+  );
+}
+
+type FieldSource = { init: AnyNode } | { type: AnyNode };
+
+interface ClassFields {
+  start: number;
+  end: number;
+  fields: Map<string, FieldSource[]>;
+}
+
+function isH3AppField(ctx: RuleContext, member: AnyNode, depth: number): boolean {
+  if (unwrap(member.object)?.type !== "ThisExpression") return false;
+  const name = fieldName(member);
+  const at = offset(member);
+  if (!name || at === undefined) return false;
+  let owner: ClassFields | undefined;
+  for (const item of classFields(ctx))
+    if (item.start <= at && at < item.end && (!owner || item.start > owner.start)) owner = item;
+  const sources = owner?.fields.get(name);
+  if (!sources?.length) return false;
+  return sources.every((source) =>
+    "init" in source ? isH3AppReceiver(ctx, source.init, depth + 1) : isH3AppType(ctx, source.type),
+  );
+}
+
+/** Each class's fields: their initializers, type annotations, and `this.field = value` writes. */
+function classFields(ctx: RuleContext): readonly ClassFields[] {
+  return perFile(ctx, "h3:class-fields", () => {
+    const classes: ClassFields[] = [];
+    const scope = fileScriptScope(ctx);
+    if (!scope) return classes;
+    const add = (owner: ClassFields | undefined, name: string | null, source: FieldSource) => {
+      if (!owner || !name) return;
+      const sources = owner.fields.get(name) ?? [];
+      sources.push(source);
+      owner.fields.set(name, sources);
+    };
+    const visit = (node: AnyNode, owner: ClassFields | undefined) => {
+      if (!node?.type) return;
+      if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
+        owner = { start: node.range[0], end: node.range[1], fields: new Map() };
+        classes.push(owner);
+      } else if (node.type === "PropertyDefinition" && !node.computed) {
+        const name = fieldName({ property: node.key });
+        if (node.value) add(owner, name, { init: node.value });
+        if (node.typeAnnotation) add(owner, name, { type: node.typeAnnotation });
+      } else if (node.type === "TSParameterProperty") {
+        const parameter =
+          node.parameter?.type === "AssignmentPattern" ? node.parameter.left : node.parameter;
+        if (parameter?.type === "Identifier") {
+          if (parameter.typeAnnotation)
+            add(owner, parameter.name, { type: parameter.typeAnnotation });
+          if (node.parameter.type === "AssignmentPattern")
+            add(owner, parameter.name, { init: node.parameter.right });
+        }
+      } else if (
+        node.type === "AssignmentExpression" &&
+        node.left?.type === "MemberExpression" &&
+        node.left.object?.type === "ThisExpression"
+      ) {
+        add(
+          owner,
+          fieldName(node.left),
+          node.operator === "=" ? { init: node.right } : { init: null },
+        );
+      }
+      for (const key of scope.visitorKeys[node.type] ?? []) {
+        const child = node[key];
+        if (Array.isArray(child)) for (const item of child) visit(item, owner);
+        else visit(child, owner);
+      }
+    };
+    try {
+      visit(scope.ast, undefined);
+    } catch {
+      return [];
+    }
+    return classes;
+  });
+}
+
+function fieldName(member: AnyNode): string | null {
+  if (member.property?.type === "PrivateIdentifier") return `#${member.property.name}`;
+  return memberName(member);
 }
 
 export interface H3Handler {
@@ -242,6 +355,69 @@ export function isHandlerFunction(ctx: RuleContext, fn: AnyNode): boolean {
   return handlerFor(ctx, fn) !== undefined;
 }
 
+/**
+ * The binding of `fn`'s event parameter, when `fn` is an h3 handler, as `handlerFunctions` collects
+ * them, whose first parameter is a plain identifier.
+ */
+export function handlerEventParam(ctx: RuleContext, fn: AnyNode): ScopeVariable | null {
+  const handler = handlerFor(ctx, fn);
+  const param = handler?.node.params?.[0];
+  if (param?.type !== "Identifier") return null;
+  try {
+    const declared = fileScriptScope(ctx)?.scopeManager.getDeclaredVariables(handler!.node) ?? [];
+    return declared.find((variable) => variable.defs.some((item) => item.name === param)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether `node` is an identifier bound to the event parameter of the h3 handler that declares
+ * it. A local variable that shadows the name, or another function's parameter, is not.
+ */
+export function isHandlerEvent(ctx: RuleContext, node: AnyNode): boolean {
+  const expression = unwrap(node);
+  if (expression?.type !== "Identifier") return false;
+  const variable = resolveVariable(ctx, expression);
+  const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
+  if (definition?.type !== "Parameter") return false;
+  return handlerEventParam(ctx, definition.node) === variable;
+}
+
+const transparentParents = new Set([
+  "AwaitExpression",
+  "ParenthesizedExpression",
+  "ChainExpression",
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+]);
+
+/**
+ * Whether the value of `node`, a node of the Rule's visitor AST, is dropped: it is an expression
+ * statement, a `void` operand, or a sequence item other than the last, directly or through
+ * `await`, parentheses, the right side of `&&`/`||`/`??`, or a branch of a conditional.
+ */
+export function isDiscardedExpression(node: AnyNode): boolean {
+  let current = node;
+  for (let parent = parentOf(current); parent; current = parent, parent = parentOf(current)) {
+    if (parent.type === "ExpressionStatement") return true;
+    if (parent.type === "UnaryExpression") return parent.operator === "void";
+    if (parent.type === "SequenceExpression") {
+      if (parent.expressions.at(-1) !== current) return true;
+    } else if (parent.type === "LogicalExpression") {
+      if (parent.right !== current) return false;
+    } else if (parent.type === "ConditionalExpression") {
+      if (parent.test === current) return false;
+    } else if (!transparentParents.has(parent.type)) return false;
+  }
+  return false;
+}
+
+function parentOf(node: AnyNode): AnyNode {
+  return node?.__doctorParent ?? node?.parent;
+}
+
 /** The h3 runtime major version the file's package runs, when Doctor resolved it. */
 export function h3Major(ctx: RuleContext): number | undefined {
   const major = Number.parseInt(ctx.project.runtimeGraph?.packages.h3?.version ?? "", 10);
@@ -291,15 +467,17 @@ function isFunctionNode(node: AnyNode) {
 
 const namespaceImport = Symbol("h3 namespace import");
 
-function h3Import(variable: ScopeVariable): string | typeof namespaceImport | null {
+function h3Import(
+  variable: ScopeVariable,
+  includeTypes = false,
+): string | typeof namespaceImport | null {
   for (const definition of variable.defs) {
     if (definition.type !== "ImportBinding") continue;
     const declaration: AnyNode = definition.parent;
     const specifier: AnyNode = definition.node;
     if (
       declaration?.type !== "ImportDeclaration" ||
-      declaration.importKind === "type" ||
-      specifier.importKind === "type" ||
+      (!includeTypes && (declaration.importKind === "type" || specifier.importKind === "type")) ||
       !isH3Source(declaration.source?.value)
     )
       continue;

@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import type { DoctorFramework, RuntimeGraph, RuntimePackageName } from "../primitives.js";
 
 /** npm package names that install each runtime, the canonical name first. */
@@ -16,20 +17,50 @@ export const runtimeProviders: Record<RuntimePackageName, DoctorFramework[]> = {
   vue: ["vue", "nuxt"],
 };
 
-/** Runtimes a package.json declares in any dependency field, peer dependencies included. */
-export function declaredRuntimes(manifest: object | null): RuntimePackageName[] {
+/**
+ * Runtimes a package.json declares. A dependency or required peer always counts. An optional peer
+ * or optional dependency counts only when it resolves from `manifestPath`, since a library with an
+ * uninstalled optional `h3` peer does not run h3; without `manifestPath` it never counts.
+ */
+export function declaredRuntimes(
+  manifest: object | null,
+  manifestPath?: string,
+): RuntimePackageName[] {
   const fields = manifest as Partial<Record<string, unknown>> | null;
-  const names = new Set(
-    ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"].flatMap(
-      (key) => {
-        const value = fields?.[key];
-        return value && typeof value === "object" ? Object.keys(value) : [];
-      },
+  const keys = (key: string) => {
+    const value = fields?.[key];
+    return value && typeof value === "object" ? Object.keys(value) : [];
+  };
+  const peerMeta = fields?.peerDependenciesMeta as
+    | Partial<Record<string, { optional?: unknown }>>
+    | undefined;
+  const required = new Set([
+    ...keys("dependencies"),
+    ...keys("devDependencies"),
+    ...keys("peerDependencies").filter((name) => peerMeta?.[name]?.optional !== true),
+  ]);
+  const optional = new Set(
+    [...keys("optionalDependencies"), ...keys("peerDependencies")].filter(
+      (name) => !required.has(name),
     ),
   );
+  const declares = (name: string) =>
+    required.has(name) ||
+    (optional.has(name) && manifestPath !== undefined && resolvesFrom(manifestPath, name));
   return (Object.keys(runtimePackageNames) as RuntimePackageName[]).filter((runtime) =>
-    runtimePackageNames[runtime].some((name) => names.has(name)),
+    runtimePackageNames[runtime].some(declares),
   );
+}
+
+function resolvesFrom(manifestPath: string, name: string): boolean {
+  const require = createRequire(manifestPath);
+  for (const request of [`${name}/package.json`, name]) {
+    try {
+      require.resolve(request);
+      return true;
+    } catch {}
+  }
+  return false;
 }
 
 /**

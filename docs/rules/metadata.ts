@@ -483,7 +483,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "h3/migration/no-removed-send": {
+  "h3/migration/no-removed-exports": {
     description: "Flags send() and sendError(), which H3 v2 removes.",
     why: "H3 v2 handlers return Web API response values and throw HTTPError instances instead of using imperative send helpers.",
     recommendedReplacement:
@@ -523,6 +523,181 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: 'const handler = useBase("/api", app.handler)',
         valid: 'const handler = withBase("/api", app.handler)',
+      },
+    ],
+  },
+  "h3/response/no-event-first-arg": {
+    description:
+      "Flags redirect(), noContent(), html(), and iterable() called with the event as their first argument.",
+    why: 'H3 v2 response helpers build a response value and no longer take the event. Passing it shifts every argument: redirect(event, "/login") uses the event as the location, and html(event, markup) renders the event instead of the markup.',
+    recommendedReplacement:
+      'Drop the event argument and return the helper\'s result, such as return redirect("/login").',
+    examples: [
+      {
+        title: "Return the helper without the event",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  return redirect(event, "/login")\n})',
+        valid: 'export default defineHandler(() => {\n  return redirect("/login")\n})',
+      },
+    ],
+  },
+  "h3/response/no-discarded-response": {
+    description:
+      "Flags H3 v2 response helpers such as redirect(), html(), and noContent() whose result is never returned from the handler.",
+    why: "In H3 v2 these helpers only build a response value. A call whose result is dropped sends nothing, so the handler falls through and responds with whatever it returns next.",
+    recommendedReplacement:
+      'Return the helper\'s result from the handler, such as return redirect("/login").',
+    examples: [
+      {
+        title: "Return the redirect",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  if (!event.context.user) redirect("/login")\n  return "dashboard"\n})',
+        valid:
+          'export default defineHandler((event) => {\n  if (!event.context.user) return redirect("/login")\n  return "dashboard"\n})',
+      },
+    ],
+  },
+  "h3/response/no-prepared-status-with-response": {
+    description:
+      "Flags a status set through event.res.status or setResponseStatus() in a handler that returns a Response.",
+    why: "H3 v2 applies a prepared event.res.status only to plain return values. A returned Response keeps its own status, so the prepared status is silently ignored and the client gets 200.",
+    recommendedReplacement:
+      "Pass the status to the Response, such as new Response(body, { status: 201 }), or return a plain value instead.",
+    examples: [
+      {
+        title: "Set the status on the Response",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  event.res.status = 201\n  return new Response("created")\n})',
+        valid:
+          'export default defineHandler(() => {\n  return new Response("created", { status: 201 })\n})',
+      },
+    ],
+  },
+  "h3/response/no-html-plain-string": {
+    description: "Flags html() called with a plain string that contains markup.",
+    why: "Since H3 2.0.1-rc.26, html() escapes a plain string argument, so markup passed as a string is rendered as text. Only the html`` tagged template and raw() keep trusted markup.",
+    recommendedReplacement:
+      "Use the tagged template html`<h1>${title}</h1>`, which escapes interpolated values, or wrap trusted markup with raw().",
+    examples: [
+      {
+        title: "Use the html tagged template",
+        language: "ts",
+        invalid: 'export default defineHandler(() => {\n  return html("<h1>Hello</h1>")\n})',
+        valid: "export default defineHandler(() => {\n  return html`<h1>Hello</h1>`\n})",
+      },
+    ],
+  },
+  "h3/errors/no-numeric-create-error": {
+    description: "Flags createError() called with a bare status code, such as createError(404).",
+    why: "createError() reads the status from an object or a message string. A number is neither, so createError(404) builds a 500 error in both H3 v1 and v2, and clients get a server error instead of the intended status.",
+    recommendedReplacement:
+      "Pass the status in an object, such as createError({ status: 404 }), or use HTTPError.status(404) in H3 v2.",
+    examples: [
+      {
+        title: "Pass the status in an object",
+        language: "ts",
+        invalid: "export default defineHandler(() => {\n  throw createError(404)\n})",
+        valid:
+          'export default defineHandler(() => {\n  throw createError({ status: 404, message: "Not found" })\n})',
+      },
+    ],
+  },
+  "h3/errors/no-throw-plain-object": {
+    description:
+      "Flags throw statements in H3 handlers that throw an object literal such as { statusCode: 404 }.",
+    why: "H3 v2 turns a thrown value that is not an Error into an unhandled 500 and drops its fields. H3 v1 passed it through createError(), so code migrated from v1 that throws { statusCode } now answers every such error with 500.",
+    recommendedReplacement:
+      'Throw an HTTPError, such as throw new HTTPError({ status: 404, message: "Not found" }) or throw HTTPError.status(404).',
+    examples: [
+      {
+        title: "Throw an HTTPError",
+        language: "ts",
+        invalid:
+          'export default defineHandler(() => {\n  throw { statusCode: 404, message: "Not found" }\n})',
+        valid:
+          'export default defineHandler(() => {\n  throw new HTTPError({ status: 404, message: "Not found" })\n})',
+      },
+    ],
+  },
+  "h3/body/no-double-body-read": {
+    description:
+      "Flags a handler that reads the request body twice, or reads it and then proxies the request.",
+    why: "H3 v2 reads the body from the Web Request stream, which can be consumed once. H3 v1 cached the parsed body, so a second readBody() worked; in v2 it throws or returns nothing, and a proxied request goes out without its body.",
+    recommendedReplacement:
+      "Read the body once into a variable and reuse it, or pass the body you read to the proxy explicitly.",
+    examples: [
+      {
+        title: "Read the body once",
+        language: "ts",
+        invalid:
+          "export default defineHandler((event) => {\n  await audit(await readBody(event))\n  return save(await readBody(event))\n})",
+        valid:
+          "export default defineHandler((event) => {\n  const body = await readBody(event)\n  await audit(body)\n  return save(body)\n})",
+      },
+    ],
+  },
+  "h3/security/session-password-too-short": {
+    description:
+      "Flags a literal session password shorter than 32 characters passed to useSession(), getSession(), updateSession(), sealSession(), or unsealSession().",
+    why: 'H3 seals sessions with iron-webcrypto, which rejects passwords under 32 characters. Every session read or write then throws "Password string too short", and a short literal password is a weak, committed secret anyway.',
+    recommendedReplacement:
+      "Read a secret of at least 32 characters from runtime configuration or an environment variable instead of a literal.",
+    examples: [
+      {
+        title: "Read the session password from the environment",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  return useSession(event, { password: "dev-secret" })\n})',
+        valid:
+          "export default defineHandler((event) => {\n  return useSession(event, { password: process.env.SESSION_PASSWORD })\n})",
+      },
+    ],
+  },
+  "h3/migration/no-ignored-hooks": {
+    description:
+      "Flags onRequest and onBeforeResponse on handler objects, and onBeforeResponse and onAfterResponse in app options, which H3 v2 never calls.",
+    why: "H3 v2 replaced handler-object hooks with a middleware array and kept only onRequest, onResponse, and onError as app hooks. The old keys are copied onto the handler or config but never run, so authentication, logging, or header logic in them silently stops.",
+    recommendedReplacement:
+      "Move handler hooks into middleware, such as defineHandler({ middleware: [auth], handler }), and move onBeforeResponse or onAfterResponse app logic to onResponse.",
+    examples: [
+      {
+        title: "Move handler hooks into middleware",
+        language: "ts",
+        invalid: 'export default defineHandler({\n  onRequest: [auth],\n  handler: () => "ok",\n})',
+        valid: 'export default defineHandler({\n  middleware: [auth],\n  handler: () => "ok",\n})',
+      },
+    ],
+  },
+  "h3/migration/no-removed-router-api": {
+    description:
+      "Flags router.add(), router.resolve(), app.stack, lazy handlers registered with { lazy: true }, and array route paths, which H3 v2 removed.",
+    why: "H3 v2 merged the router into the app. The removed members are undefined at runtime, so a call throws when the route module loads and the server fails to start.",
+    recommendedReplacement:
+      "Register routes with app.on(method, path, handler) or app.get(path, handler), register each path separately, and wrap lazy handlers with defineLazyEventHandler().",
+    examples: [
+      {
+        title: "Register routes on the app",
+        language: "ts",
+        invalid: 'const router = createRouter()\nrouter.add("/items", listItems)\napp.use(router)',
+        valid: 'app.get("/items", listItems)',
+      },
+    ],
+  },
+  "h3/middleware/no-exact-path-use": {
+    description:
+      'Flags app.use("/path", middleware) with a path that has no wildcard. Mounting a sub-app with app.use("/path", app) still matches nested paths and is not flagged.',
+    why: 'In H3 v1, app.use("/api", fn) ran for every path under /api. In H3 v2 a middleware path is a route pattern, so "/api" matches only /api itself and the middleware skips every nested route.',
+    recommendedReplacement:
+      'Add a wildcard, such as app.use("/api/**", fn), or keep the exact path when the middleware is meant for that one route.',
+    examples: [
+      {
+        title: "Match nested paths with a wildcard",
+        language: "ts",
+        invalid: 'app.use("/api", auth)',
+        valid: 'app.use("/api/**", auth)',
       },
     ],
   },

@@ -7,10 +7,10 @@ import {
   report,
 } from "./shared.js";
 
-export const noRemovedH3Send = createRule({
+export const noRemovedExports = createRule({
   meta: {
-    id: "h3/migration/no-removed-send",
-    title: "Replace removed H3 send utilities",
+    id: "h3/migration/no-removed-exports",
+    title: "Replace exports removed in H3 v2",
     description:
       "H3 v2 removes send() and sendError() in favor of returned values and thrown errors.",
     why: "H3 v2 handlers use Web API response values and HTTPError instead of imperative send helpers.",
@@ -33,7 +33,7 @@ export const noRemovedH3Send = createRule({
       report(
         ctx,
         node,
-        "h3/migration/no-removed-send",
+        "h3/migration/no-removed-exports",
         "error",
         "migration",
         `H3 v2 removes ${imported}().`,

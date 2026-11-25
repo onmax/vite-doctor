@@ -231,6 +231,58 @@ test("a package without h3 or a framework that provides it does not activate the
   );
 });
 
+test("an optional h3 peer or optional dependency counts only when it is installed", async () => {
+  for (const declaration of [
+    {
+      peerDependencies: { h3: "^2.0.0" },
+      peerDependenciesMeta: { h3: { optional: true } },
+    },
+    { optionalDependencies: { h3: "^2.0.0" } },
+  ]) {
+    await withFixture(
+      {
+        "package.json": JSON.stringify({ name: "lib", ...declaration }),
+        "src/index.ts": "export const lib = 1\n",
+      },
+      async (root) => {
+        const result = await withoutNodePath(() => runH3Doctor(root));
+
+        expect(activatedBy(result) ?? []).toEqual([]);
+        expect(result.diagnostics.filter((item) => item.code === "DOC0022")).toEqual([]);
+        expect(result.workspacePackages?.[0]?.runtimes?.h3).toBeUndefined();
+      },
+    );
+    await withFixture(
+      {
+        "package.json": JSON.stringify({ name: "lib", ...declaration }),
+        "node_modules/h3/package.json": manifest("h3", "2.0.8"),
+        "src/index.ts": "export const lib = 1\n",
+      },
+      async (root) => {
+        const result = await withoutNodePath(() => runH3Doctor(root));
+
+        expect(activatedBy(result)).toEqual(["."]);
+        expect(reported(result, root)).toEqual(["src/index.ts"]);
+      },
+    );
+  }
+});
+
+test("a required h3 peer counts even when it is not installed", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ name: "lib", peerDependencies: { h3: "^2.0.0" } }),
+      "src/index.ts": "export const lib = 1\n",
+    },
+    async (root) => {
+      const result = await withoutNodePath(() => runH3Doctor(root));
+
+      expect(activatedBy(result)).toEqual(["."]);
+      expect(result.diagnostics.filter((item) => item.code === "DOC0022")).toHaveLength(1);
+    },
+  );
+});
+
 function reported(result: DoctorRunResult, root: string): string[] {
   return result.diagnostics
     .filter((item) => item.ruleId === h3v2Rule.meta.id)

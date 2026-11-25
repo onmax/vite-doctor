@@ -5,10 +5,13 @@ import {
   createRule,
   h3ExportName,
   h3ImportBindings,
+  handlerEventParam,
   handlerFunctions,
+  isDiscardedExpression,
   isH3AppReceiver,
   isH3Call,
   isH3HandlerFile,
+  isHandlerEvent,
   sourceForNode,
   type AnyNode,
 } from "../../../src/rule-packs/h3/rules/shared.ts";
@@ -201,4 +204,156 @@ const notAHandler = [1].map((x) => x)
     ["async (event, next) => next()", "event"],
     ["({ req }) => req.url", undefined],
   ]);
+});
+
+test("isH3AppReceiver follows this.app class fields and parameters typed H3", async () => {
+  const result = await probe(`import { H3, createApp } from "h3"
+import type { H3 as App } from "h3"
+import * as h3 from "h3"
+class Server {
+  app = new H3()
+  #api = new H3()
+  legacy
+  swapped = new H3()
+  constructor(private injected: App) {
+    this.legacy = createApp()
+    this.swapped = express()
+  }
+  routes() {
+    this.app.get("/a", (event) => "a")
+    this.#api.post("/b", (event) => "b")
+    this.legacy.use((event) => "c")
+    this.injected.get("/d", (event) => "d")
+    this.swapped.get("/e", (event) => "e")
+    this.missing.get("/f", (event) => "f")
+  }
+}
+export function register(app: H3, ns: h3.H3, other: Router) {
+  app.get("/g", (event) => "g")
+  ns.get("/h", (event) => "h")
+  other.get("/i", (event) => "i")
+}
+`);
+  expect(result.receivers).toMatchObject({
+    "this.app": true,
+    "this.#api": true,
+    "this.legacy": true,
+    "this.injected": true,
+    "this.swapped": false,
+    "this.missing": false,
+    app: true,
+    ns: true,
+    other: false,
+  });
+  expect(result.handlers.map((handler) => handler.source)).toEqual([
+    '(event) => "a"',
+    '(event) => "b"',
+    '(event) => "c"',
+    '(event) => "d"',
+    '(event) => "g"',
+    '(event) => "h"',
+  ]);
+});
+
+async function probeExpressions(text: string) {
+  const file = "src/server.ts";
+  const events: Record<string, boolean[]> = {};
+  const params: Record<string, string | null> = {};
+  const discarded: Record<string, boolean> = {};
+  const rule = createRule({
+    meta: {
+      id: "test/h3-expressions",
+      title: "Probe h3 expression helpers",
+      category: "correctness",
+      severity: "info",
+      requires: { script: true },
+    },
+    create(ctx: RuleContext) {
+      if (ctx.file.relativePath !== file) return;
+      const line = (node: AnyNode) => ctx.file.text.slice(0, node.start).split("\n").length;
+      return {
+        Identifier(node: AnyNode) {
+          const parent = node.__doctorParent;
+          const declares = parent?.params?.includes(node) || parent?.id === node;
+          if (declares || !/^(?:event|e|ev)$/.test(node.name)) return;
+          (events[`${node.name}@${line(node)}`] ??= []).push(isHandlerEvent(ctx, node));
+        },
+        ArrowFunctionExpression(node: AnyNode) {
+          params[sourceForNode(node, ctx.file.text).split(" =>")[0]!] =
+            handlerEventParam(ctx, node)?.name ?? null;
+        },
+        CallExpression(node: AnyNode) {
+          if (node.callee.type === "Identifier" && node.callee.name.startsWith("send"))
+            discarded[`${node.callee.name}@${line(node)}`] = isDiscardedExpression(node);
+        },
+      };
+    },
+  });
+  await runProjectFixture({
+    framework: "vite",
+    dependencies: { h3: "^2.0.8" },
+    files: { [file]: text },
+    rules: [rule],
+  });
+  return { events, params, discarded };
+}
+
+test("isHandlerEvent and handlerEventParam resolve the handler's event binding, not its name", async () => {
+  const result = await probeExpressions(`import { H3 } from "h3"
+export const app = new H3()
+  .get("/a", (event: H3Event) => event.path)
+  .get("/b", (e) => {
+    const event = other
+    return [e, event]
+  })
+  .get("/c", ({ req }) => req)
+  .get("/d", (ev) => list.map((event) => [ev, event]))
+const helper = (event) => event
+`);
+  expect(result.events).toEqual({
+    "event@3": [true],
+    "e@6": [true],
+    "event@6": [false],
+    "ev@9": [true],
+    "event@9": [false],
+    "event@10": [false],
+  });
+  expect(result.params).toEqual({
+    "(event: H3Event)": "event",
+    "(event)": null,
+    "(e)": "e",
+    "({ req })": null,
+    "(ev)": "ev",
+  });
+});
+
+test("isDiscardedExpression finds values that are dropped", async () => {
+  const result = await probeExpressions(`async function run(ok) {
+  sendA()
+  await sendB()
+  void sendC()
+  ok && sendD()
+  ok ? sendE() : sendF()
+  sendG(), other()
+  const value = sendH()
+  if (sendI()) {}
+  use(sendJ())
+  return sendK()
+}
+const arrow = () => sendL()
+`);
+  expect(result.discarded).toEqual({
+    "sendA@2": true,
+    "sendB@3": true,
+    "sendC@4": true,
+    "sendD@5": true,
+    "sendE@6": true,
+    "sendF@6": true,
+    "sendG@7": true,
+    "sendH@8": false,
+    "sendI@9": false,
+    "sendJ@10": false,
+    "sendK@11": false,
+    "sendL@13": false,
+  });
 });
