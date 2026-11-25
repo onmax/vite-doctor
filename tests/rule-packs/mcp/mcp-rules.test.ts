@@ -529,6 +529,63 @@ describe("MCP tool output", () => {
     ).toEqual(["MCP0004 src/server.ts"]);
   });
 
+  test("does not follow reassigned handler or helper declarations", async () => {
+    const pretty = "function render() { return JSON.stringify({ n: 1 }, null, 2) }\n";
+    const reassign = "render = () => '{\"n\":1}'\n";
+    const options = (handler: string) =>
+      `{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, handler: ${handler} }`;
+    expect(
+      await codes({
+        "src/handler.ts": pretty + reassign + tool(options("render")),
+        "src/local.ts": pretty + reassign + tool(options("() => render()")),
+        "src/imported.ts": "import { render } from './render'\n" + tool(options("render")),
+        "src/render.ts": "export " + pretty + reassign,
+        "src/stable.ts": pretty + tool(options("render")),
+      }),
+    ).toEqual(["MCP0004 src/stable.ts"]);
+  });
+
+  test("traces only Nitro's imported toolResult envelope", async () => {
+    const result =
+      "{ content: [{ type: 'text', text: JSON.stringify({ n: 1 }, null, 2) }], structuredContent: { n: 1 } }";
+    const options = (handler: string) =>
+      `{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, outputSchema: { n: z.number() }, handler: ${handler} }`;
+    expect(
+      await codes({
+        "src/envelope.ts":
+          "import { toolResult as envelope } from 'nitro-mcp-toolkit'\n" +
+          tool(options(`() => envelope(${result})`)),
+        "src/unrelated.ts":
+          "import { toolResult } from 'another-package'\n" +
+          tool(options(`() => toolResult(${result})`)),
+        "src/shadowed.ts":
+          "import { toolResult } from 'nitro-mcp-toolkit'\n" +
+          tool(options(`(toolResult) => toolResult(${result})`)),
+      }),
+    ).toEqual(["MCP0004 src/envelope.ts"]);
+  });
+
+  test.each([
+    ["./render", { "src/render.js": "export const render = () => '{}'" }, []],
+    ["./render.jsx", {}, ["MCP0004 src/tool.ts"]],
+  ])("follows Vite helper resolution for %s", async (specifier, otherFiles, expected) => {
+    expect(
+      await codes(
+        {
+          ...otherFiles,
+          "src/render.tsx": "export const render = () => JSON.stringify({ n: 1 }, null, 2)",
+          "src/tool.ts":
+            `import { render } from '${specifier}'\n` +
+            tool(
+              "{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, handler: () => render() }",
+              "vite-hub/mcp",
+            ),
+        },
+        viteHub,
+      ),
+    ).toEqual(expected);
+  });
+
   test("accepts compact JSON, logs, and indents Doctor can't read", async () => {
     expect(
       await codes({
