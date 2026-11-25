@@ -37,7 +37,7 @@ export const noHttpErrorMasking = createRule({
           "try { throw new HTTPError({ status: 401 }) } catch (error) { if (HTTPError.isError(error)) throw error; throw new HTTPError({ status: 500 }) }",
       },
     ],
-    title: "Preserve intentional HTTP errors in Nitro handlers",
+    title: "Preserve intentional HTTP errors in h3 handlers",
     category: "request",
     severity: "warn",
     confidence: "heuristic-high",

@@ -32,7 +32,7 @@ export const preferGetRequestIp = createRule({
           "This request-sensitive code reads a forwarded client IP header directly.",
           (h3Major(ctx) ?? 0) >= 2
             ? "Configure srvx's trustProxy option for the proxies in front of the server, then read the client address with getRequestIP(event) or event.req.ip."
-            : "Use the H3/Nitro request IP utility with trusted proxy configuration.",
+            : "Use the h3 request IP utility with trusted proxy configuration.",
         );
       },
     };

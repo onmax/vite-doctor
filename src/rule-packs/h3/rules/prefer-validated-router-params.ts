@@ -4,7 +4,7 @@ export const preferValidatedRouterParams = createValidatedInputRule({
   id: "h3/request/prefer-validated-router-params",
   title: "Use getValidatedRouterParams for validated route params",
   description:
-    "When a Nitro handler validates the whole route params object, read and validate it through the H3 utility.",
+    "When an h3 handler validates the whole route params object, read and validate it through the H3 utility.",
   rawUtilities: ["getRouterParams"],
   confidence: "heuristic-medium",
   validatedUtility: "getValidatedRouterParams",
