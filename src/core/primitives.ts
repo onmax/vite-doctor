@@ -330,6 +330,9 @@ export interface NuxtProjectInfo {
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+    resolvedRouteRules?: Record<string, unknown>;
+    routeRulePagesCurrent?: boolean;
+    nitroPreset?: string;
     pages?: NuxtDoctorManifest["pages"];
     /** Route middleware Nuxt resolved, with absolute paths. Absent in manifests that predate it. */
     middleware?: NuxtResolvedMiddleware[];
@@ -488,6 +491,11 @@ export interface NuxtDoctorManifest {
   granularCachedData?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
+  /** Nitro's resolved `routeRules`; unset when the manifest was written before Nitro started. */
+  resolvedRouteRules?: Record<string, unknown>;
+  routeRulePageMtimes?: Record<string, number | null>;
+  routeRulePageInventory?: Record<string, string[]>;
+  nitroPreset?: string;
   ssr?: boolean;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];

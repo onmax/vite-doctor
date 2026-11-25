@@ -157,6 +157,9 @@ catalogs:
     picomatch:
       specifier: ^4.0.7
       version: 4.0.7
+    radix3:
+      specifier: ^1.1.2
+      version: 1.1.2
     semver:
       specifier: ^7.8.5
       version: 7.8.5
@@ -278,6 +281,9 @@ importers:
       picomatch:
         specifier: catalog:prod
         version: 4.0.7
+      radix3:
+        specifier: catalog:prod
+        version: 1.1.2
       semver:
         specifier: catalog:prod
         version: 7.8.5
