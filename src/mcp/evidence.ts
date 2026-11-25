@@ -54,8 +54,17 @@ export function readMcpServers(
 ): McpServerEvidence[] {
   return Object.values(runtimeEvidence ?? {}).flatMap((entry) => {
     const servers = (entry as { mcpServers?: unknown } | null | undefined)?.mcpServers;
-    return Array.isArray(servers) ? servers.filter(isMcpServerEvidence) : [];
+    return Array.isArray(servers)
+      ? servers.filter(isMcpServerEvidence).map(withoutFailedTools)
+      : [];
   });
+}
+
+// A read that failed has no tools, whatever else an Extension put beside its error.
+function withoutFailedTools(server: McpServerEvidence): McpServerEvidence {
+  if (!("error" in server) || !("tools" in server)) return server;
+  const { tools: _tools, ...failed } = server as McpServerErrorEvidence & { tools: unknown };
+  return failed;
 }
 
 // Any Doctor Extension can contribute this evidence, so only well-formed entries are read.
@@ -86,15 +95,17 @@ export function mcpEvidenceExtension(
           );
           const gaps = new Map<string, NonNullable<ProjectInfo["evidenceGaps"]>[number]>();
           for (const server of mcpServers) {
-            if (!("error" in server) || !server.endpointId || gaps.has(server.endpointId)) continue;
-            gaps.set(server.endpointId, {
+            if (!("error" in server)) continue;
+            const instanceKey = unreadGapKey(server);
+            if (gaps.has(instanceKey)) continue;
+            gaps.set(instanceKey, {
               source: MCP_EVIDENCE,
               message: `Doctor could not read the tools of the MCP server at ${server.url}, so its tools were not checked: ${server.error}${authHint(server.status)}`,
               files: [],
-              instanceKey: server.endpointId,
+              instanceKey,
             });
           }
-          project.evidenceGaps = [...(project.evidenceGaps ?? []), ...gaps.values()];
+          if (gaps.size) project.evidenceGaps = [...(project.evidenceGaps ?? []), ...gaps.values()];
           return { mcpServers };
         },
       });
@@ -169,8 +180,8 @@ export function unreadMcpServerGaps(
   for (const [contributor, entry] of Object.entries(project.runtimeEvidence ?? {})) {
     for (const server of readMcpServers({ [contributor]: entry })) {
       if (typeof (server as Partial<McpServerErrorEvidence>).error !== "string") continue;
-      const { url, endpointId, status } = server as McpServerErrorEvidence;
-      const instanceKey = endpointId ?? mcpEndpointId(url) ?? sha256(url);
+      const { url, status } = server as McpServerErrorEvidence;
+      const instanceKey = unreadGapKey(server as McpServerErrorEvidence);
       if (read.has(instanceKey) || gaps.has(instanceKey)) continue;
       const code = Number.isInteger(status) ? status : undefined;
       // A contributor's error text can carry the URL and its credentials, so only the status is shown.
@@ -183,6 +194,11 @@ export function unreadMcpServerGaps(
     }
   }
   return [...gaps.values()];
+}
+
+// An Extension's endpoint ID or URL can carry credentials, so a gap keeps only its hash.
+function unreadGapKey({ endpointId, url }: McpServerErrorEvidence): string {
+  return sha256(endpointId ?? url);
 }
 
 function authHint(status: number | undefined): string {

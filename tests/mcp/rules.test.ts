@@ -276,6 +276,10 @@ describe("rule details", () => {
     });
     expect(hits("codex/dropped-constraints", zod)).toEqual([]);
     expect(hits("vscode/gpt-4-dropped-constraints", zod)).toEqual([]);
+    const number = tool({
+      inputSchema: object({ ratio: { type: "number", maximum: Number.MAX_SAFE_INTEGER } }),
+    });
+    expect(hits("codex/dropped-constraints", number)).toHaveLength(1);
   });
 
   test("Codex keywords count only descriptions that survive compaction", () => {

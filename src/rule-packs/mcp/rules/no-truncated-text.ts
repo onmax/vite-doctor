@@ -28,7 +28,6 @@ export const noTruncatedText = createRule({
     diagnosticCodes: ["MCP0006"],
     docsUrl: "https://code.claude.com/docs/en/mcp#tool-search-for-mcp-server-authors",
     execution: "workspace",
-    activationScope: "workspace",
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],

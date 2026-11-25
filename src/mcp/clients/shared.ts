@@ -126,7 +126,8 @@ export function undescribedConstraints(
     const prose = texts.filter((text): text is string => typeof text === "string").join("\n");
     for (const keyword of Object.keys(node.schema)) {
       if (!dropped.has(keyword)) continue;
-      if (isSafeIntegerBound(keyword, node.schema[keyword])) continue;
+      if (node.schema.type === "integer" && isSafeIntegerBound(keyword, node.schema[keyword]))
+        continue;
       if (mentions(prose, keyword, node.schema[keyword])) continue;
       found.push({ pointer: inputPointer(`${node.pointer}/${keyword}`), keyword });
     }
