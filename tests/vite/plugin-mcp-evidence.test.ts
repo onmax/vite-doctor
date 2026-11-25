@@ -40,16 +40,17 @@ async function withProject(run: (root: string) => Promise<void>) {
 
 function captureLogger() {
   const errors: string[] = [];
+  const warnings: string[] = [];
   const logger: Logger = {
     info() {},
-    warn() {},
+    warn: (message) => void warnings.push(message),
     warnOnce() {},
     error: (message) => void errors.push(message),
     clearScreen() {},
     hasErrorLogged: () => false,
     hasWarned: false,
   };
-  return { logger, errors };
+  return { logger, errors, warnings };
 }
 
 const mcpEndpoint: Plugin = {
@@ -84,7 +85,7 @@ test("in dev, an MCP path resolves against the dev server once it listens", asyn
       const result = await doctorRuns[0]!;
       const origin = new URL(server.resolvedUrls!.local[0]!).origin;
       expect(readMcpServers(result.project.runtimeEvidence)).toEqual([
-        expect.objectContaining({ url: `${origin}/mcp`, name: "stub", tools: stubTools }),
+        expect.objectContaining({ url: origin, name: "stub", tools: stubTools }),
       ]);
       expect(result.project.evidenceGaps ?? []).toEqual([]);
       expect(errors).toEqual([]);
@@ -103,9 +104,50 @@ test("in middleware mode, an MCP path is a config error that names Nuxt", async 
     });
     try {
       await vi.waitFor(() => expect(errors).toHaveLength(1), { timeout: 15_000 });
-      expect(errors[0]).toContain('MCP server URL "/mcp" is a path');
+      expect(errors[0]).toContain("MCP server URL is a path");
       expect(errors[0]).toContain("middleware mode, as under Nuxt");
       expect(doctorRuns).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+test("a save replaces project-wide MCP evidence gaps and findings", async () => {
+  await withProject(async (root) => {
+    const { logger, errors, warnings } = captureLogger();
+    let authorized = false;
+    const handler = mcpStubHandler({
+      tools: [{ name: "remote", inputSchema: { type: "object", properties: { "page size": {} } } }],
+    });
+    const server = await createServer({
+      ...config(root, logger, { run: "serve", mcp: [{ url: "/live" }] }),
+      plugins: [
+        {
+          name: "fixture/live-mcp",
+          configureServer(server) {
+            server.middlewares.use("/live", (request, response) => {
+              if (!authorized) response.writeHead(401).end();
+              else handler(request, response);
+            });
+          },
+        },
+        doctor({ cache: false, mode: "error", run: "serve", mcp: [{ url: "/live" }] }),
+      ],
+    });
+    try {
+      await server.listen();
+      await vi.waitFor(() => expect(errors.join("\n")).toContain("HTTP 401"), { timeout: 15_000 });
+      authorized = true;
+      server.watcher.emit("change", join(root, "entry.ts"));
+      await vi.waitFor(
+        () => {
+          expect([...warnings, ...errors]).toContainEqual(
+            expect.stringMatching(/Evidence restored:[\s\S]*MCP0005/),
+          );
+        },
+        { timeout: 15_000 },
+      );
     } finally {
       await server.close();
     }

@@ -1,4 +1,3 @@
-import { resolve } from "pathe";
 import type {
   Confidence,
   DiagnosticEvidence,
@@ -8,12 +7,12 @@ import type {
   SourceRange,
 } from "../../../core/index.js";
 import type { DoctorDiagnosticHandle } from "../../../core/diagnostics.js";
-import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
 import { sha256 } from "../../../core/internal/utils.js";
 import { checkMcpToolList } from "../../../mcp/check.js";
+import { mcpEndpointLabel } from "../../../mcp/endpoint.js";
 import { readMcpServers, type McpServerToolsEvidence } from "../../../mcp/evidence.js";
 import type { McpClient, McpEffect, McpFinding } from "../../../mcp/types.js";
-import { collectMcpTools, MCP_PACKAGES, type McpToolDefinition } from "./shared.js";
+import { collectMcpTools, type McpToolDefinition } from "./shared.js";
 import { nameProblems } from "./valid-name.js";
 
 export const MCP_CLIENT_LABELS: Record<McpClient, string> = {
@@ -51,7 +50,7 @@ function serverFindings(ctx: RuleContext): ServerFindings[] {
       .filter((server): server is McpServerToolsEvidence => "tools" in server)
       .map((server) => ({
         server,
-        findings: checkMcpToolList(server, { serverName: server.name }),
+        findings: checkMcpToolList(server, { serverName: server.clientAlias }),
       }));
     checked.set(ctx.project, found);
   }
@@ -116,7 +115,8 @@ function report(
   findings: McpFinding[],
   definition: McpToolDefinition | undefined,
 ): void {
-  const label = server.name ?? server.url ?? "an MCP server";
+  const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
+  const label = server.name ?? endpoint ?? "an MCP server";
   const subject =
     tool === undefined
       ? `MCP server ${JSON.stringify(label)}`
@@ -135,7 +135,7 @@ function report(
   const evidence: DiagnosticEvidence[] = [
     {
       kind: "runtime",
-      summary: `Read from the tools/list of MCP server ${JSON.stringify(label)}${server.url ? ` at ${server.url}` : ""} during this Doctor Run.`,
+      summary: `Read from the tools/list of MCP server ${JSON.stringify(label)}${endpoint ? ` at ${endpoint}` : ""} during this Doctor Run.`,
     },
     ...findings.map((finding) => ({
       kind: "runtime" as const,
@@ -161,19 +161,15 @@ function report(
       ruleId: options.ruleId,
       severity: severity satisfies DoctorSeverity,
       category: "clients",
-      file: definition && range ? definition.file : fallbackAnchor(ctx),
+      file: definition && range ? definition.file : undefined,
+      projectLevel: !definition || !range,
       range: definition && range ? range : undefined,
       // Without a source location, the server and tool identify the Diagnostic across runs.
       fingerprint:
         definition && range
           ? undefined
           : sha256(
-              JSON.stringify([
-                options.ruleId,
-                server.name ?? null,
-                server.url ?? null,
-                tool ?? null,
-              ]),
+              JSON.stringify([options.ruleId, server.name ?? null, endpoint ?? null, tool ?? null]),
             ),
       confidence,
       evidence,
@@ -189,17 +185,4 @@ function measured(finding: McpFinding): string {
 function list(items: string[]): string {
   if (items.length < 3) return items.join(" and ");
   return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
-}
-
-/**
- * The root of the one workspace package that depends on an MCP package, else the project root.
- * In a monorepo the MCP Rule Pack is scoped to those packages, and a Diagnostic located outside
- * them would be dropped.
- */
-function fallbackAnchor(ctx: RuleContext): string {
-  const owners = projectWorkspacePackages(ctx.project).filter((item) =>
-    MCP_PACKAGES.some((name) => name in item.packages),
-  );
-  const owner = owners.length === 1 ? owners[0]!.root : ".";
-  return resolve(ctx.project.root, owner);
 }

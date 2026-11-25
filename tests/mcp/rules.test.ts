@@ -61,8 +61,8 @@ const cases: Record<string, Case> = {
     pass: tool({ annotations: { title: "Search docs" } }),
   },
   "claude-directory/missing-hint": {
-    fail: tool({ annotations: { title: "Search docs" } }),
-    pass: tool({ annotations: { destructiveHint: false } }),
+    fail: tool({ annotations: { readOnlyHint: false, destructiveHint: false } }),
+    pass: tool({ annotations: { destructiveHint: true } }),
   },
   "chatgpt/missing-read-only-hint": {
     fail: tool({ annotations: { destructiveHint: false } }),
@@ -310,6 +310,23 @@ describe("rule details", () => {
     expect(found[0]?.message).toContain("`/inputSchema/properties/a/anyOf/0`");
     expect(found[0]?.message).toContain("`/inputSchema/properties/b/properties/c`");
     expect(found[0]?.confidence).toBe("medium");
+  });
+
+  test("VS Code checks schema-valued draft-07 dependencies", () => {
+    const found = hits(
+      "vscode/array-without-items",
+      schema({
+        $schema: "http://json-schema.org/draft-07/schema#",
+        type: "object",
+        dependencies: {
+          flags: ["enabled"],
+          search: object({ tags: { type: "array" } }),
+        },
+      }),
+    );
+    expect(found.map((finding) => finding.pointer)).toEqual([
+      "/inputSchema/dependencies/search/properties/tags",
+    ]);
   });
 
   test("Gemini CLI shows the cut name", () => {

@@ -43,7 +43,7 @@ function parseMcpFlags(urls: unknown, headers: unknown): DoctorRunOptions["mcp"]
     const name = colon === -1 ? "" : header.slice(0, colon).trim();
     if (!name)
       throw new Error(
-        `--mcp-header ${JSON.stringify(header)} must look like "Name: value", such as "Authorization: Bearer <token>".`,
+        '--mcp-header must look like "Name: value", such as "Authorization: Bearer <token>".',
       );
     parsed[name] = header.slice(colon + 1).trim();
   }

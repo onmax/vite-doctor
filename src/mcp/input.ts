@@ -32,9 +32,13 @@ export function normalizeToolResult(input: unknown): McpToolResult {
   throw new TypeError("Expected a tools/call result or a JSON-RPC tools/call response.");
 }
 
-function validateTools(tools: unknown[]): McpTool[] {
+export function isMcpTool(tool: unknown): tool is McpTool {
+  return isSchema(tool) && typeof tool.name === "string";
+}
+
+export function validateTools(tools: unknown[]): McpTool[] {
   tools.forEach((tool, index) => {
-    if (!isSchema(tool) || typeof tool.name !== "string")
+    if (!isMcpTool(tool))
       throw new TypeError(`tools[${index}] is not an MCP tool with a string \`name\`.`);
   });
   return tools as McpTool[];

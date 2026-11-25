@@ -44,6 +44,7 @@ export function mcpStubHandler(options: StubOptions = {}): RequestListener {
         response.writeHead(401).end();
         return;
       }
+      if (request.method === "DELETE") return void response.writeHead(204).end();
       if (message.method === "notifications/initialized") {
         response.writeHead(202).end();
         return;

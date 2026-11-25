@@ -1,6 +1,13 @@
 import type { McpJsonSchema } from "./types.js";
 
-const SCHEMA_MAPS = ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"];
+const SCHEMA_MAPS = [
+  "properties",
+  "patternProperties",
+  "$defs",
+  "definitions",
+  "dependentSchemas",
+  "dependencies",
+];
 const SCHEMA_LISTS = ["anyOf", "oneOf", "allOf", "prefixItems"];
 const SCHEMA_VALUES = [
   "items",

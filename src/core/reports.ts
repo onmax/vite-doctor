@@ -586,7 +586,8 @@ function agentRunArguments(
   ] as const) {
     if (value !== undefined) args.push(flag, String(value));
   }
-  for (const target of options?.mcp ?? []) args.push("--mcp-url", target.url);
+  for (let index = 0; index < (options?.mcp?.length ?? 0); index++)
+    args.push("--mcp-url", "<mcp-url>");
   // Header values carry tokens, so commands name the header and leave its value to the agent.
   for (const name of Object.keys(options?.mcp?.[0]?.headers ?? {}))
     args.push("--mcp-header", `${name}: <value>`);

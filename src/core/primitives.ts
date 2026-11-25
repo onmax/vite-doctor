@@ -1067,7 +1067,10 @@ export type RuleReportMetadata = Omit<
   DoctorDiagnosticMetadata,
   "ruleId" | "severity" | "category"
 > &
-  Partial<Pick<DoctorDiagnosticMetadata, "ruleId" | "severity" | "category">>;
+  Partial<Pick<DoctorDiagnosticMetadata, "ruleId" | "severity" | "category">> & {
+    /** A workspace-rule finding with no source owner; anchored at the project root. */
+    projectLevel?: boolean;
+  };
 
 export interface RuleContext {
   project: ProjectInfo;

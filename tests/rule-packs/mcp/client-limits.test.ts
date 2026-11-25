@@ -113,6 +113,41 @@ function byCode(diagnostics: Diagnostic[], code: string, tool: string) {
   return diagnostics.find((item) => item.code === code && item.why.includes(`Tool \`${tool}\``));
 }
 
+test("auto reports unowned remote tool findings at the workspace root", async () => {
+  const manifest = JSON.stringify({ dependencies: { "@modelcontextprotocol/sdk": "^1.32.0" } });
+  const root = project({
+    "package.json": '{"name":"workspace"}',
+    "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+    "packages/a/package.json": manifest,
+    "packages/a/index.ts": "export const a = 1;",
+    "packages/b/package.json": manifest,
+    "packages/b/index.ts": "export const b = 1;",
+  });
+  const { diagnostics } = await run(root, {
+    extends: "auto",
+    extensions: contributing([{ name: "remote", tools: [lookup] }]),
+  });
+  expect(summary(root, diagnostics)).toContain("MCP0005 error .");
+});
+
+test("only an explicit client alias affects alias-based exclusions", async () => {
+  const root = project();
+  const name = "s".repeat(73);
+  const server = {
+    name,
+    initialize: { serverInfo: { name } },
+    tools: [{ ...annotated, name: "t".repeat(65), inputSchema: { type: "object" } }],
+  };
+  for (const clientAlias of [undefined, name]) {
+    const { diagnostics } = await run(root, {
+      extensions: contributing([{ ...server, clientAlias }]),
+    });
+    expect(
+      diagnostics.some((item) => item.code === "MCP0005" && item.why.includes("Claude Code")),
+    ).toBe(clientAlias !== undefined);
+  }
+});
+
 test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the tool's source or the root", async () => {
   const root = project({ "server/mcp/tools/search.ts": searchSource });
   const { diagnostics } = await run(root, {

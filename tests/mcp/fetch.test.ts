@@ -12,14 +12,17 @@ type Handler = (
 const servers: ReturnType<typeof createServer>[] = [];
 
 afterEach(() => {
-  for (const server of servers.splice(0)) server.close();
+  for (const server of servers.splice(0)) {
+    server.close();
+    server.closeAllConnections();
+  }
 });
 
 async function serve(handler: Handler): Promise<string> {
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => (body += chunk));
-    request.on("end", () => handler(JSON.parse(body), request, response));
+    request.on("end", () => handler(JSON.parse(body || "{}"), request, response));
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -49,11 +52,12 @@ test("reads initialize and every tools/list page over JSON and SSE with the sess
   const seen: { method: string; session?: string; version?: string; cursor?: string }[] = [];
   const url = await serve((message, request, response) => {
     seen.push({
-      method: message.method,
+      method: request.method === "DELETE" ? "DELETE" : message.method,
       session: request.headers["mcp-session-id"] as string | undefined,
       version: request.headers["mcp-protocol-version"] as string | undefined,
       cursor: message.params?.cursor,
     });
+    if (request.method === "DELETE") return void response.writeHead(204).end();
     if (message.method === "initialize")
       return json(response, message.id, initialize, { "mcp-session-id": "session-1" });
     if (message.method === "notifications/initialized") {
@@ -78,6 +82,7 @@ test("reads initialize and every tools/list page over JSON and SSE with the sess
     },
     { method: "tools/list", session: "session-1", version: "2025-06-18", cursor: undefined },
     { method: "tools/list", session: "session-1", version: "2025-06-18", cursor: "page-2" },
+    { method: "DELETE", session: "session-1", version: "2025-06-18", cursor: undefined },
   ]);
 });
 
@@ -92,6 +97,83 @@ test("reports a 401 with a hint and the status", async () => {
   expect(error).toBeInstanceOf(McpFetchError);
   expect(error).toMatchObject({ status: 401 });
   expect((error as Error).message).toContain("needs authorization");
+});
+
+test("returns the matching SSE result without waiting for the connection to close", async () => {
+  let canceled = false;
+  const fetch: typeof globalThis.fetch = async (_url, init) => {
+    const message = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+    if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
+    if (message.method === "initialize")
+      return Response.json({ id: message.id, result: initialize });
+    const encoder = new TextEncoder();
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          for (const chunk of [
+            'data: {"id":99,"result":{}}\r\n\r\n',
+            `data: {"jsonrpc":"2.0",\r`,
+            `\ndata: "id":${message.id},"result":{"tools":[{"name":"café"}]}}\r\n\r\n`,
+          ])
+            controller.enqueue(encoder.encode(chunk));
+        },
+        cancel() {
+          canceled = true;
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  };
+  await expect(fetchMcpToolList("https://example.test/mcp", { fetch })).resolves.toMatchObject({
+    tools: [{ name: "café" }],
+  });
+  expect(canceled).toBe(true);
+}, 1_000);
+
+test("reports a redirect without enabling automatic forwarding", async () => {
+  const fetch: typeof globalThis.fetch = async (_url, init) => {
+    expect(init?.redirect).toBe("manual");
+    return Response.redirect("https://other.example.test/mcp", 307);
+  };
+  await expect(fetchMcpToolList("https://example.test/mcp", { fetch })).rejects.toThrow(
+    "redirects are not followed",
+  );
+});
+
+test("rejects redirects without forwarding MCP headers", async () => {
+  let forwarded = false;
+  const other = await serve((_message, _request, response) => {
+    forwarded = true;
+    response.writeHead(403).end();
+  });
+  const url = await serve((_message, _request, response) => {
+    response.writeHead(307, { location: other }).end();
+  });
+  await expect(fetchMcpToolList(url, { headers: { "X-API-Key": "test-token" } })).rejects.toThrow(
+    "redirect",
+  );
+  expect(forwarded).toBe(false);
+});
+
+test("rejects malformed tools and terminates the assigned session on failure", async () => {
+  const terminated: Array<[unknown, unknown]> = [];
+  const fetch: typeof globalThis.fetch = async (_url, init) => {
+    if (init?.method === "DELETE") {
+      const headers = new Headers(init.headers);
+      terminated.push([headers.get("mcp-session-id"), headers.get("mcp-protocol-version")]);
+      return new Response(null, { status: 405 });
+    }
+    const message = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+    if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
+    if (message.method === "initialize")
+      return Response.json(
+        { id: message.id, result: initialize },
+        { headers: { "mcp-session-id": "session-1" } },
+      );
+    return Response.json({ id: message.id, result: { tools: [{ description: "Search" }] } });
+  };
+  await expect(fetchMcpToolList("https://example.test/mcp", { fetch })).rejects.toThrow("tools[0]");
+  expect(terminated).toEqual([["session-1", "2025-06-18"]]);
 });
 
 test("sends the given headers", async () => {
@@ -115,7 +197,5 @@ test("reports a JSON-RPC error", async () => {
       JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Nope" } }),
     );
   });
-  await expect(fetchMcpToolList(url)).rejects.toThrow(
-    "initialize returned JSON-RPC error -32601: Nope",
-  );
+  await expect(fetchMcpToolList(url)).rejects.toThrow("initialize returned JSON-RPC error -32601.");
 });

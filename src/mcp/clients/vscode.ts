@@ -28,6 +28,7 @@ const NORMALIZED_STRUCTURE = new Set([
   "properties",
   "items",
   "patternProperties",
+  "dependencies",
   "additionalProperties",
   "anyOf",
   "allOf",

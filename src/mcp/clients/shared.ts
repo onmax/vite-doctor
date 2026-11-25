@@ -79,6 +79,7 @@ function keywordPath(root: unknown, pointer: string): string[] | undefined {
 const MAP_KEYWORDS = new Set([
   "properties",
   "patternProperties",
+  "dependencies",
   "$defs",
   "definitions",
   "dependentSchemas",

@@ -434,7 +434,9 @@ class ServeDoctorRun {
     this.pending = emptyChanges();
     // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files.
     const affected =
-      full || !this.state || this.options.changed || this.options.since ? undefined : files;
+      full || !this.state || this.options.changed || this.options.since || this.options.mcp?.length
+        ? undefined
+        : files;
     await this.execute({ affected, changed: [...changed], reported });
   }
 
@@ -667,7 +669,7 @@ function surfaceMcpTargets(
       ? "a build has no dev server to resolve it against"
       : "this dev server runs in middleware mode, as under Nuxt, so Vite does not know its URL";
     throw new Error(
-      `MCP server URL ${JSON.stringify(target.url)} is a path, and ${reason}. Pass an absolute URL in the mcp option, such as http://localhost:3000/mcp.`,
+      `The MCP server URL is a path, and ${reason}. Pass an absolute URL in the mcp option, such as http://localhost:3000/mcp.`,
     );
   });
 }
