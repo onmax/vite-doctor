@@ -320,6 +320,38 @@ describe("nuxt/pages/single-root-node", () => {
     ).toEqual([]);
   });
 
+  test("keeps parent and layout transition evidence when a nested outlet is missing", async () => {
+    const diagnostics = await run(id, {
+      "app/app.vue": template("<NuxtLayout><NuxtPage /></NuxtLayout>"),
+      "app/layouts/default.vue": template("<header /><slot />"),
+      "app/pages/users.vue": template("<h1>Users</h1><p>Welcome</p>"),
+      "app/pages/users/index.vue": template(
+        "<h1>User</h1><p>Profile</p>",
+        "definePageMeta({ pageTransition: true, layoutTransition: true })",
+      ),
+    });
+
+    expect(diagnostics.map((item) => item.file).sort()).toEqual([
+      expect.stringMatching(/layouts\/default\.vue$/),
+      expect.stringMatching(/pages\/users\.vue$/),
+    ]);
+  });
+
+  test("uses the route transition for a layout rendered by a page", async () => {
+    const diagnostics = await run(id, {
+      "app/app.vue": template("<NuxtPage />"),
+      "app/layouts/default.vue": template("<header /><slot />"),
+      "app/pages/index.vue": template(
+        "<NuxtLayout><main>Home</main></NuxtLayout>",
+        "definePageMeta({ layoutTransition: true })",
+      ),
+    });
+
+    expect(diagnostics.map((item) => item.file)).toEqual([
+      expect.stringMatching(/layouts\/default\.vue$/),
+    ]);
+  });
+
   test("treats a v-if chain as one root", async () => {
     const diagnostics = await run(id, {
       "nuxt.config.ts": pageTransition,
