@@ -74,7 +74,10 @@ export async function runSurfaceDoctor(
     diagnostics: result.diagnostics.map((diagnostic) => surfaceDiagnostic(result, diagnostic)),
     evidenceGaps: (result.project.evidenceGaps ?? []).map((gap) => ({
       ...gap,
-      id: JSON.stringify([gap.source, gap.instanceKey, gap.message, gap.files]),
+      // A gap with an instance keeps its identity while its reason changes.
+      id: JSON.stringify(
+        gap.instanceKey ? [gap.source, gap.instanceKey] : [gap.source, gap.message, gap.files],
+      ),
     })),
     runtimeIncomplete:
       reportStatus({ ...result, project: { ...result.project, evidenceGaps: undefined } }) ===

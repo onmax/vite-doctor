@@ -6,6 +6,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { readMcpServers } from "../../src/mcp/evidence.ts";
 import { doctor, type ViteDoctorSurfaceOptions } from "../../src/plugin.ts";
 import type { runViteDoctor } from "../../src/doctor.ts";
+import type { DoctorExtension } from "../../src/core/primitives.ts";
 import { mcpStubHandler, stubTools } from "../mcp/mcp-stub.ts";
 
 type RunResult = Awaited<ReturnType<typeof runViteDoctor>>;
@@ -162,6 +163,43 @@ test("a save replaces project-wide MCP evidence gaps and findings", async () => 
         },
         { timeout: 15_000 },
       );
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+test("a save that first brings MCP servers reruns Doctor in full", async () => {
+  await withProject(async (root) => {
+    const { logger, warnings, errors } = captureLogger();
+    let calls = 0;
+    const tool = {
+      name: "remote",
+      inputSchema: { type: "object", properties: { "page size": {} } },
+    };
+    const extensions: DoctorExtension[] = [
+      {
+        name: "fixture/late-mcp",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({
+            name: "late",
+            contribute: () => ({ mcpServers: calls++ ? [{ name: "late", tools: [tool] }] : [] }),
+          });
+        },
+      },
+    ];
+    const server = await createServer(
+      config(root, logger, { cache: false, mode: "warn", run: "serve", extensions }),
+    );
+    try {
+      await server.listen();
+      await vi.waitFor(() => expect(doctorRuns.length).toBeGreaterThan(0), { timeout: 15_000 });
+      await doctorRuns[0];
+      server.watcher.emit("change", join(root, "entry.ts"));
+      await vi.waitFor(() => expect([...warnings, ...errors].join("\n")).toContain("MCP0005"), {
+        timeout: 15_000,
+      });
+      expect(runOptions.at(-1)!.affectedFiles).toBeUndefined();
     } finally {
       await server.close();
     }

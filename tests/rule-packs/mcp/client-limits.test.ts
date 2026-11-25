@@ -380,16 +380,30 @@ test("without MCP evidence the client-limit Rules report nothing and leave no ga
   expect(result.project.evidenceGaps ?? []).toEqual([]);
 });
 
-test("a server a Doctor Extension could not read leaves an evidence gap", async () => {
+test("a server a Doctor Extension could not read leaves one evidence gap that hides its URL", async () => {
+  const url = "http://user:pass@127.0.0.1:1/mcp?token=secret";
+  const failed = { url, error: `fetch ${url} failed`, status: 503 };
   const root = project();
   const { result, diagnostics } = await run(root, {
-    extensions: contributing([{ url: "http://127.0.0.1:1/mcp", error: "connection refused" }]),
+    extensions: [
+      ...contributing([failed])!,
+      {
+        name: "fixture/other",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({
+            name: "other",
+            contribute: () => ({ mcpServers: [failed] }),
+          });
+        },
+      },
+    ],
   });
   expect(diagnostics).toEqual([]);
   expect(result.project.evidenceGaps).toEqual([
     expect.objectContaining({
       source: "mcp",
-      message: expect.stringContaining("http://127.0.0.1:1, so its tools were not checked"),
+      message:
+        'The "vitehub" Runtime Evidence contributor could not read the tools of the MCP server at http://127.0.0.1:1 (HTTP 503), so its tools were not checked.',
     }),
   ]);
 });

@@ -1,4 +1,5 @@
 import type { DoctorExtension, ProjectInfo } from "../core/primitives.js";
+import { sha256 } from "../core/internal/utils.js";
 import { mcpEndpointId, mcpEndpointLabel, parseMcpEndpoint } from "./endpoint.js";
 import { fetchMcpToolList, McpFetchError } from "./fetch.js";
 import { isMcpTool } from "./input.js";
@@ -134,21 +135,26 @@ export function assertAbsoluteMcpUrl(url: string): void {
 export function unreadMcpServerGaps(
   project: ProjectInfo,
 ): NonNullable<ProjectInfo["evidenceGaps"]> {
-  return readMcpServers(project.runtimeEvidence)
-    .filter(
-      (server): server is McpServerErrorEvidence =>
-        typeof (server as Partial<McpServerErrorEvidence>).error === "string",
-    )
-    .map(({ url, endpointId, error, status }) => ({
-      source: MCP_EVIDENCE,
-      message: `Doctor could not read the tools of the MCP server at ${mcpEndpointLabel(url)}, so its tools were not checked: ${error}${
-        status === 401 || status === 403
+  const gaps = new Map<string, NonNullable<ProjectInfo["evidenceGaps"]>[number]>();
+  for (const [contributor, entry] of Object.entries(project.runtimeEvidence ?? {})) {
+    for (const server of readMcpServers({ [contributor]: entry })) {
+      if (!("error" in server)) continue;
+      const instanceKey = server.endpointId ?? mcpEndpointId(server.url) ?? sha256(server.url);
+      if (gaps.has(instanceKey)) continue;
+      const label = mcpEndpointLabel(server.url);
+      const hint =
+        server.status === 401 || server.status === 403
           ? ' On the CLI, pass it with --mcp-header "Authorization: Bearer <token>".'
-          : ""
-      }`,
-      files: [],
-      instanceKey: endpointId ?? mcpEndpointId(url),
-    }));
+          : "";
+      // Only Doctor's own reasons are known to leave out the URL and its credentials.
+      const message =
+        contributor === MCP_EVIDENCE
+          ? `Doctor could not read the tools of the MCP server at ${label}, so its tools were not checked: ${server.error}${hint}`
+          : `The ${JSON.stringify(contributor)} Runtime Evidence contributor could not read the tools of the MCP server at ${label}${server.status ? ` (HTTP ${server.status})` : ""}, so its tools were not checked.${hint}`;
+      gaps.set(instanceKey, { source: MCP_EVIDENCE, message, files: [], instanceKey });
+    }
+  }
+  return [...gaps.values()];
 }
 
 /**

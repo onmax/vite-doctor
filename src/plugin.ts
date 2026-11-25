@@ -442,7 +442,7 @@ class ServeDoctorRun {
     await this.execute({ affected, changed: [...changed], reported });
   }
 
-  private async execute(batch: RunBatch, initial = false) {
+  private async execute(batch: RunBatch, initial = false): Promise<void> {
     const { config } = this.server;
     let base: ReturnType<typeof surfaceRunInput>;
     try {
@@ -488,7 +488,13 @@ class ServeDoctorRun {
       if (this.active === run) this.active = undefined;
       done.resolve();
     }
-    if (outcome && !run.stale && !this.closed) this.record(base.options.root, batch, outcome);
+    if (!outcome || run.stale || this.closed) return;
+    // Diagnostics from MCP servers have no saved file, so an affected run cannot merge them.
+    if (batch.affected && outcome.mcpEvidence && !this.mcpEvidence) {
+      this.mcpEvidence = true;
+      return this.execute({ ...batch, affected: undefined }, initial);
+    }
+    this.record(base.options.root, batch, outcome);
   }
 
   private record(root: string, batch: RunBatch, outcome: SurfaceRunOutcome) {
