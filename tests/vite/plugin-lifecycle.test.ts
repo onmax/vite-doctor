@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { build, createBuilder, resolveConfig, type Logger } from "vite";
-import { expect, test } from "vite-plus/test";
+import { build, createBuilder, resolveConfig, type Logger, type ViteDevServer } from "vite";
+import { expect, test, vi } from "vite-plus/test";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../src/extension.ts";
 import { doctor } from "../../src/plugin.ts";
 
@@ -15,6 +15,15 @@ async function withProject(run: (root: string) => Promise<void>) {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+async function installFixtureVue(root: string) {
+  await mkdir(join(root, "node_modules/vue"), { recursive: true });
+  await writeFile(
+    join(root, "node_modules/vue/package.json"),
+    JSON.stringify({ name: "vue", version: "3.5.0", main: "index.js" }),
+  );
+  await writeFile(join(root, "node_modules/vue/index.js"), "module.exports = {};");
 }
 
 test("a reused Plugin Surface diagnoses each resolved Vite build", async () => {
@@ -41,6 +50,7 @@ test("a reused Plugin Surface diagnoses each resolved Vite build", async () => {
 
 test("Pinia classifies destructuring against the configured Vite alias", async () => {
   await withProject(async (root) => {
+    await installFixtureVue(root);
     await writeFile(
       join(root, "package.json"),
       JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0", vue: "^3.5.0" } }),
@@ -89,6 +99,7 @@ test.each(["browser", "extension", "tsconfig"] as const)(
   "Pinia uses Vite's final store resolution (%s)",
   async (kind) => {
     await withProject(async (root) => {
+      await installFixtureVue(root);
       await writeFile(
         join(root, "package.json"),
         JSON.stringify({
@@ -152,6 +163,142 @@ export default defineComponent({ setup() { const { count } = useCartStore(); ret
     });
   },
 );
+
+const destructureRule = "pinia/state/no-store-destructure";
+const storeState = "{ state: () => ({ count: 0 }) }";
+const storeAction = "{ actions: { count() {} } }";
+
+async function piniaImports(root: string, specifier: string) {
+  await installFixtureVue(root);
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0", vue: "^3.5.0" } }),
+  );
+  await writeFile(
+    join(root, "entry.ts"),
+    `import { defineComponent } from 'vue'
+import { useCartStore } from '${specifier}'
+export default defineComponent({ setup() { const { count } = useCartStore(); return { count } } })`,
+  );
+  const store = async (name: string, options: string) =>
+    writeFile(
+      join(root, `${name}.ts`),
+      `import { defineStore } from 'pinia'; export const useCartStore = defineStore('${name}', ${options})`,
+    );
+  await store("cart", storeState);
+  await store("action", storeAction);
+  return store;
+}
+
+function piniaBuild(root: string) {
+  return {
+    root,
+    configFile: false as const,
+    logLevel: "silent" as const,
+    plugins: [doctor({ rules: destructureRule, maxWarnings: 0, cache: false })],
+    build: {
+      write: false,
+      lib: { entry: join(root, "entry.ts"), formats: ["es" as const] },
+      rolldownOptions: { external: ["pinia", "vue"] },
+    },
+  };
+}
+
+test("Pinia uses the import resolved after all buildStart hooks", async () => {
+  await withProject(async (root) => {
+    const store = await piniaImports(root, "@cart");
+    const config = piniaBuild(root);
+    let ready = false;
+    const resolver = {
+      name: "fixture/late-store-resolver",
+      buildStart: {
+        order: "post" as const,
+        sequential: true,
+        handler() {
+          ready = true;
+        },
+      },
+      resolveId(source: string) {
+        if (source === "@cart") return join(root, ready ? "action.ts" : "cart.ts");
+      },
+    };
+    await build({ ...config, plugins: [...config.plugins, resolver] });
+    ready = false;
+    await store("action", storeState);
+    await expect(build({ ...config, plugins: [...config.plugins, resolver] })).rejects.toThrow(
+      /PINIA0005.*action\.ts/,
+    );
+  });
+});
+
+test("Pinia does not apply SSR resolution to a client-only importer", async () => {
+  await withProject(async (root) => {
+    await piniaImports(root, "./cart");
+    await rename(join(root, "action.ts"), join(root, "cart.js"));
+    await writeFile(join(root, "server.ts"), "export const server = true;");
+    const config = piniaBuild(root);
+    const app = await createBuilder({
+      ...config,
+      environments: {
+        client: { resolve: { extensions: [".js", ".ts"] } },
+        ssr: {
+          consumer: "server",
+          resolve: { extensions: [".ts", ".js"] },
+          build: { lib: { entry: join(root, "server.ts") } },
+        },
+      },
+      builder: {
+        async buildApp(builder) {
+          await Promise.all(Object.values(builder.environments).map((env) => builder.build(env)));
+        },
+      },
+    });
+    await app.buildApp();
+  });
+});
+
+test("Pinia resolves a relative dev import with the legacy plugin container", async () => {
+  await withProject(async (root) => {
+    await piniaImports(root, "./cart");
+    const warn = vi.fn();
+    const config = await resolveConfig({ root, configFile: false, logLevel: "silent" }, "serve");
+    const legacy = { ...config, environments: undefined, logger: { ...config.logger, warn } };
+    const resolveId = vi.fn(async (source: string) =>
+      source === "./cart" ? { id: join(root, "cart.ts"), external: false } : null,
+    );
+    const events = { on: vi.fn(), off: vi.fn() };
+    const server = {
+      config: legacy,
+      pluginContainer: { resolveId },
+      watcher: { ...events, add: vi.fn() },
+      ws: events,
+    } as unknown as ViteDevServer;
+    const { configResolved, configureServer, buildStart, closeBundle } = doctor({
+      rules: destructureRule,
+      run: "serve",
+      cache: false,
+    });
+    if (
+      typeof configResolved !== "function" ||
+      typeof configureServer !== "function" ||
+      typeof buildStart !== "function" ||
+      typeof closeBundle !== "function"
+    )
+      throw new Error("Expected Doctor lifecycle hooks");
+    await configResolved.call({} as ThisParameterType<typeof configResolved>, server.config);
+    await configureServer.call({} as ThisParameterType<typeof configureServer>, server);
+    try {
+      await buildStart.call({} as ThisParameterType<typeof buildStart>, {} as never);
+      await vi.waitFor(
+        () => expect(warn).toHaveBeenCalledWith(expect.stringContaining("PINIA0005")),
+        { timeout: 15_000 },
+      );
+      expect(resolveId).toHaveBeenCalledWith("./cart", join(root, "entry.ts"));
+    } finally {
+      await closeBundle.call({} as ThisParameterType<typeof closeBundle>);
+    }
+  });
+});
 
 test("Pinia cycles use Vite's resolved extension order", async () => {
   await withProject(async (root) => {

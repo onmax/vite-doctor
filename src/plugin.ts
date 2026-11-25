@@ -11,6 +11,7 @@ import type {
   DoctorSerializableConfig,
 } from "./core/index.js";
 import type { HostImportResolver } from "./core/internal/host-imports.js";
+import { parseScriptSync } from "./core/internal/script.js";
 import {
   diffStates,
   formatDelta,
@@ -30,6 +31,7 @@ import {
 import type { BuildEnvironment, Plugin, ResolvedConfig, ViteDevServer } from "vite";
 
 type BuildTarget = Pick<BuildEnvironment, "name" | "config">;
+type BuildImports = Map<string, Map<string, string | undefined>>;
 
 function newBuildReports() {
   return {
@@ -88,6 +90,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
   const watchReports = new WeakMap<BuildTarget, ReturnType<typeof newBuildReports>>();
   let privateMaps = new WeakSet<object>();
   let stubResolutions = new WeakMap<object, Map<string, string>>();
+  let buildImports = new WeakMap<object, BuildImports>();
   const inspectBuild =
     options.enabled !== false &&
     shouldRun(options.run ?? "build", "build") &&
@@ -99,17 +102,6 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     return (
       resolved.environments && resolved.plugins.find((candidate) => warningBudgets.has(candidate))
     );
-  }
-
-  async function checkBuild(
-    resolved: ResolvedConfig,
-    fail: (message: string) => never,
-    targets?: BuildTarget[],
-    warnings?: Set<string>,
-    resolveImport?: HostImportResolver,
-  ) {
-    const outcome = await runBuild(resolved, targets, resolveImport);
-    reportBuild(resolved, outcome, fail, warnings);
   }
 
   async function runBuild(
@@ -178,6 +170,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       buildReports = newBuildReports();
       privateMaps = new WeakSet();
       stubResolutions = new WeakMap();
+      buildImports = new WeakMap();
       if (
         resolved.command !== "build" ||
         options.maxWarnings === undefined ||
@@ -214,51 +207,86 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         run.startAfterListening();
         return;
       }
-      const resolveImport: HostImportResolver | undefined =
-        typeof this.resolve === "function"
-          ? async (source, importer) => {
-              const result = await this.resolve(source, importer, { skipSelf: true });
-              return result && !result.external ? result.id : undefined;
-            }
-          : undefined;
-      if (target && this.meta.watchMode) {
-        const reports = newBuildReports();
-        watchReports.set(target, reports);
-        await checkBuild(
-          resolved,
-          (message) => this.error(message),
-          [target],
-          reports.warnings,
-          resolveImport,
-        );
-        return;
+      const watch = target && this.meta.watchMode ? newBuildReports() : undefined;
+      if (target && watch) watchReports.set(target, watch);
+      if (!watch && (target ? checkedTargets.has(target) : ran)) return;
+      const outcome = await runBuild(resolved, target ? [target] : undefined);
+      if (outcome.needsHostImportResolution && typeof this.getModuleInfo === "function") {
+        buildImports.set(target ?? resolved, new Map());
+      } else {
+        reportBuild(resolved, outcome, (message) => this.error(message), watch?.warnings);
       }
-      if (target ? checkedTargets.has(target) : ran) return;
-      await checkBuild(
-        resolved,
-        (message) => this.error(message),
-        target ? [target] : undefined,
-        undefined,
-        resolveImport,
-      );
+      if (watch) return;
       if (target) checkedTargets.add(target);
       else ran = true;
+    },
+    async buildEnd(error) {
+      const target = this.environment;
+      const resolved = target?.getTopLevelConfig() ?? config;
+      if (resolved?.command !== "build") return;
+      const key = target ?? resolved;
+      const imports = buildImports.get(key);
+      if (!imports) return;
+      buildImports.delete(key);
+      if (error) return;
+      const staticSources = new Map<string, Set<string>>();
+      const outcome = await runBuild(
+        resolved,
+        target ? [target] : undefined,
+        async (source, importer) => {
+          const id = imports.get(importer)?.get(source);
+          if (!id) return;
+          const info = this.getModuleInfo(importer);
+          if (!info?.importedIds.includes(id) || !info.code) return;
+          let sources = staticSources.get(importer);
+          if (!sources) {
+            const { module } = parseScriptSync(importer, info.code, { lang: "js" });
+            sources = new Set(module.staticImports.map(({ moduleRequest }) => moduleRequest.value));
+            for (const { entries } of module.staticExports)
+              for (const entry of entries)
+                if (entry.moduleRequest) sources.add(entry.moduleRequest.value);
+            staticSources.set(importer, sources);
+          }
+          return sources.has(source) ? id : undefined;
+        },
+      );
+      reportBuild(
+        resolved,
+        outcome,
+        (message) => this.error(message),
+        target && watchReports.get(target)?.warnings,
+      );
     },
     resolveId: {
       order: "pre",
       async handler(source, importer, context) {
         const env = this.environment;
-        if (
-          !inspectBuild ||
-          !this.meta.rolldownVersion ||
-          env?.config.consumer !== "client" ||
-          env.config.command !== "build" ||
-          !importer ||
-          !isBuiltin(source)
-        )
-          return;
+        const key = env ?? config;
+        const imports = key && buildImports.get(key);
+        const observeImport =
+          imports &&
+          importer &&
+          isAbsolute(importer) &&
+          !/[?#\0]/.test(importer) &&
+          !importer.split("/").includes("node_modules") &&
+          (!("kind" in context) || context.kind === "import-statement");
+        const inspectStub =
+          inspectBuild &&
+          this.meta.rolldownVersion &&
+          env?.config.consumer === "client" &&
+          env.config.command === "build" &&
+          importer &&
+          isBuiltin(source);
+        if (!importer || (!observeImport && !inspectStub)) return;
         const resolution = await this.resolve(source, importer, { ...context, skipSelf: true });
-        if (resolution && !resolution.external) {
+        if (observeImport && imports) {
+          let sources = imports.get(importer);
+          if (!sources) imports.set(importer, (sources = new Map()));
+          const id = resolution && !resolution.external ? resolution.id : undefined;
+          if (!sources.has(source)) sources.set(source, id);
+          else if (sources.get(source) !== id) sources.set(source, undefined);
+        }
+        if (inspectStub && env && resolution && !resolution.external) {
           let resolutions = stubResolutions.get(env);
           if (!resolutions) stubResolutions.set(env, (resolutions = new Map()));
           resolutions.set(`${importer}\0${source}`, resolution.id);
@@ -349,7 +377,10 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     },
     buildApp,
     closeBundle() {
-      if (serveRun && this.environment?.getTopLevelConfig() === serveRun.server.config) {
+      if (
+        serveRun &&
+        (this.environment?.getTopLevelConfig() ?? config) === serveRun.server.config
+      ) {
         serveRun.cancel();
         serveRun = undefined;
       }
@@ -495,8 +526,13 @@ class ServeDoctorRun {
     input.frameworkDiagnostics = this.runtimeDiagnostics.list();
     const extensions = surfaceExtensions(config, this.options);
     const resolveImport: HostImportResolver = async (source, importer) => {
+      const environments = Object.values(this.server.environments ?? {});
+      if (environments.length === 0) {
+        const result = await this.server.pluginContainer.resolveId(source, importer);
+        return result && !result.external ? result.id : undefined;
+      }
       const ids = await Promise.all(
-        Object.values(this.server.environments ?? {}).map(async (environment) => {
+        environments.map(async (environment) => {
           const result = await environment.pluginContainer.resolveId(source, importer);
           return result && !result.external ? result.id : undefined;
         }),
