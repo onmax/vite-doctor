@@ -8,6 +8,7 @@ import type { McpInitializeResult, McpTool, McpToolList, McpToolResult } from ".
 export function normalizeToolList(input: unknown): McpToolList {
   if (Array.isArray(input)) return { tools: validateTools(input) };
   if (isSchema(input)) {
+    rejectJsonRpcError(input, "tools/list");
     if (Array.isArray(input.tools)) {
       const initialize = isSchema(input.initialize)
         ? (input.initialize as McpInitializeResult)
@@ -25,11 +26,21 @@ export function normalizeToolList(input: unknown): McpToolList {
 /** Accepts a `tools/call` result or the raw JSON-RPC response that carries it. */
 export function normalizeToolResult(input: unknown): McpToolResult {
   if (isSchema(input)) {
-    const result = "jsonrpc" in input && isSchema(input.result) ? input.result : input;
-    if (result.content === undefined || Array.isArray(result.content))
+    rejectJsonRpcError(input, "tools/call");
+    const result = "jsonrpc" in input ? input.result : input;
+    if (isSchema(result) && (result.content === undefined || Array.isArray(result.content)))
       return result as McpToolResult;
   }
   throw new TypeError("Expected a tools/call result or a JSON-RPC tools/call response.");
+}
+
+// An error response has no result to check; reading it as an empty result would pass every check.
+function rejectJsonRpcError(input: Record<string, unknown>, method: string): void {
+  if (!("jsonrpc" in input) || !isSchema(input.error)) return;
+  const { code, message } = input.error;
+  throw new TypeError(
+    `Expected a JSON-RPC ${method} result, got an error response${typeof code === "number" ? ` ${code}` : ""}${typeof message === "string" ? `: ${message}` : ""}.`,
+  );
 }
 
 export function isMcpTool(tool: unknown): tool is McpTool {

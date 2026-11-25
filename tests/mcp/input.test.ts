@@ -61,4 +61,13 @@ describe("tools/call input", () => {
     expect(() => checkMcpToolResult([])).toThrow(TypeError);
     expect(() => checkMcpToolResult(null)).toThrow(TypeError);
   });
+
+  test("rejects a JSON-RPC error response instead of passing it as an empty result", () => {
+    const error = { jsonrpc: "2.0", id: 1, error: { code: -32602, message: "Unknown tool" } };
+    expect(() => checkMcpToolResult(error)).toThrow(
+      "Expected a JSON-RPC tools/call result, got an error response -32602: Unknown tool.",
+    );
+    expect(() => checkMcpToolList(error)).toThrow(/tools\/list result, got an error response/);
+    expect(() => checkMcpToolResult({ jsonrpc: "2.0", id: 1 })).toThrow(TypeError);
+  });
 });
