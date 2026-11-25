@@ -263,6 +263,48 @@ test.each([false, true])(
   },
 );
 
+test("a baseline does not hide changed client exclusions at the same MCP endpoint", async () => {
+  const root = project({
+    "server/mcp/tools/lookup.ts": searchSource.replace("name: 'search'", "name: 'lookup'"),
+  });
+  const copilotProperty = { size: { type: "integer", exclusiveMinimum: 0 } };
+  const claudeProperty = { "page size": { type: "integer" } };
+  let properties: Record<string, unknown> = copilotProperty;
+  vi.stubGlobal("fetch", async (_url: URL, request: RequestInit) => {
+    const { id, method } = JSON.parse(typeof request.body === "string" ? request.body : "{}");
+    if (method === "notifications/initialized") return new Response(null, { status: 202 });
+    const result =
+      method === "initialize"
+        ? { serverInfo: { name: "stub" } }
+        : { tools: [{ ...lookup, inputSchema: { type: "object", properties } }] };
+    return Response.json({ jsonrpc: "2.0", id, result });
+  });
+  const mcp = [{ url: "https://example.test/mcp" }];
+  const baseline = "baseline.json";
+  const exclusions = (diagnostics: Diagnostic[]) =>
+    diagnostics.filter((item) => item.code === "MCP0005");
+  const initial = await run(root, { mcp });
+  const [known] = exclusions(initial.diagnostics);
+  expect(known?.range).toBeDefined();
+  expect(known?.why).toContain("Copilot Studio");
+  writeBaseline(root, baseline, initial.diagnostics);
+
+  const unchanged = await run(root, { mcp, baseline, newOnly: true });
+  expect(exclusions(unchanged.diagnostics)).toEqual([]);
+
+  properties = claudeProperty;
+  const changed = await run(root, { mcp, baseline, newOnly: true });
+  expect(exclusions(changed.diagnostics)).toEqual([
+    expect.objectContaining({ why: expect.stringContaining("Claude Code") }),
+  ]);
+
+  properties = { ...copilotProperty, ...claudeProperty };
+  const combined = await run(root, { mcp });
+  expect(exclusions(combined.diagnostics)).toEqual([
+    expect.objectContaining({ why: expect.stringContaining("Claude Code and Copilot Studio") }),
+  ]);
+});
+
 test("the Recommended Preset reports only excluded tools and truncated text", async () => {
   const server = await startMcpStub({ tools: [search, lookup] });
   cleanups.push(server.close);

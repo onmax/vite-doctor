@@ -120,7 +120,13 @@ function report(
   const fingerprint =
     endpointId || !definition?.name?.range
       ? sha256(
-          JSON.stringify([options.ruleId, server.name ?? null, endpointId ?? null, tool ?? null]),
+          JSON.stringify([
+            options.ruleId,
+            server.name ?? null,
+            endpointId ?? null,
+            tool ?? null,
+            findings.map(({ rule, pointer }) => JSON.stringify([rule, pointer ?? null])).sort(),
+          ]),
         )
       : undefined;
   const label = server.name ?? endpoint ?? "an MCP server";
