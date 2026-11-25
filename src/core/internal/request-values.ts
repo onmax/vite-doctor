@@ -48,6 +48,8 @@ export interface RequestValueSources {
   maxDepth?: number;
   /** Trace the selected value, not evaluation of other fields in a local object initializer. */
   projectObjectMembers?: boolean;
+  /** Report that an intervening operation prevents proving a selected value. */
+  onUncertainProjection?(): void;
   /** Whether an operation is proven not to execute in the runtime being traced. */
   isSkippedOperation?(node: AnyNode): boolean;
 }
@@ -176,7 +178,10 @@ function projectMember(
   }
   if (object?.type !== "ObjectExpression") return;
   const write = setupMemberWrite(node, object, name, sources);
-  if (write === UNKNOWN_VALUE) return { value: null, steps };
+  if (write === UNKNOWN_VALUE) {
+    sources.onUncertainProjection?.();
+    return { value: null, steps };
+  }
   for (const property of object.properties.toReversed()) {
     if (property.type !== "Property") return;
     const key =
@@ -245,6 +250,7 @@ function setupMemberWrite(
   const setupOperations: AnyNode[] = [];
   const functionOperations = new Map<AnyNode, AnyNode[]>();
   const firstSuspension = new Map<AnyNode, AnyNode>();
+  let lastSetupSuspension = -Infinity;
   for (const operation of scriptNodesOfType(
     program,
     "AssignmentExpression",
@@ -260,17 +266,21 @@ function setupMemberWrite(
     while (scope && scope !== program && !FUNCTION_TYPES.has(scope.type)) {
       scope = scope.__doctorParent;
     }
-    if (scope?.async) {
-      const operand =
-        operation.type === "AwaitExpression"
-          ? operation.argument
-          : operation.type === "ForOfStatement" && operation.await
-            ? operation.right
-            : null;
-      if (
-        operand &&
+    if (sources.isSkippedOperation?.(operation) || skipsStaticBranch(operation, scope, sources))
+      continue;
+    const operand =
+      operation.type === "AwaitExpression"
+        ? operation.argument
+        : operation.type === "ForOfStatement" && operation.await
+          ? operation.right
+          : null;
+    if (operand) {
+      if (scope === program && operand.end <= reference.start)
+        lastSetupSuspension = Math.max(lastSetupSuspension, operand.end);
+      else if (
+        scope?.async &&
         operand.end < (firstSuspension.get(scope)?.end ?? Infinity) &&
-        !sources.isSkippedOperation?.(operation)
+        straightLineAwait(operation, scope)
       )
         firstSuspension.set(scope, operand);
     }
@@ -285,24 +295,23 @@ function setupMemberWrite(
     }
   }
 
-  const callMayWrite = (call: AnyNode) => {
-    const pending: { invocation: AnyNode; canAwait: boolean; resolvedFunction?: AnyNode }[] = [
-      { invocation: call, canAwait: true },
-    ];
+  const callMayWrite = (call: AnyNode, afterYield: boolean) => {
+    const pending: { invocation: AnyNode; resolvedFunction?: AnyNode }[] = [{ invocation: call }];
     const visited = new Set<AnyNode>();
-    const visitedAwaited = new Set<AnyNode>();
     const forwardedCalls = new Map<AnyNode, Set<AnyNode>>();
-    const awaitedForwardedCalls = new Map<AnyNode, Set<AnyNode>>();
     while (pending.length > 0) {
       const next = pending.pop();
       if (!next) break;
-      const { invocation, canAwait, resolvedFunction } = next;
+      const { invocation, resolvedFunction } = next;
+      const callee = unwrapExpression(invocation.callee);
+      if (afterYield && !resolvedFunction && PROMISE_METHODS.has(staticMemberName(callee) ?? "")) {
+        for (const argument of invocation.arguments) {
+          const callback = localFunction(argument, sources.programBinding);
+          if (callback) pending.push({ invocation, resolvedFunction: callback });
+        }
+      }
       const fn = resolvedFunction ?? localFunction(invocation.callee, sources.programBinding);
       if (!fn || fn.generator) continue;
-      const awaited =
-        fn.async &&
-        canAwait &&
-        enclosingExpression(invocation).__doctorParent?.type === "AwaitExpression";
       const forwarded = directParameterCall(fn);
       if (
         forwarded &&
@@ -312,26 +321,22 @@ function setupMemberWrite(
           invocation.arguments[forwarded.index],
           sources.programBinding,
         );
-        if (callback && !sources.isSkippedOperation?.(forwarded.call)) {
-          const calls = awaited ? awaitedForwardedCalls : forwardedCalls;
-          let callbacks = calls.get(forwarded.call);
-          if (!callbacks) calls.set(forwarded.call, (callbacks = new Set()));
+        if (callback && functionOperations.get(fn)?.includes(forwarded.call)) {
+          let callbacks = forwardedCalls.get(forwarded.call);
+          if (!callbacks) forwardedCalls.set(forwarded.call, (callbacks = new Set()));
           if (!callbacks.has(callback)) {
             callbacks.add(callback);
             pending.push({
               invocation: forwarded.call,
-              canAwait: awaited,
               resolvedFunction: callback,
             });
           }
         }
       }
-      const seen = awaited ? visitedAwaited : visited;
-      if (seen.has(fn)) continue;
-      seen.add(fn);
-      const boundary = awaited ? undefined : firstSuspension.get(fn);
+      if (visited.has(fn)) continue;
+      visited.add(fn);
+      const boundary = afterYield ? undefined : firstSuspension.get(fn);
       for (const operation of functionOperations.get(fn) ?? []) {
-        if (sources.isSkippedOperation?.(operation)) continue;
         if (
           boundary &&
           (operation.end > boundary.end ||
@@ -339,7 +344,7 @@ function setupMemberWrite(
         )
           continue;
         if (mayWrite(operation)) return true;
-        if (isCall(operation)) pending.push({ invocation: operation, canAwait: awaited });
+        if (isCall(operation)) pending.push({ invocation: operation });
       }
     }
     return false;
@@ -349,8 +354,7 @@ function setupMemberWrite(
   let value: AnyNode = null;
   for (const operation of setupOperations) {
     if (latest && operation.end <= latest.end) continue;
-    if (sources.isSkippedOperation?.(operation)) continue;
-    if (!mayWrite(operation) && !(isCall(operation) && callMayWrite(operation))) continue;
+    if (!mayWrite(operation) && !(isCall(operation) && callMayWrite(operation, false))) continue;
 
     latest = operation;
     const statement = enclosingExpression(operation).__doctorParent;
@@ -365,7 +369,55 @@ function setupMemberWrite(
         ? operation.right
         : UNKNOWN_VALUE;
   }
+  if (
+    lastSetupSuspension >= (latest?.end ?? object.end) &&
+    setupOperations.some(
+      (operation) =>
+        isCall(operation) && operation.end <= lastSetupSuspension && callMayWrite(operation, true),
+    )
+  )
+    return UNKNOWN_VALUE;
   return value;
+}
+
+function straightLineAwait(operation: AnyNode, fn: AnyNode): boolean {
+  if (operation.type !== "AwaitExpression") return false;
+  let expression = enclosingExpression(operation);
+  const parent = expression.__doctorParent;
+  if (
+    parent?.type === "AssignmentExpression" &&
+    parent.operator === "=" &&
+    parent.right === expression
+  )
+    expression = enclosingExpression(parent);
+  const statement = expression.__doctorParent;
+  return statement?.type === "ExpressionStatement" && statement.__doctorParent === fn.body;
+}
+
+function skipsStaticBranch(node: AnyNode, scope: AnyNode, sources: RequestValueSources): boolean {
+  let child = node;
+  for (
+    let parent = child.__doctorParent;
+    parent && parent !== scope;
+    parent = child.__doctorParent
+  ) {
+    if (parent.type === "ConditionalExpression" || parent.type === "IfStatement") {
+      const condition = staticValue(parent.test, sources.programBinding, 0);
+      if (
+        condition !== UNKNOWN_VALUE &&
+        child === (condition ? parent.alternate : parent.consequent)
+      )
+        return true;
+    }
+    if (
+      parent.type === "LogicalExpression" &&
+      child === parent.right &&
+      logicalRightIsSkipped(parent, sources.programBinding)
+    )
+      return true;
+    child = parent;
+  }
+  return false;
 }
 
 function directParameterCall(fn: AnyNode): { call: AnyNode; index: number } | undefined {

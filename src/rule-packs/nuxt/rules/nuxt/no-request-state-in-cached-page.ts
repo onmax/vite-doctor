@@ -96,8 +96,8 @@ export const noRequestStateInCachedPage = createRule({
     if (!ctx.project.ssr || ctx.project.nuxt?.ssr === false) return;
     return {
       Program(program: AnyNode) {
-        const reads = requestReads(ctx, program);
-        if (!reads.length) return;
+        const { reads, cookieFlowUncertain } = requestReads(ctx, program);
+        if (!reads.length && !cookieFlowUncertain) return;
         const fact = pageRouteRules(ctx.project, ctx.file.path);
         if (fact.state === "absent") return;
         if (fact.state === "unknown") {
@@ -117,6 +117,11 @@ export const noRequestStateInCachedPage = createRule({
               ctx.file.relativePath,
               `ISR coverage for ${route} is unproven for the production Nitro preset`,
             );
+          if (
+            cookieFlowUncertain &&
+            kinds.some((kind) => applies({ kind: "headers", headers: ["cookie"] }, kind))
+          )
+            recordCookieFlowGap(ctx);
           const applicable = reads.filter((candidate) =>
             kinds.some((kind) => applies(candidate, kind)),
           );
@@ -164,7 +169,7 @@ export const noRequestStateInCachedPage = createRule({
             });
           }
 
-          function applies(read: RequestRead, kind: SharedCacheKind) {
+          function applies(read: Pick<RequestRead, "kind" | "headers">, kind: SharedCacheKind) {
             if (read.kind === "query") return kind === "prerender";
             if (kind !== "cache" && kind !== "swr") return true;
             return !variesOnHeaders(rules.cache ? rules.cache.varies : undefined, read.headers);
@@ -175,8 +180,9 @@ export const noRequestStateInCachedPage = createRule({
   },
 });
 
-function requestReads(ctx: RuleContext, program: AnyNode): RequestRead[] {
+function requestReads(ctx: RuleContext, program: AnyNode) {
   const reads: RequestRead[] = [];
+  let cookieFlowUncertain = false;
   const event = sources(ctx, "useRequestEvent");
   const url = sources(ctx, "useRequestURL");
   walkScriptLocal(program, (node) => {
@@ -202,13 +208,16 @@ function requestReads(ctx: RuleContext, program: AnyNode): RequestRead[] {
           };
       } else if (composable === "useCookie") {
         // useCookie also reads document.cookie in the browser, so only a rendered value matters.
-        const name = renderedBinding(ctx, program, node);
+        if (skipsSsrOperation(ctx, node)) return;
+        let uncertain = false;
+        const name = renderedBinding(ctx, program, node, () => (uncertain = true));
         if (name)
           read = {
             kind: "headers",
             headers: ["cookie"],
             label: `useCookie() reads a cookie that the template renders as ${name}`,
           };
+        else if (uncertain) cookieFlowUncertain = true;
       } else {
         const reader = importedName(ctx, callee, (source) => H3_SOURCES.test(source));
         if (reader && H3_READERS.has(reader) && node.arguments?.[0])
@@ -235,10 +244,27 @@ function requestReads(ctx: RuleContext, program: AnyNode): RequestRead[] {
     if (execution !== "setup-time" && execution !== "unknown") return;
     reads.push({ node, ...read, renderUnproven: execution === "unknown", visitorUnproven });
   });
-  return reads.sort((a, b) => a.node.start - b.node.start);
+  return { reads: reads.sort((a, b) => a.node.start - b.node.start), cookieFlowUncertain };
 }
 
-function renderedBinding(ctx: RuleContext, program: AnyNode, call: AnyNode) {
+function recordCookieFlowGap(ctx: RuleContext) {
+  const file = ctx.file.relativePath;
+  const source = `${RULE_ID}/cookie-flow`;
+  const gaps = (ctx.project.evidenceGaps ??= []);
+  if (gaps.some((gap) => gap.source === source && gap.files.includes(file))) return;
+  gaps.push({
+    source,
+    files: [file],
+    message: `Doctor could not prove whether a cookie reaches the cached SSR template in ${file}: a write may change the rendered value. Inspect setup writes before sharing the response.`,
+  });
+}
+
+function renderedBinding(
+  ctx: RuleContext,
+  program: AnyNode,
+  call: AnyNode,
+  onUncertainProjection: () => void,
+) {
   for (const statement of program.body ?? []) {
     if (statement.type !== "VariableDeclaration") continue;
     for (const { id, init } of statement.declarations) {
@@ -249,6 +275,7 @@ function renderedBinding(ctx: RuleContext, program: AnyNode, call: AnyNode) {
           programBinding: findStatementBinding,
           maxDepth: 8,
           projectObjectMembers: true,
+          onUncertainProjection,
           isSkippedOperation: (node) => skipsSsrOperation(ctx, node),
         })
       )

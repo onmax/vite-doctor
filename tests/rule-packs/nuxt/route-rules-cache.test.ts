@@ -45,6 +45,9 @@ async function run(files: Record<string, string>) {
     gaps: (result.project.evidenceGaps ?? []).filter(
       (gap) => gap.source === "vite-doctor/nuxt-route-rules",
     ),
+    cookieFlowGaps: (result.project.evidenceGaps ?? []).filter(
+      (gap) => gap.source === `${RULE_ID}/cookie-flow`,
+    ),
   };
 }
 
@@ -240,6 +243,62 @@ test.each([
     0,
   ],
   [
+    "an awaited synchronous wrapper",
+    "const reset = () => resetTheme(); await reset()",
+    "async function",
+    "await 0; preferences.theme = 'light'",
+    0,
+  ],
+  [
+    "an awaited async wrapper",
+    "const reset = async () => resetTheme(); await reset()",
+    "async function",
+    "await 0; preferences.theme = 'light'",
+    0,
+  ],
+  [
+    "an awaited forwarded promise",
+    "const invoke = (fn: () => Promise<void>) => fn(); await invoke(resetTheme)",
+    "async function",
+    "await 0; preferences.theme = 'light'",
+    0,
+  ],
+  [
+    "an unreachable suspension",
+    "void resetTheme()",
+    "async function",
+    "if (false) await 0; preferences.theme = 'light'",
+    0,
+  ],
+  [
+    "a suspension in setup after an unawaited call",
+    "void resetTheme(); await 0",
+    "async function",
+    "await 0; preferences.theme = 'light'",
+    0,
+  ],
+  [
+    "a skipped setup suspension",
+    "void resetTheme(); if (false) await 0",
+    "async function",
+    "await 0; preferences.theme = 'light'",
+    1,
+  ],
+  [
+    "a setup suspension before the call starts",
+    "await 0; void resetTheme()",
+    "async function",
+    "await 0; preferences.theme = 'light'",
+    1,
+  ],
+  [
+    "an unjoined promise continuation with a setup suspension",
+    "void Promise.resolve().then(resetTheme); await unrelatedWork()",
+    "function",
+    "preferences.theme = 'light'",
+    0,
+  ],
+  [
     "a write in the synchronous prefix",
     "void resetTheme()",
     "async function",
@@ -290,6 +349,7 @@ ${declaration} resetTheme() { ${body} }`,
     }),
   });
   expect(result.diagnostics).toHaveLength(count);
+  expect(result.cookieFlowGaps).toHaveLength(count === 0 ? 1 : 0);
 });
 
 test.each(["const alias = alias", "const alias = other; const other = alias"])(
