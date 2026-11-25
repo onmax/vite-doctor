@@ -11,6 +11,13 @@ export const stubTools: McpTool[] = [
   },
 ];
 
+export interface StubOptions {
+  token?: string;
+  requests?: StubRequest[];
+  tools?: McpTool[];
+  instructions?: string;
+}
+
 export interface StubRequest {
   path: string;
   method: string;
@@ -20,11 +27,9 @@ export interface StubRequest {
 /**
  * A Streamable HTTP MCP server answering with JSON: `initialize`, `notifications/initialized`
  * (202), and `tools/list`. A request without `authorization: Bearer <token>` gets 401 when
- * `token` is set.
+ * `token` is set. It lists `tools`, `stubTools` by default.
  */
-export function mcpStubHandler(
-  options: { token?: string; requests?: StubRequest[] } = {},
-): RequestListener {
+export function mcpStubHandler(options: StubOptions = {}): RequestListener {
   return (request, response) => {
     let body = "";
     request.on("data", (chunk) => (body += chunk));
@@ -49,15 +54,16 @@ export function mcpStubHandler(
               protocolVersion: "2025-11-25",
               capabilities: { tools: {} },
               serverInfo: { name: "stub", version: "1.0.0" },
+              ...(options.instructions ? { instructions: options.instructions } : {}),
             }
-          : { tools: stubTools };
+          : { tools: options.tools ?? stubTools };
       response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "s1" });
       response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
     });
   };
 }
 
-export async function startMcpStub(options: { token?: string; requests?: StubRequest[] } = {}) {
+export async function startMcpStub(options: StubOptions = {}) {
   const server = createServer(mcpStubHandler(options));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;

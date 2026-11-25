@@ -618,7 +618,7 @@ describe("MCP tool output", () => {
 });
 
 describe("MCP Rule Pack", () => {
-  test("activates on MCP server libraries with every Rule recommended", () => {
+  test("activates on MCP server libraries and recommends the source Rules and lost-tool client limits", () => {
     expect(mcpRulePack.name).toBe("vite-doctor/mcp");
     expect(mcpRulePack.activation).toEqual({ packages: expect.any(Array) });
     const { packages } = mcpRulePack.activation || {};
@@ -633,8 +633,13 @@ describe("MCP Rule Pack", () => {
       "vite-hub",
     ]);
     expect(mcpRulePack.presets.recommended.toSorted()).toEqual(
-      rules.map((rule) => rule.meta.id).toSorted(),
+      [
+        ...rules.map((rule) => rule.meta.id),
+        "mcp/clients/no-excluded-tool",
+        "mcp/clients/no-truncated-text",
+      ].toSorted(),
     );
+    expect(mcpRulePack.presets.strict).toHaveLength(mcpRulePack.rules.length);
   });
 
   test("runs through the Vite Doctor distribution only for MCP projects", async () => {
