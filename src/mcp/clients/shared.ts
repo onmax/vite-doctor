@@ -128,7 +128,7 @@ export function undescribedConstraints(
       if (!dropped.has(keyword)) continue;
       if (node.schema.type === "integer" && isSafeIntegerBound(keyword, node.schema[keyword]))
         continue;
-      if (isHarmless(keyword, node.schema[keyword])) continue;
+      if (isVacuousSizeMinimum(keyword, node.schema[keyword])) continue;
       if (mentions(prose, keyword, node.schema[keyword])) continue;
       found.push({ pointer: inputPointer(`${node.pointer}/${keyword}`), keyword });
     }
@@ -144,59 +144,81 @@ function isSafeIntegerBound(keyword: string, value: unknown): boolean {
   );
 }
 
-// An empty or `false` default means the same as leaving the field out, and a minimum of 1 only
-// rejects an empty value, so a model that never sees them sends nothing the server would refuse.
-function isHarmless(keyword: string, value: unknown): boolean {
-  if (keyword === "default")
-    return (
-      value === null ||
-      value === false ||
-      value === "" ||
-      (typeof value === "object" && Object.keys(value).length === 0)
-    );
+function isVacuousSizeMinimum(keyword: string, value: unknown): boolean {
   return (
     (keyword === "minLength" || keyword === "minItems" || keyword === "minProperties") &&
-    typeof value === "number" &&
-    value <= 1
+    value === 0
   );
 }
+
+const calendarDatePattern = String.raw`^(?:\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9])))$`;
 
 function mentions(prose: string, keyword: string, value: unknown): boolean {
   if (!prose) return false;
+  if (keyword === "default") return mentionsDefault(prose, value);
   if (typeof value === "number")
     return new RegExp(`(?<![\\d.])${escapeRegExp(String(value))}(?![\\d])`).test(prose);
-  if (typeof value === "boolean") {
-    if (keyword === "uniqueItems") return /unique|duplicate/i.test(prose);
-    return (
-      keyword === "default" &&
-      new RegExp(
-        `\\bdefault(?:s?\\s+to|\\s+is|\\s*:)\\s*\`?${value}\\b|\\b${value}\`?\\s+by\\s+default\\b`,
-        "i",
-      ).test(prose)
-    );
-  }
+  if (typeof value === "boolean")
+    return keyword === "uniqueItems" && /unique|duplicate/i.test(prose);
   if (typeof value === "string") {
-    if (keyword === "pattern" && /\bYYYY-MM-DD\b/.test(prose) && isDatePattern(value)) return true;
+    if (keyword === "pattern")
+      return (
+        prose.includes(value) || (value === calendarDatePattern && /\bYYYY-MM-DD\b/.test(prose))
+      );
     return prose.toLowerCase().includes(value.toLowerCase());
   }
-  return compactJson(prose).includes(compactJson(JSON.stringify(value)));
+  return prose.includes(JSON.stringify(value));
 }
 
-function compactJson(text: string): string {
-  return text.replaceAll(/\s+/g, "").replaceAll("'", '"');
+function isNegated(prose: string, start: number): boolean {
+  const clause = prose
+    .slice(0, start)
+    .split(/[.!?;\n]/)
+    .at(-1)!;
+  return /\b(?:not|never|no|neither|nor)\b|n['’]t\b/i.test(clause);
 }
 
-function isDatePattern(pattern: string): boolean {
-  let regex: RegExp;
-  try {
-    regex = new RegExp(pattern);
-  } catch {
-    return false;
+function mentionsDefault(prose: string, value: unknown): boolean {
+  for (const declaration of prose.matchAll(
+    /\bdefault(?:s?\s+to\b|\s+is\b|\s*:|\s+(?=-?\d))\s*`?/gi,
+  )) {
+    if (isNegated(prose, declaration.index)) continue;
+    const literal = prose.slice(declaration.index + declaration[0].length);
+    if (typeof value === "boolean" && new RegExp(`^${value}\\b`, "i").test(literal)) return true;
+    if (jsonEqual(readDefaultLiteral(literal), value)) return true;
+    if (
+      typeof value === "string" &&
+      value !== "" &&
+      new RegExp(`^${escapeRegExp(value)}(?=$|[\\s\x60.,;!?)])`).test(literal)
+    )
+      return true;
   }
-  return (
-    ["2024-02-29", "1999-12-31", "2026-01-01"].every((date) => regex.test(date)) &&
-    !["2026-13-01", "2026-1-1", "2026-01-01T00:00:00Z"].some((date) => regex.test(date))
-  );
+  if (typeof value === "string") {
+    for (const match of prose.matchAll(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\(default\)/gi)) {
+      if (!isNegated(prose, match.index) && readDefaultLiteral(match[0]) === value) return true;
+    }
+  }
+  if (typeof value !== "boolean") return false;
+  const reverse = new RegExp(`\\b${value}\`?\\s+by\\s+default\\b`, "gi");
+  return Array.from(prose.matchAll(reverse)).some((match) => !isNegated(prose, match.index));
+}
+
+function readDefaultLiteral(text: string): unknown {
+  const tokens =
+    /\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[[\]{}:,]|(?:true|false|null)\b|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?(?!\w|\.\d))/gy;
+  let depth = 0;
+  const json = [];
+  for (const [, token] of text.matchAll(tokens)) {
+    if (token === "[" || token === "{") depth++;
+    if (token === "]" || token === "}") depth--;
+    json.push(
+      token.startsWith("'")
+        ? `"${token.slice(1, -1).replace(/\\.|"/g, (part) => (part === "\\'" ? "'" : part === '"' ? '\\"' : part))}"`
+        : token,
+    );
+    if (depth === 0) return parseJson(json.join(""));
+  }
+  return undefined;
 }
 
 function escapeRegExp(text: string): string {

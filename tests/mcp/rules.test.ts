@@ -307,7 +307,15 @@ describe("rule details", () => {
         "Enabled true by default.",
       ])
         expect(hits(rule, withDescription(description)), description).toEqual([]);
-      for (const description of ["Enable the feature.", "Defaults to false.", "true or false"]) {
+      for (const description of [
+        "Enable the feature.",
+        "Defaults to false.",
+        "true or false",
+        "Receipt delivery is not true by default.",
+        "Receipt delivery isn't `true` by default.",
+        "The default is not true.",
+        "Not default: true.",
+      ]) {
         expect(hits(rule, withDescription(description))[0]?.pointer, description).toBe(
           "/inputSchema/properties/enabled/default",
         );
@@ -316,16 +324,40 @@ describe("rule details", () => {
   );
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
-    "%s skips empty defaults and minimums of 1",
+    "%s reports undescribed defaults and skips only vacuous size minimums",
     (rule) => {
-      const harmless = object({
+      const constrained = object({
         a: { type: ["string", "null"], default: null },
         b: { type: "boolean", default: false },
         c: { type: "string", default: "", minLength: 1 },
         d: { type: "array", items: { type: "string" }, default: [], minItems: 1 },
         e: { type: "object", default: {}, minProperties: 0 },
+        f: { type: "object", minProperties: 1 },
+        g: { type: "string", minLength: 0 },
+        h: { type: "array", items: { type: "string" }, minItems: 0 },
       });
-      expect(hits(rule, schema(harmless))).toEqual([]);
+      expect(hits(rule, schema(constrained))[0]?.affectedPointers).toEqual([
+        "/inputSchema/properties/a/default",
+        "/inputSchema/properties/b/default",
+        "/inputSchema/properties/c/default",
+        "/inputSchema/properties/c/minLength",
+        "/inputSchema/properties/d/default",
+        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/d/minItems"] : []),
+        "/inputSchema/properties/e/default",
+        "/inputSchema/properties/f/minProperties",
+      ]);
+      const described = object({
+        a: { type: ["string", "null"], default: null, description: "Defaults to null." },
+        b: { type: "boolean", default: false, description: "Default is false." },
+        c: { type: "string", default: "", description: 'Default: "".' },
+        d: { type: "array", items: { type: "string" }, default: [], description: "Default: []." },
+        e: { type: "object", default: {}, description: "Default: {}." },
+        f: { type: "integer", default: 0, description: "Defaults to 0." },
+      });
+      expect(hits(rule, schema(described))).toEqual([]);
+      expect(
+        hits(rule, schema(object({ c: { type: "string", default: "", description: "A label." } }))),
+      ).toHaveLength(1);
       const strict = object({
         a: { type: "integer", default: 0 },
         b: { type: "string", minLength: 2 },
@@ -362,6 +394,22 @@ describe("rule details", () => {
         [],
       );
       expect(hits(rule, withDescription(["a", "b"], "Defaults to ['b', 'a']."))).toHaveLength(1);
+      expect(hits(rule, withDescription(["New York"], 'Defaults to ["NewYork"].'))).toHaveLength(1);
+      expect(
+        hits(rule, withDescription(["Bob's project"], `Defaults to ['Bob"s project'].`)),
+      ).toHaveLength(1);
+      expect(
+        hits(rule, withDescription(["Bob's project"], String.raw`Defaults to ['Bob\'s project'].`)),
+      ).toEqual([]);
+      expect(
+        hits(
+          rule,
+          withDescription(
+            { city: "New York", tags: ["]"] },
+            `Default: {"tags": [']'], 'city': "New York"}.`,
+          ),
+        ),
+      ).toEqual([]);
     },
   );
 
@@ -374,13 +422,15 @@ describe("rule details", () => {
         "^(?:\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|02-(?:0[1-9]|1\\d|2[0-9])))$";
       expect(hits(rule, withPattern(date))).toEqual([]);
       expect(hits(rule, withPattern(date, "First date."))).toHaveLength(1);
-      for (const loose of [
+      for (const other of [
         "^\\d{4}-\\d{2}-\\d{2}$",
         "^\\d{4}-\\d{1,2}-\\d{1,2}$",
         "\\d{4}-\\d{2}-\\d{2}",
         "[",
+        String.raw`^(?:19\d{2}|20[0-2]\d)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$`,
+        String.raw`^\d{4}-(?:0[1-24-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$`,
       ])
-        expect(hits(rule, withPattern(loose)), loose).toHaveLength(1);
+        expect(hits(rule, withPattern(other)), other).toHaveLength(1);
     },
   );
 
