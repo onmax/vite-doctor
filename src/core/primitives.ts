@@ -651,6 +651,8 @@ export interface RuntimeGraphEdge {
 export interface RuntimeGraph {
   packages: Partial<Record<RuntimePackageName, RuntimePackageInstance>>;
   directH3?: RuntimePackageInstance;
+  nuxtH3MayBeShimmed?: true;
+  nuxtServerBuilder?: "vite";
   edges: RuntimeGraphEdge[];
 }
 

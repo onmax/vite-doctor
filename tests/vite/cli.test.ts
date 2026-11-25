@@ -1533,32 +1533,57 @@ test.each([false, true])(
 );
 
 test.each([
-  { scope: "app", builderInstalled: true },
-  { scope: "workspace", builderInstalled: true },
-  { scope: "app", builderInstalled: false },
+  { scenario: "app opt-in", modern: true },
+  { scenario: "workspace opt-in", workspace: true, modern: true },
+  { scenario: "missing builder", missing: true },
+  { scenario: "app nitropack", workspace: true, appLegacy: true },
+  { scenario: "both at workspace root", workspace: true, rootLegacy: true },
+  { scenario: "optional-only nitro", optional: true },
+  { scenario: "explicit Nitro 2", config: "{ _nitroMajor: 2 }" },
+  { scenario: "explicit Vite", config: '{ server: { builder: "vite" } }' },
+  { scenario: "computed builder", config: "{ server: { builder: process.env.BUILDER } }" },
 ])(
-  "Nitro migration checks the opted-in builder ($scope, installed: $builderInstalled)",
-  async ({ scope, builderInstalled }) => {
+  "Nitro migration checks the effective builder ($scenario)",
+  async ({ workspace, modern: usesModern, missing, appLegacy, rootLegacy, optional, config }) => {
     const nitro = "3.0.261103-rc";
     const legacy = "node_modules/nuxt/node_modules/@nuxt/nitro-server";
     const modern = "node_modules/nuxt/node_modules/@nuxt/nitro-v3-server";
-    const appRoot = scope === "workspace" ? "apps/web/" : "";
+    const appRoot = workspace ? "apps/web/" : "";
+    const native = `${appRoot}server/api/native.ts`;
+    const shimmed = `${appRoot}server/api/shimmed.ts`;
+    const auto = `${appRoot}server/api/auto.ts`;
+    const hook = `export default defineEventHandler({ handler: () => "ok", onBeforeResponse: () => {} })`;
     await withFixture(
       {
         "package.json": JSON.stringify(
-          scope === "workspace"
-            ? { workspaces: ["apps/*"], devDependencies: { nitro } }
-            : { dependencies: { nuxt: "4.7.0", nitro, vue: "3.5.18" } },
+          workspace
+            ? {
+                workspaces: ["apps/*"],
+                devDependencies: { nitro, ...(rootLegacy ? { nitropack: "2.13.1" } : {}) },
+              }
+            : {
+                dependencies: { nuxt: "4.7.0", vue: "3.5.18", ...(!optional ? { nitro } : {}) },
+                ...(optional ? { optionalDependencies: { nitro } } : {}),
+              },
         ),
         ...(appRoot
           ? {
               [`${appRoot}package.json`]: JSON.stringify({
-                dependencies: { nuxt: "4.7.0", vue: "3.5.18" },
+                dependencies: {
+                  nuxt: "4.7.0",
+                  vue: "3.5.18",
+                  ...(appLegacy ? { nitropack: "2.13.1" } : {}),
+                },
               }),
             }
           : {}),
-        [`${appRoot}nuxt.config.ts`]: "export default defineNuxtConfig({})",
-        [`${appRoot}server/api/redirect.ts`]: h3RedirectHandler,
+        [`${appRoot}nuxt.config.ts`]: `export default defineNuxtConfig(${config ?? "{}"})`,
+        [native]: `import { defineEventHandler } from "nitro/h3"
+import { defineEventHandler as legacyHandler } from "h3"
+export const legacy = legacyHandler({ handler: () => "ok", onBeforeResponse: () => {} })
+${hook}`,
+        [shimmed]: `import { defineEventHandler } from "h3"\n${hook}`,
+        [auto]: hook,
         "node_modules/nuxt/package.json": JSON.stringify({
           name: "nuxt",
           version: "4.7.0",
@@ -1578,7 +1603,7 @@ test.each([
           name: "h3",
           version: "1.15.11",
         }),
-        ...(builderInstalled
+        ...(!missing
           ? {
               [`${modern}/package.json`]: JSON.stringify({
                 name: "@nuxt/nitro-v3-server",
@@ -1601,23 +1626,38 @@ test.each([
       async (root) => {
         const result = await runCli(["migrate", ".", "--to", "nitro@3", "--format", "agent"], root);
         const report = JSON.parse(result.output);
-        expect(result.code, JSON.stringify(report.target)).toBe(builderInstalled ? 1 : 3);
-        if (builderInstalled) {
+        expect(result.code, JSON.stringify(report.target)).toBe(usesModern ? 1 : 3);
+        const scan = await runCli([".", "--no-cache", "--format", "json"], root);
+        const diagnostics = JSON.parse(scan.output).diagnostics;
+        expect(diagnostics.filter((item: { code: string }) => item.code === "H30018")).toEqual(
+          usesModern
+            ? [expect.objectContaining({ location: expect.objectContaining({ path: native }) })]
+            : [],
+        );
+        expect(diagnostics).not.toContainEqual(
+          expect.objectContaining({
+            code: "NITRO0027",
+            location: expect.objectContaining({ path: shimmed }),
+          }),
+        );
+        if (usesModern) {
           expect(report.target.blockedScopes).toBeUndefined();
-          expect(report.stages[0].diagnostics).toContainEqual(
-            expect.objectContaining({ code: "H30001", file: `${appRoot}server/api/redirect.ts` }),
-          );
+          expect(
+            report.stages[0].diagnostics.filter((item: { code: string }) => item.code === "H30018"),
+          ).toEqual([expect.objectContaining({ file: native })]);
           expect(report.stages[1].changes).toEqual([]);
           expect(report.stages[2].checks).not.toContainEqual(
             expect.objectContaining({ id: "install-target" }),
           );
         } else {
-          expect(report.target.blockedScopes).toEqual([expect.objectContaining({ root: "." })]);
+          expect(report.target.blockedScopes).toEqual([
+            expect.objectContaining({ root: appRoot.slice(0, -1) || "." }),
+          ]);
           expect(report.stages[0].diagnostics).not.toContainEqual(
-            expect.objectContaining({ code: "H30001" }),
+            expect.objectContaining({ code: "H30018" }),
           );
           expect(report.stages[1].diagnostics).not.toContainEqual(
-            expect.objectContaining({ code: "H30001" }),
+            expect.objectContaining({ code: "H30018" }),
           );
         }
       },

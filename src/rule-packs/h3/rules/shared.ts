@@ -1,7 +1,8 @@
 import {
   codeForRuleId,
-  createRule,
+  createRule as defineH3Rule,
   diagnosticForCode,
+  type DoctorRule,
   type RuleContext,
 } from "../../../core/index.js";
 import type { AnyNode } from "../../../core/rule-authoring.js";
@@ -15,7 +16,16 @@ import {
 import { isNitroRouteFile, isNitroServerFile } from "../../../core/internal/server-files.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../diagnostics.js";
 
-export { createRule };
+export function createRule(rule: DoctorRule): DoctorRule {
+  if (!rule.meta.applicability?.runtimes?.h3) return defineH3Rule(rule);
+  return defineH3Rule({
+    ...rule,
+    create(ctx) {
+      if (ctx.project.runtimeGraph?.nuxtH3MayBeShimmed && !importsOnlyNativeH3(ctx)) return;
+      return rule.create(ctx);
+    },
+  });
+}
 export {
   nearestFunctionOrProgram,
   sourceForNode,
@@ -60,6 +70,24 @@ const h3SourcePattern = /["'](?:h3|nitro\/h3|h3\/[\w-]+)["']/;
 /** Whether an import source is one of h3's entry points, including Nitro's `nitro/h3`. */
 export function isH3Source(source: unknown): boolean {
   return typeof source === "string" && h3Sources.has(source);
+}
+
+function importsOnlyNativeH3(ctx: RuleContext): boolean {
+  return perFile(ctx, "h3:native-imports", () => {
+    if (!ctx.file.text.includes("nitro/h3")) return false;
+    let native = false;
+    for (const node of fileScriptScope(ctx)?.ast.body ?? []) {
+      if (
+        !["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration"].includes(node.type)
+      )
+        continue;
+      const source = node.source?.value;
+      if (!isH3Source(source)) continue;
+      if (source !== "nitro/h3") return false;
+      native = true;
+    }
+    return native;
+  });
 }
 
 export interface H3ImportBindings {
@@ -118,6 +146,21 @@ export function h3ExportName(ctx: RuleContext, node: AnyNode): string | null {
   if (!h3ImportBindings(ctx).namespaces.has(object.name)) return null;
   const variable = resolveVariable(ctx, object);
   return variable && h3Import(variable) === namespaceImport ? property : null;
+}
+
+export function bindsNativeH3(ctx: RuleContext, node: AnyNode): boolean {
+  const expression = unwrap(node);
+  const identifier =
+    expression?.type === "MemberExpression" ? unwrap(expression.object) : expression;
+  if (identifier?.type !== "Identifier") return false;
+  return (
+    resolveVariable(ctx, identifier)?.defs.some(
+      (definition) =>
+        definition.type === "ImportBinding" &&
+        definition.parent.type === "ImportDeclaration" &&
+        definition.parent.source.value === "nitro/h3",
+    ) ?? false
+  );
 }
 
 /** Whether `node` is a call of one of the named h3 exports, as `h3ExportName` resolves them. */
@@ -428,6 +471,7 @@ function parentOf(node: AnyNode): AnyNode {
 /** The h3 runtime major version the file's package runs, when Doctor resolved it. */
 export function h3Major(ctx: RuleContext): number | undefined {
   const graph = ctx.project.runtimeGraph;
+  if (graph?.nuxtH3MayBeShimmed && !importsOnlyNativeH3(ctx)) return undefined;
   const major = Number.parseInt(graph?.packages.h3?.version ?? "", 10);
   if (
     graph?.directH3 &&

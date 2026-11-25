@@ -41,21 +41,31 @@ export function resolveRuntimeGraph(
 ): RuntimeGraph {
   const packages: RuntimeGraph["packages"] = {};
   const edges: RuntimeGraph["edges"] = [];
+  let nuxtH3MayBeShimmed: true | undefined;
+  let nuxtServerBuilder: "vite" | undefined;
 
   if (framework === "nuxt") {
     packages.nuxt = resolveRuntimePackage("nuxt", rootManifest, "project");
     edges.push(edge("project", packages.nuxt));
     const nuxtManifest =
       packages.nuxt.state === "resolved" ? packages.nuxt.packageJsonPath : undefined;
-    packages.nitro = nuxtManifest
-      ? resolveNuxtNitro(nuxtManifest, rootManifest, join(root, "package.json"))
-      : blockedRuntime("nitro", "nuxt", packages.nuxt);
-    edges.push(edge("nuxt", packages.nitro));
-    packages.h3 =
-      packages.nitro.state === "resolved" && packages.nitro.packageJsonPath
-        ? resolveRuntimePackage("h3", packages.nitro.packageJsonPath, "nitro")
-        : blockedRuntime("h3", "nitro", packages.nitro);
-    edges.push(edge("nitro", packages.h3));
+    if (nuxtManifest) {
+      const workspaceManifest = join(root, "package.json");
+      const selection = selectNuxtNitro(nuxtManifest, rootManifest, workspaceManifest);
+      if (selection === "vite") nuxtServerBuilder = selection;
+      else packages.nitro = resolveNuxtNitro(nuxtManifest, selection);
+      if (selection === 3) nuxtH3MayBeShimmed = true;
+    } else {
+      packages.nitro = blockedRuntime("nitro", "nuxt", packages.nuxt);
+    }
+    if (packages.nitro) {
+      edges.push(edge("nuxt", packages.nitro));
+      packages.h3 =
+        packages.nitro.state === "resolved" && packages.nitro.packageJsonPath
+          ? resolveRuntimePackage("h3", packages.nitro.packageJsonPath, "nitro")
+          : blockedRuntime("h3", "nitro", packages.nitro);
+      edges.push(edge("nitro", packages.h3));
+    }
     // Under a strict pnpm layout a Nuxt app that does not declare vue can only reach Nuxt's own.
     packages.vue =
       nuxtManifest && packageDeclaration(readPackageManifest(rootManifest), "vue") === undefined
@@ -87,7 +97,13 @@ export function resolveRuntimeGraph(
     packages.h3 ??= ownH3;
     edges.push(edge("project", ownH3));
   }
-  return { packages, edges, ...(directH3 ? { directH3 } : {}) };
+  return {
+    packages,
+    edges,
+    ...(directH3 ? { directH3 } : {}),
+    ...(nuxtH3MayBeShimmed ? { nuxtH3MayBeShimmed } : {}),
+    ...(nuxtServerBuilder ? { nuxtServerBuilder } : {}),
+  };
 }
 
 /** nuxt.config sources keyed by layer root, scoped to one Doctor Run. */
@@ -342,6 +358,7 @@ export function applyRuntimeTarget(
   }
   return {
     graph: {
+      ...graph,
       packages,
       ...(directH3 ? { directH3 } : {}),
       edges: graph.edges.map((item) => ({
@@ -438,20 +455,63 @@ function resolveRuntimePackage(
   );
 }
 
-/** Nuxt 4.5 moved its Nitro dependency into @nuxt/nitro-server. */
-function resolveNuxtNitro(
+type NuxtNitroSelection = 2 | 3 | "vite" | "uncertain";
+const nuxtNitroV3Builder = "@nuxt/nitro-v3-server";
+
+function selectNuxtNitro(
   nuxtManifest: string,
   appManifest: string,
   workspaceManifest: string,
+): NuxtNitroSelection {
+  if (packageDeclaration(readPackageManifest(nuxtManifest), nuxtNitroV3Builder) === undefined)
+    return 2;
+
+  const hasBuilder = (manifest: Record<string, unknown> | null, name: string) =>
+    packageDeclaration(manifest, name, ["dependencies", "devDependencies"]) !== undefined;
+  const app = readPackageManifest(appManifest);
+  const workspace =
+    workspaceManifest === appManifest ? null : readPackageManifest(workspaceManifest);
+  const defaultMajor = hasBuilder(app, "nitro")
+    ? 3
+    : hasBuilder(app, "nitropack")
+      ? 2
+      : hasBuilder(workspace, "nitro") && !hasBuilder(workspace, "nitropack")
+        ? 3
+        : 2;
+
+  const appRoot = dirname(appManifest);
+  const config = findNuxtConfig(appRoot);
+  const option = (name: string, nested?: string) =>
+    config && readExportedNuxtOption(config.file, config.text, name, nested);
+  const builder = config ? option("server", "builder") : undefined;
+  if (builder?.type === "Literal" && builder.value === "vite") return "vite";
+  if (builder !== undefined && !(builder?.type === "Literal" && builder.value === "nitro"))
+    return "uncertain";
+  const major = config ? option("_nitroMajor") : undefined;
+  const selection =
+    major === undefined ? defaultMajor : major?.type === "Literal" ? major.value : null;
+  if (selection !== 2 && selection !== 3) return "uncertain";
+  if (
+    selection === 3 &&
+    ((config && option("extends") !== undefined) || autoRegisteredNuxtLayers(appRoot).length)
+  )
+    return "uncertain";
+  return selection;
+}
+
+/** Nuxt 4.5 moved its Nitro dependency into @nuxt/nitro-server. */
+function resolveNuxtNitro(
+  nuxtManifest: string,
+  selection: Exclude<NuxtNitroSelection, "vite">,
 ): RuntimePackageInstance {
+  if (selection === "uncertain") {
+    return unknownRuntime("nitro", "nitro", "nuxt", undefined, {
+      reason: "Doctor could not establish which server builder the effective Nuxt config selects.",
+    });
+  }
   const nuxt = readPackageManifest(nuxtManifest);
-  const v3Builder = "@nuxt/nitro-v3-server";
-  const usesV3Builder =
-    packageDeclaration(nuxt, v3Builder) !== undefined &&
-    (packageDeclaration(readPackageManifest(appManifest), "nitro") !== undefined ||
-      (workspaceManifest !== appManifest &&
-        packageDeclaration(readPackageManifest(workspaceManifest), "nitro") !== undefined));
-  const builder = usesV3Builder ? v3Builder : "@nuxt/nitro-server";
+  const usesV3Builder = selection === 3;
+  const builder = usesV3Builder ? nuxtNitroV3Builder : "@nuxt/nitro-server";
   const serverDeclaration = packageDeclaration(nuxt, builder);
   if (
     !usesV3Builder &&
@@ -566,13 +626,9 @@ function packageIdentity(
 function packageDeclaration(
   manifest: Record<string, unknown> | null,
   name: string,
+  keys = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"],
 ): string | undefined {
-  for (const key of [
-    "dependencies",
-    "devDependencies",
-    "peerDependencies",
-    "optionalDependencies",
-  ]) {
+  for (const key of keys) {
     const dependencies = manifest?.[key];
     if (dependencies && typeof dependencies === "object") {
       const value = (dependencies as Record<string, unknown>)[name];

@@ -103,13 +103,22 @@ export async function createMigrationReport(
   const explicitNitroOnly = runtimeTarget.standaloneNitro && !targetSpec.runtime.nuxt;
   if (explicitNitroOnly) {
     const blockedScopes = packages.flatMap(({ root }) => {
-      const nitro = workspaceProjectView(current, root).runtimeGraph?.packages.nitro;
+      const graph = workspaceProjectView(current, root).runtimeGraph;
+      if (graph?.nuxtServerBuilder === "vite")
+        return [
+          {
+            root,
+            instruction:
+              "Nuxt selects the Vite server builder in this package, not Nitro. Switch the effective server builder to Nitro before applying Nitro 3 or H3 v2 source changes.",
+          },
+        ];
+      const nitro = graph?.packages.nitro;
       if (nitro?.owner !== "nuxt" || isInstalledNitro3(nitro)) return [];
       return [
         {
           root,
           instruction:
-            "Nuxt manages Nitro in this package. If your Nuxt version supports opting into Nitro 3, declare and install nitro directly; otherwise plan the Nuxt upgrade with --to nuxt@5. Verify the effective Nitro version before applying Nitro 3 or H3 v2 source changes.",
+            "Nuxt manages Nitro in this package. Check the effective server builder and Nitro version before applying Nitro 3 or H3 v2 source changes. If your Nuxt version supports opting into Nitro 3, select that builder and declare and install nitro; otherwise plan the Nuxt upgrade with --to nuxt@5.",
         },
       ];
     });
