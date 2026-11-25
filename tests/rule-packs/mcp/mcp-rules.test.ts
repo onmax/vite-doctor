@@ -57,6 +57,10 @@ describe("MCP tool annotations", () => {
       ),
     });
     expect(found.map((diagnostic) => diagnostic.code).sort()).toEqual(["MCP0001", "MCP0002"]);
+    expect(found.map((diagnostic) => diagnostic.data)).toEqual([
+      { tool: "publish" },
+      { tool: "publish" },
+    ]);
     expect(found.find((diagnostic) => diagnostic.code === "MCP0001")?.message).toContain(
       'top-level title "Publish"',
     );

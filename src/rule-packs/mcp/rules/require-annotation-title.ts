@@ -70,6 +70,7 @@ export const requireAnnotationTitle = createRule({
               file: tool.file,
               range: annotations.state === "resolved" ? annotations.range : tool.callee,
               confidence: "heuristic-high",
+              data: tool.name ? { tool: tool.name.value } : undefined,
               evidence: annotationsEvidence(tool),
             },
           );

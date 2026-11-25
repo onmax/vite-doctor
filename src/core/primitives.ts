@@ -105,6 +105,12 @@ export interface Diagnostic {
   suppressionReason?: string;
   confidence?: Confidence;
   evidence?: DiagnosticEvidence[];
+  /**
+   * Plain JSON the Rule attaches for agents, such as the MCP tool and the client findings behind
+   * the message. The Rule owns its shape and its Diagnostic Code docs describe it. Reports emit it
+   * as is, and the cache stores it as JSON.
+   */
+  data?: Record<string, unknown>;
   fixGroupId?: string;
   analysisPhase?: ExecutionKind;
   cacheHit?: boolean;

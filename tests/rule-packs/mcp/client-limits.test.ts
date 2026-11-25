@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "pathe";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import type { Diagnostic, DoctorRunOptions } from "../../../src/core/index.ts";
+import { createReport, type Diagnostic, type DoctorRunOptions } from "../../../src/core/index.ts";
 import { writeBaseline } from "../../../src/core/internal/diagnostic-policy.ts";
 import { runViteDoctor } from "../../../src/doctor.ts";
 import { mcpClientRules } from "../../../src/mcp/index.ts";
@@ -152,7 +152,7 @@ test("only an explicit client alias affects alias-based exclusions", async () =>
 
 test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the tool's source or the root", async () => {
   const root = project({ "server/mcp/tools/search.ts": searchSource });
-  const { diagnostics } = await run(root, {
+  const { diagnostics, result } = await run(root, {
     extensions: contributing([
       {
         name: "hub",
@@ -183,6 +183,32 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
 
   const stripped = byCode(diagnostics, "MCP0008", "search")!;
   expect(stripped.why).toContain("in Codex and VS Code.");
+  expect(stripped.data).toMatchObject({ server: { name: "hub" }, tool: "search" });
+  const findings = (stripped.data as { findings: Array<{ client: string; tool: string }> })
+    .findings;
+  expect(new Set(findings.map((finding) => finding.client))).toEqual(new Set(["codex", "vscode"]));
+  expect(findings.every((finding) => finding.tool === "search")).toBe(true);
+  for (const format of ["json", "agent"] as const) {
+    const report = JSON.parse(createReport(result, format)) as {
+      diagnostics: Array<{ fingerprint: string; data?: unknown }>;
+    };
+    expect(
+      report.diagnostics.find((item) => item.fingerprint === stripped.fingerprint)?.data,
+    ).toEqual(stripped.data);
+  }
+  const sarif = JSON.parse(createReport(result, "sarif")) as {
+    runs: Array<{
+      results: Array<{
+        partialFingerprints: Record<string, string>;
+        properties: { data?: unknown };
+      }>;
+    }>;
+  };
+  expect(
+    sarif.runs[0]!.results.find(
+      (item) => item.partialFingerprints["vite-doctor/v1"] === stripped.fingerprint,
+    )?.properties.data,
+  ).toEqual(stripped.data);
 
   const remote = byCode(diagnostics, "MCP0005", "lookup")!;
   expect(remote.file).toBe(root);

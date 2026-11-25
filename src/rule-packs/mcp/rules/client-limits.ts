@@ -186,6 +186,11 @@ function report(
       instanceKey: endpointId ? fingerprint : undefined,
       confidence,
       evidence,
+      data: {
+        server: { name: server.name, url: endpoint },
+        ...(tool === undefined ? {} : { tool }),
+        findings,
+      },
     },
   );
 }

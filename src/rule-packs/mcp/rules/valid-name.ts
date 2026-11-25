@@ -71,6 +71,7 @@ export const validName = createRule({
               file: tool.file,
               range: name.range,
               confidence: name.source === "file" ? "heuristic-medium" : "heuristic-high",
+              data: { tool: name.value },
               evidence: [
                 {
                   kind: "ast",
