@@ -1,4 +1,34 @@
-import { createRule } from "./shared.js";
+import {
+  type AnyNode,
+  createRule,
+  h3ExportName,
+  isDiscardedExpression,
+  isH3Call,
+  isH3HandlerFile,
+  isHandlerFunction,
+  nearestFunctionOrProgram,
+  report,
+  sourceForNode,
+} from "./shared.js";
+
+// In h3 2.0.8 these return a response and write nothing to the event. serveStatic() is left out
+// because it sets response headers on the event itself.
+const builders = [
+  "redirect",
+  "redirectBack",
+  "noContent",
+  "iterable",
+  "html",
+  "proxy",
+  "proxyRequest",
+  "sendRedirect",
+  "sendNoContent",
+  "sendStream",
+  "sendWebResponse",
+  "sendProxy",
+  "sendIterable",
+  "handleCors",
+];
 
 export const noDiscardedResponse = createRule({
   meta: {
@@ -20,7 +50,28 @@ export const noDiscardedResponse = createRule({
       includePrerelease: true,
     },
   },
-  create() {
-    return undefined;
+  create(ctx) {
+    if (!isH3HandlerFile(ctx)) return;
+    return {
+      CallExpression(node: AnyNode) {
+        if (!isH3Call(ctx, node, builders) || !isDiscardedExpression(node)) return;
+        if (!isHandlerFunction(ctx, nearestFunctionOrProgram(node))) return;
+        const name = h3ExportName(ctx, node.callee);
+        const call = sourceForNode(node, ctx.file.text);
+        report(
+          ctx,
+          node,
+          "h3/response/no-discarded-response",
+          "error",
+          "response",
+          name === "handleCors"
+            ? "handleCors() returns the preflight response instead of sending it, so an OPTIONS preflight falls through to the rest of the handler."
+            : `${name}() builds a response value and sends nothing, so the handler falls through and responds with whatever it returns next.`,
+          name === "handleCors"
+            ? `Return the preflight response: const cors = ${call}; if (cors !== false) return cors.`
+            : `Return it from the handler: return ${call}.`,
+        );
+      },
+    };
   },
 });

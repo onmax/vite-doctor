@@ -1,4 +1,26 @@
-import { createRule } from "./shared.js";
+import {
+  type AnyNode,
+  createRule,
+  isH3Call,
+  isH3HandlerFile,
+  report,
+  sourceForNode,
+} from "./shared.js";
+
+function asTemplate(markup: string): string {
+  if (markup.startsWith("`")) return markup;
+  const inner = markup.slice(1, -1);
+  return /[`\\]|\$\{/.test(inner) ? `\`...\`` : `\`${inner}\``;
+}
+
+// Escaping a bare `<` still renders it; only a tag shows up as literal text.
+const tag = /<[a-z!/]/i;
+
+function hasMarkup(node: AnyNode): boolean {
+  if (node?.type === "Literal") return typeof node.value === "string" && tag.test(node.value);
+  if (node?.type !== "TemplateLiteral") return false;
+  return node.quasis.some((quasi: AnyNode) => tag.test(quasi.value.cooked ?? ""));
+}
 
 export const noHtmlPlainString = createRule({
   meta: {
@@ -19,7 +41,24 @@ export const noHtmlPlainString = createRule({
       includePrerelease: true,
     },
   },
-  create() {
-    return undefined;
+  create(ctx) {
+    if (!isH3HandlerFile(ctx)) return;
+    return {
+      CallExpression(node: AnyNode) {
+        if (!isH3Call(ctx, node, ["html"]) || node.arguments.length !== 1) return;
+        if (!hasMarkup(node.arguments[0])) return;
+        const markup = sourceForNode(node.arguments[0], ctx.file.text);
+        const callee = sourceForNode(node.callee, ctx.file.text);
+        report(
+          ctx,
+          node,
+          "h3/response/no-html-plain-string",
+          "warn",
+          "response",
+          "html() escapes a plain string, so this markup is sent as text and the browser shows the tags.",
+          `Use the tagged template, which escapes only interpolated values: ${callee}${asTemplate(markup)}. Wrap other trusted markup with raw().`,
+        );
+      },
+    };
   },
 });

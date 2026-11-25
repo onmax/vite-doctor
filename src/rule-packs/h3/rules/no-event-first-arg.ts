@@ -1,4 +1,16 @@
-import { createRule } from "./shared.js";
+import {
+  type AnyNode,
+  createRule,
+  h3ExportName,
+  isH3Call,
+  isH3HandlerFile,
+  isHandlerEvent,
+  report,
+  sourceForNode,
+} from "./shared.js";
+
+// The v1 forms of these took the event first; the v2 forms in h3 2.0.8 do not.
+const eventlessHelpers = ["redirect", "noContent", "html", "iterable", "sendWebResponse"];
 
 export const noEventFirstArg = createRule({
   meta: {
@@ -20,7 +32,28 @@ export const noEventFirstArg = createRule({
       includePrerelease: true,
     },
   },
-  create() {
-    return undefined;
+  create(ctx) {
+    if (!isH3HandlerFile(ctx)) return;
+    return {
+      CallExpression(node: AnyNode) {
+        if (!isH3Call(ctx, node, eventlessHelpers) || !isHandlerEvent(ctx, node.arguments[0]))
+          return;
+        const name = h3ExportName(ctx, node.callee);
+        const callee = sourceForNode(node.callee, ctx.file.text);
+        const rest = node.arguments
+          .slice(1)
+          .map((argument: AnyNode) => sourceForNode(argument, ctx.file.text))
+          .join(", ");
+        report(
+          ctx,
+          node,
+          "h3/response/no-event-first-arg",
+          "error",
+          "response",
+          `${name}() in H3 v2 takes no event, so the event is read as its first argument and every other argument shifts.`,
+          `Replace it with ${callee}(${rest}).`,
+        );
+      },
+    };
   },
 });
