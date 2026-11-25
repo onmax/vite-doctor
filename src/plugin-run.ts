@@ -16,6 +16,7 @@ import type {
 import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
 import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
 import { runViteDoctor, shouldFailDoctorRun, viteDoctorRunOptions } from "./doctor.js";
+import { readMcpServers } from "./mcp/evidence.js";
 import type { SurfaceDiagnostic, SurfaceEvidenceGap } from "./plugin-delta.js";
 import {
   BUILD_EVIDENCE_RULE,
@@ -42,6 +43,8 @@ export interface SurfaceRunOutcome {
   evidenceGaps: SurfaceEvidenceGap[];
   /** The run is `incomplete` for a reason other than its evidence gaps, such as an unresolved runtime. */
   runtimeIncomplete: boolean;
+  /** Some contributor read MCP servers, whose Diagnostics and gaps no saved file can rerun. */
+  mcpEvidence: boolean;
 }
 
 export async function runSurfaceDoctor(
@@ -76,6 +79,7 @@ export async function runSurfaceDoctor(
     runtimeIncomplete:
       reportStatus({ ...result, project: { ...result.project, evidenceGaps: undefined } }) ===
       "incomplete",
+    mcpEvidence: readMcpServers(result.project.runtimeEvidence).length > 0,
   };
 }
 

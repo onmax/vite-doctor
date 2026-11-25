@@ -29,6 +29,7 @@ export const noStrippedConstraint = createRule({
     docsUrl:
       "https://github.com/microsoft/vscode/blob/24bc9d5278687dbdd90e8013b93e1daac453ae2b/extensions/copilot/src/extension/tools/common/toolSchemaNormalizer.ts#L119-L128",
     execution: "workspace",
+    activationScope: "workspace",
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],

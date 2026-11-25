@@ -44,6 +44,7 @@ test("a Doctor Run reads an MCP server's tools/list as Runtime Evidence", async 
     url: new URL(server.url).origin,
     tools: stubTools,
   });
+  expect(evidence.mcpServers[0]).not.toHaveProperty("clientAlias");
   expect(readMcpServers(result.project.runtimeEvidence)).toEqual(evidence.mcpServers);
   expect(result.project.evidenceGaps ?? []).toEqual([]);
 });

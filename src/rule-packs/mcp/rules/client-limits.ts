@@ -1,4 +1,4 @@
-import { relative } from "pathe";
+import { relative, resolve } from "pathe";
 import type {
   Confidence,
   DiagnosticEvidence,
@@ -8,13 +8,13 @@ import type {
   SourceRange,
 } from "../../../core/index.js";
 import type { DoctorDiagnosticHandle } from "../../../core/diagnostics.js";
+import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
 import { sha256 } from "../../../core/internal/utils.js";
 import { checkMcpToolList } from "../../../mcp/check.js";
 import { mcpEndpointId, mcpEndpointLabel } from "../../../mcp/endpoint.js";
 import { readMcpServers, type McpServerToolsEvidence } from "../../../mcp/evidence.js";
 import type { McpClient, McpEffect, McpFinding } from "../../../mcp/types.js";
-import { collectMcpTools, type McpToolDefinition } from "./shared.js";
-import { nameProblems } from "./valid-name.js";
+import { collectMcpTools, MCP_PACKAGES, type McpToolDefinition } from "./shared.js";
 
 export const MCP_CLIENT_LABELS: Record<McpClient, string> = {
   "claude-code": "Claude Code",
@@ -75,13 +75,10 @@ export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOption
         ),
       );
       if (!groups.length) return;
-      const tools = await collectMcpTools(ctx);
+      const tools = mcpPackageTools(ctx, await collectMcpTools(ctx));
       for (const group of groups) {
         const definition = group.tool === undefined ? undefined : staticTool(tools, group.tool);
-        const findings = definition?.name
-          ? group.findings.filter((finding) => !repeatsValidName(finding, definition.name!.value))
-          : group.findings;
-        if (findings.length) report(ctx, options, group.server, group.tool, findings, definition);
+        report(ctx, options, group.server, group.tool, group.findings, definition);
       }
     },
   };
@@ -94,18 +91,29 @@ function groupByTool(server: McpServerToolsEvidence, findings: McpFinding[]) {
   return [...byTool].map(([tool, grouped]) => ({ server, tool, findings: grouped }));
 }
 
+/**
+ * Definitions in workspace packages that depend on an MCP package. These Rules run across the
+ * workspace, and a tool of the same name in another package is not the one the server sends.
+ * Without such a package, nothing ties the server to this project's source.
+ */
+function mcpPackageTools(ctx: RuleContext, tools: McpToolDefinition[]): McpToolDefinition[] {
+  const packages = projectWorkspacePackages(ctx.project).map((item) => ({
+    root: resolve(ctx.project.root, item.root),
+    mcp: MCP_PACKAGES.some((name) => name in item.packages),
+  }));
+  if (!packages.some((item) => item.mcp)) return [];
+  return tools.filter((tool) => {
+    const owner = packages
+      .filter((item) => tool.file.startsWith(`${item.root}/`))
+      .sort((left, right) => right.root.length - left.root.length)[0];
+    return owner?.mcp ?? false;
+  });
+}
+
 /** The tool's definition in source, when exactly one has the name the server sends. */
 function staticTool(tools: McpToolDefinition[], name: string): McpToolDefinition | undefined {
   const matches = tools.filter((tool) => tool.name?.value === name);
   return matches.length === 1 ? matches[0] : undefined;
-}
-
-// MCP0003 already asks to rename a tool whose name breaks MCP's rules; a client renaming that
-// same name says nothing the fix doesn't cover.
-function repeatsValidName(finding: McpFinding, name: string): boolean {
-  return (
-    finding.effect === "rewritten" && finding.pointer === "/name" && nameProblems(name).length > 0
-  );
 }
 
 function report(
@@ -134,7 +142,7 @@ function report(
       [...locations].sort(),
     ]),
   );
-  const label = server.name ?? endpoint ?? "an MCP server";
+  const label = server.name ?? server.initialize?.serverInfo?.name ?? endpoint ?? "an MCP server";
   const subject =
     tool === undefined
       ? `MCP server ${JSON.stringify(label)}`

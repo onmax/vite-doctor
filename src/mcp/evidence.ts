@@ -13,7 +13,11 @@ export interface McpServerTarget {
   url: string;
   /** Request headers, such as `authorization`. They never reach a report. */
   headers?: Record<string, string>;
-  /** Client-configured alias, also used in reports when provided. */
+  /**
+   * The name clients know the server by, such as its key in `.mcp.json`, which they prefix to tool
+   * names. Without it, reports name the server by the `serverInfo.name` it sends, and name-length
+   * checks assume a one-character name.
+   */
   serverName?: string;
 }
 
@@ -33,6 +37,7 @@ export interface McpServerToolsEvidence {
 export interface McpServerErrorEvidence {
   name?: string;
   url: string;
+  endpointId?: string;
   error: string;
   status?: number;
 }
@@ -62,8 +67,7 @@ function isMcpServerEvidence(value: unknown): value is McpServerEvidence {
 
 /**
  * Doctor Extension that reads `tools/list` from each configured server as `mcp` Runtime Evidence.
- * A server Doctor cannot read leaves an evidence gap, so the report is `incomplete` rather than
- * clean.
+ * A server Doctor cannot read is contributed as `{ url, error }`.
  */
 export function mcpEvidenceExtension(
   targets: readonly McpServerTarget[],
@@ -75,9 +79,9 @@ export function mcpEvidenceExtension(
     setup(api) {
       api.registerRuntimeEvidenceContributor({
         name: MCP_EVIDENCE,
-        async contribute(project) {
+        async contribute() {
           const mcpServers = await Promise.all(
-            targets.map((target) => readServer(project, target, options)),
+            targets.map((target) => readServer(target, options)),
           );
           return { mcpServers };
         },
@@ -87,7 +91,6 @@ export function mcpEvidenceExtension(
 }
 
 async function readServer(
-  project: ProjectInfo,
   { url, headers, serverName }: McpServerTarget,
   options: { fetch?: typeof globalThis.fetch; timeout?: number },
 ): Promise<McpServerEvidence> {
@@ -106,22 +109,10 @@ async function readServer(
   } catch (error) {
     const reason = error instanceof McpFetchError ? error.message : "The request failed.";
     const status = error instanceof McpFetchError ? error.status : undefined;
-    const hint =
-      status === 401 || status === 403
-        ? ' On the CLI, pass it with --mcp-header "Authorization: Bearer <token>".'
-        : "";
-    project.evidenceGaps = [
-      ...(project.evidenceGaps ?? []),
-      {
-        source: MCP_EVIDENCE,
-        message: `Doctor could not read the tools of the MCP server at ${label}, so its tools were not checked: ${reason}${hint}`,
-        files: [],
-        instanceKey: endpointId,
-      },
-    ];
     return {
       ...(serverName ? { name: serverName } : {}),
       url: label,
+      endpointId,
       error: reason,
       ...(status === undefined ? {} : { status }),
     };
@@ -134,6 +125,30 @@ export function assertAbsoluteMcpUrl(url: string): void {
   throw new Error(
     "The MCP server URL is not an absolute http(s) URL. Pass the full endpoint, such as http://localhost:3000/mcp; only the Vite plugin in dev resolves a path against its own dev server.",
   );
+}
+
+/**
+ * One evidence gap per MCP server that any Runtime Evidence contributor could not read, so the
+ * report is `incomplete` rather than clean.
+ */
+export function unreadMcpServerGaps(
+  project: ProjectInfo,
+): NonNullable<ProjectInfo["evidenceGaps"]> {
+  return readMcpServers(project.runtimeEvidence)
+    .filter(
+      (server): server is McpServerErrorEvidence =>
+        typeof (server as Partial<McpServerErrorEvidence>).error === "string",
+    )
+    .map(({ url, endpointId, error, status }) => ({
+      source: MCP_EVIDENCE,
+      message: `Doctor could not read the tools of the MCP server at ${mcpEndpointLabel(url)}, so its tools were not checked: ${error}${
+        status === 401 || status === 403
+          ? ' On the CLI, pass it with --mcp-header "Authorization: Bearer <token>".'
+          : ""
+      }`,
+      files: [],
+      instanceKey: endpointId ?? mcpEndpointId(url),
+    }));
 }
 
 /**

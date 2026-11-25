@@ -10,6 +10,7 @@ import { mcpStubHandler, stubTools } from "../mcp/mcp-stub.ts";
 
 type RunResult = Awaited<ReturnType<typeof runViteDoctor>>;
 const doctorRuns = vi.hoisted(() => [] as Array<Promise<RunResult>>);
+const runOptions = vi.hoisted(() => [] as Array<{ affectedFiles?: string[] }>);
 
 vi.mock("../../src/doctor.ts", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../src/doctor.ts")>();
@@ -18,6 +19,7 @@ vi.mock("../../src/doctor.ts", async (importOriginal) => {
     runViteDoctor(...args: Parameters<typeof original.runViteDoctor>) {
       const run = original.runViteDoctor(...args);
       doctorRuns.push(run);
+      runOptions.push(args[0] ?? {});
       return run;
     },
   };
@@ -26,6 +28,7 @@ vi.mock("../../src/doctor.ts", async (importOriginal) => {
 async function withProject(run: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "doctor-plugin-mcp-"));
   doctorRuns.length = 0;
+  runOptions.length = 0;
   try {
     await writeFile(
       join(root, "package.json"),
@@ -89,6 +92,11 @@ test("in dev, an MCP path resolves against the dev server once it listens", asyn
       ]);
       expect(result.project.evidenceGaps ?? []).toEqual([]);
       expect(errors).toEqual([]);
+
+      server.watcher.emit("change", join(root, "entry.ts"));
+      await vi.waitFor(() => expect(doctorRuns).toHaveLength(2), { timeout: 15_000 });
+      await doctorRuns[1];
+      expect(runOptions[1]!.affectedFiles).toBeUndefined();
     } finally {
       await server.close();
     }

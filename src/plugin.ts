@@ -342,6 +342,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
 class ServeDoctorRun {
   private closed = false;
   private state: DiagnosticState | undefined;
+  private mcpEvidence = false;
   private active: ActiveRun | undefined;
   private pending = emptyChanges();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -432,9 +433,10 @@ class ServeDoctorRun {
     if (this.closed || this.timer || this.active) return;
     const { files, full, changed, reported } = this.pending;
     this.pending = emptyChanges();
-    // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files.
+    // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files, and
+    // neither can a run that rereads MCP servers, whose gaps and Diagnostics have no saved file.
     const affected =
-      full || !this.state || this.options.changed || this.options.since || this.options.mcp?.length
+      full || !this.state || this.options.changed || this.options.since || this.mcpEvidence
         ? undefined
         : files;
     await this.execute({ affected, changed: [...changed], reported });
@@ -490,6 +492,7 @@ class ServeDoctorRun {
   }
 
   private record(root: string, batch: RunBatch, outcome: SurfaceRunOutcome) {
+    this.mcpEvidence = outcome.mcpEvidence;
     const previous = this.state;
     const next =
       previous && batch.affected
