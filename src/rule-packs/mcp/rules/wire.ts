@@ -145,7 +145,7 @@ const ANNOTATION_TYPES: Record<string, string> = {
 };
 
 const SDK_REJECTS =
-  "The MCP TypeScript SDK's client rejects the whole tools/list response when it can't parse a tool's annotations, so clients built on it get no tools from this server.";
+  "The MCP TypeScript SDK's client rejects the whole tools/list response when it can't parse a tool's annotations, so clients built on it get none of the tools on that page, or none at all when the server sends one page.";
 
 export interface AnnotationsProblem {
   why: string;
