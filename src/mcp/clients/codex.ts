@@ -81,8 +81,8 @@ export const droppedConstraints: McpClientRule = {
   severity: "info",
   confidence: "high",
   source: source(
-    `${CODEX}/tools/src/json_schema/types.rs#L35-L78`,
-    "/// Generic JSON-Schema subset needed for our tool definitions.",
+    `${CODEX}/tools/src/json_schema_tests.rs#L226-L241`,
+    'let schema = parse_tool_input_schema(&serde_json::json!({\n        "minimum": 1\n    }))\n    .expect("parse schema");\n\n    assert_eq!(schema, JsonSchema::number(/*description*/ None));',
   ),
   check(tool) {
     const descriptionsSurvive = !reduceCodexInputSchema(tool.inputSchema)?.passes.includes(

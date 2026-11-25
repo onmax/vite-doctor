@@ -1,4 +1,4 @@
-import { relative } from "pathe";
+import { relative, resolve } from "pathe";
 import type {
   Confidence,
   DiagnosticEvidence,
@@ -9,11 +9,12 @@ import type {
 } from "../../../core/index.js";
 import type { DoctorDiagnosticHandle } from "../../../core/diagnostics.js";
 import { canReportFromWorkspace } from "../../../core/internal/rule-execution.js";
+import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
 import { sha256 } from "../../../core/internal/utils.js";
 import { mcpEndpointId, mcpEndpointLabel } from "../../../mcp/endpoint.js";
 import type { McpServerToolsEvidence } from "../../../mcp/evidence.js";
 import type { McpEffect, McpFinding } from "../../../mcp/types.js";
-import { collectMcpTools, type McpToolDefinition } from "./shared.js";
+import { collectMcpTools, MCP_PACKAGES, type McpToolDefinition } from "./shared.js";
 import { nameProblems } from "./valid-name.js";
 import { MCP_CLIENT_LABELS, markChecked, serverFindings, staticTool } from "./wire.js";
 
@@ -44,7 +45,7 @@ export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOption
         ),
       );
       if (!groups.length && (checked.projectWide || !checked.servers.length)) return;
-      const tools = await collectMcpTools(ctx);
+      const tools = mcpPackageTools(ctx, await collectMcpTools(ctx));
       markChecked(ctx, tools);
       for (const group of groups) {
         const definition = group.tool === undefined ? undefined : staticTool(tools, group.tool);
@@ -66,6 +67,25 @@ function groupByTool(server: McpServerToolsEvidence, findings: McpFinding[]) {
   return [...byTool].map(([tool, grouped]) => ({ server, tool, findings: grouped }));
 }
 
+/**
+ * Definitions in workspace packages that depend on an MCP package. These Rules run across the
+ * workspace, and a tool of the same name in another package is not the one the server sends.
+ * Without such a package, nothing ties the server to this project's source.
+ */
+function mcpPackageTools(ctx: RuleContext, tools: McpToolDefinition[]): McpToolDefinition[] {
+  const packages = projectWorkspacePackages(ctx.project).map((item) => ({
+    root: resolve(ctx.project.root, item.root),
+    mcp: MCP_PACKAGES.some((name) => name in item.packages),
+  }));
+  if (!packages.some((item) => item.mcp)) return [];
+  return tools.filter((tool) => {
+    const owner = packages
+      .filter((item) => tool.file.startsWith(`${item.root}/`))
+      .sort((left, right) => right.root.length - left.root.length)[0];
+    return owner?.mcp ?? false;
+  });
+}
+
 // MCP0003 already asks to rename a tool whose name breaks MCP's rules; a client renaming that
 // same name says nothing the fix doesn't cover.
 function repeatsValidName(finding: McpFinding, name: string): boolean {
@@ -84,6 +104,7 @@ function report(
 ): void {
   const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
   const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
+  const name = server.name ?? server.initialize?.serverInfo?.name;
   const locations = new Set(
     findings.flatMap(({ rule, pointer, affectedPointers }) =>
       (affectedPointers ?? [pointer ?? null]).map((location) => JSON.stringify([rule, location])),
@@ -92,15 +113,9 @@ function report(
   const anchor =
     endpointId ?? (definition?.name?.range ? relative(ctx.project.root, definition.file) : null);
   const fingerprint = sha256(
-    JSON.stringify([
-      options.ruleId,
-      server.name ?? null,
-      anchor,
-      tool ?? null,
-      [...locations].sort(),
-    ]),
+    JSON.stringify([options.ruleId, name ?? null, anchor, tool ?? null, [...locations].sort()]),
   );
-  const label = server.name ?? endpoint ?? "an MCP server";
+  const label = name ?? endpoint ?? "an MCP server";
   const subject =
     tool === undefined
       ? `MCP server ${JSON.stringify(label)}`
@@ -154,7 +169,7 @@ function report(
       evidence,
       data: {
         server: {
-          ...(server.name === undefined ? {} : { name: server.name }),
+          ...(name === undefined ? {} : { name }),
           ...(endpoint === undefined ? {} : { url: endpoint }),
         },
         ...(tool === undefined ? {} : { tool }),

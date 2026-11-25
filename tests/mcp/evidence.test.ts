@@ -45,6 +45,7 @@ test("a Doctor Run reads an MCP server's tools/list as Runtime Evidence", async 
     url: new URL(server.url).origin,
     tools: stubTools,
   });
+  expect(evidence.mcpServers[0]).not.toHaveProperty("clientAlias");
   expect(readMcpServers(result.project.runtimeEvidence)).toEqual(evidence.mcpServers);
   expect(result.project.evidenceGaps ?? []).toEqual([]);
 });
@@ -52,7 +53,11 @@ test("a Doctor Run reads an MCP server's tools/list as Runtime Evidence", async 
 test("an MCP server that answers 401 leaves an evidence gap and an incomplete report", async () => {
   const server = await stub({ token: "secret" });
   const root = project(mcpServerPackage);
-  const result = await runViteDoctor({ root, cache: false, mcp: [{ url: server.url }] });
+  const result = await runViteDoctor({
+    root,
+    cache: false,
+    mcp: [{ url: server.url }, { url: server.url, serverName: "again" }],
+  });
 
   expect(reportStatus(result)).toBe("incomplete");
   const gaps = result.project.evidenceGaps ?? [];
@@ -63,6 +68,7 @@ test("an MCP server that answers 401 leaves an evidence gap and an incomplete re
   expect(gaps[0]!.message).toContain("--mcp-header");
   expect(readMcpServers(result.project.runtimeEvidence)).toEqual([
     expect.objectContaining({ url: new URL(server.url).origin, status: 401 }),
+    expect.objectContaining({ name: "again", status: 401 }),
   ]);
 });
 
@@ -280,7 +286,7 @@ test("a file override reports scoped MCP evidence without clearing the project-w
     const tools = [{ name, inputSchema: { type: "object", properties: { "page size": {} } } }];
     return Response.json({ id, result: method === "initialize" ? {} : { tools } });
   });
-  const root = project();
+  const root = project(mcpServerPackage);
   const file = join(root, "index.ts");
   writeFileSync(
     file,
@@ -341,11 +347,13 @@ test("readMcpServers collects mcpServers from every contributor and skips malfor
       vitehub: {
         mcpServers: [{ name: "hub", tools: [{ name: "b" }] }, { tools: [{}] }, { error: "x" }],
       },
+      other: { mcpServers: [{ name: "ok", error: null, tools: [{ name: "c" }] }] },
       vite: { other: true },
     }),
   ).toEqual([
     { url: "http://a/mcp", tools: [{ name: "a" }] },
     { name: "hub", tools: [{ name: "b" }] },
+    { name: "ok", error: null, tools: [{ name: "c" }] },
   ]);
 });
 

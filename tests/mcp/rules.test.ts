@@ -130,7 +130,7 @@ const cases: Record<string, Case> = {
   "gemini-cli/name-length": { fail: named(58), pass: named(57) },
   "copilot-studio/numeric-exclusive-minimum": {
     fail: schema(object({ count: { type: "integer", exclusiveMinimum: 0 } })),
-    pass: schema(object({ count: { type: "integer", minimum: 1 } })),
+    pass: schema(object({ count: { type: "number", exclusiveMinimum: 0.5 } })),
   },
   "copilot-studio/reference": {
     fail: schema(
@@ -262,6 +262,24 @@ describe("rule details", () => {
     expect(finding?.pointer).toBe("/inputSchema/properties/limit/default");
     expect(finding?.message).toContain("`default`");
     expect(finding?.message).not.toContain("`maximum`");
+  });
+
+  test("dropped constraints skip Zod's safe-integer bounds", () => {
+    const zod = tool({
+      inputSchema: object({
+        offset: {
+          type: "integer",
+          minimum: Number.MIN_SAFE_INTEGER,
+          maximum: Number.MAX_SAFE_INTEGER,
+        },
+      }),
+    });
+    expect(hits("codex/dropped-constraints", zod)).toEqual([]);
+    expect(hits("vscode/gpt-4-dropped-constraints", zod)).toEqual([]);
+    const number = tool({
+      inputSchema: object({ ratio: { type: "number", maximum: Number.MAX_SAFE_INTEGER } }),
+    });
+    expect(hits("codex/dropped-constraints", number)).toHaveLength(1);
   });
 
   test("Codex keywords count only descriptions that survive compaction", () => {
