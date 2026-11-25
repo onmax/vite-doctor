@@ -56,28 +56,26 @@ export interface RequestValueSources {
   isSkippedOperation?(node: AnyNode): boolean;
 }
 
-type FlowSources = RequestValueSources & { spendProjectionWork?: () => void };
+type FlowSources = RequestValueSources & {
+  spendProjectionWork?: () => void;
+  tracingProjection?: boolean;
+};
 
 /** Whether evaluating `value` reads a request source, directly or through local bindings. */
 export function holdsRequestValue(value: AnyNode, sources: RequestValueSources): boolean {
   if (!sources.projectObjectMembers) return flows(value, sources, 0);
   let remaining = PROJECTION_WORK_BUDGET;
-  try {
-    return flows(
-      value,
-      {
-        ...sources,
-        spendProjectionWork: () => {
-          if (remaining-- <= 0) throw PROJECTION_LIMIT;
-        },
+  return flows(
+    value,
+    {
+      ...sources,
+      spendProjectionWork: () => {
+        if (remaining <= 0) throw PROJECTION_LIMIT;
+        remaining--;
       },
-      0,
-    );
-  } catch (error) {
-    if (error !== PROJECTION_LIMIT) throw error;
-    sources.onUncertainProjection?.();
-    return false;
-  }
+    },
+    0,
+  );
 }
 
 /** The imported export, null for a rejected binding, or undefined for an unbound identifier. */
@@ -125,7 +123,7 @@ function flows(value: AnyNode, sources: FlowSources, depth: number): boolean {
   let found = false;
   const visit = (node: AnyNode) => {
     if (found || !node || typeof node !== "object") return;
-    sources.spendProjectionWork?.();
+    if (sources.tracingProjection) sources.spendProjectionWork?.();
     if (sources.isSkippedOperation?.(node)) return;
     if (isModuleImport(node)) {
       if (node.type !== "CallExpression") return;
@@ -155,17 +153,9 @@ function flows(value: AnyNode, sources: FlowSources, depth: number): boolean {
     }
     if (FUNCTION_TYPES.has(node.type) && !isInvoked(node) && !isPromiseCallback(node)) return;
     if (sources.projectObjectMembers && node.type === "MemberExpression") {
-      const selected = projectMember(node, sources, (sources.maxDepth ?? 2) - depth);
-      if (selected) {
-        const dependsOnSource = (candidates: Map<AnyNode, number>) => {
-          for (const [candidate, steps] of candidates)
-            if (flows(candidate, sources, depth + steps)) return true;
-          return false;
-        };
-        if (selected.uncertain) {
-          if (dependsOnSource(selected.controls) || dependsOnSource(selected.values))
-            sources.onUncertainProjection?.();
-        } else found = dependsOnSource(selected.values);
+      const projected = projectedRequestValue(node, sources, depth);
+      if (projected !== undefined) {
+        found = projected;
         return;
       }
     }
@@ -184,6 +174,29 @@ function flows(value: AnyNode, sources: FlowSources, depth: number): boolean {
   return found;
 }
 
+function projectedRequestValue(node: AnyNode, sources: FlowSources, depth: number) {
+  try {
+    const selected = projectMember(node, sources, (sources.maxDepth ?? 2) - depth);
+    if (!selected) return;
+    const candidateSources = sources.tracingProjection
+      ? sources
+      : { ...sources, tracingProjection: true };
+    const dependsOnSource = (candidates: Map<AnyNode, number>) => {
+      for (const [candidate, steps] of candidates)
+        if (flows(candidate, candidateSources, depth + steps)) return true;
+      return false;
+    };
+    if (!selected.uncertain) return dependsOnSource(selected.values);
+    if (dependsOnSource(selected.controls) || dependsOnSource(selected.values))
+      sources.onUncertainProjection?.();
+    return false;
+  } catch (error) {
+    if (error !== PROJECTION_LIMIT || sources.tracingProjection) throw error;
+    sources.onUncertainProjection?.();
+    return false;
+  }
+}
+
 interface MemberProjection {
   values: Map<AnyNode, number>;
   controls: Map<AnyNode, number>;
@@ -198,9 +211,9 @@ function projectMember(
   const name = staticMemberName(node);
   if (name === undefined || name === "__proto__" || remaining <= 0) return;
   const select = (expression: AnyNode, steps: number): MemberProjection | undefined => {
-    sources.spendProjectionWork?.();
     const object = unwrapExpression(expression);
     if (object?.type === "ObjectExpression") {
+      sources.spendProjectionWork?.();
       const { value, possibleWrites, controls } = setupMemberWrites(node, object, name, sources);
       const initial = objectMemberInitializer(object, name);
       if (initial === UNKNOWN_VALUE && !possibleWrites.size) return;

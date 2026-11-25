@@ -147,29 +147,36 @@ const rendered = label.title`,
   expect(result.cookieFlowGaps).toHaveLength(gaps);
 });
 
-test("bounds overlapping reads of a conditionally updated property", async () => {
-  const file = "app/pages/account.vue";
-  const updates = Array.from(
-    { length: 250 },
-    (_, index) =>
-      `if (enabled.has(${index})) label.title = label.title.replaceAll(String(${index}), '')`,
-  ).join("\n");
-  const result = await run({
-    [file]: page(
-      `const cookie = useCookie('theme')
+test.each([
+  [250, "label.title", 0, 1],
+  [40, "[label.title, cookie.value]", 1, 0],
+  [40, "[cookie.value, label.title]", 1, 0],
+])(
+  "bounds %i overlapping writes when rendering %s",
+  async (length, rendered, diagnostics, gaps) => {
+    const file = "app/pages/account.vue";
+    const updates = Array.from(
+      { length },
+      (_, index) =>
+        `if (enabled.has(${index})) label.title = label.title.replaceAll(String(${index}), '')`,
+    ).join("\n");
+    const result = await run({
+      [file]: page(
+        `const cookie = useCookie('theme')
 const label = { title: 'Hello' }
 const enabled = new Set(useRuntimeConfig().public.enabledTransforms)
 ${updates}
-const rendered = label.title`,
-      "<div>{{ rendered }}</div>",
-    ),
-    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
-      "/account": { swr: 60 },
-    }),
-  });
-  expect(result.diagnostics).toEqual([]);
-  expect(result.cookieFlowGaps).toHaveLength(1);
-});
+const rendered = ${rendered}`,
+        "<div>{{ rendered }}</div>",
+      ),
+      ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+        "/account": { swr: 60 },
+      }),
+    });
+    expect(result.diagnostics).toHaveLength(diagnostics);
+    expect(result.cookieFlowGaps).toHaveLength(gaps);
+  },
+);
 
 test.each([
   ["title", "'Hello'", "'Welcome'", "", 0],
