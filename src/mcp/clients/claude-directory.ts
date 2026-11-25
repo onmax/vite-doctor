@@ -47,7 +47,8 @@ export const missingTitle: McpClientRule = {
 
 /**
  * The fix for a tool with neither safety hint true, when its declared hints narrow it down.
- * A write tool that declares `readOnlyHint: false` must never be told to set it to true.
+ * A tool that declares `readOnlyHint: false` must never be told to set it to true, and an
+ * additive tool can't truthfully set either hint to true.
  */
 export function declaredHintFix(hints: {
   readOnlyHint?: unknown;
@@ -55,8 +56,8 @@ export function declaredHintFix(hints: {
 }): string | undefined {
   if (hints.readOnlyHint !== false) return;
   if (hints.destructiveHint === false)
-    return "The tool declares both `readOnlyHint: false` and `destructiveHint: false`, but the Connectors Directory needs one of them true. Set whichever one is true for this tool.";
-  return "Add `destructiveHint: true` to the annotations. The tool declares `readOnlyHint: false`, and the Connectors Directory asks for `destructiveHint: true` on tools that modify or delete data.";
+    return "The tool declares `readOnlyHint: false` and `destructiveHint: false`, which MCP uses for tools that only add data. Keep them if that is accurate and expect the Connectors Directory review to flag the tool, since it asks for one hint to be true. If the tool can modify or delete data, set `destructiveHint: true`.";
+  return "Add `destructiveHint: true` to the annotations if the tool can modify or delete data, which the Connectors Directory asks for. The tool declares `readOnlyHint: false`, so marking it read-only is not the fix. If it only adds data, `destructiveHint: false` is the accurate MCP hint, though the Directory review still asks for one hint to be true.";
 }
 
 export const missingHint: McpClientRule = {

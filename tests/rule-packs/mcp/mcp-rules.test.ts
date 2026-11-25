@@ -125,7 +125,7 @@ describe("MCP tool annotations", () => {
       )?.diagnostic.fix;
     expect(fix("write")).toContain("Add `destructiveHint: true`");
     expect(fix("write")).not.toContain("readOnlyHint: true");
-    expect(fix("both")).toContain("Set whichever one is true");
+    expect(fix("both")).toContain("which MCP uses for tools that only add data");
     expect(fix("both")).not.toContain("readOnlyHint: true");
     expect(fix("none")).toContain(
       "Add `readOnlyHint: true` to the annotations if the tool only reads",

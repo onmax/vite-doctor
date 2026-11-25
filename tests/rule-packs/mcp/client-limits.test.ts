@@ -722,7 +722,7 @@ test("MCP0002 on a sent tool follows the hints it declares", async () => {
     all.find((item) => item.code === "MCP0002" && item.data?.tool === tool)?.diagnostic.fix;
   expect(fix("create_issue")).toContain("Add `destructiveHint: true`");
   expect(fix("create_issue")).not.toContain("readOnlyHint: true");
-  expect(fix("both")).toContain("Set whichever one is true");
+  expect(fix("both")).toContain("which MCP uses for tools that only add data");
   expect(fix("both")).not.toContain("readOnlyHint: true");
 });
 

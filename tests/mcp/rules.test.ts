@@ -410,7 +410,7 @@ test("the Directory hint fix follows the hints a tool declares", () => {
   expect(fix({ readOnlyHint: false })).toContain("Add `destructiveHint: true`");
   expect(fix({ readOnlyHint: false })).not.toContain("readOnlyHint: true");
   const both = fix({ readOnlyHint: false, destructiveHint: false });
-  expect(both).toContain("Set whichever one is true");
+  expect(both).toContain("which MCP uses for tools that only add data");
   expect(both).not.toContain("readOnlyHint: true");
   expect(fix({})).toContain("`annotations.readOnlyHint: true` on read-only tools");
 });
