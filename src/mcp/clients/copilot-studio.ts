@@ -102,8 +102,8 @@ export const enumAsString: McpClientRule = {
     const pointers = pointersWhere(tool, "enum", Array.isArray);
     if (!pointers.length) return;
     return {
-      message: `Copilot Studio reads the \`enum\` inputs of \`${tool.name}\` as plain strings, so the agent doesn't see the allowed values: ${listPointers(pointers)}.`,
-      fix: "List the allowed values in the property description and keep validating them on the server.",
+      message: `Copilot Studio reads the \`enum\` inputs of \`${tool.name}\` as strings instead of enums: ${listPointers(pointers)}.`,
+      fix: "If the agent needs the allowed values, list them in the property description, and keep validating them on the server.",
       pointer: pointers[0],
     };
   },

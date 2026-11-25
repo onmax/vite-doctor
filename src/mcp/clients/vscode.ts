@@ -224,8 +224,8 @@ export const gpt4DroppedConstraints: McpClientRule = {
     if (!dropped.length) return;
     const keywords = [...new Set(dropped.map((item) => item.keyword))];
     return {
-      message: `With gpt-4* models, VS Code's Copilot Chat deletes \`${keywords.join("`, `")}\` from the schema of \`${tool.name}\`, and no description states the values: ${listPointers(dropped.map((item) => item.pointer))}.`,
-      fix: "State each limit in the property description, such as `Between 1 and 100.`, and keep validating it on the server.",
+      message: `With gpt-4* models, VS Code's Copilot Chat deletes \`${keywords.join("`, `")}\` from the schema of \`${tool.name}\`: ${listPointers(dropped.map((item) => item.pointer))}.`,
+      fix: "If the model needs a limit to call the tool right, state it in the property description, such as `Between 1 and 100.`, and keep validating it on the server.",
       pointer: dropped[0]!.pointer,
     };
   },
