@@ -48,6 +48,16 @@ export interface SurfaceRunOutcome {
   runtimeIncomplete: boolean;
 }
 
+export type SurfaceWorkerMessage =
+  | { outcome: SurfaceRunOutcome }
+  | { error: string }
+  | { request: number; source: string; importer: string };
+
+export type SurfaceWorkerResolution = { request: number } & (
+  | { id: string | undefined }
+  | { error: string }
+);
+
 export async function runSurfaceDoctor(
   input: SurfaceRunInput,
   extensions: DoctorExtensionInput[],

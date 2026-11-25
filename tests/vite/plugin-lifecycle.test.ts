@@ -1,7 +1,16 @@
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { build, createBuilder, resolveConfig, type Logger, type ViteDevServer } from "vite";
+import { pathToFileURL } from "node:url";
+import {
+  build,
+  createBuilder,
+  resolveConfig,
+  type Logger,
+  type Plugin,
+  type ViteDevServer,
+} from "vite";
 import { expect, test, vi } from "vite-plus/test";
 import { createRule, defineDoctorExtension, defineRulePack } from "../../src/extension.ts";
 import { doctor } from "../../src/plugin.ts";
@@ -228,6 +237,86 @@ test("Pinia uses the import resolved after all buildStart hooks", async () => {
     await expect(build({ ...config, plugins: [...config.plugins, resolver] })).rejects.toThrow(
       /PINIA0005.*action\.ts/,
     );
+  });
+});
+
+test("Pinia reads completed edges resolved by an earlier plugin", async () => {
+  await withProject(async (root) => {
+    await piniaImports(root, "@cart");
+    const config = piniaBuild(root);
+    const resolver: Plugin = {
+      name: "fixture/early-store-resolver",
+      enforce: "pre",
+      resolveId: {
+        order: "pre",
+        handler(source) {
+          if (source === "@cart") return join(root, "cart.ts");
+        },
+      },
+    };
+    await expect(build({ ...config, plugins: [resolver, ...config.plugins] })).rejects.toThrow(
+      /PINIA0005.*cart\.ts/,
+    );
+  });
+});
+
+test.each([
+  ["script setup", "const { count } = useCartStore()", destructureRule, "PINIA0005"],
+  [
+    "script",
+    "useCartStore(); export default {}",
+    "pinia/stores/no-module-scope-store",
+    "PINIA0006",
+  ],
+])("Pinia uses the Vue %s submodule's imports", async (block, script, rule, diagnostic) => {
+  await withProject(async (root) => {
+    const nuxtRequire = createRequire(import.meta.resolve("nuxt"));
+    const builderRequire = createRequire(nuxtRequire.resolve("@nuxt/vite-builder"));
+    const { default: vue } = (await import(
+      pathToFileURL(builderRequire.resolve("@vitejs/plugin-vue")).href
+    )) as { default: () => Plugin };
+    await piniaImports(root, "./cart");
+    const entry = join(root, "entry.vue");
+    await writeFile(
+      entry,
+      `<${block} lang="ts">\nimport { useCartStore } from './cart'\n${script}\n</script>\n<template><p>Cart</p></template>`,
+    );
+    const config = piniaBuild(root);
+    await expect(
+      build({
+        ...config,
+        plugins: [vue(), doctor({ rules: rule, maxWarnings: 0, cache: false })],
+        build: { ...config.build, lib: { ...config.build.lib, entry } },
+      }),
+    ).rejects.toThrow(diagnostic);
+  });
+});
+
+test("Pinia reclassifies a cached import when only its store changes", async () => {
+  await withProject(async (root) => {
+    const store = await piniaImports(root, "./cart");
+    await store("cart", storeAction);
+    const config = piniaBuild(root);
+    const watcher = await build({ ...config, build: { ...config.build, watch: {} } });
+    if (!("on" in watcher)) throw new Error("Expected a build watcher");
+    try {
+      const nextBuild = () =>
+        new Promise<unknown>((resolve) => {
+          const onEvent: Parameters<typeof watcher.on>[1] = (...[event]) => {
+            if (typeof event !== "object" || (event.code !== "END" && event.code !== "ERROR"))
+              return;
+            watcher.off("event", onEvent);
+            resolve(event.code === "ERROR" ? event.error : undefined);
+          };
+          watcher.on("event", onEvent);
+        });
+      expect(await nextBuild()).toBeUndefined();
+      const rebuilt = nextBuild();
+      await store("cart", storeState);
+      expect(String(await rebuilt)).toContain("PINIA0005");
+    } finally {
+      await watcher.close();
+    }
   });
 });
 

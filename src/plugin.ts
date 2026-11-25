@@ -11,7 +11,6 @@ import type {
   DoctorSerializableConfig,
 } from "./core/index.js";
 import type { HostImportResolver } from "./core/internal/host-imports.js";
-import { parseScriptSync } from "./core/internal/script.js";
 import {
   diffStates,
   formatDelta,
@@ -20,7 +19,12 @@ import {
   type DiagnosticState,
 } from "./plugin-delta.js";
 import type { McpServerTarget } from "./mcp/evidence.js";
-import type { SurfaceRunInput, SurfaceRunOutcome } from "./plugin-run.js";
+import type {
+  SurfaceRunInput,
+  SurfaceRunOutcome,
+  SurfaceWorkerMessage,
+  SurfaceWorkerResolution,
+} from "./plugin-run.js";
 import { RuntimeDiagnosticReports } from "./plugin-runtime-diagnostics.js";
 import {
   buildDiagnosticFingerprint,
@@ -32,6 +36,82 @@ import type { BuildEnvironment, Plugin, ResolvedConfig, ViteDevServer } from "vi
 
 type BuildTarget = Pick<BuildEnvironment, "name" | "config">;
 type BuildImports = Map<string, Map<string, string | undefined>>;
+type BuildContext = ThisParameterType<Extract<Plugin["buildEnd"], (...args: never[]) => unknown>>;
+
+function buildImportResolver(context: BuildContext, observed: BuildImports): HostImportResolver {
+  const modules: BuildImports = new Map();
+  function edges(id: string) {
+    let imports = modules.get(id);
+    if (imports) return imports;
+    modules.set(id, (imports = new Map()));
+    const info = context.getModuleInfo(id);
+    if (!info?.code) return imports;
+    const sources = new Set<string>();
+    let program: ReturnType<BuildContext["parse"]>;
+    try {
+      program = context.parse(info.code);
+    } catch {
+      return imports;
+    }
+    for (const statement of program.body) {
+      if (
+        (statement.type === "ImportDeclaration" ||
+          statement.type === "ExportNamedDeclaration" ||
+          statement.type === "ExportAllDeclaration") &&
+        typeof statement.source?.value === "string"
+      )
+        sources.add(statement.source.value);
+    }
+    const ordered = [...sources];
+    const resolutions = info.importedIds;
+    const recorded = observed.get(id);
+    const aligned =
+      ordered.length === resolutions.length &&
+      (!context.meta.rolldownVersion || !/\brequire\b/.test(info.code)) &&
+      ordered.every((source, index) => {
+        const resolved = recorded?.get(source);
+        return resolved === undefined || resolved === resolutions[index];
+      });
+    for (const [index, source] of ordered.entries()) {
+      const resolved = recorded?.has(source)
+        ? recorded.get(source)
+        : aligned
+          ? resolutions[index]
+          : undefined;
+      imports.set(
+        source,
+        resolved && resolutions.includes(resolved) && context.getModuleInfo(resolved)?.code != null
+          ? resolved
+          : undefined,
+      );
+    }
+    return imports;
+  }
+
+  return async (source, importer) => {
+    const candidates = [importer];
+    if (importer.endsWith(".vue")) {
+      for (const id of context.getModuleInfo(importer)?.importedIds ?? []) {
+        if (vueScriptOwner(id) === importer) candidates.push(id);
+      }
+    }
+    const matches = new Set<string | undefined>();
+    for (const id of candidates) {
+      const imports = edges(id);
+      if (imports.has(source)) matches.add(imports.get(source));
+    }
+    if (matches.size === 1) return matches.values().next().value;
+  };
+}
+
+function vueScriptOwner(id: string) {
+  const queryStart = id.indexOf("?");
+  if (queryStart < 0) return;
+  const file = id.slice(0, queryStart);
+  if (!file.endsWith(".vue")) return;
+  const query = new URLSearchParams(id.slice(queryStart + 1));
+  if (query.has("vue") && query.get("type") === "script" && !query.has("src")) return file;
+}
 
 function newBuildReports() {
   return {
@@ -229,26 +309,10 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
       if (!imports) return;
       buildImports.delete(key);
       if (error) return;
-      const staticSources = new Map<string, Set<string>>();
       const outcome = await runBuild(
         resolved,
         target ? [target] : undefined,
-        async (source, importer) => {
-          const id = imports.get(importer)?.get(source);
-          if (!id) return;
-          const info = this.getModuleInfo(importer);
-          if (!info?.importedIds.includes(id) || !info.code) return;
-          let sources = staticSources.get(importer);
-          if (!sources) {
-            const { module } = parseScriptSync(importer, info.code, { lang: "js" });
-            sources = new Set(module.staticImports.map(({ moduleRequest }) => moduleRequest.value));
-            for (const { entries } of module.staticExports)
-              for (const entry of entries)
-                if (entry.moduleRequest) sources.add(entry.moduleRequest.value);
-            staticSources.set(importer, sources);
-          }
-          return sources.has(source) ? id : undefined;
-        },
+        buildImportResolver(this, imports),
       );
       reportBuild(
         resolved,
@@ -267,7 +331,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
           imports &&
           importer &&
           isAbsolute(importer) &&
-          !/[?#\0]/.test(importer) &&
+          (!/[?#\0]/.test(importer) || vueScriptOwner(importer)) &&
           !importer.split("/").includes("node_modules") &&
           (!("kind" in context) || context.kind === "import-statement");
         const inspectStub =
@@ -282,7 +346,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         if (observeImport && imports) {
           let sources = imports.get(importer);
           if (!sources) imports.set(importer, (sources = new Map()));
-          const id = resolution && !resolution.external ? resolution.id : undefined;
+          const id = resolution?.id;
           if (!sources.has(source)) sources.set(source, id);
           else if (sources.get(source) !== id) sources.set(source, undefined);
         }
@@ -555,8 +619,8 @@ class ServeDoctorRun {
     let outcome: SurfaceRunOutcome | undefined;
     try {
       const worker = canRunInWorker(input, extensions);
-      if (worker) outcome = await this.runInWorker(input, run);
-      if (!run.stale && (!worker || outcome?.needsHostImportResolution)) {
+      if (worker) outcome = await this.runInWorker(input, run, resolveImport);
+      else if (!run.stale) {
         const { runSurfaceDoctor } = await import("./plugin-run.js");
         outcome = await runSurfaceDoctor(input, extensions, resolveImport);
       }
@@ -596,13 +660,23 @@ class ServeDoctorRun {
     if (log) this.server.config.logger[log.level](log.message);
   }
 
-  private runInWorker(input: SurfaceRunInput, run: ActiveRun) {
+  private runInWorker(input: SurfaceRunInput, run: ActiveRun, resolveImport: HostImportResolver) {
     return new Promise<SurfaceRunOutcome | undefined>((resolvePromise, reject) => {
       const worker = new Worker(workerUrl, { workerData: input });
       run.worker = worker;
       worker.unref();
-      worker.once("message", (message: { outcome?: SurfaceRunOutcome; error?: string }) => {
-        if (message.error !== undefined) reject(new Error(message.error));
+      worker.on("message", (message: SurfaceWorkerMessage) => {
+        if ("request" in message) {
+          const { request, source, importer } = message;
+          const reply = (resolution: SurfaceWorkerResolution) => {
+            if (!run.stale) worker.postMessage(resolution);
+          };
+          if (!run.stale)
+            void resolveImport(source, importer).then(
+              (id) => reply({ request, id }),
+              (error: unknown) => reply({ request, error: String(error) }),
+            );
+        } else if ("error" in message) reject(new Error(message.error));
         else resolvePromise(message.outcome);
       });
       worker.once("error", reject);
