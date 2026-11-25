@@ -14,6 +14,7 @@ import type {
   RuntimeFrameworkDiagnostic,
 } from "./core/index.js";
 import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
+import { hostImportResolvers, type HostImportResolver } from "./core/internal/host-imports.js";
 import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
 import { runViteDoctor, shouldFailDoctorRun, viteDoctorRunOptions } from "./doctor.js";
 import { readMcpServers } from "./mcp/evidence.js";
@@ -42,15 +43,40 @@ export interface SurfaceRunOutcome {
   diagnostics: SurfaceDiagnostic[];
   evidenceGaps: SurfaceEvidenceGap[];
   hasMcpEvidence: boolean;
+  needsHostImportResolution: boolean;
   /** The run is `incomplete` for a reason other than its evidence gaps, such as an unresolved runtime. */
   runtimeIncomplete: boolean;
 }
 
+export type SurfaceWorkerMessage =
+  | { outcome: SurfaceRunOutcome }
+  | { error: string }
+  | { request: number; source: string; importer: string };
+
+export type SurfaceWorkerResolution = { request: number } & (
+  | { id: string | undefined }
+  | { error: string }
+);
+
 export async function runSurfaceDoctor(
   input: SurfaceRunInput,
   extensions: DoctorExtensionInput[],
+  resolveImport?: HostImportResolver,
 ): Promise<SurfaceRunOutcome> {
-  const result = await runViteDoctor(surfaceDoctorOptions(input, extensions), true);
+  let needsHostImportResolution = false;
+  const evidence = { ...input.vite.evidence };
+  hostImportResolvers.set(
+    evidence,
+    resolveImport ??
+      (async () => {
+        needsHostImportResolution = true;
+        return undefined;
+      }),
+  );
+  const result = await runViteDoctor(
+    surfaceDoctorOptions({ ...input, vite: { ...input.vite, evidence } }, extensions),
+    true,
+  );
   const report = createReport(result, input.options.format).trimEnd();
   const shouldFail =
     reportStatus(result) === "incomplete" || shouldFailDoctorRun(result, input.options.maxWarnings);
@@ -79,6 +105,7 @@ export async function runSurfaceDoctor(
       ),
     })),
     hasMcpEvidence: readMcpServers(result.project.runtimeEvidence).length > 0,
+    needsHostImportResolution,
     runtimeIncomplete:
       reportStatus({ ...result, project: { ...result.project, evidenceGaps: undefined } }) ===
       "incomplete",

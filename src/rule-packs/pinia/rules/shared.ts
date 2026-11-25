@@ -1,5 +1,6 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from "pathe";
 import type { AutoImportEntry, NuxtProjectInfo, RuleContext } from "../../../core/index.js";
+import { hostImportResolvers } from "../../../core/internal/host-imports.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseScriptScope, type ScopeReference } from "../../../core/internal/script-scope.js";
 import { parseSfcFile, parseVueScripts } from "../../../core/internal/sfc.js";
@@ -55,26 +56,51 @@ export interface LocatedStore<S extends StoreDefinition = StoreDefinition> {
   module: StoreModule;
 }
 
-/** The extension order Vite resolved for one environment, from Runtime Evidence. */
+interface ImportAlias {
+  find: string | RegExp;
+  replacement?: string;
+}
+
+/** Vite's import configuration for one environment, from Runtime Evidence. */
 export interface EnvironmentResolution {
   root: string;
   runtime: number;
   extensions: string[];
+  aliases?: ImportAlias[];
+}
+
+function readImportAliases(value: unknown): ImportAlias[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const aliases: ImportAlias[] = [];
+  for (const alias of value) {
+    const find = alias?.find;
+    const replacement = typeof alias?.replacement === "string" ? alias.replacement : undefined;
+    if (typeof find === "string") aliases.push({ find, replacement });
+    else if (typeof find?.source === "string" && typeof find.flags === "string") {
+      try {
+        aliases.push({ find: new RegExp(find.source, find.flags), replacement });
+      } catch {
+        return undefined;
+      }
+    } else return undefined;
+  }
+  return aliases;
 }
 
 export function importResolutionEvidence(runtime: unknown): EnvironmentResolution[] {
   if (!runtime || typeof runtime !== "object" || !("importResolution" in runtime)) return [];
   const evidence = runtime.importResolution;
   if (!evidence || typeof evidence !== "object") return [];
-  const { root, environments } = evidence as Record<string, unknown>;
+  const { root, environments, aliases } = evidence as Record<string, unknown>;
   if (typeof root !== "string" || !environments || typeof environments !== "object") return [];
+  const importAliases = readImportAliases(aliases);
   return Object.values(environments).flatMap((environment) => {
     if (!environment || typeof environment !== "object") return [];
     const { consumer, extensions } = environment as Record<string, unknown>;
     if (consumer !== "client" && consumer !== "server") return [];
     if (!Array.isArray(extensions) || !extensions.every((ext) => typeof ext === "string"))
       return [];
-    return [{ root, runtime: setupRuntimes[consumer], extensions }];
+    return [{ root, runtime: setupRuntimes[consumer], extensions, aliases: importAliases }];
   });
 }
 
@@ -691,11 +717,16 @@ export function storeResolver<S extends StoreDefinition>(
   ctx: RuleContext,
   stores: LocatedStore<S>[],
   host?: EnvironmentResolution,
+  useHostImports = false,
 ) {
   const byFile = new Map<string, LocatedStore<S>[]>();
   const programs = new Map<string, StoreModule["program"]>();
   const companionExtensions = new Map<string, Set<string> | null>();
   const resolutions = host ? [host] : importResolutionEvidence(ctx.project.runtimeEvidence?.vite);
+  const vite = ctx.project.runtimeEvidence?.vite;
+  const resolveImport =
+    vite && typeof vite === "object" ? hostImportResolvers.get(vite) : undefined;
+  const resolvedImports = new Map<string, string | undefined>();
   const frameworks = new Map(
     ctx.project.workspacePackages?.map((item) => [
       resolve(ctx.project.root, item.root),
@@ -779,15 +810,39 @@ export function storeResolver<S extends StoreDefinition>(
   }
 
   function moduleFile(from: string, source: string) {
+    const orders = ordersFor(from);
+    if (useHostImports && orders.length) return resolvedImports.get(JSON.stringify([from, source]));
     const own = packageRoot(ctx, from);
     const framework = frameworks.get(own) ?? ctx.project.framework;
     const defaults = framework === "nuxt" ? NUXT_EXTENSIONS : VITE_EXTENSIONS;
-    const orders = ordersFor(from);
+    const bare = source.split("?")[0]!;
+    const guessedAlias = /^(?:~~?|@@?)\//.test(bare);
+    if (orders.length && orders.every(({ aliases }) => aliases !== undefined)) {
+      const files = orders.map(({ aliases, extensions }) => {
+        const alias = aliases!.find(({ find }) => {
+          if (typeof find === "string") return bare === find || bare.startsWith(`${find}/`);
+          find.lastIndex = 0;
+          return find.test(bare);
+        });
+        if (!alias) {
+          if (guessedAlias) return undefined;
+          const [base] = importBases(ctx, from, bare);
+          return base && fileForBase(base, extensions, true, own);
+        }
+        if (alias.replacement === undefined) return undefined;
+        if (typeof alias.find !== "string") alias.find.lastIndex = 0;
+        const target = bare.replace(alias.find, alias.replacement);
+        return isAbsolute(target) ? fileForBase(resolve(target), extensions, true, own) : undefined;
+      });
+      const [file] = files;
+      return file && files.every((candidate) => candidate === file) ? file : undefined;
+    }
     let match: string | undefined;
     for (const base of importBases(ctx, from, source)) {
-      const files = orders.length
-        ? orders.map(({ extensions }) => fileForBase(base, extensions, true, own))
-        : [fileForBase(base, defaults, false, own)];
+      const files =
+        orders.length && !guessedAlias
+          ? orders.map(({ extensions }) => fileForBase(base, extensions, true, own))
+          : [fileForBase(base, defaults, false, own)];
       const [file] = files;
       if (files.some((candidate) => candidate !== file)) return undefined;
       if (file === null || (file && match && file !== match)) return undefined;
@@ -804,6 +859,40 @@ export function storeResolver<S extends StoreDefinition>(
     return programs.get(file);
   }
 
+  async function prepareUse(from: string, target: SetupStoreUseTarget): Promise<void> {
+    if (!resolveImport || target.kind === "local" || !ordersFor(from).length) return;
+    const nuxt = nuxtForFile(ctx, from);
+    const source =
+      target.kind === "import" && target.source !== "#imports"
+        ? target.source
+        : nuxt?.autoImportsAuthoritative
+          ? nuxtValueImport(nuxt, target.name)?.from
+          : undefined;
+    if (!source) return;
+    const pending = [{ from, source }];
+    while (pending.length) {
+      const edge = pending.pop()!;
+      const key = JSON.stringify([edge.from, edge.source]);
+      if (resolvedImports.has(key)) continue;
+      const id = await resolveImport(edge.source, edge.from).catch(() => undefined);
+      const file = id && isAbsolute(id) && !/[?#\0]/.test(id) ? resolve(id) : undefined;
+      resolvedImports.set(key, file);
+      if (!file || !ordersFor(file).length || file.split("/").includes("node_modules")) continue;
+      for (const statement of program(file)?.body ?? []) {
+        if (
+          (statement.type === "ExportNamedDeclaration" ||
+            statement.type === "ExportAllDeclaration" ||
+            statement.type === "ImportDeclaration") &&
+          statement.exportKind !== "type" &&
+          statement.importKind !== "type" &&
+          typeof statement.source?.value === "string"
+        ) {
+          pending.push({ from: file, source: statement.source.value });
+        }
+      }
+    }
+  }
+
   function declarationStore(file: string, declaration: StoreModule["program"], name: string) {
     const binding = declaration?.declarations?.find(
       (entry: StoreModule["program"]) => entry.id?.type === "Identifier" && entry.id.name === name,
@@ -812,6 +901,34 @@ export function storeResolver<S extends StoreDefinition>(
       binding &&
       byFile.get(file)?.find((candidate) => candidate.store.binding?.start === binding.start)
     );
+  }
+
+  function localExport(
+    file: string,
+    body: AnyNode[],
+    local: string,
+    seen: Set<string>,
+    immutable = false,
+  ) {
+    for (const statement of body) {
+      const declaration = statement.declaration ?? statement;
+      if (!immutable || declaration.kind === "const") {
+        const store = declarationStore(file, declaration, local);
+        if (store) return store;
+      }
+      if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
+      const imported = statement.specifiers.find((entry: AnyNode) => entry.local.name === local);
+      const name =
+        imported?.type === "ImportDefaultSpecifier"
+          ? "default"
+          : imported?.type === "ImportSpecifier" && imported.importKind !== "type"
+            ? exportName(imported.imported)
+            : undefined;
+      if (!name) continue;
+      const target = moduleFile(file, statement.source.value);
+      return (target && exported(target, name, seen)) || null;
+    }
+    return null;
   }
 
   // `null` means the export might exist but cannot be proven to be a store; `undefined` means absent.
@@ -826,6 +943,15 @@ export function storeResolver<S extends StoreDefinition>(
     if (!body) return null;
     const path = new Set(seen).add(key);
     for (const statement of body) {
+      if (name === "default" && statement.type === "ExportDefaultDeclaration") {
+        const declaration = unwrap(statement.declaration);
+        if (declaration?.type === "Identifier")
+          return localExport(file, body, declaration.name, path, true);
+        const id = declaration?.type === "CallExpression" ? readStoreId(declaration) : undefined;
+        return (
+          (id && byFile.get(file)?.find((entry) => entry.store.idStart === id.idStart)) || null
+        );
+      }
       if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
       const declaration = statement.declaration;
       if (declaration?.id?.name === name) return null;
@@ -847,20 +973,10 @@ export function storeResolver<S extends StoreDefinition>(
           const target = moduleFile(file, statement.source.value);
           return (target && exported(target, local, path)) || null;
         }
-        for (const binding of body) {
-          const store = declarationStore(file, binding.declaration ?? binding, local);
-          if (store) return store;
-          if (binding.type !== "ImportDeclaration" || binding.importKind === "type") continue;
-          const imported = binding.specifiers.find(
-            (entry: StoreModule["program"]) => entry.local.name === local,
-          );
-          if (imported?.type !== "ImportSpecifier" || imported.importKind === "type") continue;
-          const target = moduleFile(file, binding.source.value);
-          return (target && exported(target, exportName(imported.imported), path)) || null;
-        }
-        return null;
+        return localExport(file, body, local, path);
       }
     }
+    if (name === "default") return undefined;
     let match: LocatedStore<S> | undefined;
     for (const statement of body) {
       if (statement.type !== "ExportAllDeclaration" || statement.exportKind === "type") continue;
@@ -959,7 +1075,7 @@ export function storeResolver<S extends StoreDefinition>(
     return [...names, ...(local.get(store) ?? [])];
   }
 
-  return { resolveUse, registeredNames };
+  return { resolveUse, registeredNames, prepareUse };
 }
 
 function exportName(node: StoreModule["program"]): string {

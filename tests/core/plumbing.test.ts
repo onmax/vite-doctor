@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { runInNewContext } from "node:vm";
 import { dirname, join, resolve } from "pathe";
 import { expect, test } from "vite-plus/test";
 import {
@@ -936,6 +937,10 @@ test.each<{ label: string; data: Record<string, unknown> }>([
   { label: "BigInt", data: { count: 1n } },
   { label: "undefined", data: { nested: [undefined] } },
   { label: "Date", data: { when: new Date(0) } },
+  {
+    label: "class instance from another realm",
+    data: { detail: runInNewContext("new (class Detail {})()") },
+  },
   { label: "non-finite number", data: { amount: Infinity } },
   {
     label: "cycle",
@@ -998,6 +1003,35 @@ test("Rule diagnostic data can be a value typed by an interface", async () => {
     expect(result.diagnostics.find((item) => item.ruleId === "test/interface-data")?.data).toEqual(
       data,
     );
+  });
+});
+
+test("Rule diagnostic data can contain plain JSON from another realm", async () => {
+  const details: unknown = runInNewContext(`JSON.parse('{"count":1,"pointers":["/name"]}')`);
+  const rule = createRule({
+    meta: { ...reportProgramRule.meta, id: "test/cross-realm-data" },
+    create(ctx) {
+      return {
+        Program() {
+          ctx.report(allDiagnostics.DOC9999({ why: "Test data.", fix: "Inspect data." }), {
+            data: { details },
+          });
+        },
+      };
+    },
+  });
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      cache: false,
+      extensions: [pluginWith(rule)],
+    });
+    const reported = result.diagnostics.find(
+      (item) => item.ruleId === "test/cross-realm-data",
+    )?.data;
+    expect(reported).toEqual({ details: { count: 1, pointers: ["/name"] } });
+    expect(reported?.details).not.toBe(details);
   });
 });
 

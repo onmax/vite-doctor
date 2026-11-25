@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nuxtIgnoreFileHash } from "../../core/internal/nuxt-inventory.js";
+import { parseScriptSync } from "../../core/internal/script.js";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
@@ -90,7 +91,7 @@ type NuxtDoctorEvidence = {
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
-  pages?: Array<{ path?: string; file?: string; name?: string }>;
+  pages?: NuxtDoctorManifest["pages"];
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
   componentDirs?: unknown[];
@@ -558,6 +559,7 @@ export async function writeManifest(
       ...toArray(evidence?.importDirs),
     ]),
     pluginFiles: normalizePluginFiles(rootDir, toArray(nuxt.options.plugins)),
+    serverAppEntryFiles: serverAppEntryFiles(rootDir, nuxt.vfs, evidence?.pages),
     resolvedPlugins: Array.isArray(app?.plugins)
       ? app.plugins.flatMap((plugin: any) =>
           typeof plugin.src === "string" && ["client", "server", "all"].includes(plugin.mode)
@@ -638,6 +640,36 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
     entries.push(path && isAbsolute(path) ? { name, source: relative(rootDir, path) } : { name });
   }
   return entries;
+}
+
+function serverAppEntryFiles(
+  root: string,
+  templates: Record<string, string> | undefined,
+  pages: NuxtDoctorManifest["pages"],
+) {
+  const entries = new Set(
+    pages?.flatMap(({ file, mode }) =>
+      file && mode !== "client" ? [relative(root, resolve(root, file))] : [],
+    ),
+  );
+  for (const file of [
+    "plugins.server.mjs",
+    "app-component.mjs",
+    "root-component.mjs",
+    "error-component.mjs",
+  ]) {
+    const source = templates?.[`#build/${file}`];
+    if (typeof source !== "string") continue;
+    const { program, errors } = parseScriptSync(file, source, { sourceType: "module" });
+    if (errors.length) continue;
+    for (const statement of program.body) {
+      if (statement.type !== "ImportDeclaration" && statement.type !== "ExportNamedDeclaration")
+        continue;
+      const path = statement.source?.value;
+      if (path && isAbsolute(path)) entries.add(relative(root, path));
+    }
+  }
+  return entries.size ? [...entries].sort() : undefined;
 }
 
 function serializeMiddleware(

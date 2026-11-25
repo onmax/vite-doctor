@@ -90,6 +90,7 @@ function runNuxt(
               return {
                 importResolution: {
                   root: project.root,
+                  aliases: [{ find: "~", replacement: project.nuxt?.appDir ?? project.root }],
                   environments: extensionOrders.map((extensions) => ({
                     consumer: "client",
                     extensions,
