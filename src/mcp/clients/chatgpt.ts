@@ -17,7 +17,7 @@ export const missingReadOnlyHint: McpClientRule = {
     if (typeof tool.annotations?.readOnlyHint === "boolean") return;
     if (tool.annotations?.destructiveHint === true) return;
     return {
-      message: `ChatGPT treats \`${tool.name}\` as a write action and asks the user to confirm each call, because it has no \`readOnlyHint\`.`,
+      message: `ChatGPT treats \`${tool.name}\` as a write action that needs the user's confirmation by default, because it has no \`readOnlyHint\`.`,
       fix: "Set `annotations.readOnlyHint` to `true` on tools that only read, and to `false` on the rest.",
       pointer: "/annotations/readOnlyHint",
     };

@@ -545,7 +545,9 @@ export default defineMcpTool({
     findings: [{ rule: "claude-directory/missing-title" }],
   });
   const hint = asWritten.all.find((item) => item.code === "MCP0002")!;
-  expect(hint.why).toContain("ChatGPT also asks the user to confirm every call");
+  expect(hint.why).toContain(
+    "ChatGPT also treats it as a write action that needs the user's confirmation by default",
+  );
   expect(hint.evidence?.map((item) => item.summary).join("\n")).toContain(
     "https://developers.openai.com/api/docs/guides/developer-mode",
   );
