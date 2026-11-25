@@ -382,6 +382,18 @@ function selectedAnalyses(session: ScanSession): Set<string> {
   );
 }
 
+const workspaceReportingContexts = new WeakMap<RuleContext, (file?: string) => boolean>();
+
+export function canReportFromWorkspace(context: RuleContext, file?: string): boolean {
+  return workspaceReportingContexts.get(context)?.(file) ?? false;
+}
+
+function projectDiagnosticConfig(session: ScanSession, ruleId: string): ResolvedRuleConfig {
+  return session.overrideOnlyRules.has(ruleId)
+    ? { enabled: false }
+    : topLevelRuleConfig(session, ruleId);
+}
+
 function createRuleRun(
   session: ScanSession,
   file: SourceFileHandle,
@@ -433,9 +445,8 @@ function createRuleRun(
       }
       // Overrides apply to the file a Diagnostic is located in, which a project-scoped Rule can
       // choose, so its config is resolved per Diagnostic.
-      if (atProjectRoot && session.overrideOnlyRules.has(input.ruleId)) return;
       const diagnosticConfig = atProjectRoot
-        ? topLevelRuleConfig(session, input.ruleId)
+        ? projectDiagnosticConfig(session, input.ruleId)
         : fileRuleConfig(session, input.ruleId, input.file);
       if (diagnosticConfig.enabled === false) return;
       if (input.file !== file.path) frame.log.push(`t:${resolve(session.root, input.file)}`);
@@ -501,6 +512,14 @@ function createRuleRun(
         : undefined;
     },
   };
+  if (phase === "workspace") {
+    workspaceReportingContexts.set(context, (file) => {
+      const config = file
+        ? fileRuleConfig(session, rule.meta.id, file)
+        : projectDiagnosticConfig(session, rule.meta.id);
+      return config.enabled !== false;
+    });
+  }
   return {
     context,
     frame,

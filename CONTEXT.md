@@ -41,7 +41,7 @@ The surface configuration field that selects rule-pack-qualified presets.
 _Avoid_: Preset list
 
 **Activation**:
-The conditions that make a rule pack and its default preset apply automatically to a project.
+The conditions that make a rule pack and its default preset apply automatically to a project. Runtime Evidence can activate a rule pack for every workspace package, as MCP servers read with `--mcp-url` activate the MCP rule pack.
 _Avoid_: Detection, matching
 
 **Vite Doctor**:

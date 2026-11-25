@@ -3,11 +3,13 @@ import type {
   Confidence,
   DiagnosticEvidence,
   DoctorSeverity,
+  ProjectInfo,
   RuleContext,
   RuleVisitor,
   SourceRange,
 } from "../../../core/index.js";
 import type { DoctorDiagnosticHandle } from "../../../core/diagnostics.js";
+import { canReportFromWorkspace } from "../../../core/internal/rule-execution.js";
 import { sha256 } from "../../../core/internal/utils.js";
 import { checkMcpToolList } from "../../../mcp/check.js";
 import { mcpEndpointId, mcpEndpointLabel } from "../../../mcp/endpoint.js";
@@ -41,18 +43,30 @@ interface ServerFindings {
   findings: McpFinding[];
 }
 
-const checked = new WeakMap<object, ServerFindings[]>();
+const checked = new WeakMap<
+  ProjectInfo,
+  { servers: ServerFindings[]; projectWide: boolean; scoped: Set<McpServerToolsEvidence> }
+>();
+
+export function checkedMcpServers(project: ProjectInfo) {
+  const result = checked.get(project);
+  return {
+    projectWide: result?.projectWide ? result.servers.map(({ server }) => server) : [],
+    scoped: result?.projectWide ? [] : [...(result?.scoped ?? [])],
+  };
+}
 
 /** Every MCP server's findings, checked once per Doctor Run and shared by the client-limit Rules. */
-function serverFindings(ctx: RuleContext): ServerFindings[] {
+function serverFindings(ctx: RuleContext) {
   let found = checked.get(ctx.project);
   if (!found) {
-    found = readMcpServers(ctx.project.runtimeEvidence)
+    const servers = readMcpServers(ctx.project.runtimeEvidence)
       .filter((server): server is McpServerToolsEvidence => "tools" in server)
       .map((server) => ({
         server,
         findings: checkMcpToolList(server, { serverName: server.clientAlias }),
       }));
+    found = { servers, projectWide: false, scoped: new Set() };
     checked.set(ctx.project, found);
   }
   return found;
@@ -68,14 +82,28 @@ const SEVERITY_RANK: Record<McpFinding["severity"], number> = { info: 0, warn: 1
 export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOptions): RuleVisitor {
   return {
     async onWorkspaceEnd() {
-      const groups = serverFindings(ctx).flatMap(({ server, findings }) =>
+      const checked = serverFindings(ctx);
+      if (canReportFromWorkspace(ctx)) checked.projectWide = true;
+      const groups = checked.servers.flatMap(({ server, findings }) =>
         groupByTool(
           server,
           findings.filter((finding) => finding.effect === options.effect),
         ),
       );
-      if (!groups.length) return;
+      if (!groups.length && (checked.projectWide || !checked.servers.length)) return;
       const tools = await collectMcpTools(ctx);
+      if (!checked.projectWide) {
+        for (const { server } of checked.servers) {
+          if (
+            server.tools.some(({ name }) => {
+              const definition = staticTool(tools, name);
+              return definition && canReportFromWorkspace(ctx, definition.file);
+            })
+          ) {
+            checked.scoped.add(server);
+          }
+        }
+      }
       for (const group of groups) {
         const definition = group.tool === undefined ? undefined : staticTool(tools, group.tool);
         const findings = definition?.name

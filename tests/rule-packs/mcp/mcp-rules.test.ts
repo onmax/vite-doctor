@@ -620,8 +620,17 @@ describe("MCP tool output", () => {
 describe("MCP Rule Pack", () => {
   test("activates on MCP server libraries and recommends the source Rules and lost-tool client limits", () => {
     expect(mcpRulePack.name).toBe("vite-doctor/mcp");
-    expect(mcpRulePack.activation).toEqual({ packages: expect.any(Array) });
-    const { packages } = mcpRulePack.activation || {};
+    expect(mcpRulePack.activation).toEqual({
+      packages: expect.any(Array),
+      runtimeEvidence: expect.any(Function),
+    });
+    const { packages, runtimeEvidence } = mcpRulePack.activation || {};
+    expect(runtimeEvidence?.({})).toBe(false);
+    expect(
+      runtimeEvidence?.({
+        mcp: { mcpServers: [{ url: "https://example.com/mcp", tools: [{ name: "a" }] }] },
+      }),
+    ).toBe(true);
     expect(packages?.toSorted()).toEqual([
       "@modelcontextprotocol/sdk",
       "@modelcontextprotocol/server",
