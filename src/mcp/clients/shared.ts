@@ -170,19 +170,18 @@ function mentions(prose: string, keyword: string, value: unknown): boolean {
   return prose.includes(JSON.stringify(value));
 }
 
-function isNegated(prose: string, start: number): boolean {
-  const clause = prose
-    .slice(0, start)
-    .split(/[.!?;\n]/)
-    .at(-1)!;
-  return /\b(?:not|never|no|neither|nor)\b|n['’]t\b/i.test(clause);
+function isLocallyNegated(prose: string, start: number): boolean {
+  const prefix = prose.slice(prose.lastIndexOf("\n", start - 1) + 1, start);
+  return /(?:\b(?:not|never|no|neither|nor)|n['’]t)\s+(?:(?:actually|always|necessarily|the|set\s+to)\s+)*(?:\(\s*)?`?$/i.test(
+    prefix,
+  );
 }
 
 function mentionsDefault(prose: string, value: unknown): boolean {
   for (const declaration of prose.matchAll(
     /\bdefault(?:s?\s+to\b|\s+is\b|\s*:|\s+(?=-?\d))\s*`?/gi,
   )) {
-    if (isNegated(prose, declaration.index)) continue;
+    if (isLocallyNegated(prose, declaration.index)) continue;
     const literal = prose.slice(declaration.index + declaration[0].length);
     if (typeof value === "boolean" && new RegExp(`^${value}\\b`, "i").test(literal)) return true;
     if (jsonEqual(readDefaultLiteral(literal), value)) return true;
@@ -195,12 +194,13 @@ function mentionsDefault(prose: string, value: unknown): boolean {
   }
   if (typeof value === "string") {
     for (const match of prose.matchAll(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\(default\)/gi)) {
-      if (!isNegated(prose, match.index) && readDefaultLiteral(match[0]) === value) return true;
+      if (!isLocallyNegated(prose, match.index) && readDefaultLiteral(match[0]) === value)
+        return true;
     }
   }
   if (typeof value !== "boolean") return false;
   const reverse = new RegExp(`\\b${value}\`?\\s+by\\s+default\\b`, "gi");
-  return Array.from(prose.matchAll(reverse)).some((match) => !isNegated(prose, match.index));
+  return Array.from(prose.matchAll(reverse)).some((match) => !isLocallyNegated(prose, match.index));
 }
 
 function readDefaultLiteral(text: string): unknown {

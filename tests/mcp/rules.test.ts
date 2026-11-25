@@ -324,6 +324,36 @@ describe("rule details", () => {
   );
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s scopes negation to the default declaration",
+    (rule) => {
+      for (const [value, description] of [
+        [true, "Include archived results, not just active ones (default: true)."],
+        [true, "Returns all results, not just active ones, when enabled (true by default)."],
+        [true, "Do not supply a value unless you want to override the default: true."],
+        ["all", 'Use a named scope, not a path: "all" (default), "docs", or "blog".'],
+      ] as const) {
+        const input = schema(
+          object({ option: { type: typeof value, default: value, description } }),
+        );
+        expect(hits(rule, input), description).toEqual([]);
+      }
+      for (const [value, description] of [
+        [true, "It doesn't actually default to true."],
+        [true, "The flag is not set to true by default."],
+        [true, "The flag is not (true by default)."],
+        ["all", 'Use a named scope, but not "all" (default).'],
+      ] as const) {
+        const input = schema(
+          object({ option: { type: typeof value, default: value, description } }),
+        );
+        expect(hits(rule, input)[0]?.pointer, description).toBe(
+          "/inputSchema/properties/option/default",
+        );
+      }
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
     "%s reports undescribed defaults and skips only vacuous size minimums",
     (rule) => {
       const constrained = object({
