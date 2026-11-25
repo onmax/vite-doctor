@@ -121,6 +121,57 @@ test("unproven ISR coverage accounts for uncertain cookie flow", async () => {
 });
 
 test.each([
+  ["if (cookie.value === 'dark') label.title = 'Dark'", 1],
+  ["cookie.value === 'dark' && (label.title = 'Dark')", 1],
+  ["if (cookie.value === 'dark') setDark()", 1],
+  ["function update() { if (cookie.value === 'dark') setDark() }; update()", 1],
+  ["label[cookie.value === 'dark' ? 'title' : 'unused'] = 'Dark'", 1],
+  ["if (cookie.value === 'dark') label.unused = 'Dark'", 0],
+  ["if (cookie.value === 'dark') setDark(); label.title = 'Final'", 0],
+])("tracks cookie-dependent write selection: %s", async (writes, gaps) => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: page(
+      `const cookie = useCookie('theme')
+const label = { title: 'Hello' }
+function setDark() { label.title = 'Dark' }
+${writes}
+const rendered = label.title`,
+      "<div>{{ rendered }}</div>",
+    ),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { swr: 60 },
+    }),
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.cookieFlowGaps).toHaveLength(gaps);
+});
+
+test("bounds overlapping reads of a conditionally updated property", async () => {
+  const file = "app/pages/account.vue";
+  const updates = Array.from(
+    { length: 250 },
+    (_, index) =>
+      `if (enabled.has(${index})) label.title = label.title.replaceAll(String(${index}), '')`,
+  ).join("\n");
+  const result = await run({
+    [file]: page(
+      `const cookie = useCookie('theme')
+const label = { title: 'Hello' }
+const enabled = new Set(useRuntimeConfig().public.enabledTransforms)
+${updates}
+const rendered = label.title`,
+      "<div>{{ rendered }}</div>",
+    ),
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { swr: 60 },
+    }),
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.cookieFlowGaps).toHaveLength(1);
+});
+
+test.each([
   ["title", "'Hello'", "'Welcome'", "", 0],
   ["title", "cookie.value", "'Welcome'", "", 1],
   ["title", "'Hello'", "cookie.value", "", 1],

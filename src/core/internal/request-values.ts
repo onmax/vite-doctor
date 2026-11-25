@@ -32,6 +32,8 @@ const WRAPPERS = new Set([
 ]);
 const PROMISE_METHODS = new Set(["then", "catch", "finally"]);
 const UNKNOWN_VALUE = Symbol("unknown value");
+const PROJECTION_LIMIT = Symbol("projection work limit");
+const PROJECTION_WORK_BUDGET = 50_000;
 type StaticValue = string | number | boolean | bigint | null | typeof UNKNOWN_VALUE;
 
 export interface RequestValueSources {
@@ -54,9 +56,28 @@ export interface RequestValueSources {
   isSkippedOperation?(node: AnyNode): boolean;
 }
 
+type FlowSources = RequestValueSources & { spendProjectionWork?: () => void };
+
 /** Whether evaluating `value` reads a request source, directly or through local bindings. */
 export function holdsRequestValue(value: AnyNode, sources: RequestValueSources): boolean {
-  return flows(value, sources, 0);
+  if (!sources.projectObjectMembers) return flows(value, sources, 0);
+  let remaining = PROJECTION_WORK_BUDGET;
+  try {
+    return flows(
+      value,
+      {
+        ...sources,
+        spendProjectionWork: () => {
+          if (remaining-- <= 0) throw PROJECTION_LIMIT;
+        },
+      },
+      0,
+    );
+  } catch (error) {
+    if (error !== PROJECTION_LIMIT) throw error;
+    sources.onUncertainProjection?.();
+    return false;
+  }
 }
 
 /** The imported export, null for a rejected binding, or undefined for an unbound identifier. */
@@ -100,10 +121,11 @@ export function staticRequestString(node: AnyNode): string | undefined {
   return undefined;
 }
 
-function flows(value: AnyNode, sources: RequestValueSources, depth: number): boolean {
+function flows(value: AnyNode, sources: FlowSources, depth: number): boolean {
   let found = false;
   const visit = (node: AnyNode) => {
     if (found || !node || typeof node !== "object") return;
+    sources.spendProjectionWork?.();
     if (sources.isSkippedOperation?.(node)) return;
     if (isModuleImport(node)) {
       if (node.type !== "CallExpression") return;
@@ -135,12 +157,15 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
     if (sources.projectObjectMembers && node.type === "MemberExpression") {
       const selected = projectMember(node, sources, (sources.maxDepth ?? 2) - depth);
       if (selected) {
-        const dependsOnSource = [...selected.values].some(([value, steps]) =>
-          flows(value, sources, depth + steps),
-        );
+        const dependsOnSource = (candidates: Map<AnyNode, number>) => {
+          for (const [candidate, steps] of candidates)
+            if (flows(candidate, sources, depth + steps)) return true;
+          return false;
+        };
         if (selected.uncertain) {
-          if (dependsOnSource) sources.onUncertainProjection?.();
-        } else found = dependsOnSource;
+          if (dependsOnSource(selected.controls) || dependsOnSource(selected.values))
+            sources.onUncertainProjection?.();
+        } else found = dependsOnSource(selected.values);
         return;
       }
     }
@@ -161,20 +186,22 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
 
 interface MemberProjection {
   values: Map<AnyNode, number>;
+  controls: Map<AnyNode, number>;
   uncertain: boolean;
 }
 
 function projectMember(
   node: AnyNode,
-  sources: RequestValueSources,
+  sources: FlowSources,
   remaining: number,
 ): MemberProjection | undefined {
   const name = staticMemberName(node);
   if (name === undefined || name === "__proto__" || remaining <= 0) return;
   const select = (expression: AnyNode, steps: number): MemberProjection | undefined => {
+    sources.spendProjectionWork?.();
     const object = unwrapExpression(expression);
     if (object?.type === "ObjectExpression") {
-      const { value, possibleWrites } = setupMemberWrites(node, object, name, sources);
+      const { value, possibleWrites, controls } = setupMemberWrites(node, object, name, sources);
       const initial = objectMemberInitializer(object, name);
       if (initial === UNKNOWN_VALUE && !possibleWrites.size) return;
       const values = new Map<AnyNode, number>();
@@ -185,7 +212,11 @@ function projectMember(
           write.type === "CallExpression" || write.type === "NewExpression" ? write : write.right;
         if (candidate) values.set(candidate, steps);
       }
-      return { values, uncertain: possibleWrites.size > 0 };
+      return {
+        values,
+        controls: new Map([...controls].map((control) => [control, steps])),
+        uncertain: possibleWrites.size > 0,
+      };
     }
     if (steps >= remaining) return;
     if (object?.type === "Identifier") {
@@ -195,6 +226,8 @@ function projectMember(
       const inner = projectMember(object, sources, remaining - steps);
       if (!inner) return;
       const values = new Map<AnyNode, number>();
+      const controls = new Map<AnyNode, number>();
+      for (const [control, innerSteps] of inner.controls) controls.set(control, steps + innerSteps);
       let uncertain = inner.uncertain;
       for (const [value, innerSteps] of inner.values) {
         const totalSteps = steps + innerSteps;
@@ -203,8 +236,10 @@ function projectMember(
         const candidates = projected?.values ?? new Map([[value, totalSteps]]);
         for (const [candidate, candidateSteps] of candidates)
           values.set(candidate, Math.min(values.get(candidate) ?? Infinity, candidateSteps));
+        for (const [control, controlSteps] of projected?.controls ?? [])
+          controls.set(control, Math.min(controls.get(control) ?? Infinity, controlSteps));
       }
-      return { values, uncertain };
+      return { values, controls, uncertain };
     }
   };
   return select(node.object, 1);
@@ -227,18 +262,20 @@ function setupMemberWrites(
   reference: AnyNode,
   object: AnyNode,
   name: string,
-  sources: RequestValueSources,
-): { value: AnyNode; possibleWrites: Set<AnyNode> } {
+  sources: FlowSources,
+): { value: AnyNode; possibleWrites: Set<AnyNode>; controls: Set<AnyNode> } {
   const possibleWrites = new Set<AnyNode>();
+  const controls = new Set<AnyNode>();
   let program = reference;
   while (program.__doctorParent) {
-    if (FUNCTION_TYPES.has(program.type)) return { value: null, possibleWrites };
+    if (FUNCTION_TYPES.has(program.type)) return { value: null, possibleWrites, controls };
     program = program.__doctorParent;
   }
   const isObject = (expression: AnyNode) => {
     let base = unwrapExpression(expression);
     const seen = new Set<AnyNode>();
     while (base?.type === "Identifier") {
+      sources.spendProjectionWork?.();
       const binding = constIdentifierBinding(base, sources.programBinding);
       if (!binding || seen.has(binding)) return false;
       seen.add(binding);
@@ -275,6 +312,11 @@ function setupMemberWrites(
     if (operation.type === "UnaryExpression" && operation.operator !== "delete") return false;
     return affectsMember(operation.left ?? operation.argument);
   };
+  const addWrite = (operation: AnyNode) => {
+    possibleWrites.add(operation);
+    addWriteGuards(operation, controls);
+    if (!isCall(operation)) addComputedKeys(operation.left ?? operation.argument, controls);
+  };
 
   const setupOperations: AnyNode[] = [];
   const functionOperations = new Map<AnyNode, AnyNode[]>();
@@ -291,10 +333,8 @@ function setupMemberWrites(
     "NewExpression",
     "AwaitExpression",
   )) {
-    let scope = operation.__doctorParent;
-    while (scope && scope !== program && !FUNCTION_TYPES.has(scope.type)) {
-      scope = scope.__doctorParent;
-    }
+    sources.spendProjectionWork?.();
+    const scope = enclosingWriteScope(operation);
     if (sources.isSkippedOperation?.(operation) || skipsStaticBranch(operation, scope, sources))
       continue;
     const operand =
@@ -324,11 +364,14 @@ function setupMemberWrites(
     }
   }
 
-  const collectCallWrites = (call: AnyNode, afterYield: boolean, writes: Set<AnyNode>) => {
+  const collectCallWrites = (call: AnyNode, afterYield: boolean) => {
     const pending: { invocation: AnyNode; resolvedFunction?: AnyNode }[] = [{ invocation: call }];
     const visited = new Set<AnyNode>();
     const forwardedCalls = new Map<AnyNode, Set<AnyNode>>();
+    const callSites = new Map<AnyNode, Set<AnyNode>>();
+    const writingFunctions = new Set<AnyNode>();
     while (pending.length > 0) {
+      sources.spendProjectionWork?.();
       const next = pending.pop();
       if (!next) break;
       const { invocation, resolvedFunction } = next;
@@ -341,6 +384,9 @@ function setupMemberWrites(
       }
       const fn = resolvedFunction ?? localFunction(invocation.callee, sources.programBinding);
       if (!fn || fn.generator) continue;
+      let sites = callSites.get(fn);
+      if (!sites) callSites.set(fn, (sites = new Set()));
+      sites.add(invocation);
       const forwarded = directParameterCall(fn);
       if (
         forwarded &&
@@ -366,14 +412,26 @@ function setupMemberWrites(
       visited.add(fn);
       const boundary = afterYield ? undefined : firstSuspension.get(fn);
       for (const operation of functionOperations.get(fn) ?? []) {
+        sources.spendProjectionWork?.();
         if (
           boundary &&
           (operation.end > boundary.end ||
             (operation.end === boundary.end && operation.start < boundary.start))
         )
           continue;
-        if (mayWrite(operation)) writes.add(operation);
+        if (mayWrite(operation)) {
+          addWrite(operation);
+          writingFunctions.add(fn);
+        }
         if (isCall(operation)) pending.push({ invocation: operation });
+      }
+    }
+    for (const fn of writingFunctions) {
+      for (const invocation of callSites.get(fn) ?? []) {
+        sources.spendProjectionWork?.();
+        addWriteGuards(invocation, controls);
+        const caller = enclosingWriteScope(invocation);
+        if (caller && caller !== program) writingFunctions.add(caller);
       }
     }
   };
@@ -382,7 +440,7 @@ function setupMemberWrites(
   let lastDefiniteWrite = object.end;
   for (const operation of setupOperations.sort((a, b) => a.end - b.end || b.start - a.start)) {
     if (!mayWrite(operation)) {
-      if (isCall(operation)) collectCallWrites(operation, false, possibleWrites);
+      if (isCall(operation)) collectCallWrites(operation, false);
       continue;
     }
 
@@ -399,16 +457,57 @@ function setupMemberWrites(
       value = operation.right;
       lastDefiniteWrite = operation.end;
       possibleWrites.clear();
+      controls.clear();
     } else {
-      possibleWrites.add(operation);
-      if (isCall(operation)) collectCallWrites(operation, false, possibleWrites);
+      addWrite(operation);
+      if (isCall(operation)) collectCallWrites(operation, false);
     }
   }
   if (lastSetupSuspension >= lastDefiniteWrite)
     for (const operation of setupOperations)
       if (isCall(operation) && operation.end <= lastSetupSuspension)
-        collectCallWrites(operation, true, possibleWrites);
-  return { value, possibleWrites };
+        collectCallWrites(operation, true);
+  return { value, possibleWrites, controls };
+}
+
+function enclosingWriteScope(operation: AnyNode): AnyNode {
+  let scope = operation.__doctorParent;
+  while (scope && scope.type !== "Program" && !FUNCTION_TYPES.has(scope.type))
+    scope = scope.__doctorParent;
+  return scope;
+}
+
+function addWriteGuards(operation: AnyNode, controls: Set<AnyNode>) {
+  for (
+    let child = operation, parent = child.__doctorParent;
+    parent && !FUNCTION_TYPES.has(parent.type);
+    child = parent, parent = parent.__doctorParent
+  ) {
+    if (
+      ((parent.type === "IfStatement" || parent.type === "ConditionalExpression") &&
+        child !== parent.test) ||
+      ((parent.type === "WhileStatement" ||
+        parent.type === "DoWhileStatement" ||
+        parent.type === "ForStatement") &&
+        child === parent.body &&
+        parent.test)
+    )
+      controls.add(parent.test);
+    else if (parent.type === "LogicalExpression" && child === parent.right)
+      controls.add(parent.left);
+    else if (parent.type === "SwitchStatement" && child !== parent.discriminant)
+      controls.add(parent.discriminant);
+    else if (parent.type === "SwitchCase" && parent.test && child !== parent.test)
+      controls.add(parent.test);
+  }
+}
+
+function addComputedKeys(input: AnyNode, controls: Set<AnyNode>) {
+  let member = unwrapExpression(input);
+  while (member?.type === "MemberExpression") {
+    if (member.computed && staticMemberName(member) === undefined) controls.add(member.property);
+    member = unwrapExpression(member.object);
+  }
 }
 
 function straightLineAwait(operation: AnyNode, fn: AnyNode): boolean {
@@ -500,7 +599,7 @@ function enclosingExpression(node: AnyNode): AnyNode {
   return node;
 }
 
-function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, depth: number) {
+function localHoldsRequestValue(node: AnyNode, sources: FlowSources, depth: number) {
   const parent = node.__doctorParent;
   if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed)
     return false;
