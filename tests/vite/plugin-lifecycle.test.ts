@@ -85,6 +85,74 @@ export default defineComponent({ setup() { const { count } = useCartStore(); ret
   });
 });
 
+test.each(["browser", "extension", "tsconfig"] as const)(
+  "Pinia uses Vite's final store resolution (%s)",
+  async (kind) => {
+    await withProject(async (root) => {
+      await writeFile(
+        join(root, "package.json"),
+        JSON.stringify({
+          type: "module",
+          dependencies: { pinia: "^3.0.0", vue: "^3.5.0" },
+          ...(kind === "browser" && { browser: { "./mapped/cart.ts": "./mapped/client.ts" } }),
+        }),
+      );
+      await mkdir(join(root, "mapped"));
+      await mkdir(join(root, "src"));
+      const store = (options: string) =>
+        `import { defineStore } from 'pinia'\nexport const useCartStore = defineStore('cart', ${options})`;
+      const state = store("{ state: () => ({ count: 0 }) }");
+      const action = store("{ actions: { count() {} } }");
+      const target = {
+        browser: "mapped/client.ts",
+        extension: "mapped/cart.tsx",
+        tsconfig: "src/cart.ts",
+      }[kind];
+      await writeFile(join(root, target), action);
+      if (kind === "browser") await writeFile(join(root, "mapped/cart.ts"), state);
+      if (kind === "extension") await writeFile(join(root, "mapped/cart.js.ts"), state);
+      if (kind === "extension")
+        await writeFile(join(root, "barrel.ts"), "export { useCartStore } from '@cart'");
+      if (kind === "tsconfig") {
+        await writeFile(
+          join(root, "tsconfig.json"),
+          JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+        );
+      }
+      await writeFile(
+        join(root, "entry.ts"),
+        `import { defineComponent } from 'vue'
+import { useCartStore } from '${{ browser: "@cart", extension: "./barrel", tsconfig: "@/cart" }[kind]}'
+export default defineComponent({ setup() { const { count } = useCartStore(); return { count } } })`,
+      );
+      const config = {
+        root,
+        configFile: false as const,
+        logLevel: "silent" as const,
+        plugins: [
+          doctor({ rules: "pinia/state/no-store-destructure", maxWarnings: 0, cache: false }),
+        ],
+        resolve:
+          kind === "tsconfig"
+            ? { tsconfigPaths: true }
+            : {
+                alias: {
+                  "@cart": join(root, kind === "browser" ? "mapped/cart.ts" : "mapped/cart.js"),
+                },
+              },
+        build: {
+          write: false,
+          lib: { entry: join(root, "entry.ts"), formats: ["es" as const] },
+          rolldownOptions: { external: ["pinia", "vue"] },
+        },
+      };
+      await build(config);
+      await writeFile(join(root, target), state);
+      await expect(build(config)).rejects.toThrow(new RegExp(`PINIA0005.*${target}`));
+    });
+  },
+);
+
 test("Pinia cycles use Vite's resolved extension order", async () => {
   await withProject(async (root) => {
     await writeFile(

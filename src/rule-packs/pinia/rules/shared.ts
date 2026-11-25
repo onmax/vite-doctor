@@ -1,5 +1,6 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from "pathe";
 import type { AutoImportEntry, NuxtProjectInfo, RuleContext } from "../../../core/index.js";
+import { hostImportResolvers } from "../../../core/internal/host-imports.js";
 import { parseScript } from "../../../core/internal/script.js";
 import { parseScriptScope, type ScopeReference } from "../../../core/internal/script-scope.js";
 import { parseSfcFile, parseVueScripts } from "../../../core/internal/sfc.js";
@@ -716,11 +717,16 @@ export function storeResolver<S extends StoreDefinition>(
   ctx: RuleContext,
   stores: LocatedStore<S>[],
   host?: EnvironmentResolution,
+  useHostImports = false,
 ) {
   const byFile = new Map<string, LocatedStore<S>[]>();
   const programs = new Map<string, StoreModule["program"]>();
   const companionExtensions = new Map<string, Set<string> | null>();
   const resolutions = host ? [host] : importResolutionEvidence(ctx.project.runtimeEvidence?.vite);
+  const vite = ctx.project.runtimeEvidence?.vite;
+  const resolveImport =
+    vite && typeof vite === "object" ? hostImportResolvers.get(vite) : undefined;
+  const resolvedImports = new Map<string, string | undefined>();
   const frameworks = new Map(
     ctx.project.workspacePackages?.map((item) => [
       resolve(ctx.project.root, item.root),
@@ -804,10 +810,11 @@ export function storeResolver<S extends StoreDefinition>(
   }
 
   function moduleFile(from: string, source: string) {
+    const orders = ordersFor(from);
+    if (useHostImports && orders.length) return resolvedImports.get(JSON.stringify([from, source]));
     const own = packageRoot(ctx, from);
     const framework = frameworks.get(own) ?? ctx.project.framework;
     const defaults = framework === "nuxt" ? NUXT_EXTENSIONS : VITE_EXTENSIONS;
-    const orders = ordersFor(from);
     const bare = source.split("?")[0]!;
     const guessedAlias = /^(?:~~?|@@?)\//.test(bare);
     if (orders.length && orders.every(({ aliases }) => aliases !== undefined)) {
@@ -850,6 +857,40 @@ export function storeResolver<S extends StoreDefinition>(
       programs.set(file, text && !file.endsWith(".vue") ? parseScript(file, text) : undefined);
     }
     return programs.get(file);
+  }
+
+  async function prepareUse(from: string, target: SetupStoreUseTarget): Promise<void> {
+    if (!resolveImport || target.kind === "local" || !ordersFor(from).length) return;
+    const nuxt = nuxtForFile(ctx, from);
+    const source =
+      target.kind === "import" && target.source !== "#imports"
+        ? target.source
+        : nuxt?.autoImportsAuthoritative
+          ? nuxtValueImport(nuxt, target.name)?.from
+          : undefined;
+    if (!source) return;
+    const pending = [{ from, source }];
+    while (pending.length) {
+      const edge = pending.pop()!;
+      const key = JSON.stringify([edge.from, edge.source]);
+      if (resolvedImports.has(key)) continue;
+      const id = await resolveImport(edge.source, edge.from).catch(() => undefined);
+      const file = id && isAbsolute(id) && !/[?#\0]/.test(id) ? resolve(id) : undefined;
+      resolvedImports.set(key, file);
+      if (!file || !ordersFor(file).length || file.split("/").includes("node_modules")) continue;
+      for (const statement of program(file)?.body ?? []) {
+        if (
+          (statement.type === "ExportNamedDeclaration" ||
+            statement.type === "ExportAllDeclaration" ||
+            statement.type === "ImportDeclaration") &&
+          statement.exportKind !== "type" &&
+          statement.importKind !== "type" &&
+          typeof statement.source?.value === "string"
+        ) {
+          pending.push({ from: file, source: statement.source.value });
+        }
+      }
+    }
   }
 
   function declarationStore(file: string, declaration: StoreModule["program"], name: string) {
@@ -1034,7 +1075,7 @@ export function storeResolver<S extends StoreDefinition>(
     return [...names, ...(local.get(store) ?? [])];
   }
 
-  return { resolveUse, registeredNames };
+  return { resolveUse, registeredNames, prepareUse };
 }
 
 function exportName(node: StoreModule["program"]): string {

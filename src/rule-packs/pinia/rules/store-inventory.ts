@@ -455,6 +455,12 @@ export async function findStoreCalls(
   for (const nuxt of [ctx.project.nuxt, ...(ctx.project.workspaceNuxt ?? []).map((i) => i.nuxt)])
     for (const [name, entry] of nuxt?.autoImports ?? []) if (!entry.type) names.add(name);
   const pattern = names.size ? new RegExp([...names].map(escapeRegExp).join("|")) : undefined;
+  const { resolveUse, prepareUse } = storeResolver(
+    ctx,
+    collection.stores.map(({ located }) => located),
+    undefined,
+    true,
+  );
   const calls: StoreCall[] = [];
   for (const file of await ctx.inventory.sourcePaths()) {
     if (/\.mdc?$/.test(file)) continue;
@@ -480,15 +486,19 @@ export async function findStoreCalls(
       callContext(node, parents, source, setups, (fn) =>
         isComponentSetup(ctx, file, source, fn, parents),
       );
+    const uses: Array<{ node: AnyNode; target: SetupStoreUseTarget }> = [];
     walk(scope, scope.ast, (node, ancestors) => {
       if (ancestors.length) parents.set(node, ancestors.at(-1));
       if (node.type !== "CallExpression") return;
       const callee = unwrap(node.callee);
       const target = useTarget(scope, callee, local, implicit ? names : undefined);
-      if (!target) return;
-      const resolved = collection.resolveUse(file, target);
+      if (target) uses.push({ node, target });
+    });
+    for (const { node, target } of uses) {
+      await prepareUse(file, target);
+      const resolved = resolveUse(file, target);
       const store = resolved && collection.byLocated.get(resolved.store);
-      if (!store) return;
+      if (!store) continue;
       calls.push({
         file,
         text,
@@ -500,7 +510,7 @@ export async function findStoreCalls(
         parents,
         contextOf,
       });
-    });
+    }
   }
   return calls;
 }

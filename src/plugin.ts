@@ -10,6 +10,7 @@ import type {
   DoctorRunOptions,
   DoctorSerializableConfig,
 } from "./core/index.js";
+import type { HostImportResolver } from "./core/internal/host-imports.js";
 import {
   diffStates,
   formatDelta,
@@ -105,13 +106,23 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
     fail: (message: string) => never,
     targets?: BuildTarget[],
     warnings?: Set<string>,
+    resolveImport?: HostImportResolver,
+  ) {
+    const outcome = await runBuild(resolved, targets, resolveImport);
+    reportBuild(resolved, outcome, fail, warnings);
+  }
+
+  async function runBuild(
+    resolved: ResolvedConfig,
+    targets?: BuildTarget[],
+    resolveImport?: HostImportResolver,
   ) {
     const { runSurfaceDoctor } = await import("./plugin-run.js");
-    const outcome = await runSurfaceDoctor(
+    return runSurfaceDoctor(
       surfaceRunInput(resolved, options, targets),
       surfaceExtensions(resolved, options),
+      resolveImport,
     );
-    reportBuild(resolved, outcome, fail, warnings);
   }
 
   function reportBuild(
@@ -151,7 +162,9 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         builder.config.plugins.some((plugin) => plugin.buildApp && plugin.buildApp !== buildApp)
       )
         return;
-      await checkBuild(builder.config, (message) => this.error(message), targets);
+      const outcome = await runBuild(builder.config, targets);
+      if (outcome.needsHostImportResolution) return;
+      reportBuild(builder.config, outcome, (message) => this.error(message));
       for (const target of targets) checkedTargets.add(target);
     },
   } satisfies NonNullable<Plugin["buildApp"]>;
@@ -201,14 +214,33 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         run.startAfterListening();
         return;
       }
+      const resolveImport: HostImportResolver | undefined =
+        typeof this.resolve === "function"
+          ? async (source, importer) => {
+              const result = await this.resolve(source, importer, { skipSelf: true });
+              return result && !result.external ? result.id : undefined;
+            }
+          : undefined;
       if (target && this.meta.watchMode) {
         const reports = newBuildReports();
         watchReports.set(target, reports);
-        await checkBuild(resolved, (message) => this.error(message), [target], reports.warnings);
+        await checkBuild(
+          resolved,
+          (message) => this.error(message),
+          [target],
+          reports.warnings,
+          resolveImport,
+        );
         return;
       }
       if (target ? checkedTargets.has(target) : ran) return;
-      await checkBuild(resolved, (message) => this.error(message), target ? [target] : undefined);
+      await checkBuild(
+        resolved,
+        (message) => this.error(message),
+        target ? [target] : undefined,
+        undefined,
+        resolveImport,
+      );
       if (target) checkedTargets.add(target);
       else ran = true;
     },
@@ -462,6 +494,16 @@ class ServeDoctorRun {
       : base;
     input.frameworkDiagnostics = this.runtimeDiagnostics.list();
     const extensions = surfaceExtensions(config, this.options);
+    const resolveImport: HostImportResolver = async (source, importer) => {
+      const ids = await Promise.all(
+        Object.values(this.server.environments ?? {}).map(async (environment) => {
+          const result = await environment.pluginContainer.resolveId(source, importer);
+          return result && !result.external ? result.id : undefined;
+        }),
+      );
+      const [id] = ids;
+      return id && ids.every((candidate) => candidate === id) ? id : undefined;
+    };
     const done = Promise.withResolvers<void>();
     const run: ActiveRun = {
       ...batch,
@@ -476,11 +518,12 @@ class ServeDoctorRun {
     this.active = run;
     let outcome: SurfaceRunOutcome | undefined;
     try {
-      outcome = canRunInWorker(input, extensions)
-        ? await this.runInWorker(input, run)
-        : await import("./plugin-run.js").then(({ runSurfaceDoctor }) =>
-            runSurfaceDoctor(input, extensions),
-          );
+      const worker = canRunInWorker(input, extensions);
+      if (worker) outcome = await this.runInWorker(input, run);
+      if (!run.stale && (!worker || outcome?.needsHostImportResolution)) {
+        const { runSurfaceDoctor } = await import("./plugin-run.js");
+        outcome = await runSurfaceDoctor(input, extensions, resolveImport);
+      }
     } catch (error) {
       if (!run.stale && !this.closed) {
         const message = error instanceof Error ? error.message : String(error);
