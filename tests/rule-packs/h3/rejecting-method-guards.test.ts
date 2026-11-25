@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
-import { preferAssertMethod } from "../../../src/rule-packs/nitro/rules/prefer-assert-method.ts";
+import { preferAssertMethod } from "../../../src/rule-packs/h3/rules/prefer-assert-method.ts";
 
 async function diagnose(body: string, file = "server/middleware/handler.ts") {
   return runRuleFixture({

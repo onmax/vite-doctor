@@ -15,6 +15,7 @@ export {
   walkScriptLocal,
   type AnyNode,
 } from "../../../core/rule-authoring.js";
+export { isNitroRouteFile, isNitroServerFile } from "../../../core/internal/server-files.js";
 
 export const BROWSER_GLOBALS = new Set([
   "window",
@@ -61,23 +62,5 @@ export function isObjectPropertyKey(node: AnyNode) {
   return (
     (parent?.type === "MemberExpression" && parent.property === node && !parent.computed) ||
     (parent?.type === "StaticMemberExpression" && parent.property === node)
-  );
-}
-
-export function isNitroRouteFile(ctx: RuleContext) {
-  const path = ctx.file.relativePath.replace(/\\/g, "/");
-  if (ctx.project.framework === "nuxt")
-    return /^(?:app\/)?server\/(?:api|routes)\/.+\.[cm]?[jt]s$/.test(path);
-  return (
-    ctx.project.framework === "nitro" && /^(?:server\/)?(?:api|routes)\/.+\.[cm]?[jt]s$/.test(path)
-  );
-}
-
-export function isNitroServerFile(ctx: RuleContext) {
-  const path = ctx.file.relativePath.replace(/\\/g, "/");
-  return (
-    (ctx.project.framework === "nuxt" && ctx.helpers.isNuxtServerFile(path)) ||
-    (ctx.project.framework === "nitro" &&
-      (isNitroRouteFile(ctx) || /^(?:server\/)?middleware\/.+\.[cm]?[jt]s$/.test(path)))
   );
 }

@@ -21,6 +21,7 @@ export default defineConfig({
     "src/rule-packs/vite/rules/index.ts",
     "src/rule-packs/vue/index.ts",
     "src/rule-packs/vue/rules.ts",
+    "src/rule-packs/h3/index.ts",
     "src/rule-packs/nitro/index.ts",
     "src/rule-packs/nitro/rules.ts",
     "src/rule-packs/nuxt/index.ts",

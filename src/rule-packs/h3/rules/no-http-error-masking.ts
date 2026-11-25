@@ -1,12 +1,12 @@
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
 import { createRule, isNitroServerFile, report, walkScriptLocal, type AnyNode } from "./shared.js";
 
-const ruleId = "nitro/h3/no-http-error-masking";
+const ruleId = "h3/errors/no-http-error-masking";
 const analysisLimit = Symbol("HTTP error analysis limit");
 
 export const noHttpErrorMasking = createRule({
   meta: {
-    id: "nitro/h3/no-http-error-masking",
+    id: "h3/errors/no-http-error-masking",
     description: "Report local intentional 4xx H3 errors replaced by HTTP 500 in a catch.",
     why: "Replacing an intentional client error with HTTP 500 hides the response contract from callers.",
     recommendedReplacement: "Rethrow H3 errors before converting unexpected failures to HTTP 500.",

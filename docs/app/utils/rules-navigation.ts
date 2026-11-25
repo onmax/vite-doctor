@@ -31,6 +31,7 @@ const frameworkNavigationOrder = [
   "vue",
   "vite",
   "nitro",
+  "h3",
   "pinia",
   "mcp",
   "package",

@@ -72,6 +72,10 @@ export async function viteDoctorExtensions(
         defineDoctorExtension({ name: "vite-doctor/builtin-nitro", rulePacks: [nitroRulePack] }),
       );
     }
+    const { h3RulePack } = await import("./rule-packs/h3/index.js");
+    extensions.push(
+      defineDoctorExtension({ name: "vite-doctor/builtin-h3", rulePacks: [h3RulePack] }),
+    );
   }
   return extensions.map((extension) => ({
     ...extension,

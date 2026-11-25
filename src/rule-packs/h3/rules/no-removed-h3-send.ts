@@ -4,7 +4,7 @@ import { type AnyNode, createRule, report } from "./shared.js";
 
 export const noRemovedH3Send = createRule({
   meta: {
-    id: "nitro/h3/no-removed-send",
+    id: "h3/migration/no-removed-send",
     title: "Replace removed H3 send utilities",
     description:
       "H3 v2 removes send() and sendError() in favor of returned values and thrown errors.",
@@ -28,7 +28,7 @@ export const noRemovedH3Send = createRule({
       report(
         ctx,
         node,
-        "nitro/h3/no-removed-send",
+        "h3/migration/no-removed-send",
         "error",
         "migration",
         `H3 v2 removes ${imported}().`,

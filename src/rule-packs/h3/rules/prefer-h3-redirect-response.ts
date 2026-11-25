@@ -2,7 +2,7 @@ import { type AnyNode, createRule, report } from "./shared.js";
 
 export const preferH3RedirectResponse = createRule({
   meta: {
-    id: "nitro/h3/prefer-redirect-response",
+    id: "h3/migration/prefer-redirect-response",
     title: "Return H3 v2 redirect responses",
     description: "H3 v2 prefers returned redirect() responses over sendRedirect(event, ...).",
     why: "The H3 v2 response model uses returned Web API response values while sendRedirect remains a compatibility wrapper.",
@@ -27,7 +27,7 @@ export const preferH3RedirectResponse = createRule({
           report(
             ctx,
             specifier,
-            "nitro/h3/prefer-redirect-response",
+            "h3/migration/prefer-redirect-response",
             "warn",
             "migration",
             "sendRedirect(event, ...) is an H3 v2 compatibility utility.",

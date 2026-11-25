@@ -226,7 +226,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/request/prefer-assert-method": {
+  "h3/request/prefer-assert-method": {
     description:
       "Finds Nitro request code that should use the supported assert method pattern instead.",
     why: "Manual method checks can drift from H3 response behavior. assertMethod() applies the framework's method validation and 405 handling consistently.",
@@ -241,7 +241,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/request/prefer-get-request-ip": {
+  "h3/request/prefer-get-request-ip": {
     description:
       "Finds Nitro request code that should use the supported get request IP pattern instead.",
     why: "Reading x-forwarded-for directly trusts raw proxy input and may return a spoofed or comma-separated value instead of the client address.",
@@ -483,7 +483,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/h3/no-removed-send": {
+  "h3/migration/no-removed-send": {
     description: "Flags send() and sendError(), which H3 v2 removes.",
     why: "H3 v2 handlers return Web API response values and throw HTTPError instances instead of using imperative send helpers.",
     recommendedReplacement:
@@ -497,7 +497,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/h3/prefer-redirect-response": {
+  "h3/migration/prefer-redirect-response": {
     description: "Flags the H3 v2 sendRedirect compatibility utility.",
     why: "H3 v2 models redirects as returned Web API response values, while sendRedirect remains a compatibility wrapper around the older event-first API.",
     recommendedReplacement:
@@ -512,7 +512,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/h3/prefer-with-base": {
+  "h3/migration/prefer-with-base": {
     description: "Flags the H3 v2 useBase compatibility alias.",
     why: "H3 v2 renamed the path-prefix handler wrapper to withBase, so using the current name keeps source aligned with the documented API.",
     recommendedReplacement:

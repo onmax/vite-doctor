@@ -3,6 +3,7 @@ export type Framework =
   | "vite"
   | "nuxt"
   | "nitro"
+  | "h3"
   | "typescript"
   | "shadcn"
   | "package"
@@ -34,6 +35,7 @@ export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; ic
     pack: "vite-doctor/nitro",
     icon: "i-unjs-nitro",
   },
+  h3: { label: "H3", pack: "vite-doctor/h3", icon: "i-unjs-h3" },
   shadcn: { label: "shadcn", pack: "vite-doctor/shadcn", icon: "i-simple-icons-shadcnui" },
   pinia: { label: "Pinia", pack: "vite-doctor/pinia", icon: "i-logos-pinia" },
   mcp: { label: "MCP", pack: "vite-doctor/mcp", icon: "i-simple-icons-modelcontextprotocol" },
@@ -114,6 +116,7 @@ export function frameworkOfPack(pack: string): Framework {
   if (pack === "vite-doctor/pinia") return "pinia";
   if (pack === "vite-doctor/mcp") return "mcp";
   if (pack === "vite-doctor/nitro") return "nitro";
+  if (pack === "vite-doctor/h3") return "h3";
   if (pack === "vite-doctor/vue") return "vue";
   if (pack === "vite-doctor/vite") return "vite";
   return "nuxt";

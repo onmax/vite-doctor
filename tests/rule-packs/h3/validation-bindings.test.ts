@@ -1,8 +1,8 @@
 import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
-import { preferValidatedBody } from "../../../src/rule-packs/nitro/rules/prefer-validated-body.ts";
-import { preferValidatedQuery } from "../../../src/rule-packs/nitro/rules/prefer-validated-query.ts";
-import { preferValidatedRouterParams } from "../../../src/rule-packs/nitro/rules/prefer-validated-router-params.ts";
+import { preferValidatedBody } from "../../../src/rule-packs/h3/rules/prefer-validated-body.ts";
+import { preferValidatedQuery } from "../../../src/rule-packs/h3/rules/prefer-validated-query.ts";
+import { preferValidatedRouterParams } from "../../../src/rule-packs/h3/rules/prefer-validated-router-params.ts";
 
 const cases = [
   { rule: preferValidatedBody, read: "await readBody(event)" },

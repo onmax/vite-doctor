@@ -1,11 +1,18 @@
 import type { RuleContext } from "../../../core/index.js";
 import { fileTextScope } from "../../../core/internal/script-scope.js";
-import { type AnyNode, createRule, isNitroServerFile, report, walkScriptLocal } from "./shared.js";
-import { isNitroRouteFile, singleMethodCheck } from "./request-helpers.js";
+import {
+  type AnyNode,
+  createRule,
+  isNitroRouteFile,
+  isNitroServerFile,
+  report,
+  walkScriptLocal,
+} from "./shared.js";
+import { singleMethodCheck } from "./request-helpers.js";
 
 export const preferAssertMethod = createRule({
   meta: {
-    id: "nitro/request/prefer-assert-method",
+    id: "h3/request/prefer-assert-method",
     title: "Use assertMethod for single-method handlers",
     description:
       "Single-method Nitro handlers should use the H3 method assertion helper instead of ad hoc method checks.",
@@ -36,7 +43,7 @@ export const preferAssertMethod = createRule({
         report(
           ctx,
           node,
-          "nitro/request/prefer-assert-method",
+          "h3/request/prefer-assert-method",
           "info",
           "request",
           `This handler checks for ${method} manually.`,

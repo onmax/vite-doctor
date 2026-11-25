@@ -260,12 +260,12 @@ useRoute();
       expect(nuxt.output).toContain("nuxt/routing/prefer-nuxt-useroute");
 
       const nitro = await runCli(
-        [".", "--rules", "nitro/request/prefer-get-request-ip", "--max-warnings", "0"],
+        [".", "--rules", "h3/request/prefer-get-request-ip", "--max-warnings", "0"],
         root,
       );
       expect(nitro.code).toBe(1);
       expect(nitro.output).toContain("Detected: Nuxt");
-      expect(nitro.output).toContain("nitro/request/prefer-get-request-ip");
+      expect(nitro.output).toContain("h3/request/prefer-get-request-ip");
     },
   );
 });
@@ -1176,7 +1176,7 @@ test("installed Nitro 2 and H3 v1 activate only their generation of runtime conf
         [
           ".",
           "--rules",
-          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,nitro/h3/prefer-with-base",
+          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,h3/migration/prefer-with-base",
           "--format",
           "json",
           "--no-cache",
@@ -1190,7 +1190,7 @@ test("installed Nitro 2 and H3 v1 activate only their generation of runtime conf
       expect(codes).toContain("NITRO0008");
       expect(codes).not.toContain("NITRO0013");
       expect(codes).not.toContain("NITRO0014");
-      expect(codes).not.toContain("NITRO0017");
+      expect(codes).not.toContain("H30003");
     },
   );
 });
@@ -1249,7 +1249,7 @@ export default defineHandler((event) => {
         [
           ".",
           "--rules",
-          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,nitro/h3/no-removed-send,nitro/h3/prefer-redirect-response,nitro/h3/prefer-with-base",
+          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,h3/migration/no-removed-send,h3/migration/prefer-redirect-response,h3/migration/prefer-with-base",
           "--format",
           "json",
           "--no-cache",
@@ -1261,7 +1261,7 @@ export default defineHandler((event) => {
       );
 
       expect(codes).toEqual(
-        expect.arrayContaining(["NITRO0013", "NITRO0014", "NITRO0015", "NITRO0016", "NITRO0017"]),
+        expect.arrayContaining(["NITRO0013", "NITRO0014", "H30001", "H30002", "H30003"]),
       );
       expect(
         JSON.parse(result.output).diagnostics.find(
@@ -1358,8 +1358,8 @@ export default defineEventHandler((event) => {
         expect.arrayContaining([
           "NITRO0013",
           "NITRO0014",
-          "NITRO0015",
-          "NITRO0017",
+          "H30001",
+          "H30003",
           "NUXT0021",
           "NUXT0073",
         ]),

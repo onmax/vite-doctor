@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
-import { noRemovedH3Send } from "../../../src/rule-packs/nitro/rules/no-removed-h3-send.ts";
+import { noRemovedH3Send } from "../../../src/rule-packs/h3/rules/no-removed-h3-send.ts";
 
 test.each([
   'import * as h3 from "h3"; export default event => h3.send(event, "ok")',
@@ -22,7 +22,7 @@ test.each([
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]).toMatchObject({
     ruleId: noRemovedH3Send.meta.id,
-    code: "NITRO0015",
+    code: "H30001",
   });
 });
 
