@@ -105,6 +105,12 @@ export interface Diagnostic {
   suppressionReason?: string;
   confidence?: Confidence;
   evidence?: DiagnosticEvidence[];
+  /**
+   * Plain JSON the Rule attaches for agents, such as the MCP tool and the client findings behind
+   * the message. The Rule owns its shape and its Diagnostic Code docs describe it. Reports emit it
+   * as is, and the cache stores it as JSON. `ctx.report` validates and copies the payload.
+   */
+  data?: Record<string, unknown>;
   fixGroupId?: string;
   analysisPhase?: ExecutionKind;
   cacheHit?: boolean;
@@ -1042,10 +1048,12 @@ export type DoctorDiagnosticInput = Omit<
 
 export type DoctorDiagnosticMetadata = Omit<
   Diagnostic,
-  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range"
+  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range" | "data"
 > & {
   file?: string;
   range?: SourceRange;
+  /** Plain JSON; `ctx.report` rejects anything else at runtime. Interfaces need no index signature. */
+  data?: object;
 };
 
 export interface SourceFileHandle {

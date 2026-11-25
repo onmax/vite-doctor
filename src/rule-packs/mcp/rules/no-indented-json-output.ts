@@ -54,6 +54,7 @@ export const noIndentedJsonOutput = createRule({
                 file: tool.file,
                 range: output.range,
                 confidence: "heuristic-high",
+                data: tool.name ? { tool: tool.name.value } : undefined,
                 evidence: [
                   helper
                     ? {

@@ -308,6 +308,7 @@ export function createSarifReport(result: DoctorRunResult): string {
                 ? diagnostic.evidence.map((item) => item.kind)
                 : undefined,
               analysisPhase: diagnostic.analysisPhase,
+              data: diagnostic.data,
             },
             locations: [
               {
@@ -514,6 +515,7 @@ function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
         : {}),
     },
     evidence: serializeEvidence(result, diagnostic),
+    data: diagnostic.data,
     editPlan: diagnostic.fix,
     related: diagnostic.related?.map((item) => ({
       path: relative(result.root, item.file),
@@ -543,6 +545,7 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
     remediation: diagnostic.diagnostic.fix,
     docs: diagnostic.docs,
     evidence: serializeEvidence(result, diagnostic),
+    data: diagnostic.data,
     editPlan: diagnostic.fix,
     related: diagnostic.related?.map((item) => ({
       path: relative(result.root, item.file),
