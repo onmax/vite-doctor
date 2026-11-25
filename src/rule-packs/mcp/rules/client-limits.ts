@@ -93,13 +93,14 @@ function groupByTool(server: McpServerToolsEvidence, findings: McpFinding[]) {
 /**
  * Definitions in workspace packages that depend on an MCP package. These Rules run across the
  * workspace, and a tool of the same name in another package is not the one the server sends.
+ * Without such a package, nothing ties the server to this project's source.
  */
 function mcpPackageTools(ctx: RuleContext, tools: McpToolDefinition[]): McpToolDefinition[] {
   const packages = projectWorkspacePackages(ctx.project).map((item) => ({
     root: resolve(ctx.project.root, item.root),
     mcp: MCP_PACKAGES.some((name) => name in item.packages),
   }));
-  if (!packages.some((item) => item.mcp)) return tools;
+  if (!packages.some((item) => item.mcp)) return [];
   return tools.filter((tool) => {
     const owner = packages
       .filter((item) => tool.file.startsWith(`${item.root}/`))

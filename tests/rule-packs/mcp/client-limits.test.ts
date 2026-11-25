@@ -184,6 +184,23 @@ test("in a monorepo with two MCP packages, a tool with no source in them is repo
   expect(summary(root, diagnostics)).toEqual(["MCP0005 error .", "MCP0005 error ."]);
 });
 
+test("without a package that depends on an MCP library, every tool is reported at the root", async () => {
+  const root = project({
+    "package.json": JSON.stringify({ type: "module" }),
+    "server/mcp/tools/search.ts": searchSource,
+  });
+  const { diagnostics } = await run(root, {
+    extensions: contributing([{ name: "remote", tools: [search, lookup] }]),
+  });
+
+  expect(summary(root, diagnostics)).toEqual([
+    "MCP0005 error .",
+    "MCP0005 error .",
+    "MCP0007 warn .",
+    "MCP0008 warn .",
+  ]);
+});
+
 test("tools read from a running server through the mcp option are checked", async () => {
   const server = await startMcpStub({ tools: [search, lookup] });
   cleanups.push(server.close);
