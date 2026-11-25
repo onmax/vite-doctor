@@ -82,8 +82,19 @@ export function mcpEvidenceExtension(
         name: MCP_EVIDENCE,
         async contribute(project) {
           const mcpServers = await Promise.all(
-            targets.map((target) => readServer(project, target, options)),
+            targets.map((target) => readServer(target, options)),
           );
+          const gaps = new Map<string, NonNullable<ProjectInfo["evidenceGaps"]>[number]>();
+          for (const server of mcpServers) {
+            if (!("error" in server) || !server.endpointId || gaps.has(server.endpointId)) continue;
+            gaps.set(server.endpointId, {
+              source: MCP_EVIDENCE,
+              message: `Doctor could not read the tools of the MCP server at ${server.url}, so its tools were not checked: ${server.error}${authHint(server.status)}`,
+              files: [],
+              instanceKey: server.endpointId,
+            });
+          }
+          project.evidenceGaps = [...(project.evidenceGaps ?? []), ...gaps.values()];
           return { mcpServers };
         },
       });
@@ -92,7 +103,6 @@ export function mcpEvidenceExtension(
 }
 
 async function readServer(
-  project: ProjectInfo,
   { url, headers, serverName }: McpServerTarget,
   options: { fetch?: typeof globalThis.fetch; timeout?: number },
 ): Promise<McpServerEvidence> {
@@ -111,15 +121,6 @@ async function readServer(
   } catch (error) {
     const reason = error instanceof McpFetchError ? error.message : "The request failed.";
     const status = error instanceof McpFetchError ? error.status : undefined;
-    project.evidenceGaps = [
-      ...(project.evidenceGaps ?? []),
-      {
-        source: MCP_EVIDENCE,
-        message: `Doctor could not read the tools of the MCP server at ${label}, so its tools were not checked: ${reason}${authHint(status)}`,
-        files: [],
-        instanceKey: endpointId,
-      },
-    ];
     return {
       ...(serverName ? { name: serverName } : {}),
       url: label,
