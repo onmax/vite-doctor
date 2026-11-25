@@ -126,11 +126,21 @@ export function undescribedConstraints(
     const prose = texts.filter((text): text is string => typeof text === "string").join("\n");
     for (const keyword of Object.keys(node.schema)) {
       if (!dropped.has(keyword)) continue;
+      if (node.schema.type === "integer" && isSafeIntegerBound(keyword, node.schema[keyword]))
+        continue;
       if (mentions(prose, keyword, node.schema[keyword])) continue;
       found.push({ pointer: inputPointer(`${node.pointer}/${keyword}`), keyword });
     }
   }
   return found;
+}
+
+// Zod's `.int()` emits these bounds; they reject nothing a model would send.
+function isSafeIntegerBound(keyword: string, value: unknown): boolean {
+  return (
+    (keyword === "minimum" && value === Number.MIN_SAFE_INTEGER) ||
+    (keyword === "maximum" && value === Number.MAX_SAFE_INTEGER)
+  );
 }
 
 function mentions(prose: string, keyword: string, value: unknown): boolean {

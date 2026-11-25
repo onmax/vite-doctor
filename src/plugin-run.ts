@@ -14,8 +14,10 @@ import type {
   RuntimeFrameworkDiagnostic,
 } from "./core/index.js";
 import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
+import { hostImportResolvers, type HostImportResolver } from "./core/internal/host-imports.js";
 import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
 import { runViteDoctor, shouldFailDoctorRun, viteDoctorRunOptions } from "./doctor.js";
+import { readMcpServers } from "./mcp/evidence.js";
 import type { SurfaceDiagnostic, SurfaceEvidenceGap } from "./plugin-delta.js";
 import {
   BUILD_EVIDENCE_RULE,
@@ -40,15 +42,41 @@ export interface SurfaceRunOutcome {
   /** The reported Diagnostics, so a serve-mode Plugin Surface can log what changed between runs. */
   diagnostics: SurfaceDiagnostic[];
   evidenceGaps: SurfaceEvidenceGap[];
+  hasMcpEvidence: boolean;
+  needsHostImportResolution: boolean;
   /** The run is `incomplete` for a reason other than its evidence gaps, such as an unresolved runtime. */
   runtimeIncomplete: boolean;
 }
 
+export type SurfaceWorkerMessage =
+  | { outcome: SurfaceRunOutcome }
+  | { error: string }
+  | { request: number; source: string; importer: string };
+
+export type SurfaceWorkerResolution = { request: number } & (
+  | { id: string | undefined }
+  | { error: string }
+);
+
 export async function runSurfaceDoctor(
   input: SurfaceRunInput,
   extensions: DoctorExtensionInput[],
+  resolveImport?: HostImportResolver,
 ): Promise<SurfaceRunOutcome> {
-  const result = await runViteDoctor(surfaceDoctorOptions(input, extensions));
+  let needsHostImportResolution = false;
+  const evidence = { ...input.vite.evidence };
+  hostImportResolvers.set(
+    evidence,
+    resolveImport ??
+      (async () => {
+        needsHostImportResolution = true;
+        return undefined;
+      }),
+  );
+  const result = await runViteDoctor(
+    surfaceDoctorOptions({ ...input, vite: { ...input.vite, evidence } }, extensions),
+    true,
+  );
   const report = createReport(result, input.options.format).trimEnd();
   const shouldFail =
     reportStatus(result) === "incomplete" || shouldFailDoctorRun(result, input.options.maxWarnings);
@@ -71,8 +99,13 @@ export async function runSurfaceDoctor(
     diagnostics: result.diagnostics.map((diagnostic) => surfaceDiagnostic(result, diagnostic)),
     evidenceGaps: (result.project.evidenceGaps ?? []).map((gap) => ({
       ...gap,
-      id: JSON.stringify([gap.source, gap.instanceKey, gap.message, gap.files]),
+      // A gap with an instance keeps its identity while its reason changes.
+      id: JSON.stringify(
+        gap.instanceKey ? [gap.source, gap.instanceKey] : [gap.source, gap.message, gap.files],
+      ),
     })),
+    hasMcpEvidence: readMcpServers(result.project.runtimeEvidence).length > 0,
+    needsHostImportResolution,
     runtimeIncomplete:
       reportStatus({ ...result, project: { ...result.project, evidenceGaps: undefined } }) ===
       "incomplete",

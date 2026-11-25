@@ -51,6 +51,20 @@ import {
 import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
 import { selectHtmlPaths } from "./source-inventory.js";
 
+const objectConstructorSource = Function.prototype.toString.call(Object);
+
+function hasPlainJsonPrototype(value: object): boolean {
+  const prototype: object | null = Object.getPrototypeOf(value);
+  if (prototype === null || prototype === Object.prototype) return true;
+  if (Object.getPrototypeOf(prototype) !== null) return false;
+  const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value;
+  return (
+    typeof constructor === "function" &&
+    constructor.prototype === prototype &&
+    Function.prototype.toString.call(constructor) === objectConstructorSource
+  );
+}
+
 function copyDiagnosticData(data: object, ruleId: string): Record<string, unknown> {
   const ancestors = new Set<object>();
   function invalid(): never {
@@ -73,8 +87,7 @@ function copyDiagnosticData(data: object, ruleId: string): Record<string, unknow
           copyProperty(value, String(index)),
         );
       }
-      const prototype = Object.getPrototypeOf(value);
-      if (prototype !== Object.prototype && prototype !== null) return invalid();
+      if (!hasPlainJsonPrototype(value)) return invalid();
       return Object.fromEntries(
         Reflect.ownKeys(value).map((key) => {
           if (typeof key !== "string") return invalid();
@@ -420,6 +433,18 @@ function selectedAnalyses(session: ScanSession): Set<string> {
   );
 }
 
+const workspaceReportingContexts = new WeakMap<RuleContext, (file?: string) => boolean>();
+
+export function canReportFromWorkspace(context: RuleContext, file?: string): boolean {
+  return workspaceReportingContexts.get(context)?.(file) ?? false;
+}
+
+function projectDiagnosticConfig(session: ScanSession, ruleId: string): ResolvedRuleConfig {
+  return session.overrideOnlyRules.has(ruleId)
+    ? { enabled: false }
+    : topLevelRuleConfig(session, ruleId);
+}
+
 function createRuleRun(
   session: ScanSession,
   file: SourceFileHandle,
@@ -472,9 +497,8 @@ function createRuleRun(
       }
       // Overrides apply to the file a Diagnostic is located in, which a project-scoped Rule can
       // choose, so its config is resolved per Diagnostic.
-      if (atProjectRoot && session.overrideOnlyRules.has(input.ruleId)) return;
       const diagnosticConfig = atProjectRoot
-        ? topLevelRuleConfig(session, input.ruleId)
+        ? projectDiagnosticConfig(session, input.ruleId)
         : fileRuleConfig(session, input.ruleId, input.file);
       if (diagnosticConfig.enabled === false) return;
       if (input.file !== file.path) frame.log.push(`t:${resolve(session.root, input.file)}`);
@@ -540,6 +564,14 @@ function createRuleRun(
         : undefined;
     },
   };
+  if (phase === "workspace") {
+    workspaceReportingContexts.set(context, (file) => {
+      const config = file
+        ? fileRuleConfig(session, rule.meta.id, file)
+        : projectDiagnosticConfig(session, rule.meta.id);
+      return config.enabled !== false;
+    });
+  }
   return {
     context,
     frame,

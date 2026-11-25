@@ -244,6 +244,19 @@ test("VUE0048 reports shared state that two components write past its mutators",
   ]);
 });
 
+test("VUE0048 counts template writes through a lib-named import", async () => {
+  const result = await run({
+    "src/store.ts": store,
+    "src/components/A.vue": scriptWriter,
+    "src/components/B.vue": `<script setup lang="ts">
+import { store as DataView } from '../store'
+</script>
+<template><button @click="DataView.count++" /></template>`,
+  });
+
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0048"]);
+});
+
 test("VUE0048 follows re-exports, namespace imports, refs, v-model, and store methods", async () => {
   const result = await run({
     "src/state/counter.ts": `import { ref } from 'vue'

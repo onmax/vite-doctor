@@ -130,7 +130,7 @@ const cases: Record<string, Case> = {
   "gemini-cli/name-length": { fail: named(58), pass: named(57) },
   "copilot-studio/numeric-exclusive-minimum": {
     fail: schema(object({ count: { type: "integer", exclusiveMinimum: 0 } })),
-    pass: schema(object({ count: { type: "integer", minimum: 1 } })),
+    pass: schema(object({ count: { type: "number", exclusiveMinimum: 0.5 } })),
   },
   "copilot-studio/reference": {
     fail: schema(
@@ -264,6 +264,24 @@ describe("rule details", () => {
     expect(finding?.message).not.toContain("`maximum`");
   });
 
+  test("dropped constraints skip Zod's safe-integer bounds", () => {
+    const zod = tool({
+      inputSchema: object({
+        offset: {
+          type: "integer",
+          minimum: Number.MIN_SAFE_INTEGER,
+          maximum: Number.MAX_SAFE_INTEGER,
+        },
+      }),
+    });
+    expect(hits("codex/dropped-constraints", zod)).toEqual([]);
+    expect(hits("vscode/gpt-4-dropped-constraints", zod)).toEqual([]);
+    const number = tool({
+      inputSchema: object({ ratio: { type: "number", maximum: Number.MAX_SAFE_INTEGER } }),
+    });
+    expect(hits("codex/dropped-constraints", number)).toHaveLength(1);
+  });
+
   test("Codex keywords count only descriptions that survive compaction", () => {
     const big = cases["codex/schema-size"]!.fail as McpTool;
     const described = {
@@ -364,4 +382,22 @@ describe("rule details", () => {
     expect(found).toHaveLength(1);
     expect(found[0]?.message).toContain("`/inputSchema/properties/b/items/enum`");
   });
+});
+
+test("the Directory title check reads annotations.title, not the top-level title", () => {
+  const rules = (fields: Partial<McpTool>) =>
+    checkMcpToolList({ tools: [tool(fields)] }).map((finding) => finding.rule);
+  expect(rules({ title: "Search docs" })).toContain("claude-directory/missing-title");
+  expect(rules({ annotations: { title: "Search docs" } })).not.toContain(
+    "claude-directory/missing-title",
+  );
+});
+
+test("ChatGPT's readOnlyHint check skips a tool that declares itself destructive", () => {
+  const rules = (fields: Partial<McpTool>) =>
+    checkMcpToolList({ tools: [tool(fields)] }).map((finding) => finding.rule);
+  expect(rules({ annotations: { destructiveHint: true } })).not.toContain(
+    "chatgpt/missing-read-only-hint",
+  );
+  expect(rules({ annotations: {} })).toContain("chatgpt/missing-read-only-hint");
 });

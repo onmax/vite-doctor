@@ -29,7 +29,14 @@ import shadcnRulePack from "./rule-packs/shadcn/index.js";
 import { packageRulePack } from "./rule-packs/package/index.js";
 import { piniaRulePack } from "./rule-packs/pinia/index.js";
 import { mcpRulePack } from "./rule-packs/mcp/index.js";
-import { mcpEvidenceExtension, uncheckedMcpEvidenceGap } from "./mcp/evidence.js";
+import {
+  mcpEvidenceExtension,
+  mcpEvidenceUsed,
+  readMcpServers,
+  uncheckedMcpEvidenceGap,
+  unreadMcpServerGaps,
+} from "./mcp/evidence.js";
+import { checkedMcpServers } from "./rule-packs/mcp/rules/wire.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
@@ -81,13 +88,22 @@ export async function viteDoctorExtensions(
   }));
 }
 
-export async function runViteDoctor(options: DoctorRunOptions) {
-  const result = await runDoctor(await viteDoctorRunOptions(options));
-  const unchecked = uncheckedMcpEvidenceGap(
-    result.project,
-    Boolean(result.rulePacks?.some((pack) => pack.name === mcpRulePack.name && pack.selected)),
+export async function runViteDoctor(options: DoctorRunOptions, fullRunForMcpEvidence = false) {
+  const result = await runDoctor(
+    await viteDoctorRunOptions(options),
+    fullRunForMcpEvidence
+      ? (project) => readMcpServers(project.runtimeEvidence).length > 0
+      : undefined,
   );
-  if (unchecked) result.project.evidenceGaps = [...(result.project.evidenceGaps ?? []), unchecked];
+  const { projectWide, scoped, clientLimits } = checkedMcpServers(result.project);
+  const used = [...mcpEvidenceUsed(projectWide), ...mcpEvidenceUsed(scoped, true)];
+  const mcpPackSelected = result.rulePacks?.some(
+    (pack) => pack.name === mcpRulePack.name && pack.selected,
+  );
+  const unchecked = !clientLimits && !mcpPackSelected && uncheckedMcpEvidenceGap(result.project);
+  const gaps = [...unreadMcpServerGaps(result.project), ...(unchecked ? [unchecked] : [])];
+  if (gaps.length) result.project.evidenceGaps = [...(result.project.evidenceGaps ?? []), ...gaps];
+  if (used.length) result.project.evidenceUsed = [...(result.project.evidenceUsed ?? []), ...used];
   return { ...result, version: viteDoctorVersion };
 }
 

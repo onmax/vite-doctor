@@ -997,8 +997,28 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia actions", "https://pinia.vuejs.org/core-concepts/actions.html");
   }
 
+  if (rule.id === "pinia/state/no-store-destructure") {
+    add("Pinia storeToRefs()", "https://pinia.vuejs.org/api/pinia/functions/storeToRefs.html");
+  }
+
+  if (rule.id === "pinia/stores/no-module-scope-store") {
+    add("Pinia SSR", "https://pinia.vuejs.org/ssr/");
+  }
+
+  if (rule.id === "pinia/stores/no-unreturned-setup-state") {
+    add("Pinia state", "https://pinia.vuejs.org/core-concepts/state.html");
+  }
+
   if (rule.id === "nuxt/ssr/no-request-data-in-module-state") {
     add("Nuxt useState", "https://nuxt.com/docs/4.x/api/composables/use-state");
+  }
+
+  if (rule.id === "nuxt/ssr/no-request-state-in-cached-page") {
+    add(
+      "Nuxt hybrid rendering",
+      "https://nuxt.com/docs/4.x/guide/concepts/rendering#hybrid-rendering",
+    );
+    add("Nitro route rules", "https://nitro.build/guide/routing#route-rules");
   }
 
   if (rule.id === "nitro/state/no-request-data-in-module-state") {
