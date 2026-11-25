@@ -229,7 +229,7 @@ export const gpt4DroppedConstraints: McpClientRule = {
     const pointers = dropped.map((item) => item.pointer);
     return {
       message: `With gpt-4* models, VS Code's Copilot Chat deletes \`${keywords.join("`, `")}\` from the schema of \`${tool.name}\`: ${listPointers(pointers)}.`,
-      fix: "If the model needs a limit to call the tool right, state it in the property description, such as `Between 1 and 100.`, and keep validating it on the server.",
+      fix: "If the model needs these values to call the tool right, state them in the property description, such as `Between 1 and 100.` or `Defaults to 20.`, and keep validating them on the server.",
       pointer: pointers[0],
       affectedPointers: pointers,
     };
