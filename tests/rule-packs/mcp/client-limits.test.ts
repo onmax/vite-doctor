@@ -162,6 +162,25 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
   expect(byCode(again.diagnostics, "MCP0005", "lookup")!.fingerprint).toBe(remote.fingerprint);
 });
 
+test("in a monorepo with two MCP packages, a tool with no source is reported at the root", async () => {
+  const mcpPackage = (name: string) =>
+    JSON.stringify({ name, dependencies: { "nitro-mcp-toolkit": "^0.4.0" } });
+  const root = project({
+    "package.json": JSON.stringify({ name: "workspace", private: true }),
+    "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+    "packages/a/package.json": mcpPackage("a"),
+    "packages/b/package.json": mcpPackage("b"),
+  });
+  const { diagnostics } = await run(root, {
+    extends: ["auto"],
+    extensions: contributing([
+      { name: "hub", initialize: { instructions: "Drops." }, tools: [lookup] },
+    ]),
+  });
+
+  expect(summary(root, diagnostics)).toEqual(["MCP0005 error ."]);
+});
+
 test("tools read from a running server through the mcp option are checked", async () => {
   const server = await startMcpStub({ tools: [search, lookup] });
   cleanups.push(server.close);
@@ -199,12 +218,18 @@ test("without MCP evidence the client-limit Rules report nothing and leave no ga
   expect(result.project.evidenceGaps ?? []).toEqual([]);
 });
 
-test("a server Doctor could not read is skipped", async () => {
+test("a server a Doctor Extension could not read leaves an evidence gap", async () => {
   const root = project();
-  const { diagnostics } = await run(root, {
+  const { result, diagnostics } = await run(root, {
     extensions: contributing([{ url: "http://127.0.0.1:1/mcp", error: "connection refused" }]),
   });
   expect(diagnostics).toEqual([]);
+  expect(result.project.evidenceGaps).toEqual([
+    expect.objectContaining({
+      source: "mcp",
+      message: expect.stringContaining("http://127.0.0.1:1/mcp, so its tools were not checked"),
+    }),
+  ]);
 });
 
 test("client findings that repeat MCP0001 to MCP0003 are not reported again", async () => {

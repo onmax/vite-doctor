@@ -27,6 +27,7 @@ export const noReducedContext = createRule({
     diagnosticCodes: ["MCP0009"],
     docsUrl: "https://code.claude.com/docs/en/mcp#scale-with-mcp-tool-search",
     execution: "workspace",
+    activationScope: "workspace",
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],

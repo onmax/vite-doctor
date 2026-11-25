@@ -116,7 +116,7 @@ function report(
   findings: McpFinding[],
   definition: McpToolDefinition | undefined,
 ): void {
-  const label = server.name ?? server.url ?? "an MCP server";
+  const label = server.name ?? server.initialize?.serverInfo?.name ?? server.url ?? "an MCP server";
   const subject =
     tool === undefined
       ? `MCP server ${JSON.stringify(label)}`
@@ -192,9 +192,8 @@ function list(items: string[]): string {
 }
 
 /**
- * The root of the one workspace package that depends on an MCP package, else the project root.
- * In a monorepo the MCP Rule Pack is scoped to those packages, and a Diagnostic located outside
- * them would be dropped.
+ * The root of the one workspace package that depends on an MCP package, else the project root,
+ * for a Diagnostic whose tool has no definition in source.
  */
 function fallbackAnchor(ctx: RuleContext): string {
   const owners = projectWorkspacePackages(ctx.project).filter((item) =>

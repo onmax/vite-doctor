@@ -84,7 +84,7 @@ test("in dev, an MCP path resolves against the dev server once it listens", asyn
       const result = await doctorRuns[0]!;
       const origin = new URL(server.resolvedUrls!.local[0]!).origin;
       expect(readMcpServers(result.project.runtimeEvidence)).toEqual([
-        expect.objectContaining({ url: `${origin}/mcp`, name: "stub", tools: stubTools }),
+        expect.objectContaining({ url: `${origin}/mcp`, tools: stubTools }),
       ]);
       expect(result.project.evidenceGaps ?? []).toEqual([]);
       expect(errors).toEqual([]);

@@ -53,13 +53,9 @@ export const missingHint: McpClientRule = {
   source: docs(`${REVIEW}#provide-tool-annotations`, ANNOTATIONS_QUOTE),
   check(tool) {
     const annotations = tool.annotations ?? {};
-    if (
-      typeof annotations.readOnlyHint === "boolean" ||
-      typeof annotations.destructiveHint === "boolean"
-    )
-      return;
+    if (annotations.readOnlyHint === true || annotations.destructiveHint === true) return;
     return {
-      message: `Directory review requires \`readOnlyHint\` or \`destructiveHint\` on every tool; \`${tool.name}\` has neither.`,
+      message: `Directory review requires \`readOnlyHint: true\` or \`destructiveHint: true\` on every tool; \`${tool.name}\` has neither.`,
       fix: "Set `annotations.readOnlyHint: true` on read-only tools and `annotations.destructiveHint: true` on tools that modify or delete data.",
       pointer: "/annotations",
     };

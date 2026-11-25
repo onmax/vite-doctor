@@ -108,6 +108,32 @@ test("sends the given headers", async () => {
   expect(authorization).toBe("Bearer token");
 });
 
+test("rejects a tools/list result with a tool without a name", async () => {
+  const url = await serve((message, _request, response) => {
+    if (message.method === "notifications/initialized") {
+      response.writeHead(202);
+      return response.end();
+    }
+    json(response, message.id, message.method === "initialize" ? initialize : { tools: [{}] });
+  });
+  await expect(fetchMcpToolList(url)).rejects.toThrow("a tool without a `name`");
+});
+
+test("does not follow a redirect when it sends headers", async () => {
+  let redirected = false;
+  const target = await serve((_message, _request, response) => {
+    redirected = true;
+    response.writeHead(500).end();
+  });
+  const url = await serve((_message, _request, response) => {
+    response.writeHead(307, { location: target }).end();
+  });
+  await expect(
+    fetchMcpToolList(url, { headers: { authorization: "Bearer token" } }),
+  ).rejects.toThrow(`pass the final URL, ${target}`);
+  expect(redirected).toBe(false);
+});
+
 test("reports a JSON-RPC error", async () => {
   const url = await serve((message, _request, response) => {
     response.writeHead(200, { "content-type": "application/json" });

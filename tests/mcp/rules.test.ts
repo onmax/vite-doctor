@@ -61,8 +61,8 @@ const cases: Record<string, Case> = {
     pass: tool({ annotations: { title: "Search docs" } }),
   },
   "claude-directory/missing-hint": {
-    fail: tool({ annotations: { title: "Search docs" } }),
-    pass: tool({ annotations: { destructiveHint: false } }),
+    fail: tool({ annotations: { readOnlyHint: false, destructiveHint: false } }),
+    pass: tool({ annotations: { destructiveHint: true } }),
   },
   "chatgpt/missing-read-only-hint": {
     fail: tool({ annotations: { destructiveHint: false } }),
@@ -130,7 +130,7 @@ const cases: Record<string, Case> = {
   "gemini-cli/name-length": { fail: named(58), pass: named(57) },
   "copilot-studio/numeric-exclusive-minimum": {
     fail: schema(object({ count: { type: "integer", exclusiveMinimum: 0 } })),
-    pass: schema(object({ count: { type: "integer", minimum: 1 } })),
+    pass: schema(object({ count: { type: "number", exclusiveMinimum: 0.5 } })),
   },
   "copilot-studio/reference": {
     fail: schema(

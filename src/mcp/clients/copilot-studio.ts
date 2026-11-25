@@ -29,10 +29,10 @@ export const numericExclusiveMinimum: McpClientRule = {
     "A `System.FormatException` error occurs when the `exclusiveMinimum` property is set to an integer (instead of a Boolean) in the MCP tool definition input schema.",
   ),
   check(tool) {
-    const pointers = pointersWhere(tool, "exclusiveMinimum", (value) => typeof value === "number");
+    const pointers = pointersWhere(tool, "exclusiveMinimum", (value) => Number.isInteger(value));
     if (!pointers.length) return;
     return {
-      message: `Copilot Studio fails with \`System.FormatException\` on \`${tool.name}\` because \`exclusiveMinimum\` is a number: ${listPointers(pointers)}.`,
+      message: `Copilot Studio fails with \`System.FormatException\` on \`${tool.name}\` because \`exclusiveMinimum\` is an integer: ${listPointers(pointers)}.`,
       fix: "Use `minimum` with the next allowed value, or state the bound in the description.",
       pointer: pointers[0],
     };

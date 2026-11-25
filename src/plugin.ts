@@ -432,9 +432,12 @@ class ServeDoctorRun {
     if (this.closed || this.timer || this.active) return;
     const { files, full, changed, reported } = this.pending;
     this.pending = emptyChanges();
-    // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files.
+    // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files, and
+    // neither can a run that rereads MCP servers, whose gaps and Diagnostics have no saved file.
     const affected =
-      full || !this.state || this.options.changed || this.options.since ? undefined : files;
+      full || !this.state || this.options.changed || this.options.since || this.options.mcp?.length
+        ? undefined
+        : files;
     await this.execute({ affected, changed: [...changed], reported });
   }
 

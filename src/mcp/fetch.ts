@@ -45,6 +45,8 @@ export async function fetchMcpToolList(
     };
     if (!Array.isArray(result?.tools))
       throw new McpFetchError("The server's tools/list result has no `tools` array.");
+    if (!result.tools.every((tool) => typeof tool?.name === "string"))
+      throw new McpFetchError("The server's tools/list result has a tool without a `name`.");
     tools.push(...(result.tools as McpTool[]));
     cursor = typeof result.nextCursor === "string" && result.nextCursor ? result.nextCursor : "";
     if (!cursor) return { initialize, tools };
@@ -76,16 +78,21 @@ function createRequester(url: URL, options: FetchMcpToolListOptions) {
         headers,
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(timeout),
+        // A redirect could carry the configured headers, such as a token, to another origin.
+        redirect: Object.keys(options.headers ?? {}).length ? "manual" : "follow",
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new McpFetchError(`${method} to ${url.href} failed: ${reason}`);
     }
     if (!response.ok && !(notification && response.status === 202)) {
+      const location = response.headers.get("location");
       const hint =
         response.status === 401 || response.status === 403
           ? " The endpoint needs authorization; pass a token in `headers`."
-          : "";
+          : location
+            ? ` Doctor does not follow redirects when it sends headers; pass the final URL, ${location}.`
+            : "";
       throw new McpFetchError(
         `${method} to ${url.href} answered HTTP ${response.status}.${hint}`,
         response.status,

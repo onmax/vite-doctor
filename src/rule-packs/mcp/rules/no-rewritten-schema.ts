@@ -28,6 +28,7 @@ export const noRewrittenSchema = createRule({
     diagnosticCodes: ["MCP0007"],
     docsUrl: "https://code.claude.com/docs/en/mcp#tool-input-schemas-with-a-root-level-combinator",
     execution: "workspace",
+    activationScope: "workspace",
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
