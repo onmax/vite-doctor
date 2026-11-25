@@ -24,6 +24,13 @@ import { requireAbsoluteGeneratedPaths } from "./require-absolute-generated-path
 import { noProcessEnvInServer } from "./no-process-env-in-server.js";
 import { preferNitroH3Import } from "./prefer-nitro-h3-import.js";
 import { declareNitroDependency } from "./declare-nitro-dependency.js";
+import { requireVariesForHeaderRead } from "./require-varies-for-header-read.js";
+import { noImplicitMiddlewareResponse } from "./no-implicit-middleware-response.js";
+import { noShadowedFileHandler } from "./no-shadowed-file-handler.js";
+import { noRuntimeConfigInResponse } from "./no-runtime-config-in-response.js";
+import { requireWaitUntilForBackgroundWork } from "./require-waituntil-for-background-work.js";
+import { noUndeclaredStorageMount } from "./no-undeclared-storage-mount.js";
+import { noRequestDataInModuleState } from "./no-request-data-in-module-state.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -51,6 +58,13 @@ export {
   noProcessEnvInServer,
   preferNitroH3Import,
   declareNitroDependency,
+  requireVariesForHeaderRead,
+  noImplicitMiddlewareResponse,
+  noShadowedFileHandler,
+  noRuntimeConfigInResponse,
+  requireWaitUntilForBackgroundWork,
+  noUndeclaredStorageMount,
+  noRequestDataInModuleState,
 };
 
 const rules = [
@@ -77,9 +91,15 @@ const rules = [
   noProcessEnvInServer,
   preferNitroH3Import,
   declareNitroDependency,
+  requireVariesForHeaderRead,
+  noImplicitMiddlewareResponse,
+  noShadowedFileHandler,
+  noRuntimeConfigInResponse,
+  requireWaitUntilForBackgroundWork,
+  noRequestDataInModuleState,
 ];
 
-const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache];
+const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache, noUndeclaredStorageMount];
 
 const nitroRulePack = defineRulePack({
   name: "vite-doctor/nitro",

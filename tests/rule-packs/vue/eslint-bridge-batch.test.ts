@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { noRefAsOperand } from "../../../src/rule-packs/vue/rules/vue/index.ts";
+import { noMutatingProps, noRefAsOperand } from "../../../src/rule-packs/vue/rules/vue/index.ts";
 import { createEslintVueRule } from "../../../src/rule-packs/vue/rules/vue/shared.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
 
@@ -27,6 +27,20 @@ const propsBridge = createEslintVueRule({
     eslintId === "vue/no-mutating-props" ? options : undefined,
   meta: {
     id: propsRuleId,
+    title: "Test bridge",
+    category: "reactivity",
+    severity: "error",
+    requires: { script: true, vue: true },
+  },
+});
+
+// A second test-only bridge, on VUE0005's Doctor id, that runs one of propsBridge's eslint rules.
+const lossRuleId = "vue/reactivity/defineprops-watch-getter";
+const lossBridge = createEslintVueRule({
+  doctorId: lossRuleId,
+  eslintId: "vue/no-setup-props-reactivity-loss",
+  meta: {
+    id: lossRuleId,
     title: "Test bridge",
     category: "reactivity",
     severity: "error",
@@ -110,5 +124,35 @@ test("disabling or suppressing one bridged rule leaves the others reporting", as
   ]);
   expect(suppressed.suppressedDiagnostics?.map((diagnostic) => diagnostic.ruleId)).toEqual([
     "vue/reactivity/no-ref-as-operand",
+  ]);
+});
+
+test("a bridge does not report an eslint rule it shares with another bridge under that bridge's options", async () => {
+  const result = await runProjectFixture({
+    framework: "vue",
+    rules: [noMutatingProps, propsBridge],
+    files: { "app.vue": source },
+    // Line 5 is a deep prop write: the default options report it, `shallowOnly` does not.
+    config: { rules: { [propsRuleId]: ["error", { shallowOnly: true }] } },
+  });
+
+  expect(located(result)).toEqual([
+    [propsRuleId, 4, "error"],
+    ["vue/props/no-mutating-props", 5, "error"],
+  ]);
+});
+
+test("a bridge stays out of a batch that runs only some of its eslint rules under its options", async () => {
+  const result = await runProjectFixture({
+    framework: "vue",
+    rules: [noMutatingProps, lossBridge, propsBridge],
+    files: { "app.vue": source },
+    config: { rules: { [propsRuleId]: ["error", { shallowOnly: true }] } },
+  });
+
+  expect(located(result)).toEqual([
+    [lossRuleId, 4, "error"],
+    [propsRuleId, 4, "error"],
+    ["vue/props/no-mutating-props", 5, "error"],
   ]);
 });

@@ -218,6 +218,71 @@ import Declared from './Declared.vue'
   expect(result.diagnostics).toEqual([]);
 });
 
+test("VUE0051 resolves namespace attrs readers at the reference", async () => {
+  const result = await runRuleFixture({
+    rule: noMultiRootFallthrough,
+    files: {
+      "src/Forwarded.vue": multiRoot(
+        "import * as Vue from 'vue'\nconst attrs = Vue.useAttrs()",
+        '<header /><main v-bind="attrs" />',
+      ),
+      "src/Shadowed.vue": multiRoot(
+        "import * as Vue from 'vue'\nfunction read(Vue: { useAttrs(): object }) { return Vue.useAttrs() }",
+      ),
+      "src/A.vue": caller("Forwarded", '<Forwarded class="a" />'),
+      "src/B.vue": caller("Shadowed", '<Shadowed class="b" />'),
+    },
+  });
+  expect(result.diagnostics.map((item) => item.file)).toEqual([join(result.root, "src/B.vue")]);
+});
+
+test("VUE0051 uses verified Nuxt attrs readers, including #imports aliases", async () => {
+  const result = await runProjectFixture({
+    rules: [noMultiRootFallthrough],
+    framework: "nuxt",
+    files: {
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date(Date.now() + 10_000).toISOString(),
+        autoImportEnabled: true,
+        autoImports: [
+          { name: "useAttrs", from: "vue", kind: "vue" },
+          { name: "useAttrs", as: "unrelated", from: "~/utils/attrs", kind: "app" },
+        ],
+      }),
+      "app/Bare.vue": multiRoot("const attrs = useAttrs()", '<header /><main v-bind="attrs" />'),
+      "app/Alias.vue": multiRoot(
+        "import { useAttrs as read } from '#imports'\nconst attrs = read()",
+        '<header /><main v-bind="attrs" />',
+      ),
+      "app/Unrelated.vue": multiRoot("unrelated()"),
+      "app/A.vue": caller("Bare", '<Bare class="a" />'),
+      "app/B.vue": caller("Alias", '<Alias class="b" />'),
+      "app/C.vue": caller("Unrelated", '<Unrelated class="c" />'),
+    },
+  });
+  expect(result.diagnostics.map((item) => item.file)).toEqual([join(result.root, "app/C.vue")]);
+});
+
+test("VUE0051 checks the modifier prop Vue generates for v-model", async () => {
+  const result = await runRuleFixture({
+    rule: noMultiRootFallthrough,
+    files: {
+      "src/Manual.vue": multiRoot(
+        "defineProps<{ title: string; modelValue: string }>()\ndefineEmits(['update:title', 'update:modelValue'])",
+      ),
+      "src/Declared.vue": multiRoot(
+        "defineProps<{ title: string; titleModifiers: object }>()\ndefineEmits(['update:title'])",
+      ),
+      "src/Macro.vue": multiRoot("defineModel<string>('title')\ndefineModel<string>()"),
+      "src/A.vue": caller("Manual", '<Manual v-model:title.trim="title" v-model.trim="value" />'),
+      "src/B.vue": caller("Declared", '<Declared v-model:title.trim="title" />'),
+      "src/C.vue": caller("Macro", '<Macro v-model:title.trim="title" v-model.trim="value" />'),
+    },
+  });
+  expect(result.diagnostics.map((item) => item.file)).toEqual([join(result.root, "src/A.vue")]);
+  expect(result.diagnostics[0]?.why).toContain("titleModifiers, modelModifiers");
+});
+
 test("VUE0051 stays quiet when Doctor cannot read the component's props or emits", async () => {
   const result = await runRuleFixture({
     rule: noMultiRootFallthrough,

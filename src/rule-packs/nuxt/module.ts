@@ -1,27 +1,46 @@
 import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nuxtAppInputSignature } from "../../core/internal/nuxt-app-inputs.js";
 import { unwrapExpression } from "../../core/internal/nuxt-module-inventory.js";
-import { parseScriptResult } from "../../core/internal/script.js";
+import { parseScriptResult, parseScriptSync } from "../../core/internal/script.js";
 import { parseSfcFile, parseVueScriptsResult } from "../../core/internal/sfc.js";
 import type { NuxtAppInventoryInputs } from "../../core/primitives.js";
+import { nuxtIgnoreFileHash } from "../../core/internal/nuxt-inventory.js";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
+  resolveRuntimeGraph,
 } from "../../core/internal/runtime-graph.js";
+import {
+  captureNitroAutoImportScan,
+  loadNitroScanner,
+  resolveNitroScanner,
+} from "../../core/internal/nitro-auto-import-scan.js";
 import {
   createIsIgnored,
   defineNuxtModule,
   getLayerDirectories,
   importModule,
+  resolveAlias,
+  resolveFiles,
   resolveIgnorePatterns,
   resolvePath,
 } from "nuxt/kit";
 import type { Nuxt, NuxtApp, NuxtModule } from "nuxt/schema";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
-import type { DoctorConfig, NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
+import { resolveAlias as resolveNitroAlias } from "pathe/utils";
+import type {
+  DoctorConfig,
+  NuxtDoctorManifest,
+  NuxtModuleSource,
+  NuxtResolvedMiddleware,
+  NuxtResolvedRoute,
+} from "../../core/index.js";
 import { doctorInternalDiagnostics } from "../../core/internal-diagnostic-handles.js";
+import { sha256 } from "../../core/internal/utils.js";
+import type { NuxtAppRegistrationDirectory } from "../../core/primitives.js";
 export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 
 export type NuxtDoctorModuleOptions = DoctorConfig;
@@ -52,9 +71,27 @@ type EvidenceBuildManifest = {
 
 type NuxtAutoImportContext = {
   getImports?: () => Promise<unknown[]> | unknown[];
+  getImportMap?: () => Promise<Map<string, unknown>> | Map<string, unknown>;
 };
 
+type NitroAutoImportEvidence = Pick<
+  NuxtDoctorManifest,
+  | "nitroAutoImportEnabled"
+  | "nitroAutoImports"
+  | "nitroScanDirs"
+  | "nitroPlugins"
+  | "nitroAliases"
+  | "nitroAutoImportCustomResolver"
+  | "nitroAutoImportScan"
+  | "nitroAutoImportTransform"
+>;
+
 type NuxtDoctorEvidence = {
+  nitroOptions?: { routeRules?: Record<string, unknown>; dev?: boolean; preset?: string };
+  routeRulePageMtimes?: NuxtDoctorManifest["routeRulePageMtimes"];
+  routeRulePageInventory?: NuxtDoctorManifest["routeRulePageInventory"];
+  appRegistration?: NuxtDoctorManifest["appRegistration"];
+  appRegistrationIgnore?: NuxtDoctorManifest["appRegistrationIgnore"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
@@ -66,9 +103,13 @@ type NuxtDoctorEvidence = {
   importDirs?: unknown[];
   autoImportContext?: NuxtAutoImportContext;
   autoImportEntries?: unknown[];
+  nitroAutoImports?: NitroAutoImportEvidence;
   composableScan?: { dirs: string; entries: Promise<unknown[]> };
   moduleSources?: NuxtModuleSource[];
   extensions?: string[];
+  app?: { middleware?: unknown[] };
+  routes?: NuxtResolvedRoute[];
+  routerOptions?: { files?: unknown[] };
 };
 
 async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
@@ -76,6 +117,10 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   nuxt.options.doctor = options;
 
   const evidence = {
+    nitroOptions: undefined as NuxtDoctorEvidence["nitroOptions"],
+    routeRulePageMtimes: undefined as NuxtDoctorEvidence["routeRulePageMtimes"],
+    routeRulePageInventory: undefined as NuxtDoctorEvidence["routeRulePageInventory"],
+    appRegistration: undefined as NuxtDoctorManifest["appRegistration"],
     resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
     serverInventory: undefined as Record<string, string[]> | undefined,
     serverHandlerMtimes: undefined as Record<string, number> | undefined,
@@ -87,9 +132,13 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     importDirs: [] as unknown[],
     autoImportContext: undefined as NuxtAutoImportContext | undefined,
     autoImportEntries: undefined as unknown[] | undefined,
+    nitroAutoImports: undefined as NitroAutoImportEvidence | undefined,
     composableScan: undefined as NuxtDoctorEvidence["composableScan"],
     moduleSources: undefined as NuxtModuleSource[] | undefined,
     extensions: undefined as string[] | undefined,
+    app: undefined as NuxtDoctorEvidence["app"],
+    routes: undefined as NuxtDoctorEvidence["routes"],
+    routerOptions: undefined as NuxtDoctorEvidence["routerOptions"],
   };
 
   // Nuxt removes every hook when it starts closing, so the final manifest write cannot call them.
@@ -99,6 +148,9 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
   });
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
+    evidence.nitroOptions = nitro.options;
+    if (!evidence.routeRulePageMtimes) capturePageInputs(nuxt, evidence);
+    evidence.nitroAutoImports = await captureNitroAutoImports(nitro, nuxt.options.rootDir);
     const captureHandlers = async () => {
       const environments = new Set([
         nitro.options.dev ? "dev" : "prod",
@@ -194,9 +246,112 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     evidence.composableScan = undefined;
   });
 
+  const resolvedPageHashes = new WeakMap<unknown[], Map<string, string>>();
+  let publishedPageHashes: Map<string, string> | undefined;
+  nuxt.hook?.("pages:resolved", (pages: any[]) => {
+    evidence.pages = flattenPages(pages).map((page: any) => ({
+      path: page.path,
+      file: page.file,
+      name: page.name,
+      mode: page.mode,
+    }));
+    capturePageInputs(nuxt, evidence);
+    if (!nuxt.options.experimental?.scanPageMeta) return;
+    const rootDir = nuxt.options.rootDir ?? process.cwd();
+    const sourceHashes = new Map<string, string>();
+    for (const page of evidence.pages) {
+      if (typeof page.file !== "string") continue;
+      const file = resolve(rootDir, page.file);
+      if (sourceHashes.has(file)) continue;
+      try {
+        sourceHashes.set(file, sha256(readFileSync(file, "utf8")));
+      } catch {
+        continue;
+      }
+    }
+    resolvedPageHashes.set(pages, sourceHashes);
+  });
+
+  nuxt.hook?.("app:templates", (app: NuxtDoctorEvidence["app"]) => {
+    evidence.app = app;
+  });
+
+  // Modules registered after this one push their files into the same context.
+  nuxt.hook?.("pages:routerOptions", (context: NuxtDoctorEvidence["routerOptions"]) => {
+    evidence.routerOptions = context;
+  });
+
+  nuxt.hook?.("prerender:routes", (ctx: any) => {
+    for (const route of toArray(ctx?.routes)) evidence.prerenderRoutes.add(String(route));
+  });
+
+  nuxt.hook?.("build:manifest", (manifest: Record<string, any>) => {
+    evidence.buildManifest = {
+      hasBuildManifest: true,
+      chunks: Object.values(manifest ?? {}).map((chunk: any) => ({
+        file: chunk.file,
+        src: chunk.src,
+        isEntry: chunk.isEntry,
+        isDynamicEntry: chunk.isDynamicEntry,
+      })),
+    };
+  });
+
+  const nuxtRuntimeUrl = import.meta.resolve("nuxt");
+  let callHook = nuxt.callHook;
+  if (callHook) {
+    Object.defineProperty(nuxt, "callHook", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        // Bind at Nuxt's method lookup, before decorators can add frames or await.
+        // Public callers (including nested hooks) still receive the current delegate.
+        const delegate = callHook;
+        if (getCallSites(2, { sourceMap: false })[1]?.scriptName !== nuxtRuntimeUrl)
+          return delegate;
+        return async function (this: unknown, name: string, ...args: unknown[]) {
+          const result = await delegate.call(this, name, ...args);
+          if (name === "imports:dirs")
+            evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
+          if (name === "app:templates") {
+            const pages = (args[0] as { pages?: unknown[] } | undefined)?.pages;
+            const sourceHashes = pages && resolvedPageHashes.get(pages);
+            if (sourceHashes !== publishedPageHashes) {
+              evidence.routes =
+                pages && sourceHashes
+                  ? serializeRoutes(nuxt.options.rootDir ?? process.cwd(), pages, sourceHashes)
+                  : undefined;
+              publishedPageHashes = sourceHashes;
+              await writeManifest(nuxt, evidence);
+            }
+          }
+          return result;
+        };
+      },
+      set(delegate) {
+        callHook = delegate;
+      },
+    });
+  }
+
+  nuxt.hook?.("components:dirs", (dirs: unknown[]) => {
+    evidence.componentDirs = dirs;
+  });
+
+  nuxt.hook?.("builder:generateApp", async () => {
+    await writeManifest(nuxt, evidence);
+  });
+
+  nuxt.hook?.("prepare:types", async () => {
+    await writeManifest(nuxt, evidence);
+  });
+
   nuxt.hook?.("app:templatesGenerated", async (app: NuxtApp) => {
-    const pagesResolved = Array.isArray(app.pages) || nuxt.options.pages?.enabled === false;
-    evidence.pages = pagesResolved ? await flattenPages(app.pages, nuxt) : undefined;
+    const pagesResolved =
+      Array.isArray(app.pages) ||
+      nuxt.options.pages === false ||
+      (typeof nuxt.options.pages === "object" && nuxt.options.pages.enabled === false);
+    evidence.pages = pagesResolved ? await flattenResolvedPages(app.pages, nuxt) : undefined;
     evidence.resolvedApp = {
       mainComponent: app.mainComponent ?? undefined,
       layouts: Object.fromEntries(
@@ -207,7 +362,10 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     const layers = getLayerDirectories(nuxt);
     const root = nuxt.options.rootDir;
     const extensionPattern = `**/*{${nuxt.options.extensions.join(",")}}`;
-    const pagePatterns = [nuxt.options.pages?.pattern ?? extensionPattern].flat() as string[];
+    const pagePatterns = [
+      (typeof nuxt.options.pages === "object" ? nuxt.options.pages.pattern : undefined) ??
+        extensionPattern,
+    ].flat() as string[];
     const ignore = {
       roots: layers.map((layer) => relative(root, layer.root)),
       patterns: resolveIgnorePatterns(),
@@ -248,58 +406,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
       ),
       mainComponent: capture([app.mainComponent ?? undefined, ...entryCandidates("App", "app")]),
     };
-  });
-
-  nuxt.hook?.("prerender:routes", (ctx: any) => {
-    for (const route of toArray(ctx?.routes)) evidence.prerenderRoutes.add(String(route));
-  });
-
-  nuxt.hook?.("build:manifest", (manifest: Record<string, any>) => {
-    evidence.buildManifest = {
-      hasBuildManifest: true,
-      chunks: Object.values(manifest ?? {}).map((chunk: any) => ({
-        file: chunk.file,
-        src: chunk.src,
-        isEntry: chunk.isEntry,
-        isDynamicEntry: chunk.isDynamicEntry,
-      })),
-    };
-  });
-
-  const nuxtRuntimeUrl = import.meta.resolve("nuxt");
-  let callHook = nuxt.callHook;
-  if (callHook) {
-    Object.defineProperty(nuxt, "callHook", {
-      configurable: true,
-      enumerable: true,
-      get() {
-        // Bind at Nuxt's method lookup, before decorators can add frames or await.
-        // Public callers (including nested hooks) still receive the current delegate.
-        const delegate = callHook;
-        if (getCallSites(2, { sourceMap: false })[1]?.scriptName !== nuxtRuntimeUrl)
-          return delegate;
-        return async function (this: unknown, name: string, ...args: unknown[]) {
-          const result = await delegate.call(this, name, ...args);
-          if (name === "imports:dirs")
-            evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
-          return result;
-        };
-      },
-      set(delegate) {
-        callHook = delegate;
-      },
-    });
-  }
-
-  nuxt.hook?.("components:dirs", (dirs: unknown[]) => {
-    evidence.componentDirs.push(...toArray(dirs));
-  });
-
-  nuxt.hook?.("builder:generateApp", async () => {
-    await writeManifest(nuxt, evidence);
-  });
-
-  nuxt.hook?.("prepare:types", async () => {
+    Object.assign(evidence, await appRegistration(nuxt, evidence.componentDirs));
     await writeManifest(nuxt, evidence);
   });
 
@@ -328,6 +435,8 @@ export async function writeManifest(
   const buildDir = resolve(rootDir, nuxt.options.buildDir ?? ".nuxt");
   const srcDir = resolve(rootDir, nuxt.options.srcDir ?? ".");
   const appDir = srcDir;
+  const app = nuxt.apps?.default;
+  const componentIslands = nuxt.options.experimental?.componentIslands;
   const moduleSources = evidence?.moduleSources ?? (await collectModuleSources(nuxt));
   const extensions = evidence?.extensions ?? (await collectExtensionEntries(nuxt));
   const modules = toArray(nuxt.options.modules).map((entry: any) => ({
@@ -380,6 +489,7 @@ export async function writeManifest(
     buildDir,
     autoImportEnabled: nuxt.options.imports?.autoImport !== false,
     autoImportTransform: serializeImportTransform(nuxt.options.imports?.transform),
+    ...evidence?.nitroAutoImports,
     scannedComposableFiles:
       scannedAutoImportEntries === undefined
         ? undefined
@@ -391,7 +501,38 @@ export async function writeManifest(
             ),
           ].sort(),
     autoImports,
+    runtimeAutoImports: evidence?.autoImportContext?.getImportMap
+      ? normalizeAutoImports([...(await evidence.autoImportContext.getImportMap()).values()])
+      : undefined,
+    appRegistration: evidence?.appRegistration,
+    appRegistrationIgnore: evidence?.appRegistrationIgnore,
+    hasServerPageIslands: evidence?.appRegistration?.pages
+      ? Boolean(
+          (app as Nuxt["apps"][string] | undefined)?.pages?.some(
+            (page) => page.mode === "server" && page.file && page.name,
+          ),
+        )
+      : undefined,
     components: toArray(nuxt.options.components ?? nuxt._components),
+    resolvedComponents: Array.isArray(app?.components)
+      ? app.components.flatMap((component: any) =>
+          typeof component.pascalName === "string" &&
+          typeof component.filePath === "string" &&
+          ["client", "server", "all"].includes(component.mode)
+            ? [
+                {
+                  name: component.pascalName,
+                  file: resolve(srcDir, component.filePath),
+                  mode: component.mode,
+                },
+              ]
+            : [],
+        )
+      : undefined,
+    componentIslands:
+      componentIslands === undefined || componentIslands === "auto"
+        ? componentIslands
+        : Boolean(componentIslands),
     layers: toArray(nuxt.options._layers ?? [{ cwd: rootDir }]).map(
       (layer: any, index: number) => ({
         root: resolve(layer.cwd ?? layer.config?.rootDir ?? rootDir),
@@ -429,6 +570,14 @@ export async function writeManifest(
       Object.entries(nuxt.options.alias ?? {}).map(([key, value]) => [key, String(value)]),
     ),
     routeRules: nuxt.options.routeRules ?? {},
+    // Nitro's options merge nuxt.config, `nitro.routeRules`, Nuxt's own rules and inline
+    // `defineRouteRules`, normalized the way Nitro's runtime matches them.
+    resolvedRouteRules: evidence?.nitroOptions?.routeRules
+      ? JSON.parse(JSON.stringify(evidence.nitroOptions.routeRules))
+      : undefined,
+    routeRulePageMtimes: evidence?.routeRulePageMtimes,
+    routeRulePageInventory: evidence?.routeRulePageInventory,
+    nitroPreset: !evidence?.nitroOptions?.dev ? evidence?.nitroOptions?.preset : undefined,
     ssr: nuxt.options.ssr !== false,
     serverHandlers: toArray(nuxt.options.serverHandlers).map((handler: any) => ({
       route: handler.route,
@@ -439,7 +588,26 @@ export async function writeManifest(
     resolvedServerHandlers: evidence?.resolvedServerHandlers,
     serverInventory: evidence?.serverInventory,
     serverHandlerMtimes: evidence?.serverHandlerMtimes,
-    pages: evidence?.pages ?? [],
+    pages: evidence?.resolvedApp?.pagesResolved
+      ? (evidence.pages ?? [])
+      : Array.isArray(app?.pages)
+        ? flattenPages(app.pages).map((page) => ({
+            path: page.path,
+            file: page.file,
+            name: page.name,
+            mode: page.mode,
+          }))
+        : (evidence?.pages ?? []),
+    middleware: evidence?.app ? serializeMiddleware(rootDir, evidence.app.middleware) : undefined,
+    routes: Object.hasOwn(nuxt.options.router?.options ?? {}, "routes")
+      ? undefined
+      : evidence?.routes,
+    routerOptionsFiles: evidence?.routerOptions
+      ? toArray(evidence.routerOptions.files)
+          .map((file: any) => file?.path)
+          .filter((path): path is string => typeof path === "string")
+          .map((path) => resolve(rootDir, path))
+      : undefined,
     resolvedApp: evidence?.resolvedApp,
     prerenderRoutes: [
       ...new Set([
@@ -459,6 +627,17 @@ export async function writeManifest(
       ...toArray(evidence?.importDirs),
     ]),
     pluginFiles: normalizePluginFiles(rootDir, toArray(nuxt.options.plugins)),
+    serverAppEntryFiles: serverAppEntryFiles(rootDir, nuxt.vfs, evidence?.pages),
+    resolvedPlugins: Array.isArray(app?.plugins)
+      ? app.plugins.flatMap((plugin: any) =>
+          typeof plugin.src === "string" && ["client", "server", "all"].includes(plugin.mode)
+            ? [{ file: resolve(rootDir, plugin.src), mode: plugin.mode }]
+            : [],
+        )
+      : undefined,
+    resolvedMiddleware: app?.middleware?.map(({ path }: { path: string }) =>
+      resolve(rootDir, path),
+    ),
     appScanRoots: [appDir],
     sharedScanRoots: [
       resolve(rootDir, "shared/utils"),
@@ -531,7 +710,7 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
   return entries;
 }
 
-async function flattenPages(
+async function flattenResolvedPages(
   pages: NuxtApp["pages"],
   nuxt: Nuxt,
   parentFile: string | null = null,
@@ -539,7 +718,7 @@ async function flattenPages(
 ): Promise<NonNullable<NuxtDoctorManifest["pages"]>> {
   const flattened: NonNullable<NuxtDoctorManifest["pages"]> = [];
   for (const page of toArray(pages)) {
-    const { path, file, name } = page;
+    const { path, file, name, mode } = page;
     const override = file ? await runtimePathOverride(file, nuxt) : undefined;
     const effectivePath = override === null ? null : (override ?? path);
     const fullPath =
@@ -548,8 +727,10 @@ async function flattenPages(
         : effectivePath.startsWith("/") || !parentPath
           ? effectivePath
           : `${parentPath}${effectivePath && !parentPath.endsWith("/") ? "/" : ""}${effectivePath}`;
-    flattened.push({ path, fullPath: fullPath ?? undefined, file, name, parentFile });
-    flattened.push(...(await flattenPages(page.children, nuxt, file ?? parentFile, fullPath)));
+    flattened.push({ path, fullPath: fullPath ?? undefined, file, name, mode, parentFile });
+    flattened.push(
+      ...(await flattenResolvedPages(page.children, nuxt, file ?? parentFile, fullPath)),
+    );
   }
   return flattened;
 }
@@ -593,6 +774,184 @@ async function runtimePathOverride(file: string, nuxt: Nuxt): Promise<string | n
   } catch {
     return null;
   }
+}
+
+function serverAppEntryFiles(
+  root: string,
+  templates: Record<string, string> | undefined,
+  pages: NuxtDoctorManifest["pages"],
+) {
+  const entries = new Set(
+    pages?.flatMap(({ file, mode }) =>
+      file && mode !== "client" ? [relative(root, resolve(root, file))] : [],
+    ),
+  );
+  for (const file of [
+    "plugins.server.mjs",
+    "app-component.mjs",
+    "root-component.mjs",
+    "error-component.mjs",
+  ]) {
+    const source = templates?.[`#build/${file}`];
+    if (typeof source !== "string") continue;
+    const { program, errors } = parseScriptSync(file, source, { sourceType: "module" });
+    if (errors.length) continue;
+    for (const statement of program.body) {
+      if (statement.type !== "ImportDeclaration" && statement.type !== "ExportNamedDeclaration")
+        continue;
+      const path = statement.source?.value;
+      if (path && isAbsolute(path)) entries.add(relative(root, path));
+    }
+  }
+  return entries.size ? [...entries].sort() : undefined;
+}
+
+function serializeMiddleware(
+  rootDir: string,
+  middleware: unknown[] = [],
+): NuxtResolvedMiddleware[] {
+  return middleware.flatMap((entry: any) =>
+    typeof entry?.name === "string" && typeof entry.path === "string"
+      ? [{ name: entry.name, path: resolve(rootDir, entry.path), global: entry.global === true }]
+      : [],
+  );
+}
+
+// vue-router joins a relative child path onto its parent's full path.
+function serializeRoutes(
+  rootDir: string,
+  pages: unknown[],
+  sourceHashes: Map<string, string>,
+  parentPath?: string,
+): NuxtResolvedRoute[] {
+  return pages.flatMap((page: any) => {
+    const own = typeof page?.path === "string" ? page.path : "";
+    const path =
+      parentPath === undefined || own.startsWith("/")
+        ? own
+        : parentPath + (own && (parentPath.endsWith("/") ? "" : "/") + own);
+    const dynamic = page?.meta?.__nuxt_dynamic_meta_key;
+    const alias = (Array.isArray(page?.alias) ? page.alias : [page?.alias]).filter(Boolean);
+    const route: NuxtResolvedRoute = { path };
+    if (typeof page?.name === "string") route.name = page.name;
+    if (typeof page?.file === "string") {
+      route.file = resolve(rootDir, page.file);
+      route.sourceHash = sourceHashes.get(route.file);
+    }
+    if (page?.redirect !== undefined) route.redirect = page.redirect;
+    if (alias.length) route.alias = alias;
+    if (dynamic instanceof Set && dynamic.size) route.dynamic = [...dynamic].map(String);
+    return [route, ...serializeRoutes(rootDir, toArray(page?.children), sourceHashes, path)];
+  });
+}
+
+async function appRegistration(
+  nuxt: Nuxt,
+  componentDirs: unknown[],
+): Promise<Pick<NuxtDoctorEvidence, "appRegistration" | "appRegistrationIgnore">> {
+  const app = nuxt.apps.default;
+  if (!app) return {};
+  const { rootDir, srcDir, alias, extensions, pages } = nuxt.options;
+  const layers = getLayerDirectories(nuxt);
+  const patterns = (prefix: string, exts = extensions) =>
+    exts.map((ext) => `${prefix}.${ext.replace(/^\./, "")}`);
+  const pageOptions = typeof pages === "object" ? pages : undefined;
+  const files = (paths: Array<string | undefined>, base = rootDir) =>
+    paths.flatMap((path) => (path ? [resolve(base, path)] : []));
+  const snapshot = async (directories: NuxtAppRegistrationDirectory[], paths: string[]) => {
+    try {
+      return {
+        directories: await Promise.all(
+          directories.map(async (dir) => ({
+            ...dir,
+            entries: (await resolveFiles(dir.path, dir.patterns, { ignore: dir.ignore }))
+              .map((file) => relative(dir.path, file))
+              .sort(),
+          })),
+        ),
+        files: [...new Set(paths.filter((file) => existsSync(file)))].sort(),
+      };
+    } catch {
+      return undefined;
+    }
+  };
+  const appRegistrationIgnore = {
+    patterns: resolveIgnorePatterns(),
+    layerRoots: layers.map(({ root }) => root).sort((left, right) => right.length - left.length),
+    options: nuxt.options.ignoreOptions,
+    fileHash: nuxtIgnoreFileHash(rootDir),
+  };
+  const appRegistration = {
+    components: Array.isArray(app.components)
+      ? await snapshot(
+          componentDirs.flatMap((entry) => {
+            const dir =
+              typeof entry === "string"
+                ? { path: entry }
+                : (entry as {
+                    path?: string;
+                    pattern?: string;
+                    extensions?: string[];
+                    ignore?: string[];
+                  });
+            if (!dir?.path) return [];
+            return [
+              {
+                path: resolve(srcDir, resolveAlias(dir.path, alias)),
+                patterns: dir.pattern ? [dir.pattern] : patterns("**/*", dir.extensions),
+                ignore: [
+                  "**/*{M,.m,-m}ixin.{js,ts,jsx,tsx}",
+                  "**/*.d.{ts,mts,cts,vue.ts,vue.mts,vue.cts}",
+                  ...(dir.ignore ?? []),
+                ],
+              },
+            ];
+          }),
+          files(
+            app.components.map(({ filePath }) => filePath),
+            srcDir,
+          ),
+        )
+      : undefined,
+    pages: await snapshot(
+      layers.map(({ appPages }) => ({
+        path: appPages,
+        patterns: pageOptions?.pattern ? [pageOptions.pattern].flat() : patterns("**/*"),
+      })),
+      files(flattenPages(app.pages ?? []).map(({ file }) => file)),
+    ),
+    plugins: Array.isArray(app.plugins)
+      ? await snapshot(
+          layers.map(({ appPlugins }) => ({
+            path: appPlugins,
+            patterns: [...patterns("*"), ...patterns("*/index")],
+          })),
+          files(app.plugins.map(({ src }) => src)),
+        )
+      : undefined,
+  };
+  return { appRegistration, appRegistrationIgnore };
+}
+
+function flattenPages(pages: any[]): any[] {
+  return toArray(pages).flatMap((page: any) => [page, ...flattenPages(page.children)]);
+}
+
+function capturePageInputs(nuxt: Nuxt, evidence: NuxtDoctorEvidence) {
+  const root = nuxt.options.rootDir;
+  evidence.routeRulePageMtimes = Object.fromEntries(
+    (evidence.pages ?? []).flatMap(({ file }) => {
+      if (!file) return [];
+      const path = resolve(root, file);
+      return [[relative(root, path), statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? null]];
+    }),
+  );
+  const pageDirectories = nuxt.options._layers
+    ? getLayerDirectories(nuxt).map(({ appPages }) => appPages)
+    : [];
+  evidence.routeRulePageInventory = Object.fromEntries(
+    pageDirectories.map((directory) => [relative(root, directory), nuxtServerInventory(directory)]),
+  );
 }
 
 function toArray<T = unknown>(value: T[] | Record<string, T> | undefined | null): T[] {
@@ -648,6 +1007,53 @@ function autoImportIdentity(entry: {
   priority?: number;
 }) {
   return JSON.stringify([entry.name, entry.as, entry.from, entry.type === true, entry.priority]);
+}
+
+async function captureNitroAutoImports(nitro: any, root: string): Promise<NitroAutoImportEvidence> {
+  const imports = nitro.options.imports;
+  const enabled = Boolean(imports) && imports.autoImport !== false;
+  const evidence: NitroAutoImportEvidence = {
+    nitroAutoImportEnabled: enabled,
+    nitroScanDirs: toArray<string>(nitro.options.scanDirs).map((dir) => resolve(dir)),
+    nitroPlugins: toArray<string>(nitro.options.plugins).map((file) => resolve(root, file)),
+    nitroAliases: nitro.options.alias,
+    nitroAutoImportCustomResolver: typeof imports?.resolveId === "function",
+  };
+  if (!enabled || !nitro.unimport?.getImportMap) return evidence;
+
+  const map = await nitro.unimport.getImportMap();
+  evidence.nitroAutoImports = normalizeAutoImports([...map.values()]).map((entry) => ({
+    ...entry,
+    from: resolveNitroAlias(entry.from, nitro.options.alias ?? {}),
+  }));
+  const nitroPackage = resolveRuntimeGraph(root, "nuxt").packages.nitro?.packageJsonPath;
+  const installed = resolveNitroScanner(nitroPackage);
+  if (installed && installed.version === nitro.unimport.version) {
+    evidence.nitroAutoImportScan = await captureNitroAutoImportScan(
+      await loadNitroScanner(installed.entry),
+      installed.version,
+      imports,
+      map,
+    );
+  }
+
+  const serialize = (value: string | RegExp | Array<string | RegExp> | undefined) =>
+    (Array.isArray(value) ? value : value === undefined ? [] : [value]).map((pattern) => {
+      if (typeof pattern !== "string") return { source: pattern.source, flags: pattern.flags };
+      const glob = pattern.replaceAll("\\", "/");
+      if (isAbsolute(glob) || glob.startsWith("**")) return { glob };
+      const base = normalize(process.cwd()).replace(/[-^$*+?.()|[\]{}]/g, "\\$&");
+      return { glob: posix.join(base, glob) };
+    });
+  const include = serialize(imports.include);
+  evidence.nitroAutoImportTransform = {
+    include: include.length
+      ? include
+      : serialize([/\.[jt]sx?$/, /\.vue$/, /\.vue\?vue/, /\.svelte$/]),
+    exclude: serialize(imports.exclude ?? [/[\\/]node_modules[\\/]/, /[\\/]\.git[\\/]/]),
+    commentsDisable: imports.commentsDisable ?? ["@unimport-disable", "@imports-disable"],
+  };
+  return evidence;
 }
 
 function serializeImportTransform(transform: any) {

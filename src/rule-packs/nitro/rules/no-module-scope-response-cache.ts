@@ -1,4 +1,3 @@
-import type { RuleContext } from "../../../core/index.js";
 import {
   type AnyNode,
   createRule,
@@ -6,7 +5,7 @@ import {
   report,
   walkScriptLocal,
 } from "./shared.js";
-import { nitroServerFile } from "./server-layout.js";
+import { isNitroRuntimeFile } from "./server-layout.js";
 
 const RULE_ID = "nitro/cache/no-module-scope-response-cache";
 const FUNCTION_TYPES = new Set([
@@ -32,7 +31,6 @@ const WRAPPERS = new Set([
 ]);
 const RELATIONAL = new Set(["<", "<=", ">", ">="]);
 const CLOCK_CALLS = new Set(["Date.now", "performance.now"]);
-const TEST_FILE = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:spec|test)\.[cm]?[jt]sx?$/;
 
 interface CacheBinding {
   name: string;
@@ -56,7 +54,7 @@ export const noModuleScopeResponseCache = createRule({
   },
   create(ctx) {
     if (!/\b(?:Date|performance)\.now\b|\.getTime\b/.test(ctx.file.text)) return;
-    if (!isServerRuntimeFile(ctx)) return;
+    if (!isNitroRuntimeFile(ctx)) return;
     return {
       Program(program: AnyNode) {
         const bindings = moduleBindings(program);
@@ -93,12 +91,6 @@ export const noModuleScopeResponseCache = createRule({
     };
   },
 });
-
-function isServerRuntimeFile(ctx: RuleContext) {
-  const path = ctx.file.relativePath.replace(/\\/g, "/");
-  if (TEST_FILE.test(path) || /\.d\.[cm]?ts$/.test(path)) return false;
-  return Boolean(nitroServerFile(ctx, ctx.file.path)) && !/\.config\.[cm]?[jt]s$/.test(path);
-}
 
 function moduleBindings(program: AnyNode) {
   const bindings = new Map<string, CacheBinding>();

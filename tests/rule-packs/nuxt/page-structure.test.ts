@@ -639,6 +639,7 @@ test("scopes prepared routes and conventional fallbacks to each Nuxt app", async
     );
     write("package.json", JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }));
     write("nuxt.config.ts", "export default {}\n");
+    write("app/app.vue", template("<NuxtPage />"));
     write("app/pages/teams.vue", template("<div>Teams</div>"));
     write("docs/nuxt.config.ts", "export default { app: { pageTransition: true } }\n");
     write("docs/app/app.vue", template("<NuxtPage />"));
@@ -672,6 +673,13 @@ test("scopes prepared routes and conventional fallbacks to each Nuxt app", async
 
     write("app/pages/teams/[id].vue", template("<div>Team</div>"));
     expect(await issues()).toEqual(["NUXT0098 app/pages/teams.vue", ...docsIssues]);
+    write("app/layouts/default.vue", template("<div><slot /></div>"));
+    expect(await issues()).toEqual([
+      "NUXT0098 app/pages/teams.vue",
+      docsIssues[0],
+      "NUXT0099 app/app.vue",
+      ...docsIssues.slice(1),
+    ]);
   } finally {
     process.chdir(cwd);
     rmSync(root, { recursive: true, force: true });

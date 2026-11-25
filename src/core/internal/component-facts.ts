@@ -71,11 +71,13 @@ export function createComponentFactsCollector(
     roots: [],
     inheritAttrs: true,
     readsAttrs: false,
+    nuxtAttrsReferences: [],
     comparisons: [],
     usages: [],
     bindingReferences: [],
   };
   const references = new Set<string>();
+  const namespaceAttrsReaders = new Set<AnyNode>();
   let importEnd = -1;
   readScriptDeclarations(facts, descriptor, scriptAst, rangeOf);
   return {
@@ -88,6 +90,12 @@ export function createComponentFactsCollector(
         if (node.start >= importEnd) references.add(node.name);
         return;
       }
+      if (
+        node.type === "MemberExpression" &&
+        node.object.type === "Identifier" &&
+        VUE_ATTRS_READERS.has(node.computed ? node.property.value : node.property.name)
+      )
+        namespaceAttrsReaders.add(node.object);
       if (node.type === "BinaryExpression" && isEquality(node.operator)) {
         const left = memberPath(node.left);
         const right = memberPath(node.right);
@@ -96,7 +104,9 @@ export function createComponentFactsCollector(
     },
     finish(template, visitAttribute) {
       if (template) walkComponentTemplate(facts, template, references, rangeOf, visitAttribute);
-      facts.readsAttrs = references.has("$attrs") || referencesVueAttrsReader(scriptAst);
+      facts.readsAttrs = references.has("$attrs");
+      if (!facts.readsAttrs)
+        readAttrsReferences(facts, scriptAst, references, namespaceAttrsReaders);
       const imported = new Set(facts.imports.map((item) => item.local));
       facts.bindingReferences = [...references].filter((name) => imported.has(name)).sort();
       return facts;
@@ -104,32 +114,63 @@ export function createComponentFactsCollector(
   };
 }
 
-function referencesVueAttrsReader(program: AnyNode): boolean {
-  const specifiers = new Set(
-    (program?.body ?? [])
-      .filter(
-        (node: AnyNode) =>
-          node.type === "ImportDeclaration" &&
-          node.importKind !== "type" &&
-          node.source.value === "vue",
-      )
-      .flatMap((node: AnyNode) => node.specifiers)
-      .filter(
-        (node: AnyNode) =>
-          node.type === "ImportSpecifier" &&
-          node.importKind !== "type" &&
-          VUE_ATTRS_READERS.has(node.imported.name ?? node.imported.value),
-      ),
-  );
-  if (!specifiers.size) return false;
+function readAttrsReferences(
+  facts: ComponentFacts,
+  program: AnyNode,
+  names: Set<string>,
+  namespaceReaders: Set<AnyNode>,
+): void {
+  if (!program) return;
+  const vueImports = new Set<AnyNode>();
+  const nuxtImports = new Map<AnyNode, string>();
+  for (const statement of program.body) {
+    if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.importKind === "type" || !names.has(specifier.local.name)) continue;
+      if (statement.source.value === "vue" && specifier.type === "ImportNamespaceSpecifier") {
+        if (namespaceReaders.size) vueImports.add(specifier);
+      } else if (specifier.type === "ImportSpecifier") {
+        const imported = specifier.imported.name ?? specifier.imported.value;
+        if (statement.source.value === "vue" && VUE_ATTRS_READERS.has(imported))
+          vueImports.add(specifier);
+        if (statement.source.value === "#imports") nuxtImports.set(specifier, imported);
+      }
+    }
+  }
+  if (
+    !vueImports.size &&
+    !nuxtImports.size &&
+    ![...VUE_ATTRS_READERS].some((name) => names.has(name))
+  )
+    return;
   const { scopes } = analyzeScriptProgram(program, "module");
-  return scopes.some((scope) =>
-    scope.variables.some(
-      (variable) =>
-        variable.defs.some((definition) => specifiers.has(definition.node)) &&
-        variable.references.some((reference) => reference.isValueReference && reference.isRead()),
-    ),
-  );
+  const explicit = new Set<string>();
+  const implicit = new Set<string>();
+  for (const scope of scopes) {
+    for (const reference of scope.references) {
+      if (!reference.isValueReference || !reference.isRead()) continue;
+      const { identifier, resolved } = reference;
+      if (!resolved?.isValueVariable) {
+        if (VUE_ATTRS_READERS.has(identifier.name)) implicit.add(identifier.name);
+        continue;
+      }
+      for (const { node } of resolved.defs) {
+        if (
+          vueImports.has(node) &&
+          (node.type === "ImportSpecifier" || namespaceReaders.has(identifier))
+        ) {
+          facts.readsAttrs = true;
+          return;
+        }
+        const name = nuxtImports.get(node);
+        if (name) explicit.add(name);
+      }
+    }
+  }
+  facts.nuxtAttrsReferences = [
+    ...[...explicit].map((name) => ({ name, explicit: true })),
+    ...[...implicit].map((name) => ({ name, explicit: false })),
+  ];
 }
 
 function readScriptDeclarations(
@@ -781,6 +822,11 @@ function readUsageDirective(
       expression,
       model: true,
       modifiers: prop.modifiers.length > 0,
+      modifiersKey: prop.modifiers.length
+        ? argument
+          ? `${argument}Modifiers`
+          : "modelModifiers"
+        : undefined,
       range,
     });
     return;
