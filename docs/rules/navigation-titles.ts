@@ -118,6 +118,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/structure/no-stateless-composable": "Plain use* helpers",
   "nuxt/ssr/no-module-scope-request-state": "Module request state",
   "nuxt/ssr/no-request-data-in-module-state": "Request data state",
+  "nuxt/ssr/no-request-state-in-cached-page": "Cached page requests",
   "nuxt/state/no-diverging-usestate-init": "Diverging useState",
   "nuxt/state/no-nonserializable-usestate": "useState values",
   "nuxt/state/prefer-explicit-usestate-key-in-exported-composables": "useState keys",

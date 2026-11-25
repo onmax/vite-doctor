@@ -1809,6 +1809,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/ssr/no-request-state-in-cached-page": {
+    description:
+      "Report a page that reads request headers, cookies, or the request event while it renders on the server, when Nitro's route rules serve that page from a shared cache (cache, swr, isr, or prerender).",
+    why: "Nitro merges matching route rules most specific first. A cached handler receives only the request headers listed in cache.varies but retains the original event.context. Doctor checks the resolved rules in a current Nuxt manifest, including inline defineRouteRules and nitro.routeRules. It skips client-only reads and routes that bypass SSR through a redirect, proxy, or ssr: false. For cache and swr, a read is covered only when all its known headers are listed in cache.varies; varying on headers does not prove coverage for event.context. URL queries are part of Nitro's runtime cache key, but static prerendered files do not vary by query. Doctor reports ISR only for verified production preset and route combinations, and records evidence gaps for unproven cache coverage, such as dynamic page routes or stale page inputs.",
+    recommendedReplacement:
+      "Move the per-visitor part to the client (onMounted(), import.meta.client, or <ClientOnly>) or to an uncached API call, or exclude the route from the cache with cache: false, isr: false, or prerender: false. For a cache keyed on a header, list it in cache.varies.",
+    examples: [
+      {
+        title: "Read the session on the client of a cached page",
+        language: "vue",
+        invalid:
+          "<!-- routeRules: { '/pricing': { swr: 3600 } } -->\n<script setup lang=\"ts\">\nconst headers = useRequestHeaders(['cookie'])\nconst { data: plan } = await useFetch('/api/me/plan', { headers })\n</script>",
+        valid:
+          "<!-- routeRules: { '/pricing': { swr: 3600 } } -->\n<script setup lang=\"ts\">\nconst { data: plan } = useFetch('/api/me/plan', { server: false })\n</script>",
+      },
+    ],
+  },
   "nuxt/state/no-diverging-usestate-init": {
     description:
       "Finds a useState() key that two or more call sites initialize with different functions.",
@@ -1889,10 +1906,10 @@ export const ruleDocumentationMetadata = {
   },
   "nuxthub/no-personalized-cached-handler": {
     description:
-      "Flags personalized cached handler in Nuxthub project code before it leaks into runtime behavior.",
-    why: "Cached server responses are shared beyond one request. Personalized data in a shared cache can leak state or serve stale content.",
+      "Report a server handler that reads the visitor's cookies, headers, session, or event.context when Nitro caches it, through cachedEventHandler() or through a cache or swr route rule.",
+    why: "Nitro keeps only the request headers listed in varies while retaining the original event.context. Doctor reports reads it can trace to the handler's event: h3 cookie, header, and session readers, nuxt-auth-utils' getUserSession(), event headers, and event.context other than params. For a plain defineEventHandler(), Doctor matches Nitro's resolved handler routes against the rules from a current Nuxt manifest, and records an evidence gap when that evidence is unavailable. A route rule that varies on unrelated headers does not cover a request read.",
     recommendedReplacement:
-      "Remove personalized cached handler, or move it to the Nuxthub runtime/API that owns that behavior.",
+      "Do not cache the personalized response: drop cachedEventHandler() or set cache: false for the route. When the response depends only on known request headers, list each in varies. A custom getKey alone does not forward headers to the handler.",
     examples: [
       {
         title: "Avoid personalized cached handlers",

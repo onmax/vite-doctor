@@ -1,6 +1,7 @@
 import type { RuleContext } from "../../../../core/index.js";
 import {
   resolvesToModuleBinding,
+  staticMemberName,
   unwrapExpression,
 } from "../../../../core/internal/request-values.js";
 import { findStatementBinding } from "../../../../core/internal/script-index.js";
@@ -115,8 +116,11 @@ export function importedName(
   callee: AnyNode,
   fromSource: (source: string) => boolean,
 ): string | null {
-  if (callee?.type !== "Identifier" || !resolvesToModuleBinding(callee, callee.name)) return null;
-  let program = callee;
+  const namespace = callee?.type === "MemberExpression";
+  const reference = namespace ? unwrapExpression(callee.object) : callee;
+  if (reference?.type !== "Identifier") return null;
+  if (!resolvesToModuleBinding(reference, reference.name)) return null;
+  let program = reference;
   while (program.__doctorParent) program = program.__doctorParent;
   const nuxt = ctx.project.nuxt;
   const registryName = (name: string) => {
@@ -126,21 +130,24 @@ export function importedName(
   };
   const setup = blockRange(ctx, "scriptSetup");
   const script = moduleScriptRange(ctx);
-  const setupDeclaration = setupBinding(program, callee.name, setup);
+  const setupDeclaration = setupBinding(program, reference.name, setup);
   const binding = ctx.file.relativePath.endsWith(".vue")
-    ? ((inRange(callee, setup) || setupDeclaration?.__doctorParent?.type === "ImportDeclaration"
+    ? ((inRange(reference, setup) || setupDeclaration?.__doctorParent?.type === "ImportDeclaration"
         ? setupDeclaration
-        : null) ?? (script ? bindingInRange(program, callee.name, script) : null))
-    : findStatementBinding(program, callee.name);
+        : null) ?? (script ? bindingInRange(program, reference.name, script) : null))
+    : findStatementBinding(program, reference.name);
   if (binding) {
-    if (binding.type !== "ImportSpecifier" || binding.importKind === "type") return null;
+    if (binding.type !== (namespace ? "ImportNamespaceSpecifier" : "ImportSpecifier")) return null;
     const declaration = binding.__doctorParent;
-    if (declaration.importKind === "type") return null;
-    const name = String(binding.imported?.name ?? binding.imported?.value);
+    if (binding.importKind === "type" || declaration.importKind === "type") return null;
+    const name = namespace
+      ? staticMemberName(callee)
+      : String(binding.imported?.name ?? binding.imported?.value);
+    if (!name) return null;
     const source = String(declaration.source.value);
     if (source !== "#imports") return fromSource(source) ? name : null;
     return registryName(name);
   }
-  if (!nuxt?.autoImportEnabled) return null;
-  return registryName(callee.name);
+  if (namespace || !nuxt?.autoImportEnabled) return null;
+  return registryName(reference.name);
 }
