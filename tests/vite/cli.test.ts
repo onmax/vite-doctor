@@ -1538,6 +1538,11 @@ test.each([
         "h3/migration/prefer-redirect-response",
       ]),
     );
+    expect(
+      report.stages[1].diagnostics
+        .filter((item: { file: string }) => item.file === "src/server.ts")
+        .map((item: { code: string }) => item.code),
+    ).toContain("H30002");
     expect(report.stages[1].changes).toEqual([
       {
         kind: "dependency",

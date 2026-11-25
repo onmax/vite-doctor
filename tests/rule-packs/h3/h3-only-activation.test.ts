@@ -161,6 +161,23 @@ export const app = new H3()
   expect(h3Codes(result)).toEqual([]);
 });
 
+test("an unimported createError outside Nitro and Nuxt is not treated as h3's", async () => {
+  const root = h3Project({
+    "src/server.ts": `import { H3 } from "h3"
+export const app = new H3().post("/secure", async () => {
+  try {
+    throw createError({ statusCode: 401 })
+  } catch {
+    throw createError({ statusCode: 500 })
+  }
+})
+`,
+  });
+
+  const result = await runViteDoctor({ root, cache: false });
+  expect(h3Codes(result)).toEqual([]);
+});
+
 test("method guards outside h3 handlers stay silent", async () => {
   const root = h3Project({
     "src/server.ts": `import { H3, createError } from "h3"
