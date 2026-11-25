@@ -240,7 +240,7 @@ test("Pinia uses the import resolved after all buildStart hooks", async () => {
   });
 });
 
-test("Pinia reads completed edges resolved by an earlier plugin", async () => {
+test("Pinia uses an early resolver's answer only when Doctor observes it", async () => {
   await withProject(async (root) => {
     await piniaImports(root, "@cart");
     const config = piniaBuild(root);
@@ -254,9 +254,54 @@ test("Pinia reads completed edges resolved by an earlier plugin", async () => {
         },
       },
     };
-    await expect(build({ ...config, plugins: [resolver, ...config.plugins] })).rejects.toThrow(
+    const [doctorPlugin] = config.plugins;
+    const observingDoctor = { ...doctorPlugin, enforce: "pre" as const };
+    await build({ ...config, plugins: [resolver, observingDoctor] });
+    await expect(build({ ...config, plugins: [observingDoctor, resolver] })).rejects.toThrow(
       /PINIA0005.*cart\.ts/,
     );
+  });
+});
+
+test("Pinia does not pair deduplicated imports with native asset edges", async () => {
+  await withProject(async (root) => {
+    await piniaImports(root, "@use");
+    const entry = join(root, "entry.ts");
+    await writeFile(
+      entry,
+      `import { defineComponent } from 'vue'
+import '@side'
+import { useCartStore } from '@use'
+import '@state'
+export const logo = new URL('./logo.svg', import.meta.url)
+export default defineComponent({ setup() { const { count } = useCartStore(); return { count } } })`,
+    );
+    await writeFile(join(root, "logo.svg"), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const config = piniaBuild(root);
+    const resolver: Plugin = {
+      name: "fixture/early-store-and-asset-resolver",
+      enforce: "pre",
+      resolveId: {
+        order: "pre",
+        handler(source) {
+          if (source === "@side" || source === "@use") return join(root, "action.ts");
+          if (source === "@state") return join(root, "cart.ts");
+        },
+      },
+    };
+    await build({
+      ...config,
+      plugins: [resolver, ...config.plugins],
+      build: {
+        write: false,
+        ssr: entry,
+        rolldownOptions: {
+          ...config.build.rolldownOptions,
+          experimental: { resolveNewUrlToAsset: true },
+          moduleTypes: { ".svg": "asset" },
+        },
+      },
+    });
   });
 });
 

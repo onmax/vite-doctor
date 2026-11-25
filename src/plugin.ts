@@ -35,11 +35,12 @@ import {
 import type { BuildEnvironment, Plugin, ResolvedConfig, ViteDevServer } from "vite";
 
 type BuildTarget = Pick<BuildEnvironment, "name" | "config">;
-type BuildImports = Map<string, Map<string, string | undefined>>;
+type CachedResolution = { id: string; external: boolean | "absolute" | "relative" };
+type BuildImports = Map<string, Map<string, string | CachedResolution | undefined>>;
 type BuildContext = ThisParameterType<Extract<Plugin["buildEnd"], (...args: never[]) => unknown>>;
 
 function buildImportResolver(context: BuildContext, observed: BuildImports): HostImportResolver {
-  const modules: BuildImports = new Map();
+  const modules = new Map<string, Map<string, string | undefined>>();
   function edges(id: string) {
     let imports = modules.get(id);
     if (imports) return imports;
@@ -62,22 +63,20 @@ function buildImportResolver(context: BuildContext, observed: BuildImports): Hos
       )
         sources.add(statement.source.value);
     }
-    const ordered = [...sources];
     const resolutions = info.importedIds;
     const recorded = observed.get(id);
-    const aligned =
-      ordered.length === resolutions.length &&
-      (!context.meta.rolldownVersion || !/\brequire\b/.test(info.code)) &&
-      ordered.every((source, index) => {
-        const resolved = recorded?.get(source);
-        return resolved === undefined || resolved === resolutions[index];
-      });
-    for (const [index, source] of ordered.entries()) {
-      const resolved = recorded?.has(source)
-        ? recorded.get(source)
-        : aligned
-          ? resolutions[index]
-          : undefined;
+    for (const source of sources) {
+      const observation = recorded?.get(source);
+      const resolved =
+        typeof observation === "string"
+          ? observation
+          : observation &&
+              !observation.external &&
+              "importedIdResolutions" in info &&
+              Array.isArray(info.importedIdResolutions) &&
+              info.importedIdResolutions.includes(observation)
+            ? observation.id
+            : undefined;
       imports.set(
         source,
         resolved && resolutions.includes(resolved) && context.getModuleInfo(resolved)?.code != null
@@ -321,6 +320,17 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         target && watchReports.get(target)?.warnings,
       );
     },
+    shouldTransformCachedModule({
+      id,
+      resolvedSources,
+    }: {
+      id: string;
+      resolvedSources?: Record<string, CachedResolution>;
+    }) {
+      const key = this.environment ?? config;
+      const imports = key && buildImports.get(key);
+      if (imports && resolvedSources) imports.set(id, new Map(Object.entries(resolvedSources)));
+    },
     resolveId: {
       order: "pre",
       async handler(source, importer, context) {
@@ -346,9 +356,13 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
         if (observeImport && imports) {
           let sources = imports.get(importer);
           if (!sources) imports.set(importer, (sources = new Map()));
-          const id = resolution?.id;
-          if (!sources.has(source)) sources.set(source, id);
-          else if (sources.get(source) !== id) sources.set(source, undefined);
+          const id = resolution && !resolution.external ? resolution.id : undefined;
+          const previous = sources.get(source);
+          if (!sources.has(source) || (previous && typeof previous !== "string")) {
+            sources.set(source, id);
+          } else if (previous !== id) {
+            sources.set(source, undefined);
+          }
         }
         if (inspectStub && env && resolution && !resolution.external) {
           let resolutions = stubResolutions.get(env);
