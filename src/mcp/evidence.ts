@@ -62,7 +62,8 @@ export function readMcpServers(
 
 // A read that failed has no tools, whatever else an Extension put beside its error.
 function withoutFailedTools(server: McpServerEvidence): McpServerEvidence {
-  if (!("error" in server) || !("tools" in server)) return server;
+  if (typeof (server as { error?: unknown }).error !== "string" || !("tools" in server))
+    return server;
   const { tools: _tools, ...failed } = server as McpServerErrorEvidence & { tools: unknown };
   return failed;
 }
@@ -198,7 +199,7 @@ export function unreadMcpServerGaps(
 
 // An Extension's endpoint ID or URL can carry credentials, so a gap keeps only its hash.
 function unreadGapKey({ endpointId, url }: McpServerErrorEvidence): string {
-  return sha256(endpointId ?? url);
+  return sha256(typeof endpointId === "string" ? endpointId : (mcpEndpointId(url) ?? url));
 }
 
 function authHint(status: number | undefined): string {

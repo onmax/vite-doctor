@@ -321,11 +321,13 @@ test("readMcpServers collects mcpServers from every contributor and skips malfor
       vitehub: {
         mcpServers: [{ name: "hub", tools: [{ name: "b" }] }, { tools: [{}] }, { error: "x" }],
       },
+      other: { mcpServers: [{ name: "ok", error: null, tools: [{ name: "c" }] }] },
       vite: { other: true },
     }),
   ).toEqual([
     { url: "http://a/mcp", tools: [{ name: "a" }] },
     { name: "hub", tools: [{ name: "b" }] },
+    { name: "ok", error: null, tools: [{ name: "c" }] },
   ]);
 });
 

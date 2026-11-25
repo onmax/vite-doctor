@@ -468,6 +468,25 @@ test("a server a Doctor Extension could not read leaves one evidence gap that hi
   expect(result.project.evidenceUsed).toBeUndefined();
 });
 
+test("an Extension's failed read of a URL Doctor also read adds no second gap", async () => {
+  const url = "http://127.0.0.1:1/mcp";
+  const other = "http://127.0.0.1:2/mcp";
+  const root = project();
+  const { result } = await run(root, {
+    mcp: [{ url }],
+    extensions: contributing([
+      { url, error: "x", status: 503 },
+      { url: other, endpointId: 7, error: "x" } as unknown as McpServerEvidence,
+    ]),
+  });
+  expect(result.project.evidenceGaps?.map((gap) => gap.message)).toEqual([
+    expect.stringContaining(
+      "Doctor could not read the tools of the MCP server at http://127.0.0.1:1",
+    ),
+    expect.stringContaining("server at http://127.0.0.1:2"),
+  ]);
+});
+
 test("an Extension contributing as mcp cannot put its error text or status in a gap", async () => {
   const url = "http://user:pass@127.0.0.1:1/mcp?token=secret";
   const root = project();
