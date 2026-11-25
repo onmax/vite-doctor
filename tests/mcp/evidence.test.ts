@@ -112,9 +112,39 @@ test("malformed tool lists leave a gap without exposing the request URL", async 
   );
 });
 
-test("MCP evidence the MCP Rule Pack does not check leaves an evidence gap", async () => {
+test("MCP evidence activates the MCP Rule Pack in a project without an MCP package", async () => {
   const server = await stub();
+  const origin = new URL(server.url).origin;
   const result = await runViteDoctor({ root: project(), cache: false, mcp: [{ url: server.url }] });
+
+  expect(result.project.evidenceGaps ?? []).toEqual([]);
+  expect(result.rulePacks).toContainEqual(
+    expect.objectContaining({ name: "vite-doctor/mcp", selected: true, activatedBy: ["."] }),
+  );
+  expect(result.project.evidenceUsed).toEqual([
+    { source: "mcp", message: `tools/list of the MCP server at ${origin}, 1 tool` },
+  ]);
+  expect(createReport(result, "text")).toContain(
+    `Evidence used: tools/list of the MCP server at ${origin}`,
+  );
+
+  const strict = await runViteDoctor({
+    root: project(),
+    cache: false,
+    extends: ["strict"],
+    mcp: [{ url: server.url }],
+  });
+  expect(strict.project.evidenceGaps ?? []).toEqual([]);
+});
+
+test("an extends list that leaves out the MCP Rule Pack leaves an evidence gap", async () => {
+  const server = await stub();
+  const result = await runViteDoctor({
+    root: project(),
+    cache: false,
+    extends: ["vite-doctor/typescript/recommended"],
+    mcp: [{ url: server.url }],
+  });
 
   expect(reportStatus(result)).toBe("incomplete");
   expect(result.project.evidenceGaps).toEqual([
@@ -125,14 +155,6 @@ test("MCP evidence the MCP Rule Pack does not check leaves an evidence gap", asy
       ),
     }),
   ]);
-
-  const selected = await runViteDoctor({
-    root: project(),
-    cache: false,
-    extends: ["auto", "mcp/recommended"],
-    mcp: [{ url: server.url }],
-  });
-  expect(selected.project.evidenceGaps ?? []).toEqual([]);
 });
 
 test("readMcpServers collects mcpServers from every contributor and skips malformed entries", () => {

@@ -136,9 +136,24 @@ export function assertAbsoluteMcpUrl(url: string): void {
   );
 }
 
+/** One line per MCP server whose `tools/list` the run read, so a clean report names what it covered. */
+export function mcpEvidenceUsed(project: ProjectInfo): NonNullable<ProjectInfo["evidenceUsed"]> {
+  return readMcpServers(project.runtimeEvidence)
+    .filter((server): server is McpServerToolsEvidence => "tools" in server)
+    .map((server) => {
+      const label = server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server");
+      const count = `${server.tools.length} ${server.tools.length === 1 ? "tool" : "tools"}`;
+      return {
+        source: MCP_EVIDENCE,
+        message: `tools/list of the MCP server at ${label}, ${count}`,
+      };
+    });
+}
+
 /**
- * MCP Runtime Evidence that no Rule checked because the MCP Rule Pack is not selected. Reported
- * as an evidence gap so a run that read a server's tools never looks clean for them.
+ * MCP Runtime Evidence that no Rule checked because an explicit extends list leaves the MCP Rule
+ * Pack out; the evidence itself activates it. Reported as an evidence gap so a run that read a
+ * server's tools never looks clean for them.
  */
 export function uncheckedMcpEvidenceGap(
   project: ProjectInfo,
@@ -154,7 +169,7 @@ export function uncheckedMcpEvidenceGap(
     .join(", ");
   return {
     source: MCP_EVIDENCE,
-    message: `Doctor read the tools of ${names} as Runtime Evidence but did not check them: the vite-doctor/mcp Rule Pack is not selected. If you use the automatic defaults, pass --extends auto,mcp/recommended. If you already set extends, append "mcp/recommended" to your existing selectors; a CLI --extends override must include those selectors because it replaces the configured list. Use "mcp/strict" instead for the Strict Preset.`,
+    message: `Doctor read the tools of ${names} as Runtime Evidence but did not check them: the extends list leaves out the vite-doctor/mcp Rule Pack. Add "auto", or "mcp/recommended" ("mcp/strict" for the Strict Preset), to the selectors you already have; a CLI --extends replaces the configured list, so repeat them there.`,
     files: [],
   };
 }

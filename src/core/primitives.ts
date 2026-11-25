@@ -531,6 +531,8 @@ export interface ProjectInfo {
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
   evidenceGaps?: Array<{ source: string; message: string; files: string[]; instanceKey?: string }>;
+  /** Runtime Evidence the run read, such as each MCP server's `tools/list`, so a clean report shows what it covered. */
+  evidenceUsed?: Array<{ source: string; message: string }>;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
 }
@@ -1299,6 +1301,12 @@ export interface RulePack {
         packages?: string[];
         modules?: string[];
         nuxt?: string;
+        /**
+         * Activates the Rule Pack for every workspace package when this returns true for the
+         * Doctor Run's Runtime Evidence, whatever the other conditions say. The MCP Rule Pack uses
+         * it so a configured MCP server is checked in a project without an MCP package.
+         */
+        runtimeEvidence?: (runtimeEvidence: Record<string, unknown>) => boolean;
       };
 }
 

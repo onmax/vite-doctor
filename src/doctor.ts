@@ -29,7 +29,7 @@ import shadcnRulePack from "./rule-packs/shadcn/index.js";
 import { packageRulePack } from "./rule-packs/package/index.js";
 import { piniaRulePack } from "./rule-packs/pinia/index.js";
 import { mcpRulePack } from "./rule-packs/mcp/index.js";
-import { mcpEvidenceExtension, uncheckedMcpEvidenceGap } from "./mcp/evidence.js";
+import { mcpEvidenceExtension, mcpEvidenceUsed, uncheckedMcpEvidenceGap } from "./mcp/evidence.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
@@ -88,6 +88,8 @@ export async function runViteDoctor(options: DoctorRunOptions) {
     Boolean(result.rulePacks?.some((pack) => pack.name === mcpRulePack.name && pack.selected)),
   );
   if (unchecked) result.project.evidenceGaps = [...(result.project.evidenceGaps ?? []), unchecked];
+  const used = mcpEvidenceUsed(result.project);
+  if (used.length) result.project.evidenceUsed = [...(result.project.evidenceUsed ?? []), ...used];
   return { ...result, version: viteDoctorVersion };
 }
 

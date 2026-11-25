@@ -85,6 +85,7 @@ function evaluateWorkspacePackageActivation(
 ): ApplicabilityResult {
   const activation = pack.activation;
   if (!activation) return active();
+  if (activation.runtimeEvidence?.(project.runtimeEvidence ?? {})) return active();
   if (
     activation.frameworks &&
     !packageFrameworks(workspacePackage).some((framework) =>
