@@ -228,7 +228,7 @@ export const ruleDocumentationMetadata = {
   },
   "h3/request/prefer-assert-method": {
     description:
-      "Finds Nitro request code that should use the supported assert method pattern instead.",
+      "Finds single-method H3 handlers that check the request method by hand instead of using assertMethod().",
     why: "Manual method checks can drift from H3 response behavior. assertMethod() applies the framework's method validation and 405 handling consistently.",
     recommendedReplacement: "Use assertMethod(event, method) at the top of single-method handlers.",
     examples: [
@@ -243,18 +243,18 @@ export const ruleDocumentationMetadata = {
   },
   "h3/request/prefer-get-request-ip": {
     description:
-      "Finds Nitro request code that should use the supported get request IP pattern instead.",
-    why: "Reading x-forwarded-for directly trusts raw proxy input and may return a spoofed or comma-separated value instead of the client address.",
+      "Finds request-sensitive H3 code, such as rate limiting, that reads a forwarded client IP header directly.",
+    why: "Reading x-forwarded-for directly trusts raw proxy input and may return a spoofed or comma-separated value instead of the client address. On H3 v2, srvx's trustProxy option decides which proxies may set the client address, and getRequestIP(event) and event.req.ip read the result.",
     recommendedReplacement:
-      "Use getRequestIP(event) and configure trusted proxy handling centrally.",
+      "Use getRequestIP(event) and configure trusted proxies centrally: srvx's trustProxy option on H3 v2.",
     examples: [
       {
         title: "Use getRequestIP",
         language: "ts",
         invalid:
-          "export default defineEventHandler((event) => {\n  return getHeader(event, 'x-forwarded-for')\n})",
+          "export default defineEventHandler((event) => {\n  return rateLimit(event.req.headers.get('x-forwarded-for'))\n})",
         valid:
-          "export default defineEventHandler((event) => {\n  return getRequestIP(event, { xForwardedFor: true })\n})",
+          '// serve(app, { trustProxy: "loopback" })\nexport default defineEventHandler((event) => {\n  return rateLimit(getRequestIP(event))\n})',
       },
     ],
   },

@@ -1,6 +1,11 @@
-import type { RuleContext } from "../../../core/index.js";
-import { fileScriptScope } from "../../../core/internal/script-scope.js";
-import { type AnyNode, createRule, report } from "./shared.js";
+import {
+  type AnyNode,
+  createRule,
+  h3ExportName,
+  isH3HandlerFile,
+  isH3Source,
+  report,
+} from "./shared.js";
 
 export const noRemovedH3Send = createRule({
   meta: {
@@ -16,14 +21,14 @@ export const noRemovedH3Send = createRule({
     confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/migration",
-    requires: { script: true, nitro: true },
+    requires: { script: true },
     applicability: {
       runtimes: { h3: ">=2.0.0-0" },
       includePrerelease: true,
     },
   },
   create(ctx) {
-    let namespaceReads: Map<number, string> | undefined;
+    if (!isH3HandlerFile(ctx)) return;
     const reportRemoved = (node: AnyNode, imported: string) =>
       report(
         ctx,
@@ -38,13 +43,14 @@ export const noRemovedH3Send = createRule({
       );
     return {
       MemberExpression(node: AnyNode) {
-        const imported = (namespaceReads ??= removedNamespaceReads(ctx)).get(node.start);
-        if (imported) reportRemoved(node, imported);
+        const imported = h3ExportName(ctx, node);
+        if (imported === "send" || imported === "sendError") reportRemoved(node, imported);
       },
       ImportDeclaration(node: AnyNode) {
-        if (node.source?.value !== "h3" && node.source?.value !== "nitro/h3") return;
+        if (node.importKind === "type" || !isH3Source(node.source?.value)) return;
         for (const specifier of node.specifiers ?? []) {
           const imported = specifier.imported?.name;
+          if (specifier.importKind === "type") continue;
           if (imported !== "send" && imported !== "sendError") continue;
           reportRemoved(specifier, imported);
         }
@@ -52,45 +58,3 @@ export const noRemovedH3Send = createRule({
     };
   },
 });
-
-function removedNamespaceReads(ctx: RuleContext): Map<number, string> {
-  const result = new Map<number, string>();
-  const scope = fileScriptScope(ctx);
-  if (!scope) return result;
-  try {
-    const { ast, references, visitorKeys } = scope;
-    const visit = (node: AnyNode) => {
-      if (!node?.type) return;
-      if (node.type === "MemberExpression" && node.object.type === "Identifier") {
-        const property = node.computed
-          ? node.property.type === "TemplateLiteral" && node.property.expressions.length === 0
-            ? node.property.quasis[0]?.value.cooked
-            : node.property.value
-          : node.property.name;
-        if (property === "send" || property === "sendError") {
-          const variable = references.get(node.object)?.resolved;
-          if (
-            variable?.defs.some(
-              (definition) =>
-                definition.type === "ImportBinding" &&
-                definition.node.type === "ImportNamespaceSpecifier" &&
-                definition.parent.type === "ImportDeclaration" &&
-                definition.parent.importKind !== "type" &&
-                ["h3", "nitro/h3"].includes(String(definition.parent.source.value)),
-            )
-          )
-            result.set(node.range[0], property);
-        }
-      }
-      for (const key of visitorKeys[node.type] ?? []) {
-        const child = node[key];
-        if (Array.isArray(child)) child.forEach(visit);
-        else visit(child);
-      }
-    };
-    visit(ast);
-  } catch {
-    return result;
-  }
-  return result;
-}

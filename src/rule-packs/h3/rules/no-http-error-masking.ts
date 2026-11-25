@@ -1,5 +1,5 @@
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
-import { createRule, isNitroServerFile, report, walkScriptLocal, type AnyNode } from "./shared.js";
+import { createRule, isH3HandlerFile, report, walkScriptLocal, type AnyNode } from "./shared.js";
 
 const ruleId = "h3/errors/no-http-error-masking";
 const analysisLimit = Symbol("HTTP error analysis limit");
@@ -26,10 +26,10 @@ export const noHttpErrorMasking = createRule({
     confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/guide/api/error",
-    requires: { script: true, nitro: true },
+    requires: { script: true },
   },
   create(ctx) {
-    if (!isNitroServerFile(ctx)) return;
+    if (!isH3HandlerFile(ctx)) return;
     return {
       TryStatement(node: AnyNode) {
         if (!node.handler) return;

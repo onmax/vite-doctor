@@ -1,8 +1,10 @@
 import type { RuleContext } from "../../../core/index.js";
-import { fileTextScope } from "../../../core/internal/script-scope.js";
 import {
   type AnyNode,
   createRule,
+  h3ExportName,
+  isH3HandlerFile,
+  isHandlerFunction,
   isNitroRouteFile,
   isNitroServerFile,
   report,
@@ -15,7 +17,7 @@ export const preferAssertMethod = createRule({
     id: "h3/request/prefer-assert-method",
     title: "Use assertMethod for single-method handlers",
     description:
-      "Single-method Nitro handlers should use the H3 method assertion helper instead of ad hoc method checks.",
+      "Single-method H3 handlers should use the H3 method assertion helper instead of ad hoc method checks.",
     recommendedReplacement:
       'Use assertMethod(event, "POST") for handlers that accept one HTTP method.',
     category: "request",
@@ -23,19 +25,21 @@ export const preferAssertMethod = createRule({
     confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/utils/request#assertmethodevent-expected-allowhead",
-    requires: { script: true, nitro: true },
+    requires: { script: true },
   },
   create(ctx) {
-    if (!isNitroServerFile(ctx)) return;
+    if (!isH3HandlerFile(ctx)) return;
+    // Nitro route files express the accepted method in their filename instead.
     if (isNitroRouteFile(ctx)) return;
-    let methodReferences: { value: Set<number> | undefined } | undefined;
+    const autoImports = isNitroServerFile(ctx);
     return {
       IfStatement(node: AnyNode) {
         if (!isUnconditionalGuard(node)) return;
+        if (!autoImports && !isHandlerFunction(ctx, enclosingFunction(node))) return;
         const check = singleMethodCheck(node.test, ctx.file.text, node);
         if (
           !check?.isNegative ||
-          usesLocalGetMethod(node.test, (methodReferences ??= getMethodReferences(ctx)).value) ||
+          usesNonH3GetMethod(ctx, node.test) ||
           !rejectsRequest(node.consequent)
         )
           return;
@@ -47,7 +51,7 @@ export const preferAssertMethod = createRule({
           "info",
           "request",
           `This handler checks for ${method} manually.`,
-          `Use assertMethod(event, "${method}") for single-method Nitro handlers.`,
+          `Use assertMethod(event, "${method}") for single-method handlers.`,
         );
       },
     };
@@ -85,51 +89,27 @@ function isUnconditionalGuard(node: AnyNode): boolean {
   return false;
 }
 
-function usesLocalGetMethod(node: AnyNode, references: Set<number> | undefined): boolean {
+function enclosingFunction(node: AnyNode): AnyNode {
+  let current = node.__doctorParent;
+  while (
+    current &&
+    !/^(?:FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(current.type)
+  )
+    current = current.__doctorParent;
+  return current;
+}
+
+function usesNonH3GetMethod(ctx: RuleContext, node: AnyNode): boolean {
   let found = false;
   walkScriptLocal(node, (child) => {
     if (
       child.type === "CallExpression" &&
-      child.callee?.type === "Identifier" &&
-      child.callee.name === "getMethod"
+      (child.callee?.type === "Identifier" || child.callee?.type === "MemberExpression") &&
+      (child.callee.name ?? child.callee.property?.name) === "getMethod"
     )
-      found ||= !references?.has(child.callee.start);
+      found ||= h3ExportName(ctx, child.callee) !== "getMethod";
   });
   return found;
-}
-
-function getMethodReferences(ctx: RuleContext): { value: Set<number> | undefined } {
-  const scope = fileTextScope(ctx);
-  if (!scope) return { value: undefined };
-  try {
-    const { scopeManager } = scope;
-    const result = new Set<number>();
-    for (const scope of scopeManager.scopes) {
-      for (const reference of scope.references) {
-        if (reference.identifier.name !== "getMethod") continue;
-        const variable = reference.resolved;
-        if (
-          !variable ||
-          variable.defs.every(
-            (definition) =>
-              definition.type === "ImportBinding" &&
-              definition.parent.type === "ImportDeclaration" &&
-              definition.parent.source.value === "h3" &&
-              definition.parent.importKind !== "type" &&
-              definition.node.type === "ImportSpecifier" &&
-              definition.node.importKind !== "type" &&
-              (definition.node.imported.type === "Identifier"
-                ? definition.node.imported.name
-                : definition.node.imported.value) === "getMethod",
-          )
-        )
-          result.add(reference.identifier.range[0]);
-      }
-    }
-    return { value: result };
-  } catch {
-    return { value: undefined };
-  }
 }
 
 function rejectsRequest(node: AnyNode): boolean {

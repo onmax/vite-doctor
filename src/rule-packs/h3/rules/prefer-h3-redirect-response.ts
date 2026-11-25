@@ -1,4 +1,11 @@
-import { type AnyNode, createRule, report } from "./shared.js";
+import {
+  type AnyNode,
+  createRule,
+  h3ExportName,
+  isH3HandlerFile,
+  isH3Source,
+  report,
+} from "./shared.js";
 
 export const preferH3RedirectResponse = createRule({
   meta: {
@@ -12,27 +19,33 @@ export const preferH3RedirectResponse = createRule({
     confidence: "proven",
     fixable: "suggestion",
     docsUrl: "https://h3.dev/migration",
-    requires: { script: true, nitro: true },
+    requires: { script: true },
     applicability: {
       runtimes: { h3: ">=2.0.0-0" },
       includePrerelease: true,
     },
   },
   create(ctx) {
+    if (!isH3HandlerFile(ctx)) return;
+    const reportUse = (node: AnyNode) =>
+      report(
+        ctx,
+        node,
+        "h3/migration/prefer-redirect-response",
+        "warn",
+        "migration",
+        "sendRedirect(event, ...) is an H3 v2 compatibility utility.",
+        "Import redirect and return redirect(location, status) from the handler.",
+      );
     return {
+      MemberExpression(node: AnyNode) {
+        if (h3ExportName(ctx, node) === "sendRedirect") reportUse(node);
+      },
       ImportDeclaration(node: AnyNode) {
-        if (node.source?.value !== "h3" && node.source?.value !== "nitro/h3") return;
+        if (node.importKind === "type" || !isH3Source(node.source?.value)) return;
         for (const specifier of node.specifiers ?? []) {
-          if (specifier.imported?.name !== "sendRedirect") continue;
-          report(
-            ctx,
-            specifier,
-            "h3/migration/prefer-redirect-response",
-            "warn",
-            "migration",
-            "sendRedirect(event, ...) is an H3 v2 compatibility utility.",
-            "Import redirect and return redirect(location, status) from the handler.",
-          );
+          if (specifier.importKind !== "type" && specifier.imported?.name === "sendRedirect")
+            reportUse(specifier);
         }
       },
     };

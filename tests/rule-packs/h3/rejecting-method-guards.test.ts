@@ -37,6 +37,7 @@ test.each([
 test.each([
   'if (getMethod(event) !== "POST") throw createError({ statusCode: 405 })',
   'if (event.method != "POST") { throw createError({ statusCode: 405 }) }',
+  'if (event.req.method !== "POST") throw createError({ statusCode: 405 })',
   'if ("POST" !== event.method) { console.log("rejected"); throw createError({ statusCode: 405 }) }',
   'const method = getMethod(event); if (method !== "POST") throw createError({ statusCode: 405 })',
   'function audit() {} if (event.method !== "POST") throw createError({ statusCode: 405 })',

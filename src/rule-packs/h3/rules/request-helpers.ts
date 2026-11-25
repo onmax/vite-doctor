@@ -2,7 +2,9 @@ import { fileTextScope } from "../../../core/internal/script-scope.js";
 import {
   type AnyNode,
   createRule,
-  isNitroServerFile,
+  h3ExportName,
+  isH3Call,
+  isH3HandlerFile,
   nearestFunctionOrProgram,
   report,
   sourceForNode,
@@ -48,14 +50,14 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
       confidence: opts.confidence,
       fixable: "suggestion",
       docsUrl: opts.docsUrl,
-      requires: { script: true, nitro: true },
+      requires: { script: true },
     },
     create(ctx) {
-      if (!isNitroServerFile(ctx)) return;
+      if (!isH3HandlerFile(ctx)) return;
       let bindings: Map<number, Set<number>> | undefined;
       return {
         VariableDeclarator(node: AnyNode) {
-          if (!rawInputVariable(node, opts.rawUtilities)) return;
+          if (!rawInputVariable(ctx, node, opts.rawUtilities)) return;
           const match = rawInputValidatedNearby(
             ctx,
             node,
@@ -78,7 +80,7 @@ export function rawInputValidatedNearby(
   validatedUtility: string,
   bindings: Map<number, Set<number>>,
 ): RawInputMatch | null {
-  const variable = rawInputVariable(node, rawUtilities);
+  const variable = rawInputVariable(ctx, node, rawUtilities);
   if (!variable) return null;
   const scope = nearestFunctionOrProgram(node);
   const references = bindings.get(node.id.start);
@@ -91,21 +93,43 @@ export function rawInputValidatedNearby(
   return {
     node,
     variable,
-    rawUtility: rawUtilityNameFromVariableDeclarator(node),
+    rawUtility: h3ExportName(ctx, unwrapAwait(node.init).callee) ?? "",
     validatedUtility,
   };
 }
 
-export function isIpHeaderRead(node: AnyNode, source: string) {
+const ipHeaders = new Set([
+  "x-forwarded-for",
+  "x-real-ip",
+  "cf-connecting-ip",
+  "true-client-ip",
+  "x-client-ip",
+]);
+
+/**
+ * A read of a client IP header: `getHeader(event, name)` or `getRequestHeader(event, name)` from
+ * h3, or `event.req.headers.get(name)` on the H3 v2 request.
+ */
+export function isIpHeaderRead(ctx: RuleContext, node: AnyNode) {
   if (node.type !== "CallExpression") return false;
-  const name = calleeName(node);
-  if (name !== "getHeader" && name !== "getRequestHeader") return false;
-  const header = staticString(node.arguments?.[1], source)?.toLowerCase();
-  return Boolean(
-    header &&
-    ["x-forwarded-for", "x-real-ip", "cf-connecting-ip", "true-client-ip", "x-client-ip"].includes(
-      header,
-    ),
+  const argument = isH3Call(ctx, node, ["getHeader", "getRequestHeader"])
+    ? node.arguments?.[1]
+    : isRequestHeadersGet(node.callee)
+      ? node.arguments?.[0]
+      : undefined;
+  const header = argument && staticString(argument, ctx.file.text)?.toLowerCase();
+  return Boolean(header && ipHeaders.has(header));
+}
+
+function isRequestHeadersGet(callee: AnyNode) {
+  const headers = callee?.type === "MemberExpression" && !callee.computed ? callee.object : null;
+  const request = headers?.type === "MemberExpression" && !headers.computed ? headers.object : null;
+  return (
+    callee?.property?.name === "get" &&
+    headers?.property?.name === "headers" &&
+    request?.type === "MemberExpression" &&
+    !request.computed &&
+    request.property?.name === "req"
   );
 }
 
@@ -152,16 +176,9 @@ export function methodCheckMethods(node: AnyNode, source: string, anchor: AnyNod
   return [...new Set(methodChecks(node, source, anchor).map((check) => check.method))];
 }
 
-function rawInputVariable(node: AnyNode, rawUtilities: string[]) {
+function rawInputVariable(ctx: RuleContext, node: AnyNode, rawUtilities: string[]) {
   if (node.type !== "VariableDeclarator" || node.id?.type !== "Identifier") return null;
-  const call = unwrapAwait(node.init);
-  if (call?.type !== "CallExpression") return null;
-  const name = calleeName(call);
-  return name && rawUtilities.includes(name) ? node.id.name : null;
-}
-
-function rawUtilityNameFromVariableDeclarator(node: AnyNode) {
-  return calleeName(unwrapAwait(node.init)) ?? "";
+  return isH3Call(ctx, unwrapAwait(node.init), rawUtilities) ? node.id.name : null;
 }
 
 function variableReferences(ctx: RuleContext): Map<number, Set<number>> {

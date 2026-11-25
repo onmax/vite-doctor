@@ -8,7 +8,7 @@ export { diagnostics, h3DiagnosticRegistry } from "./diagnostics.js";
 export const h3RulePack = defineRulePack({
   name: "vite-doctor/h3",
   version: "0.0.0",
-  activation: { frameworks: ["nitro", "nuxt"] },
+  activation: { runtimes: ["h3"] },
   rules: h3Rules,
   presets: {
     recommended: h3RecommendedRuleIds,
