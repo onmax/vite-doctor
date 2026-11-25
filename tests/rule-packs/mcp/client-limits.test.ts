@@ -476,6 +476,7 @@ test("an Extension's failed read of a URL Doctor also read adds no second gap", 
     mcp: [{ url }],
     extensions: contributing([
       { url, error: "x", status: 503 },
+      { url, endpointId: url, error: "x" },
       { url: other, endpointId: 7, error: "x" } as unknown as McpServerEvidence,
     ]),
   });
@@ -539,6 +540,25 @@ export default defineMcpTool({ name: 'list orders', handler: () => [] })
     "MCP0002 warn server/mcp/tools/list_orders.ts:2",
     "MCP0003 warn server/mcp/tools/list_orders.ts:2",
   ]);
+});
+
+test("a server without a name is named and told apart by the name it announces", async () => {
+  const root = project();
+  const announced = (name: string): McpServerEvidence => ({
+    initialize: { serverInfo: { name, version: "1" }, instructions: "Search." },
+    tools: [search],
+  });
+  const { diagnostics } = await run(root, {
+    extensions: contributing([announced("alpha"), announced("beta")]),
+  });
+  const named = (name: string) =>
+    diagnostics.filter((item) => (item.data?.server as { name?: string })?.name === name);
+  const alpha = named("alpha");
+  const beta = named("beta");
+  expect(alpha.length).toBeGreaterThan(0);
+  expect(alpha.length).toBe(beta.length);
+  const fingerprints = new Set(diagnostics.map((item) => item.fingerprint));
+  expect(fingerprints.size).toBe(diagnostics.length);
 });
 
 test("each Diagnostic's severity and confidence follow its findings", async () => {

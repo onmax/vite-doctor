@@ -199,7 +199,8 @@ export function unreadMcpServerGaps(
 
 // An Extension's endpoint ID or URL can carry credentials, so a gap keeps only its hash.
 function unreadGapKey({ endpointId, url }: McpServerErrorEvidence): string {
-  return sha256(typeof endpointId === "string" ? endpointId : (mcpEndpointId(url) ?? url));
+  const id = typeof endpointId === "string" ? endpointId : url;
+  return sha256(mcpEndpointId(id) ?? id);
 }
 
 function authHint(status: number | undefined): string {

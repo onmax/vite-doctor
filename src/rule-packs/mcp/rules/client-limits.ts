@@ -104,6 +104,7 @@ function report(
 ): void {
   const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
   const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
+  const name = server.name ?? server.initialize?.serverInfo?.name;
   const locations = new Set(
     findings.flatMap(({ rule, pointer, affectedPointers }) =>
       (affectedPointers ?? [pointer ?? null]).map((location) => JSON.stringify([rule, location])),
@@ -112,15 +113,9 @@ function report(
   const anchor =
     endpointId ?? (definition?.name?.range ? relative(ctx.project.root, definition.file) : null);
   const fingerprint = sha256(
-    JSON.stringify([
-      options.ruleId,
-      server.name ?? null,
-      anchor,
-      tool ?? null,
-      [...locations].sort(),
-    ]),
+    JSON.stringify([options.ruleId, name ?? null, anchor, tool ?? null, [...locations].sort()]),
   );
-  const label = server.name ?? server.initialize?.serverInfo?.name ?? endpoint ?? "an MCP server";
+  const label = name ?? endpoint ?? "an MCP server";
   const subject =
     tool === undefined
       ? `MCP server ${JSON.stringify(label)}`
@@ -174,7 +169,7 @@ function report(
       evidence,
       data: {
         server: {
-          ...(server.name === undefined ? {} : { name: server.name }),
+          ...(name === undefined ? {} : { name }),
           ...(endpoint === undefined ? {} : { url: endpoint }),
         },
         ...(tool === undefined ? {} : { tool }),
