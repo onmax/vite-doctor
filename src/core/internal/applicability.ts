@@ -161,13 +161,24 @@ export function evaluateRuntimeRange(
   includePrerelease = false,
 ): ApplicabilityResult {
   if (!validRange(range)) return unknown(`Invalid ${runtime} applicability range ${range}.`);
-  const instance = project.runtimeGraph?.packages[runtime];
-  if (!instance || instance.state !== "resolved" || !instance.version || !valid(instance.version)) {
-    return unknown(instance?.reason ?? `The ${runtime} runtime is unresolved.`);
-  }
-  return satisfies(instance.version, range, { includePrerelease })
-    ? active()
-    : inactive(`${runtime} ${instance.version} does not satisfy ${range}.`);
+  const instances = [project.runtimeGraph?.packages[runtime]];
+  if (runtime === "h3" && project.runtimeGraph?.directH3)
+    instances.push(project.runtimeGraph.directH3);
+  return combineApplicability(
+    instances.map((instance) => {
+      if (
+        !instance ||
+        instance.state !== "resolved" ||
+        !instance.version ||
+        !valid(instance.version)
+      ) {
+        return unknown(instance?.reason ?? `The ${runtime} runtime is unresolved.`);
+      }
+      return satisfies(instance.version, range, { includePrerelease })
+        ? active()
+        : inactive(`${runtime} ${instance.version} does not satisfy ${range}.`);
+    }),
+  );
 }
 
 function evaluateNuxtCompatibility(project: ProjectInfo, range: string): ApplicabilityResult {

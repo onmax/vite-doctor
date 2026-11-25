@@ -634,9 +634,9 @@ export const ruleDocumentationMetadata = {
   "h3/body/no-double-body-read": {
     description:
       "Flags a handler that reads the request body twice, or reads it and then proxies the request.",
-    why: "H3 v2 reads the body from the Web Request stream, which can be consumed once. H3 v1 cached the parsed body, so a second readBody() worked; in v2 it throws or returns nothing, and a proxied request goes out without its body.",
+    why: "H3 v2 uses the Web Request stream. If a body is present and the first read consumes it, a second read can fail and the original stream can no longer be forwarded by a proxy.",
     recommendedReplacement:
-      "Read the body once into a variable and reuse it, or pass the body you read to the proxy explicitly.",
+      "Read the body once and reuse it, or read from a clone before forwarding the original stream to a proxy.",
     examples: [
       {
         title: "Read the body once",
@@ -650,8 +650,8 @@ export const ruleDocumentationMetadata = {
   },
   "h3/security/session-password-too-short": {
     description:
-      "Flags a literal session password shorter than 32 characters passed to useSession(), getSession(), updateSession(), sealSession(), or unsealSession().",
-    why: 'H3 seals sessions with iron-webcrypto, which rejects passwords under 32 characters. Every session read or write then throws "Password string too short", and a short literal password is a weak, committed secret anyway.',
+      "Flags a literal password shorter than 32 characters in session calls that can seal a session.",
+    why: 'When H3 seals a session, iron-webcrypto rejects short passwords with "Password string too short". Reading an existing session does not necessarily seal it.',
     recommendedReplacement:
       "Read a secret of at least 32 characters from runtime configuration or an environment variable instead of a literal.",
     examples: [

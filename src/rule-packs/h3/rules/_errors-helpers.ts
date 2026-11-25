@@ -87,7 +87,10 @@ export function isNeverReassigned(variable: ScopeVariable): boolean {
  * The value of a string or number literal, a template literal without expressions, or an
  * identifier bound by `const` to one of these in the same file.
  */
-export function staticValue(ctx: RuleContext, node: AnyNode): string | number | undefined {
+export function staticValue(
+  ctx: RuleContext,
+  node: AnyNode,
+): string | number | boolean | undefined {
   const expression = unwrapExpression(node);
   const literal = literalValue(expression);
   if (literal !== undefined || expression?.type !== "Identifier") return literal;
@@ -98,10 +101,12 @@ export function staticValue(ctx: RuleContext, node: AnyNode): string | number | 
   return literalValue(unwrapExpression(definition.node.init));
 }
 
-function literalValue(node: AnyNode): string | number | undefined {
+function literalValue(node: AnyNode): string | number | boolean | undefined {
   if (
     node?.type === "Literal" &&
-    (typeof node.value === "string" || typeof node.value === "number")
+    (typeof node.value === "string" ||
+      typeof node.value === "number" ||
+      typeof node.value === "boolean")
   )
     return node.value;
   if (node?.type === "TemplateLiteral" && node.expressions.length === 0)

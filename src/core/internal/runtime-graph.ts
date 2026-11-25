@@ -74,38 +74,20 @@ export function resolveRuntimeGraph(
     packages.vue = resolveRuntimePackage("vue", rootManifest, "project");
     edges.push(edge("project", packages.vue));
   }
-  // Without Nitro, a package that declares h3 runs its own, such as an h3 server on srvx.
-  if (
-    !packages.h3 &&
-    declaredRuntimes(readPackageManifest(rootManifest), rootManifest).includes("h3")
-  ) {
-    packages.h3 = resolveProjectRuntime("h3", rootManifest);
-    edges.push(edge("project", packages.h3));
+  const declared = declaredRuntimes(readPackageManifest(rootManifest), rootManifest);
+  if (!packages.vue && declared.includes("vue")) {
+    packages.vue = resolveRuntimePackage("vue", rootManifest, "project");
+    edges.push(edge("project", packages.vue));
   }
-
-  return { packages, edges };
-}
-
-/** The `runtime` a package resolves for itself from its own package.json. */
-export function resolveProjectRuntime(
-  runtime: RuntimePackageName,
-  manifest: string,
-): RuntimePackageInstance {
-  return resolveRuntimePackage(runtime, manifest, "project");
-}
-
-/** `graph` with `instance` as the project-owned resolution of its runtime. */
-export function withProjectRuntime(
-  graph: RuntimeGraph,
-  instance: RuntimePackageInstance,
-): RuntimeGraph {
-  return {
-    packages: { ...graph.packages, [instance.runtime]: instance },
-    edges: [
-      ...graph.edges.filter((item) => item.to !== instance.runtime),
-      edge("project", instance),
-    ],
-  };
+  const ownH3 = declared.includes("h3")
+    ? resolveRuntimePackage("h3", rootManifest, "project")
+    : undefined;
+  const directH3 = packages.h3 ? ownH3 : undefined;
+  if (ownH3) {
+    packages.h3 ??= ownH3;
+    edges.push(edge("project", ownH3));
+  }
+  return { packages, edges, ...(directH3 ? { directH3 } : {}) };
 }
 
 /** nuxt.config sources keyed by layer root, scoped to one Doctor Run. */
@@ -309,10 +291,41 @@ export function applyRuntimeTarget(
 ): { graph: RuntimeGraph; compatibility: NuxtCompatibilityInfo | undefined } {
   if (!target) return { graph, compatibility };
   const packages = { ...graph.packages };
+  let directH3 = graph.directH3;
+  const upgradesNitro = !target.nuxt || packages.nuxt || target.standaloneNitro;
+  const upgrade = (current: RuntimePackageInstance, version: string): RuntimePackageInstance => ({
+    ...current,
+    state: "resolved",
+    version,
+    provenance: "target",
+    identity: "exact",
+  });
+  if (directH3 && target.h3 && target.h3Owner !== "nitro") {
+    if (
+      !target.h3Owner ||
+      !directH3.version ||
+      Number(directH3.version.split(".")[0]) < 2 ||
+      directH3.state !== "resolved"
+    )
+      directH3 = upgrade(directH3, target.h3);
+  }
   for (const runtime of ["nuxt", "nitro", "h3", "vue"] as const) {
     const version = target[runtime];
     if (!version) continue;
     const current = packages[runtime];
+    if (target.h3Owner) {
+      if (!current || (runtime === "nitro" && !upgradesNitro)) continue;
+      if (runtime === "h3") {
+        if (target.h3Owner !== "both" && current.owner !== target.h3Owner) continue;
+        if (current.owner === "nitro" && !upgradesNitro) continue;
+        if (
+          current.owner === "project" &&
+          current.state === "resolved" &&
+          Number(current.version?.split(".")[0]) >= 2
+        )
+          continue;
+      }
+    }
     packages[runtime] = {
       runtime,
       state: "resolved",
@@ -327,9 +340,12 @@ export function applyRuntimeTarget(
   return {
     graph: {
       packages,
+      ...(directH3 ? { directH3 } : {}),
       edges: graph.edges.map((item) => ({
         ...item,
-        state: packages[item.to]?.state ?? item.state,
+        state:
+          (item.to === "h3" && item.from === "project" && directH3 ? directH3 : packages[item.to])
+            ?.state ?? item.state,
       })),
     },
     compatibility:

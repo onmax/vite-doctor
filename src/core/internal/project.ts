@@ -17,7 +17,6 @@ import {
   manifestSsrEvidence,
   nuxtInventoryOwner,
   owningWorkspacePackage,
-  packageFrameworks,
   runtimeGraphPackage,
   workspaceFramework,
 } from "./workspace-packages.js";
@@ -32,12 +31,9 @@ import {
   readNuxtConfigGranularCachedData,
   readNuxtConfigSsr,
   resolveNuxtCompatibility,
-  resolveProjectRuntime,
   resolveRuntimeGraph,
-  withProjectRuntime,
   type NuxtConfigCache,
 } from "./runtime-graph.js";
-import { runtimeProviders } from "./runtime-packages.js";
 
 export async function detectProject(
   root: string,
@@ -97,24 +93,17 @@ export async function detectProject(
         undefined,
         runtimeTarget,
       );
-  // A package outside Nitro and Nuxt that declares h3 runs its own; the run graph answers for it
-  // only when it was resolved from that package.
   const runGraphRoot = owner?.root ?? graphPackage?.root ?? ".";
   const workspaceRuntimeGraphs = Object.fromEntries(
     workspacePackages
       .filter(
         (item) =>
-          item.root !== runGraphRoot &&
-          item.declaredRuntimes?.includes("h3") &&
-          !packageFrameworks(item).some((name) => runtimeProviders.h3.includes(name)),
+          item.root !== runGraphRoot && !(framework === "nuxt" && item.framework === "nuxt"),
       )
       .map((item) => [
         item.root,
         applyRuntimeTarget(
-          withProjectRuntime(
-            runtime.graph,
-            resolveProjectRuntime("h3", join(root, item.root, "package.json")),
-          ),
+          resolveRuntimeGraph(root, item.framework, join(root, item.root, "package.json")),
           undefined,
           runtimeTarget,
         ).graph,
@@ -158,6 +147,7 @@ export async function detectProject(
     nuxt: owner?.nuxt,
     nuxtModuleDefinitions: owner?.nuxtModuleDefinitions,
     runtimeGraph: runtime.graph,
+    runtimeGraphRoot: runGraphRoot,
     nuxtCompatibility: runtime.compatibility,
     inventory: { packages: deps },
   };

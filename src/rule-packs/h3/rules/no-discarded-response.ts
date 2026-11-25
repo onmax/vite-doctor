@@ -1,3 +1,4 @@
+import { parentOf, unwrapExpression } from "./_errors-helpers.js";
 import {
   type AnyNode,
   createRule,
@@ -54,9 +55,11 @@ export const noDiscardedResponse = createRule({
     if (!isH3HandlerFile(ctx)) return;
     return {
       CallExpression(node: AnyNode) {
-        if (!isH3Call(ctx, node, builders) || !isDiscardedExpression(node)) return;
+        if (!isH3Call(ctx, node, builders)) return;
         if (!isHandlerFunction(ctx, nearestFunctionOrProgram(node))) return;
         const name = h3ExportName(ctx, node.callee);
+        if (!isDiscardedExpression(node) && !(name === "handleCors" && isBareReturnGuard(node)))
+          return;
         const call = sourceForNode(node, ctx.file.text);
         report(
           ctx,
@@ -65,7 +68,7 @@ export const noDiscardedResponse = createRule({
           "error",
           "response",
           name === "handleCors"
-            ? "handleCors() returns the preflight response instead of sending it, so an OPTIONS preflight falls through to the rest of the handler."
+            ? "handleCors() returns the preflight response instead of sending it. Discarding it leaves the OPTIONS preflight unanswered by this handler."
             : `${name}() builds a response value and sends nothing, so the handler falls through and responds with whatever it returns next.`,
           name === "handleCors"
             ? `Return the preflight response: const cors = ${call}; if (cors !== false) return cors.`
@@ -75,3 +78,13 @@ export const noDiscardedResponse = createRule({
     };
   },
 });
+
+function isBareReturnGuard(call: AnyNode): boolean {
+  let test = call;
+  while (unwrapExpression(parentOf(test)) === call) test = parentOf(test);
+  const statement = parentOf(test);
+  if (statement?.type !== "IfStatement" || statement.test !== test) return false;
+  const branch = statement.consequent;
+  const returned = branch.type === "BlockStatement" ? branch.body.at(-1) : branch;
+  return returned?.type === "ReturnStatement" && !returned.argument;
+}

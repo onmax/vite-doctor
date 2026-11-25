@@ -689,6 +689,7 @@ test("each workspace package that declares h3 outside Nitro resolves its own", a
       expect(project.framework).toBe("vue");
       expect(project.runtimeGraph?.packages.h3).toBeUndefined();
       expect(Object.keys(project.workspaceRuntimeGraphs ?? {}).sort()).toEqual([
+        ".",
         "packages/api",
         "packages/legacy",
       ]);
@@ -700,10 +701,7 @@ test("each workspace package that declares h3 outside Nitro resolves its own", a
         version: "1.15.11",
         owner: "project",
       });
-      // The rest of a package graph stays the run's.
-      expect(project.workspaceRuntimeGraphs?.["packages/api"]?.packages.vue?.version).toBe(
-        "3.5.35",
-      );
+      expect(project.workspaceRuntimeGraphs?.["packages/api"]?.packages.vue).toBeUndefined();
     },
   );
 });

@@ -1,5 +1,11 @@
 import { createRequire } from "node:module";
-import type { DoctorFramework, RuntimeGraph, RuntimePackageName } from "../primitives.js";
+import type {
+  DoctorFramework,
+  ProjectInfo,
+  RuntimeGraph,
+  RuntimePackageName,
+} from "../primitives.js";
+import { workspaceProjectView } from "./workspace-nuxt.js";
 
 /** npm package names that install each runtime, the canonical name first. */
 export const runtimePackageNames: Record<RuntimePackageName, string[]> = {
@@ -81,4 +87,21 @@ export function governingRuntimes(
           : [];
   if (!runtimes.includes("h3") && graph?.packages.h3?.owner === "project") runtimes.push("h3");
   return runtimes;
+}
+
+export function unresolvedRuntimeInventory(project: ProjectInfo) {
+  const scopes = project.workspacePackages ?? [{ root: ".", framework: project.framework }];
+  return scopes.flatMap(({ root, framework }) => {
+    const view = workspaceProjectView(project, root);
+    if (view === project && root !== (project.runtimeGraphRoot ?? ".")) return [];
+    const graph = view.runtimeGraph;
+    const unresolved = [
+      ...governingRuntimes(framework, graph).map((runtime) => graph?.packages[runtime]),
+      graph?.directH3,
+    ].filter((item) => item?.state === "unknown");
+    const compatibility = framework === "nuxt" ? view.nuxtCompatibility : undefined;
+    return unresolved.length || compatibility?.state === "unknown"
+      ? [{ root, unresolved, compatibility, manifestPath: view.nuxt?.manifestPath }]
+      : [];
+  });
 }

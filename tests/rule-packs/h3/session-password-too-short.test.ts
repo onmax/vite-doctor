@@ -49,7 +49,7 @@ export const app = new H3()
 `;
   for (const version of ["2.0.8", "1.15.11"]) {
     const root = h3Project({ "src/server.ts": server }, version);
-    expect(await lines(root)).toEqual([5, 6, 7]);
+    expect(await lines(root)).toEqual([5, 7]);
   }
 });
 
@@ -81,6 +81,8 @@ test("long, runtime, custom-seal, and look-alike passwords stay silent", async (
 function useSession(event, config) { return config }
 let mutable = "short"
 const base = { password: "short" }
+const config = { password: "short" }
+config.password = process.env.SESSION_PASSWORD!
 export const app = new H3()
   .get("/a", (event) => session(event, { password: "${secret}" }))
   .get("/b", (event) => session(event, { password: process.env.SESSION_PASSWORD! }))
@@ -90,6 +92,9 @@ export const app = new H3()
   .get("/f", (event) => useSession(event, { password: "short" }))
   .get("/g", (event) => clearSession(event, { password: "short" }))
   .get("/h", (event) => updateSession(event, { password: { id: "1", secret: "short" } }))
+  .get("/i", (event) => session(event, config))
+  .get("/j", (event) => session(event, { password: "short", cookie: false, sessionHeader: false }))
+  .get("/k", (event) => updateSession(event, { password: "short", cookie: false, sessionHeader: false }))
 `,
   });
 

@@ -20,12 +20,10 @@ import type {
   DoctorSeverity,
   FixEdit,
   DoctorFramework,
-  NuxtCompatibilityInfo,
   ProjectInfo,
-  RuntimePackageName,
   SourceRange,
 } from "../primitives.js";
-import { governingRuntimes } from "./runtime-packages.js";
+import { unresolvedRuntimeInventory } from "./runtime-packages.js";
 import type { GraphSummary } from "./cache-store.js";
 import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
 import { defaultConfigDiagnosticMetadata } from "../diagnostic-metadata.js";
@@ -43,7 +41,6 @@ import {
 import { hasRuleSourceCoverage, isTestFileHandle } from "./facts.js";
 import { collectExternalGitChanges } from "./git-change-ranges.js";
 import { lineColumnAt } from "./line-index.js";
-import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
 import {
   analyzesTestFiles,
@@ -1118,44 +1115,20 @@ export function pushDiagnostic(
 }
 
 export function reportRuntimeInventoryUnknown(session: ScanSession): void {
-  const project = session.project;
-  const nuxtRoots = workspaceNuxtRoots(project);
-  // Without a run owner, the run graph is borrowed from a Nuxt app that reports it below.
-  const ownerless = project.framework === "nuxt" && !project.nuxt && nuxtRoots.length;
-  if (!ownerless)
-    reportUnresolvedRuntime(
-      session,
-      project,
-      ".",
-      governingRuntimes(project.framework, project.runtimeGraph),
-      project.nuxtCompatibility,
-    );
-  for (const root of nuxtRoots) {
-    const view = workspaceProjectView(project, root);
-    reportUnresolvedRuntime(
-      session,
-      view,
-      root,
-      governingRuntimes("nuxt", view.runtimeGraph),
-      view.nuxtCompatibility,
-    );
-  }
-  // The rest of these graphs is the run's, reported above.
-  for (const root of Object.keys(project.workspaceRuntimeGraphs ?? {}))
-    reportUnresolvedRuntime(session, workspaceProjectView(project, root), root, ["h3"], undefined);
+  for (const scope of unresolvedRuntimeInventory(session.project))
+    reportUnresolvedRuntime(session, scope);
 }
 
 function reportUnresolvedRuntime(
   session: ScanSession,
-  project: ProjectInfo,
-  packageRoot: string,
-  expected: readonly RuntimePackageName[],
-  compatibility: NuxtCompatibilityInfo | undefined,
+  {
+    root: packageRoot,
+    unresolved,
+    compatibility,
+    manifestPath,
+  }: ReturnType<typeof unresolvedRuntimeInventory>[number],
 ): void {
   const packageJson = resolve(session.root, packageRoot, "package.json");
-  const unresolved = expected
-    .map((runtime) => project.runtimeGraph?.packages[runtime])
-    .filter((item) => item?.state === "unknown");
   const details = [
     ...unresolved.map(
       (item) => `${item?.owner} -> ${item?.runtime}: ${item?.reason ?? "unresolved"}`,
@@ -1206,7 +1179,7 @@ function reportUnresolvedRuntime(
             {
               kind: "manifest" as const,
               summary: "Nuxt compatibility behavior is unresolved.",
-              file: compatibility?.file ?? project.nuxt?.manifestPath,
+              file: compatibility?.file ?? manifestPath,
             },
           ]
         : []),

@@ -61,7 +61,9 @@ export const named = defineHandler(async (event) => {
 test("a second body read or a proxy after a read in an h3 v2 handler is reported", async () => {
   const root = h3Project({ "src/server.ts": handlers });
 
-  expect((await hits(root)).map((item) => item.line)).toEqual([5, 11, 14, 19]);
+  const diagnostics = await hits(root);
+  expect(diagnostics.map((item) => item.line)).toEqual([5, 11, 14, 19]);
+  expect(diagnostics[1]?.why).toContain("cannot forward the original stream and can fail");
 });
 
 test("a Nitro server file that reads the body twice is reported", async () => {
@@ -102,6 +104,10 @@ async function readTwice(event) {
   return readBody(event)
 }
 export const app = new H3()
+  .get("/bodyless", async (event) => {
+    await readBody(event)
+    return readBody(event)
+  })
   .post("/a", async (event) => {
     if (event.req.headers.get("content-type") === "text/plain") {
       return event.req.text()

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
+import { Module } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -1562,7 +1563,13 @@ test.each([
 test("migrate --to h3@2 proposes the h3 bump in each workspace package that declares h3 1.x", async () => {
   await withFixture(
     {
-      "package.json": JSON.stringify({ private: true, workspaces: ["packages/*"] }),
+      ...h3ServerFiles("2.0.8"),
+      "package.json": JSON.stringify({
+        private: true,
+        workspaces: ["packages/*"],
+        dependencies: { h3: "2.0.8" },
+      }),
+      "packages/api/src/server.ts": 'import { send } from "h3"; export { send };',
       "packages/api/package.json": JSON.stringify({
         name: "api",
         dependencies: { h3: "^1.15.4" },
@@ -1584,6 +1591,12 @@ test("migrate --to h3@2 proposes the h3 bump in each workspace package that decl
       const result = await runCli(["migrate", ".", "--to", "h3@2", "--format", "json"], root);
       const report = JSON.parse(result.output);
 
+      expect(report.stages[0].diagnostics).not.toContainEqual(
+        expect.objectContaining({ code: "H30001", file: "packages/api/src/server.ts" }),
+      );
+      expect(report.stages[1].diagnostics).toContainEqual(
+        expect.objectContaining({ code: "H30001", file: "packages/api/src/server.ts" }),
+      );
       expect(report.stages[1].changes).toEqual([
         expect.objectContaining({
           package: "h3",
@@ -1594,6 +1607,148 @@ test("migrate --to h3@2 proposes the h3 bump in each workspace package that decl
       ]);
     },
   );
+});
+
+test.each(["nitro@3", "nuxt@5"] as const)(
+  "migrate targets only owning H3 copies alongside %s",
+  async (target) => {
+    const frameworkFiles =
+      target === "nitro@3"
+        ? nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" })
+        : nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" });
+    await withFixture(
+      {
+        ...frameworkFiles,
+        "package.json": JSON.stringify({
+          ...JSON.parse(frameworkFiles["package.json"]),
+          workspaces: ["packages/*"],
+        }),
+        "server/api/redirect.ts": h3RedirectHandler,
+        ...Object.fromEntries(
+          Object.entries(h3ServerFiles("1.15.4")).map(([path, contents]) => [
+            `packages/api/${path}`,
+            contents,
+          ]),
+        ),
+        "packages/api/src/server.ts": 'import { send } from "h3"; export { send };',
+      },
+      async (root) => {
+        for (const [to, file] of [
+          [target, "server/api/redirect.ts"],
+          ["h3@2", "packages/api/src/server.ts"],
+        ]) {
+          const result = await runCli(["migrate", ".", "--to", to!, "--format", "json"], root);
+          const report = JSON.parse(result.output);
+          const removed = report.stages
+            .slice(0, 2)
+            .flatMap(
+              (stage: { diagnostics: Array<{ code: string; file: string }> }) => stage.diagnostics,
+            )
+            .filter((item: { code: string }) => item.code === "H30001");
+          expect([...new Set(removed.map((item: { file: string }) => item.file))]).toEqual([file]);
+          expect(report.stages[1].changes).toContainEqual(
+            expect.objectContaining(
+              to === "h3@2" ? { to, file: "packages/api/package.json" } : { to },
+            ),
+          );
+        }
+      },
+    );
+  },
+);
+
+test.each(["json", "agent"])("missing nested h3 makes the %s run incomplete", async (format) => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+      "packages/api/package.json": JSON.stringify({ dependencies: { h3: "2.0.8" } }),
+      "packages/api/src/server.ts": 'import { send } from "h3"; export { send };',
+    },
+    async (root) => {
+      const nodePath = process.env.NODE_PATH;
+      const initPaths = () => (Module as unknown as { _initPaths(): void })._initPaths();
+      delete process.env.NODE_PATH;
+      initPaths();
+      try {
+        for (const path of [".", "packages/api"]) {
+          const result = await runCli(
+            [path, "--no-cache", "--no-server", "--format", format],
+            root,
+          );
+          expect(result.code, `${path}: ${result.output}`).toBe(3);
+          expect(JSON.parse(result.output)).toMatchObject({ status: "incomplete" });
+          expect(result.output).toContain("DOC0022");
+          expect(result.output).not.toContain("H30001");
+        }
+      } finally {
+        if (nodePath !== undefined) process.env.NODE_PATH = nodePath;
+        initPaths();
+      }
+    },
+  );
+});
+
+test("workspace reports use owning Nitro and Vue runtimes and avoid mixed-copy H3 advice", async () => {
+  const modern = nitroRuntimeFixture({ nitro: "3.0.0-beta.4", h3: "2.0.8" });
+  const legacy = nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.11" });
+  const files = { "package.json": JSON.stringify({ workspaces: ["packages/*"] }) } as Record<
+    string,
+    string
+  >;
+  for (const [name, fixture] of Object.entries({ modern, legacy, mixed: modern })) {
+    for (const [path, contents] of Object.entries(fixture))
+      files[`packages/${name}/${path}`] = contents;
+    files[`packages/${name}/src/server.ts`] = 'import { send } from "h3"; export { send };';
+  }
+  files["packages/mixed/package.json"] = JSON.stringify({
+    dependencies: { nitropack: "3.0.0-beta.4", h3: "1.15.11" },
+  });
+  files["packages/mixed/node_modules/h3/package.json"] = JSON.stringify({
+    name: "h3",
+    version: "1.15.11",
+  });
+  for (const [name, version] of Object.entries({ web: "3.5.35", components: "3.4.38" })) {
+    files[`packages/${name}/package.json`] = JSON.stringify({ dependencies: { vue: version } });
+    files[`packages/${name}/node_modules/vue/package.json`] = JSON.stringify({
+      name: "vue",
+      version,
+    });
+  }
+  await withFixture(files, async (root) => {
+    const result = await runCli([".", "--no-cache", "--no-server", "--format", "json"], root);
+    const report = JSON.parse(result.output);
+    expect(report.workspacePackages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          root: "packages/modern",
+          runtimes: expect.objectContaining({ h3: expect.objectContaining({ version: "2.0.8" }) }),
+        }),
+        expect.objectContaining({
+          root: "packages/legacy",
+          runtimes: expect.objectContaining({
+            h3: expect.objectContaining({ version: "1.15.11" }),
+          }),
+        }),
+        expect.objectContaining({
+          root: "packages/web",
+          runtimes: expect.objectContaining({
+            vue: expect.objectContaining({ version: "3.5.35" }),
+          }),
+        }),
+        expect.objectContaining({
+          root: "packages/components",
+          runtimes: expect.objectContaining({
+            vue: expect.objectContaining({ version: "3.4.38" }),
+          }),
+        }),
+      ]),
+    );
+    expect(report.diagnostics.filter((item: { code: string }) => item.code === "H30001")).toEqual([
+      expect.objectContaining({
+        location: expect.objectContaining({ path: "packages/modern/src/server.ts" }),
+      }),
+    ]);
+  });
 });
 
 test.each([

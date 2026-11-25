@@ -3,6 +3,7 @@ import {
   isFunctionNode,
   isNeverReassigned,
   memberName,
+  nearestFunction,
   propertyKey,
   resolveVariable,
   unwrapExpression,
@@ -10,6 +11,7 @@ import {
 import {
   type AnyNode,
   createRule,
+  handlerFor,
   h3ExportName,
   isH3HandlerFile,
   isHandlerEvent,
@@ -42,12 +44,12 @@ export const noDoubleBodyRead = createRule({
     title: "Read the request body once",
     description:
       "Flags a handler that reads the request body twice, or reads it and then proxies the request.",
-    why: "H3 v2 reads the body from the Web Request stream, which can be consumed once. H3 v1 cached the parsed body, so a second readBody() worked; in v2 it throws or returns nothing, and a proxied request goes out without its body.",
+    why: "H3 v2 uses the Web Request stream. If a body is present and the first read consumes it, a second read can fail and the original stream can no longer be forwarded by a proxy.",
     recommendedReplacement:
-      "Read the body once into a variable and reuse it, or pass the body you read to the proxy explicitly.",
+      "Read the body once and reuse it, or read from a clone before forwarding the original stream to a proxy.",
     category: "body",
     severity: "error",
-    confidence: "proven",
+    confidence: "heuristic-high",
     fixable: "suggestion",
     docsUrl: "https://github.com/h3js/h3/issues/1212",
     requires: { script: true },
@@ -75,10 +77,10 @@ export const noDoubleBodyRead = createRule({
             "error",
             "body",
             use.proxy
-              ? `${earlier.label} already consumed the request body, so ${use.label} forwards the request without it.`
-              : `${earlier.label} already consumed the request body, and H3 v2 can read the body stream only once, so ${use.label} rejects.`,
+              ? `If ${earlier.label} consumes the request body, ${use.label} cannot forward the original stream and can fail.`
+              : `If ${earlier.label} consumes the request body, ${use.label} can fail because H3 v2 can read the stream only once.`,
             use.proxy
-              ? "Pass the body you read to the proxy, such as proxyRequest(event, target, { fetchOptions: { body } }), or proxy before reading."
+              ? "Read from event.req.clone() before proxying so the original stream is still available."
               : "Read the body once into a variable and reuse it, or make the extra read from event.req.clone() before the first one.",
           );
         }
@@ -134,6 +136,7 @@ function statementBodyUses(ctx: RuleContext, statement: AnyNode): BodyUse[] {
 }
 
 function bodyUse(ctx: RuleContext, call: AnyNode): BodyUse | undefined {
+  if (handlerFor(ctx, nearestFunction(call))?.bodyless) return undefined;
   const name = h3ExportName(ctx, call.callee);
   if (name && (readUtils.has(name) || proxyUtils.has(name))) {
     const event = eventBinding(ctx, call.arguments?.[0]);

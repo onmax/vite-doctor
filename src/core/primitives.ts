@@ -530,6 +530,7 @@ export interface ProjectInfo {
    * Rules read the package's runtimes through `ctx.project` for files that package owns.
    */
   workspaceRuntimeGraphs?: Record<string, RuntimeGraph>;
+  runtimeGraphRoot?: string;
   tsconfigPath?: string;
   languages?: ProjectLanguage[];
   nuxt?: NuxtProjectInfo;
@@ -647,6 +648,7 @@ export interface RuntimeGraphEdge {
 
 export interface RuntimeGraph {
   packages: Partial<Record<RuntimePackageName, RuntimePackageInstance>>;
+  directH3?: RuntimePackageInstance;
   edges: RuntimeGraphEdge[];
 }
 
@@ -664,6 +666,9 @@ export interface RuntimeTarget {
   h3?: string;
   vue?: string;
   nuxtCompatibility?: number;
+  /** Which H3 copies a migration upgrades. */
+  h3Owner?: "project" | "nitro" | "both";
+  standaloneNitro?: boolean;
 }
 
 export interface ImportFact {

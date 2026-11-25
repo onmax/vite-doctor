@@ -294,6 +294,7 @@ export interface H3Handler {
   node: AnyNode;
   /** The local name of the handler's event parameter, when it is a plain identifier. */
   event?: string;
+  bodyless?: boolean;
 }
 
 const handlerDefiners = new Set([
@@ -314,13 +315,19 @@ export function handlerFunctions(ctx: RuleContext): ReadonlyMap<number, H3Handle
     const handlers = new Map<number, H3Handler>();
     const scope = fileScriptScope(ctx);
     if (!scope) return handlers;
-    const add = (candidate: AnyNode) => {
+    const add = (candidate: AnyNode, bodyless = false) => {
       const fn = handlerFunctionNode(ctx, candidate);
       const start = offset(fn);
-      if (start === undefined || handlers.has(start)) return;
+      if (start === undefined) return;
+      const existing = handlers.get(start);
+      if (existing) {
+        existing.bodyless &&= bodyless;
+        return;
+      }
       const param = fn.params?.[0];
       handlers.set(start, {
         node: fn,
+        bodyless,
         event: param?.type === "Identifier" ? param.name : undefined,
       });
     };
@@ -420,11 +427,22 @@ function parentOf(node: AnyNode): AnyNode {
 
 /** The h3 runtime major version the file's package runs, when Doctor resolved it. */
 export function h3Major(ctx: RuleContext): number | undefined {
-  const major = Number.parseInt(ctx.project.runtimeGraph?.packages.h3?.version ?? "", 10);
+  const graph = ctx.project.runtimeGraph;
+  const major = Number.parseInt(graph?.packages.h3?.version ?? "", 10);
+  if (
+    graph?.directH3 &&
+    (graph.directH3.state !== "resolved" ||
+      Number.parseInt(graph.directH3.version ?? "", 10) !== major)
+  )
+    return undefined;
   return Number.isFinite(major) ? major : undefined;
 }
 
-function collectHandlers(ctx: RuleContext, call: AnyNode, add: (node: AnyNode) => void) {
+function collectHandlers(
+  ctx: RuleContext,
+  call: AnyNode,
+  add: (node: AnyNode, bodyless?: boolean) => void,
+) {
   const name = h3ExportName(ctx, call.callee);
   if (name && handlerDefiners.has(name)) {
     const input = unwrap(call.arguments?.[0]);
@@ -443,7 +461,10 @@ function collectHandlers(ctx: RuleContext, call: AnyNode, add: (node: AnyNode) =
     !isH3AppReceiver(ctx, callee.object)
   )
     return;
-  for (const argument of call.arguments ?? []) add(argument);
+  const method = memberName(callee);
+  for (const argument of call.arguments ?? []) {
+    add(argument, isFunctionNode(unwrap(argument)) && (method === "get" || method === "head"));
+  }
 }
 
 function handlerFunctionNode(ctx: RuleContext, candidate: AnyNode): AnyNode {

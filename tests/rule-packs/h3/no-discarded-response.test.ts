@@ -115,7 +115,6 @@ export const app = new H3()
   .get("/b", (event) => {
     const cors = handleCors(event, { origin: "*" })
     if (cors !== false) return cors
-    if (handleCors(event, {})) return
     return event.context.ok ? html("<p>ok</p>") : noContent()
   })
   .get("/c", (event) => {
@@ -145,4 +144,17 @@ export const app = createApp().use(
     const result = await runViteDoctor({ root, cache: false });
     expect(hits(result)).toEqual([]);
   }
+});
+
+test("reports legacy CORS guards that return no response", async () => {
+  const root = h3Project(`import { H3, handleCors } from "h3"
+export const app = new H3().use((event) => {
+  if (handleCors(event, {})) return
+  if (handleCors(event, {})) { return }
+  const cors = handleCors(event, {})
+  if (cors !== false) return cors
+})
+`);
+  const result = await runViteDoctor({ root, cache: false });
+  expect(hits(result).map((item) => item.line)).toEqual([3, 4]);
 });
