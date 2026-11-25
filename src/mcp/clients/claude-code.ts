@@ -105,6 +105,7 @@ export const rootCombinator: McpClientRule = {
       message: `Claude Code flattens the root \`${keywords.join("`, `")}\` of \`${tool.name}\` into one object and describes the branches in prose, or skips the tool when it can't.`,
       fix: "Declare one root object schema and keep combinators inside `properties`.",
       pointer: `/inputSchema/${keywords[0]}`,
+      affectedPointers: keywords.map((keyword) => `/inputSchema/${keyword}`),
     };
   },
 };

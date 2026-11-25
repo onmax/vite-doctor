@@ -96,10 +96,12 @@ export const droppedConstraints: McpClientRule = {
     );
     if (!dropped.length) return;
     const keywords = [...new Set(dropped.map((item) => item.keyword))];
+    const pointers = dropped.map((item) => item.pointer);
     return {
-      message: `Codex drops \`${keywords.join("`, `")}\` from the schema of \`${tool.name}\`: ${listPointers(dropped.map((item) => item.pointer))}.`,
+      message: `Codex drops \`${keywords.join("`, `")}\` from the schema of \`${tool.name}\`: ${listPointers(pointers)}.`,
       fix: "If the model needs a limit to call the tool right, state it in the property description, such as `Between 1 and 100.`, and keep validating it on the server.",
-      pointer: dropped[0]!.pointer,
+      pointer: pointers[0],
+      affectedPointers: pointers,
     };
   },
 };

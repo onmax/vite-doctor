@@ -35,6 +35,7 @@ export const numericExclusiveMinimum: McpClientRule = {
       message: `Copilot Studio fails with \`System.FormatException\` on \`${tool.name}\` because \`exclusiveMinimum\` is a number: ${listPointers(pointers)}.`,
       fix: "Use `minimum` with the next allowed value, or state the bound in the description.",
       pointer: pointers[0],
+      affectedPointers: pointers,
     };
   },
 };
@@ -57,6 +58,7 @@ export const reference: McpClientRule = {
       message: `Copilot Studio leaves \`${tool.name}\` out of the server's tools because its input schema uses \`$ref\`: ${listPointers(pointers)}.`,
       fix: "Inline the referenced schemas instead of using `$ref`.",
       pointer: pointers[0],
+      affectedPointers: pointers,
     };
   },
 };
@@ -83,6 +85,7 @@ export const typeArray: McpClientRule = {
       message: `Copilot Studio truncates the input schema of \`${tool.name}\` because a \`type\` lists several types: ${listPointers(pointers)}.`,
       fix: 'Use a single type in each `type` field, for example by making the property optional instead of `["string", "null"]`.',
       pointer: pointers[0],
+      affectedPointers: pointers,
     };
   },
 };
@@ -105,6 +108,7 @@ export const enumAsString: McpClientRule = {
       message: `Copilot Studio reads the \`enum\` inputs of \`${tool.name}\` as strings instead of enums: ${listPointers(pointers)}.`,
       fix: "If the agent needs the allowed values, list them in the property description, and keep validating them on the server.",
       pointer: pointers[0],
+      affectedPointers: pointers,
     };
   },
 };

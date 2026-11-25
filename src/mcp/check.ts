@@ -54,6 +54,7 @@ export function toFindings(rule: McpClientRule, hits: McpRuleHits, tool?: string
     confidence: hit.confidence ?? rule.confidence,
     ...(tool === undefined ? {} : { tool }),
     ...(hit.pointer ? { pointer: hit.pointer } : {}),
+    ...(hit.affectedPointers ? { affectedPointers: hit.affectedPointers } : {}),
     message: hit.message,
     fix: hit.fix,
     source: rule.source,

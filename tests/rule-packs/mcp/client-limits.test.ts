@@ -263,47 +263,67 @@ test.each([false, true])(
   },
 );
 
-test("a baseline does not hide changed client exclusions at the same MCP endpoint", async () => {
-  const root = project({
-    "server/mcp/tools/lookup.ts": searchSource.replace("name: 'search'", "name: 'lookup'"),
-  });
-  const copilotProperty = { size: { type: "integer", exclusiveMinimum: 0 } };
-  const claudeProperty = { "page size": { type: "integer" } };
-  let properties: Record<string, unknown> = copilotProperty;
-  vi.stubGlobal("fetch", async (_url: URL, request: RequestInit) => {
-    const { id, method } = JSON.parse(typeof request.body === "string" ? request.body : "{}");
-    if (method === "notifications/initialized") return new Response(null, { status: 202 });
-    const result =
-      method === "initialize"
-        ? { serverInfo: { name: "stub" } }
-        : { tools: [{ ...lookup, inputSchema: { type: "object", properties } }] };
-    return Response.json({ jsonrpc: "2.0", id, result });
-  });
-  const mcp = [{ url: "https://example.test/mcp" }];
-  const baseline = "baseline.json";
-  const exclusions = (diagnostics: Diagnostic[]) =>
-    diagnostics.filter((item) => item.code === "MCP0005");
-  const initial = await run(root, { mcp });
-  const [known] = exclusions(initial.diagnostics);
-  expect(known?.range).toBeDefined();
-  expect(known?.why).toContain("Copilot Studio");
-  writeBaseline(root, baseline, initial.diagnostics);
+test.each(["HTTP", "extension"])(
+  "a baseline tracks MCP exclusion locations from %s",
+  async (source) => {
+    const root = project({
+      "server/mcp/tools/lookup.ts": searchSource.replace("name: 'search'", "name: 'lookup'"),
+    });
+    const limit = { type: "integer", exclusiveMinimum: 0 };
+    const copilotProperties = { first: limit, second: limit };
+    const claudeProperty = { "page size": { type: "integer" } };
+    let properties: Record<string, unknown> = copilotProperties;
+    vi.stubGlobal("fetch", async (_url: URL, request: RequestInit) => {
+      const { id, method } = JSON.parse(typeof request.body === "string" ? request.body : "{}");
+      if (method === "notifications/initialized") return new Response(null, { status: 202 });
+      const result =
+        method === "initialize"
+          ? { serverInfo: { name: "stub" } }
+          : { tools: [{ ...lookup, inputSchema: { type: "object", properties } }] };
+      return Response.json({ jsonrpc: "2.0", id, result });
+    });
+    const options = (): DoctorRunOptions =>
+      source === "HTTP"
+        ? { mcp: [{ url: "https://example.test/mcp" }] }
+        : {
+            extensions: contributing([
+              { name: "stub", tools: [{ ...lookup, inputSchema: { type: "object", properties } }] },
+            ]),
+          };
+    const baseline = "baseline.json";
+    const exclusions = (diagnostics: Diagnostic[]) =>
+      diagnostics.filter((item) => item.code === "MCP0005");
+    const initial = await run(root, options());
+    const [known] = exclusions(initial.diagnostics);
+    expect(known?.range).toBeDefined();
+    expect(known?.why).toContain("Copilot Studio");
+    writeBaseline(root, baseline, initial.diagnostics);
 
-  const unchanged = await run(root, { mcp, baseline, newOnly: true });
-  expect(exclusions(unchanged.diagnostics)).toEqual([]);
+    properties = { second: limit, first: limit };
+    const reordered = await run(root, { ...options(), baseline, newOnly: true });
+    expect(exclusions(reordered.diagnostics)).toEqual([]);
 
-  properties = claudeProperty;
-  const changed = await run(root, { mcp, baseline, newOnly: true });
-  expect(exclusions(changed.diagnostics)).toEqual([
-    expect.objectContaining({ why: expect.stringContaining("Claude Code") }),
-  ]);
+    properties = { first: limit, third: limit };
+    const replaced = await run(root, { ...options(), baseline, newOnly: true });
+    expect(exclusions(replaced.diagnostics)).toEqual([
+      expect.objectContaining({
+        why: expect.stringContaining("/properties/third/exclusiveMinimum"),
+      }),
+    ]);
 
-  properties = { ...copilotProperty, ...claudeProperty };
-  const combined = await run(root, { mcp });
-  expect(exclusions(combined.diagnostics)).toEqual([
-    expect.objectContaining({ why: expect.stringContaining("Claude Code and Copilot Studio") }),
-  ]);
-});
+    properties = claudeProperty;
+    const changed = await run(root, { ...options(), baseline, newOnly: true });
+    expect(exclusions(changed.diagnostics)).toEqual([
+      expect.objectContaining({ why: expect.stringContaining("Claude Code") }),
+    ]);
+
+    properties = { ...copilotProperties, ...claudeProperty };
+    const combined = await run(root, options());
+    expect(exclusions(combined.diagnostics)).toEqual([
+      expect.objectContaining({ why: expect.stringContaining("Claude Code and Copilot Studio") }),
+    ]);
+  },
+);
 
 test("the Recommended Preset reports only excluded tools and truncated text", async () => {
   const server = await startMcpStub({ tools: [search, lookup] });

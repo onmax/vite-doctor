@@ -104,6 +104,7 @@ export const rootCombinator: McpClientRule = {
       message: `VS Code's Copilot Chat deletes the root \`${keywords.join("`, `")}\` from the schema of \`${tool.name}\` before sending it to the model.`,
       fix: "Declare one root object schema and keep combinators inside `properties`.",
       pointer: `/inputSchema/${keywords[0]}`,
+      affectedPointers: keywords.map((keyword) => `/inputSchema/${keyword}`),
     };
   },
 };
@@ -173,6 +174,7 @@ export const arrayWithoutItems: McpClientRule = {
       message: `VS Code's Copilot Chat throws "tool parameters array type must have items" for \`${tool.name}\` (${listPointers(pointers)}), so requests that include it likely fail.`,
       fix: 'Give every `type: "array"` schema an `items` schema.',
       pointer: pointers[0],
+      affectedPointers: pointers,
     };
   },
 };
@@ -224,10 +226,12 @@ export const gpt4DroppedConstraints: McpClientRule = {
     const dropped = undescribedConstraints(tool, GPT4_DROPPED_CONSTRAINTS, NORMALIZED_STRUCTURE);
     if (!dropped.length) return;
     const keywords = [...new Set(dropped.map((item) => item.keyword))];
+    const pointers = dropped.map((item) => item.pointer);
     return {
-      message: `With gpt-4* models, VS Code's Copilot Chat deletes \`${keywords.join("`, `")}\` from the schema of \`${tool.name}\`: ${listPointers(dropped.map((item) => item.pointer))}.`,
+      message: `With gpt-4* models, VS Code's Copilot Chat deletes \`${keywords.join("`, `")}\` from the schema of \`${tool.name}\`: ${listPointers(pointers)}.`,
       fix: "If the model needs a limit to call the tool right, state it in the property description, such as `Between 1 and 100.`, and keep validating it on the server.",
-      pointer: dropped[0]!.pointer,
+      pointer: pointers[0],
+      affectedPointers: pointers,
     };
   },
 };

@@ -1,3 +1,4 @@
+import { relative } from "pathe";
 import type {
   Confidence,
   DiagnosticEvidence,
@@ -117,18 +118,22 @@ function report(
 ): void {
   const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
   const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
-  const fingerprint =
-    endpointId || !definition?.name?.range
-      ? sha256(
-          JSON.stringify([
-            options.ruleId,
-            server.name ?? null,
-            endpointId ?? null,
-            tool ?? null,
-            findings.map(({ rule, pointer }) => JSON.stringify([rule, pointer ?? null])).sort(),
-          ]),
-        )
-      : undefined;
+  const locations = new Set(
+    findings.flatMap(({ rule, pointer, affectedPointers }) =>
+      (affectedPointers ?? [pointer ?? null]).map((location) => JSON.stringify([rule, location])),
+    ),
+  );
+  const anchor =
+    endpointId ?? (definition?.name?.range ? relative(ctx.project.root, definition.file) : null);
+  const fingerprint = sha256(
+    JSON.stringify([
+      options.ruleId,
+      server.name ?? null,
+      anchor,
+      tool ?? null,
+      [...locations].sort(),
+    ]),
+  );
   const label = server.name ?? endpoint ?? "an MCP server";
   const subject =
     tool === undefined

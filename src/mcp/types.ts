@@ -89,6 +89,8 @@ export interface McpFinding {
   tool?: string;
   /** JSON Pointer inside the tool or result, such as `/inputSchema/properties/limit`. */
   pointer?: string;
+  /** All affected JSON Pointers when a single finding groups multiple locations. */
+  affectedPointers?: readonly string[];
   /** What the client does, in one sentence. */
   message: string;
   fix: string;
@@ -101,6 +103,7 @@ export interface McpRuleHit {
   message: string;
   fix: string;
   pointer?: string;
+  affectedPointers?: readonly string[];
   measured?: McpMeasurement;
   /** Overrides the rule's confidence for this hit. */
   confidence?: McpFinding["confidence"];
