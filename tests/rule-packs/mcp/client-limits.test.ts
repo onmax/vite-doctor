@@ -162,7 +162,7 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
   expect(byCode(again.diagnostics, "MCP0005", "lookup")!.fingerprint).toBe(remote.fingerprint);
 });
 
-test("in a monorepo with two MCP packages, a tool with no source is reported at the root", async () => {
+test("in a monorepo with two MCP packages, a tool with no source in them is reported at the root", async () => {
   const mcpPackage = (name: string) =>
     JSON.stringify({ name, dependencies: { "nitro-mcp-toolkit": "^0.4.0" } });
   const root = project({
@@ -170,15 +170,18 @@ test("in a monorepo with two MCP packages, a tool with no source is reported at 
     "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
     "packages/a/package.json": mcpPackage("a"),
     "packages/b/package.json": mcpPackage("b"),
+    // A package without an MCP dependency is not the source of the server's `search`.
+    "packages/c/package.json": JSON.stringify({ name: "c" }),
+    "packages/c/server/mcp/tools/search.ts": searchSource,
   });
   const { diagnostics } = await run(root, {
     extends: ["auto"],
     extensions: contributing([
-      { name: "hub", initialize: { instructions: "Drops." }, tools: [lookup] },
+      { name: "hub", initialize: { instructions: "Drops." }, tools: [search, lookup] },
     ]),
   });
 
-  expect(summary(root, diagnostics)).toEqual(["MCP0005 error ."]);
+  expect(summary(root, diagnostics)).toEqual(["MCP0005 error .", "MCP0005 error ."]);
 });
 
 test("tools read from a running server through the mcp option are checked", async () => {

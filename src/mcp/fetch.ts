@@ -78,8 +78,8 @@ function createRequester(url: URL, options: FetchMcpToolListOptions) {
         headers,
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(timeout),
-        // A redirect could carry the configured headers, such as a token, to another origin.
-        redirect: Object.keys(options.headers ?? {}).length ? "manual" : "follow",
+        // A redirect could carry a token or the session ID to another origin.
+        redirect: "manual",
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -91,7 +91,7 @@ function createRequester(url: URL, options: FetchMcpToolListOptions) {
         response.status === 401 || response.status === 403
           ? " The endpoint needs authorization; pass a token in `headers`."
           : location
-            ? ` Doctor does not follow redirects when it sends headers; pass the final URL, ${location}.`
+            ? ` Doctor does not follow redirects; pass the final URL, ${location}.`
             : "";
       throw new McpFetchError(
         `${method} to ${url.href} answered HTTP ${response.status}.${hint}`,
@@ -123,9 +123,38 @@ interface JsonRpcResponse {
 }
 
 async function readMessage(response: Response, id: number): Promise<JsonRpcResponse> {
-  const text = await response.text();
   const type = response.headers.get("content-type") ?? "";
-  const candidates = type.includes("text/event-stream") ? eventData(text) : [text];
+  const message =
+    type.includes("text/event-stream") && response.body
+      ? await readEvents(response.body, id)
+      : findResponse([await response.text()], id);
+  if (message) return message;
+  throw new McpFetchError(`The server sent no JSON-RPC response for request ${id}.`);
+}
+
+// Reads events as they arrive: a server that keeps the stream open after the response is valid.
+async function readEvents(
+  body: ReadableStream<Uint8Array>,
+  id: number,
+): Promise<JsonRpcResponse | undefined> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = done ? "" : blocks.pop()!;
+      const message = findResponse(blocks.flatMap(eventData), id);
+      if (message || done) return message;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
+function findResponse(candidates: string[], id: number): JsonRpcResponse | undefined {
   for (const candidate of candidates) {
     let parsed: unknown;
     try {
@@ -138,7 +167,7 @@ async function readMessage(response: Response, id: number): Promise<JsonRpcRespo
         return message as JsonRpcResponse;
     }
   }
-  throw new McpFetchError(`The server sent no JSON-RPC response for request ${id}.`);
+  return undefined;
 }
 
 function eventData(stream: string): string[] {

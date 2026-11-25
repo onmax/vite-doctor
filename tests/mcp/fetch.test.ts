@@ -119,7 +119,21 @@ test("rejects a tools/list result with a tool without a name", async () => {
   await expect(fetchMcpToolList(url)).rejects.toThrow("a tool without a `name`");
 });
 
-test("does not follow a redirect when it sends headers", async () => {
+test("reads an SSE response the server keeps open", async () => {
+  const url = await serve((message, _request, response) => {
+    if (message.method === "notifications/initialized") {
+      response.writeHead(202);
+      return response.end();
+    }
+    const result = message.method === "initialize" ? initialize : { tools: [{ name: "search" }] };
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write(`data: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n\n`);
+  });
+  const list = await fetchMcpToolList(url, { timeout: 2_000 });
+  expect(list.tools).toEqual([{ name: "search" }]);
+});
+
+test("does not follow a redirect", async () => {
   let redirected = false;
   const target = await serve((_message, _request, response) => {
     redirected = true;

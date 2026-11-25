@@ -124,7 +124,10 @@ export function unreadMcpServerGaps(
   project: ProjectInfo,
 ): NonNullable<ProjectInfo["evidenceGaps"]> {
   return readMcpServers(project.runtimeEvidence)
-    .filter((server): server is McpServerErrorEvidence => "error" in server)
+    .filter(
+      (server): server is McpServerErrorEvidence =>
+        typeof (server as Partial<McpServerErrorEvidence>).error === "string",
+    )
     .map(({ url, error, status }) => ({
       source: MCP_EVIDENCE,
       message: `Doctor could not read the tools of the MCP server at ${url}, so its tools were not checked: ${error}${

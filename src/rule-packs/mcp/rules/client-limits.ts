@@ -75,7 +75,7 @@ export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOption
         ),
       );
       if (!groups.length) return;
-      const tools = await collectMcpTools(ctx);
+      const tools = mcpPackageTools(ctx, await collectMcpTools(ctx));
       for (const group of groups) {
         const definition = group.tool === undefined ? undefined : staticTool(tools, group.tool);
         const findings = definition?.name
@@ -92,6 +92,24 @@ function groupByTool(server: McpServerToolsEvidence, findings: McpFinding[]) {
   for (const finding of findings)
     byTool.set(finding.tool, [...(byTool.get(finding.tool) ?? []), finding]);
   return [...byTool].map(([tool, grouped]) => ({ server, tool, findings: grouped }));
+}
+
+/**
+ * Definitions in workspace packages that depend on an MCP package. These Rules run across the
+ * workspace, and a tool of the same name in another package is not the one the server sends.
+ */
+function mcpPackageTools(ctx: RuleContext, tools: McpToolDefinition[]): McpToolDefinition[] {
+  const packages = projectWorkspacePackages(ctx.project).map((item) => ({
+    root: resolve(ctx.project.root, item.root),
+    mcp: MCP_PACKAGES.some((name) => name in item.packages),
+  }));
+  if (!packages.some((item) => item.mcp)) return tools;
+  return tools.filter((tool) => {
+    const owner = packages
+      .filter((item) => tool.file.startsWith(`${item.root}/`))
+      .sort((left, right) => right.root.length - left.root.length)[0];
+    return owner?.mcp ?? false;
+  });
 }
 
 /** The tool's definition in source, when exactly one has the name the server sends. */
