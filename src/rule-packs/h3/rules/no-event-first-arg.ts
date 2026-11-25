@@ -1,4 +1,5 @@
 import {
+  canUseNativeH3,
   type AnyNode,
   createRule,
   h3ExportName,
@@ -36,6 +37,7 @@ export const noEventFirstArg = createRule({
     if (!isH3HandlerFile(ctx)) return;
     return {
       CallExpression(node: AnyNode) {
+        if (!canUseNativeH3(ctx, node.callee)) return;
         if (!isH3Call(ctx, node, eventlessHelpers) || !isHandlerEvent(ctx, node.arguments[0]))
           return;
         const name = h3ExportName(ctx, node.callee);

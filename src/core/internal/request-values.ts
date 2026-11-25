@@ -1,5 +1,10 @@
 import type { AnyNode } from "../rule-authoring.js";
-import { findFunctionVar, findStatementBinding, patternNames } from "./script-index.js";
+import {
+  findFunctionVar,
+  findStatementBinding,
+  patternNames,
+  scriptNodesOfType,
+} from "./script-index.js";
 
 // Request-value flow over a Doctor script AST (nodes carry `__doctorParent`): does an expression
 // hold a value that only exists for one request? Rule Packs supply what counts as a source, such as
@@ -27,6 +32,8 @@ const WRAPPERS = new Set([
 ]);
 const PROMISE_METHODS = new Set(["then", "catch", "finally"]);
 const UNKNOWN_VALUE = Symbol("unknown value");
+const PROJECTION_LIMIT = Symbol("projection work limit");
+const PROJECTION_WORK_BUDGET = 50_000;
 type StaticValue = string | number | boolean | bigint | null | typeof UNKNOWN_VALUE;
 
 export interface RequestValueSources {
@@ -41,17 +48,85 @@ export interface RequestValueSources {
   parameter?(fn: AnyNode, index: number, reference: AnyNode): boolean;
   /** How many local initializers the flow follows. Defaults to 2. */
   maxDepth?: number;
+  /** Trace the selected value, not evaluation of other fields in a local object initializer. */
+  projectObjectMembers?: boolean;
+  /** Report that an intervening operation leaves a possible, but unproven, request dependency. */
+  onUncertainProjection?(): void;
+  /** Whether an operation is proven not to execute in the runtime being traced. */
+  isSkippedOperation?(node: AnyNode): boolean;
 }
+
+type FlowSources = RequestValueSources & {
+  spendProjectionWork?: () => void;
+  tracingProjection?: boolean;
+  initializerResults?: WeakMap<object, Map<number, boolean>>;
+};
 
 /** Whether evaluating `value` reads a request source, directly or through local bindings. */
 export function holdsRequestValue(value: AnyNode, sources: RequestValueSources): boolean {
-  return flows(value, sources, 0);
+  if (!sources.projectObjectMembers) return flows(value, sources, 0);
+  let remaining = PROJECTION_WORK_BUDGET;
+  return flows(
+    value,
+    {
+      ...sources,
+      initializerResults: new WeakMap(),
+      spendProjectionWork: () => {
+        if (remaining <= 0) throw PROJECTION_LIMIT;
+        remaining--;
+      },
+    },
+    0,
+  );
 }
 
-function flows(value: AnyNode, sources: RequestValueSources, depth: number): boolean {
+/** The imported export, null for a rejected binding, or undefined for an unbound identifier. */
+export function requestImportName(
+  callee: AnyNode,
+  acceptsSource: (source: string) => boolean,
+): string | null | undefined {
+  const namespace = callee?.type === "MemberExpression";
+  const binding = namespace ? unwrapExpression(callee.object) : callee;
+  if (binding?.type !== "Identifier" || !resolvesToModuleBinding(binding, binding.name))
+    return null;
+  let program = binding;
+  while (program.__doctorParent) program = program.__doctorParent;
+  for (const statement of program.body ?? []) {
+    if (statement.type !== "ImportDeclaration") continue;
+    for (const specifier of statement.specifiers ?? []) {
+      if (specifier.local?.name !== binding.name) continue;
+      if (statement.importKind === "type" || specifier.importKind === "type") return null;
+      if (!acceptsSource(String(statement.source.value))) return null;
+      if (namespace && specifier.type === "ImportNamespaceSpecifier")
+        return staticMemberName(callee) ?? null;
+      if (!namespace && specifier.type === "ImportSpecifier")
+        return String(specifier.imported?.name ?? specifier.imported?.value);
+      return null;
+    }
+  }
+  return namespace || moduleNames(binding).has(binding.name) ? null : undefined;
+}
+
+export function staticMemberName(node: AnyNode): string | undefined {
+  if (node?.type !== "MemberExpression") return undefined;
+  if (!node.computed) return node.property?.name;
+  return staticRequestString(node.property);
+}
+
+export function staticRequestString(node: AnyNode): string | undefined {
+  node = unwrapExpression(node);
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
+    return node.quasis[0]?.value.cooked ?? undefined;
+  return undefined;
+}
+
+function flows(value: AnyNode, sources: FlowSources, depth: number): boolean {
   let found = false;
   const visit = (node: AnyNode) => {
     if (found || !node || typeof node !== "object") return;
+    if (sources.tracingProjection) sources.spendProjectionWork?.();
+    if (sources.isSkippedOperation?.(node)) return;
     if (isModuleImport(node)) {
       if (node.type !== "CallExpression") return;
       // A continuation can still perform request work even though the imported module value
@@ -79,6 +154,13 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
       return;
     }
     if (FUNCTION_TYPES.has(node.type) && !isInvoked(node) && !isPromiseCallback(node)) return;
+    if (sources.projectObjectMembers && node.type === "MemberExpression") {
+      const projected = projectedRequestValue(node, sources, depth);
+      if (projected !== undefined) {
+        found = projected;
+        return;
+      }
+    }
     if (node.type === "LogicalExpression") {
       visit(node.left);
       if (!found && !logicalRightIsSkipped(node, sources.programBinding)) visit(node.right);
@@ -94,7 +176,445 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
   return found;
 }
 
-function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, depth: number) {
+function projectedRequestValue(node: AnyNode, sources: FlowSources, depth: number) {
+  try {
+    const selected = projectMember(node, sources, (sources.maxDepth ?? 2) - depth);
+    if (!selected) return;
+    const candidateSources = sources.tracingProjection
+      ? sources
+      : { ...sources, tracingProjection: true };
+    const dependsOnSource = (candidates: Map<AnyNode, number>) => {
+      for (const [candidate, steps] of candidates)
+        if (flows(candidate, candidateSources, depth + steps)) return true;
+      return false;
+    };
+    if (!selected.uncertain) return dependsOnSource(selected.values);
+    if (dependsOnSource(selected.controls) || dependsOnSource(selected.values))
+      sources.onUncertainProjection?.();
+    return false;
+  } catch (error) {
+    if (error !== PROJECTION_LIMIT || sources.tracingProjection) throw error;
+    sources.onUncertainProjection?.();
+    return false;
+  }
+}
+
+interface MemberProjection {
+  values: Map<AnyNode, number>;
+  controls: Map<AnyNode, number>;
+  uncertain: boolean;
+}
+
+function projectMember(
+  node: AnyNode,
+  sources: FlowSources,
+  remaining: number,
+): MemberProjection | undefined {
+  const name = staticMemberName(node);
+  if (name === undefined || name === "__proto__" || remaining <= 0) return;
+  const select = (expression: AnyNode, steps: number): MemberProjection | undefined => {
+    const object = unwrapExpression(expression);
+    if (object?.type === "ObjectExpression") {
+      sources.spendProjectionWork?.();
+      const { value, possibleWrites, controls } = setupMemberWrites(node, object, name, sources);
+      const initial = objectMemberInitializer(object, name);
+      if (initial === UNKNOWN_VALUE && !possibleWrites.size) return;
+      const values = new Map<AnyNode, number>();
+      const previous = value ?? (initial === UNKNOWN_VALUE ? object : initial);
+      if (previous) values.set(previous, steps);
+      for (const write of possibleWrites) {
+        const candidate =
+          write.type === "CallExpression" || write.type === "NewExpression" ? write : write.right;
+        if (candidate) values.set(candidate, steps);
+      }
+      return {
+        values,
+        controls: new Map([...controls].map((control) => [control, steps])),
+        uncertain: possibleWrites.size > 0,
+      };
+    }
+    if (steps >= remaining) return;
+    if (object?.type === "Identifier") {
+      const binding = constIdentifierBinding(object, sources.programBinding);
+      if (binding && binding.end <= object.start) return select(binding.init, steps + 1);
+    } else if (object?.type === "MemberExpression") {
+      const inner = projectMember(object, sources, remaining - steps);
+      if (!inner) return;
+      const values = new Map<AnyNode, number>();
+      const controls = new Map<AnyNode, number>();
+      for (const [control, innerSteps] of inner.controls) controls.set(control, steps + innerSteps);
+      let uncertain = inner.uncertain;
+      for (const [value, innerSteps] of inner.values) {
+        const totalSteps = steps + innerSteps;
+        const projected = select(value, totalSteps);
+        uncertain ||= projected?.uncertain ?? false;
+        const candidates = projected?.values ?? new Map([[value, totalSteps]]);
+        for (const [candidate, candidateSteps] of candidates)
+          values.set(candidate, Math.min(values.get(candidate) ?? Infinity, candidateSteps));
+        for (const [control, controlSteps] of projected?.controls ?? [])
+          controls.set(control, Math.min(controls.get(control) ?? Infinity, controlSteps));
+      }
+      return { values, controls, uncertain };
+    }
+  };
+  return select(node.object, 1);
+}
+
+function objectMemberInitializer(object: AnyNode, name: string): AnyNode {
+  for (const property of object.properties.toReversed()) {
+    if (property.type !== "Property") return UNKNOWN_VALUE;
+    const key =
+      !property.computed && property.key.type === "Identifier"
+        ? property.key.name
+        : staticRequestString(property.key);
+    if (key === undefined || key === "__proto__") return UNKNOWN_VALUE;
+    if (key === name) return property.kind === "init" ? property.value : UNKNOWN_VALUE;
+  }
+  return null;
+}
+
+function setupMemberWrites(
+  reference: AnyNode,
+  object: AnyNode,
+  name: string,
+  sources: FlowSources,
+): { value: AnyNode; possibleWrites: Set<AnyNode>; controls: Set<AnyNode> } {
+  const possibleWrites = new Set<AnyNode>();
+  const controls = new Set<AnyNode>();
+  let program = reference;
+  while (program.__doctorParent) {
+    if (FUNCTION_TYPES.has(program.type)) return { value: null, possibleWrites, controls };
+    program = program.__doctorParent;
+  }
+  const isObject = (expression: AnyNode) => {
+    let base = unwrapExpression(expression);
+    const seen = new Set<AnyNode>();
+    while (base?.type === "Identifier") {
+      sources.spendProjectionWork?.();
+      const binding = constIdentifierBinding(base, sources.programBinding);
+      if (!binding || seen.has(binding)) return false;
+      seen.add(binding);
+      base = unwrapExpression(binding.init);
+    }
+    return base === object;
+  };
+  const affectsMember = (input: AnyNode): boolean => {
+    const target = unwrapExpression(input);
+    if (target?.type === "MemberExpression") {
+      if (!isObject(target.object)) return affectsMember(target.object);
+      const key = staticMemberName(target);
+      return key === undefined || key === name || key === "__proto__";
+    }
+    if (target?.type === "ArrayPattern") return target.elements.some(affectsMember);
+    if (target?.type === "ObjectPattern")
+      return target.properties.some((property: AnyNode) =>
+        affectsMember(property.value ?? property.argument),
+      );
+    if (target?.type === "AssignmentPattern") return affectsMember(target.left);
+    if (target?.type === "RestElement") return affectsMember(target.argument);
+    return false;
+  };
+
+  const isCall = (node: AnyNode) => node.type === "CallExpression" || node.type === "NewExpression";
+  const mayWrite = (operation: AnyNode) => {
+    if (isCall(operation)) {
+      const callee = unwrapExpression(operation.callee);
+      return (
+        operation.arguments.some(isObject) ||
+        (callee?.type === "MemberExpression" && isObject(callee.object))
+      );
+    }
+    if (operation.type === "UnaryExpression" && operation.operator !== "delete") return false;
+    return affectsMember(operation.left ?? operation.argument);
+  };
+  const addWrite = (operation: AnyNode) => {
+    possibleWrites.add(operation);
+    addWriteGuards(operation, controls);
+    if (!isCall(operation)) addComputedKeys(operation.left ?? operation.argument, controls);
+  };
+
+  const setupOperations: AnyNode[] = [];
+  const functionOperations = new Map<AnyNode, AnyNode[]>();
+  const firstSuspension = new Map<AnyNode, AnyNode>();
+  let lastSetupSuspension = -Infinity;
+  for (const operation of scriptNodesOfType(
+    program,
+    "AssignmentExpression",
+    "UpdateExpression",
+    "UnaryExpression",
+    "ForInStatement",
+    "ForOfStatement",
+    "CallExpression",
+    "NewExpression",
+    "AwaitExpression",
+  )) {
+    sources.spendProjectionWork?.();
+    const scope = enclosingWriteScope(operation);
+    if (sources.isSkippedOperation?.(operation) || skipsStaticBranch(operation, scope, sources))
+      continue;
+    const operand =
+      operation.type === "AwaitExpression"
+        ? operation.argument
+        : operation.type === "ForOfStatement" && operation.await
+          ? operation.right
+          : null;
+    if (operand) {
+      if (scope === program && operand.end <= reference.start)
+        lastSetupSuspension = Math.max(lastSetupSuspension, operand.end);
+      else if (
+        scope?.async &&
+        operand.end < (firstSuspension.get(scope)?.end ?? Infinity) &&
+        straightLineAwait(operation, scope)
+      )
+        firstSuspension.set(scope, operand);
+    }
+    if (operation.type === "AwaitExpression") continue;
+    if (scope === program) {
+      if (operation.end <= reference.start && operation.end > object.end)
+        setupOperations.push(operation);
+    } else if (scope) {
+      let operations = functionOperations.get(scope);
+      if (!operations) functionOperations.set(scope, (operations = []));
+      operations.push(operation);
+    }
+  }
+
+  const collectCallWrites = (call: AnyNode, afterYield: boolean) => {
+    const pending: { invocation: AnyNode; resolvedFunction?: AnyNode }[] = [{ invocation: call }];
+    const visited = new Set<AnyNode>();
+    const forwardedCalls = new Map<AnyNode, Set<AnyNode>>();
+    const callSites = new Map<AnyNode, Set<AnyNode>>();
+    const writingFunctions = new Set<AnyNode>();
+    while (pending.length > 0) {
+      sources.spendProjectionWork?.();
+      const next = pending.pop();
+      if (!next) break;
+      const { invocation, resolvedFunction } = next;
+      const callee = unwrapExpression(invocation.callee);
+      if (afterYield && !resolvedFunction && PROMISE_METHODS.has(staticMemberName(callee) ?? "")) {
+        for (const argument of invocation.arguments) {
+          const callback = localFunction(argument, sources.programBinding);
+          if (callback) pending.push({ invocation, resolvedFunction: callback });
+        }
+      }
+      const fn = resolvedFunction ?? localFunction(invocation.callee, sources.programBinding);
+      if (!fn || fn.generator) continue;
+      let sites = callSites.get(fn);
+      if (!sites) callSites.set(fn, (sites = new Set()));
+      sites.add(invocation);
+      const forwarded = directParameterCall(fn);
+      if (
+        forwarded &&
+        !invocation.arguments.some((argument: AnyNode) => argument.type === "SpreadElement")
+      ) {
+        const callback = localFunction(
+          invocation.arguments[forwarded.index],
+          sources.programBinding,
+        );
+        if (callback && functionOperations.get(fn)?.includes(forwarded.call)) {
+          let callbacks = forwardedCalls.get(forwarded.call);
+          if (!callbacks) forwardedCalls.set(forwarded.call, (callbacks = new Set()));
+          if (!callbacks.has(callback)) {
+            callbacks.add(callback);
+            pending.push({
+              invocation: forwarded.call,
+              resolvedFunction: callback,
+            });
+          }
+        }
+      }
+      if (visited.has(fn)) continue;
+      visited.add(fn);
+      const boundary = afterYield ? undefined : firstSuspension.get(fn);
+      for (const operation of functionOperations.get(fn) ?? []) {
+        sources.spendProjectionWork?.();
+        if (
+          boundary &&
+          (operation.end > boundary.end ||
+            (operation.end === boundary.end && operation.start < boundary.start))
+        )
+          continue;
+        if (mayWrite(operation)) {
+          addWrite(operation);
+          writingFunctions.add(fn);
+        }
+        if (isCall(operation)) pending.push({ invocation: operation });
+      }
+    }
+    for (const fn of writingFunctions) {
+      for (const invocation of callSites.get(fn) ?? []) {
+        sources.spendProjectionWork?.();
+        addWriteGuards(invocation, controls);
+        const caller = enclosingWriteScope(invocation);
+        if (caller && caller !== program) writingFunctions.add(caller);
+      }
+    }
+  };
+
+  let value: AnyNode = null;
+  let lastDefiniteWrite = object.end;
+  for (const operation of setupOperations.sort((a, b) => a.end - b.end || b.start - a.start)) {
+    if (!mayWrite(operation)) {
+      if (isCall(operation)) collectCallWrites(operation, false);
+      continue;
+    }
+
+    const statement = enclosingExpression(operation).__doctorParent;
+    const target = unwrapExpression(operation.left);
+    if (
+      operation.type === "AssignmentExpression" &&
+      operation.operator === "=" &&
+      statement?.type === "ExpressionStatement" &&
+      statement.__doctorParent === program &&
+      staticMemberName(target) === name &&
+      isObject(target.object)
+    ) {
+      value = operation.right;
+      lastDefiniteWrite = operation.end;
+      possibleWrites.clear();
+      controls.clear();
+    } else {
+      addWrite(operation);
+      if (isCall(operation)) collectCallWrites(operation, false);
+    }
+  }
+  if (lastSetupSuspension >= lastDefiniteWrite)
+    for (const operation of setupOperations)
+      if (isCall(operation) && operation.end <= lastSetupSuspension)
+        collectCallWrites(operation, true);
+  return { value, possibleWrites, controls };
+}
+
+function enclosingWriteScope(operation: AnyNode): AnyNode {
+  let scope = operation.__doctorParent;
+  while (scope && scope.type !== "Program" && !FUNCTION_TYPES.has(scope.type))
+    scope = scope.__doctorParent;
+  return scope;
+}
+
+function addWriteGuards(operation: AnyNode, controls: Set<AnyNode>) {
+  for (
+    let child = operation, parent = child.__doctorParent;
+    parent && !FUNCTION_TYPES.has(parent.type);
+    child = parent, parent = parent.__doctorParent
+  ) {
+    if (
+      ((parent.type === "IfStatement" || parent.type === "ConditionalExpression") &&
+        child !== parent.test) ||
+      ((parent.type === "WhileStatement" ||
+        parent.type === "DoWhileStatement" ||
+        parent.type === "ForStatement") &&
+        child === parent.body &&
+        parent.test)
+    )
+      controls.add(parent.test);
+    else if (parent.type === "LogicalExpression" && child === parent.right)
+      controls.add(parent.left);
+    else if (parent.type === "SwitchStatement" && child !== parent.discriminant)
+      controls.add(parent.discriminant);
+    else if (parent.type === "SwitchCase" && parent.test && child !== parent.test)
+      controls.add(parent.test);
+  }
+}
+
+function addComputedKeys(input: AnyNode, controls: Set<AnyNode>) {
+  let member = unwrapExpression(input);
+  while (member?.type === "MemberExpression") {
+    if (member.computed && staticMemberName(member) === undefined) controls.add(member.property);
+    member = unwrapExpression(member.object);
+  }
+}
+
+function straightLineAwait(operation: AnyNode, fn: AnyNode): boolean {
+  if (operation.type !== "AwaitExpression") return false;
+  let expression = enclosingExpression(operation);
+  const parent = expression.__doctorParent;
+  if (
+    parent?.type === "AssignmentExpression" &&
+    parent.operator === "=" &&
+    parent.right === expression
+  )
+    expression = enclosingExpression(parent);
+  const statement = expression.__doctorParent;
+  return statement?.type === "ExpressionStatement" && statement.__doctorParent === fn.body;
+}
+
+function skipsStaticBranch(node: AnyNode, scope: AnyNode, sources: RequestValueSources): boolean {
+  let child = node;
+  for (
+    let parent = child.__doctorParent;
+    parent && parent !== scope;
+    parent = child.__doctorParent
+  ) {
+    if (parent.type === "ConditionalExpression" || parent.type === "IfStatement") {
+      const condition = staticValue(parent.test, sources.programBinding, 0);
+      if (
+        condition !== UNKNOWN_VALUE &&
+        child === (condition ? parent.alternate : parent.consequent)
+      )
+        return true;
+    }
+    if (
+      parent.type === "LogicalExpression" &&
+      child === parent.right &&
+      logicalRightIsSkipped(parent, sources.programBinding)
+    )
+      return true;
+    child = parent;
+  }
+  return false;
+}
+
+function directParameterCall(fn: AnyNode): { call: AnyNode; index: number } | undefined {
+  let body = fn.body;
+  if (body?.type === "BlockStatement") {
+    if (body.body.length !== 1) return;
+    const statement = body.body[0];
+    if (statement.type !== "ExpressionStatement" && statement.type !== "ReturnStatement") return;
+    body = statement.expression ?? statement.argument;
+  }
+  let call = unwrapExpression(body);
+  if (call?.type === "AwaitExpression") call = unwrapExpression(call.argument);
+  if (call?.type !== "CallExpression") return;
+  const callee = unwrapExpression(call.callee);
+  if (callee?.type !== "Identifier") return;
+  const index = fn.params.findIndex(
+    (parameter: AnyNode) => parameter.type === "Identifier" && parameter.name === callee.name,
+  );
+  if (index >= 0) return { call, index };
+}
+
+function localFunction(
+  expression: AnyNode,
+  programBinding: RequestValueSources["programBinding"],
+): AnyNode {
+  let node = unwrapExpression(expression);
+  const seen = new Set<AnyNode>();
+  while (node?.type === "Identifier") {
+    const binding = programBinding
+      ? resolveBinding(node, programBinding)
+      : resolveLexicalBinding(node);
+    if (!binding || seen.has(binding)) return null;
+    if (binding.type === "FunctionDeclaration" || binding.type === "FunctionExpression")
+      return binding;
+    if (
+      binding.type !== "VariableDeclarator" ||
+      binding.id.type !== "Identifier" ||
+      binding.__doctorParent?.kind !== "const"
+    )
+      return null;
+    seen.add(binding);
+    node = unwrapExpression(binding.init);
+  }
+  return FUNCTION_TYPES.has(node?.type) ? node : null;
+}
+
+function enclosingExpression(node: AnyNode): AnyNode {
+  while (WRAPPERS.has(node.__doctorParent?.type)) node = node.__doctorParent;
+  return node;
+}
+
+function localHoldsRequestValue(node: AnyNode, sources: FlowSources, depth: number) {
   const parent = node.__doctorParent;
   if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed)
     return false;
@@ -111,11 +631,23 @@ function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, dep
         ? (sources.programBinding?.(current, node.name, node) ?? null)
         : nearerBinding(current, child, node.name);
     if (declarator?.type === "VariableDeclarator")
-      return Boolean(declarator.init) && flows(declarator.init, sources, depth + 1);
+      return declarator.init ? traceInitializer(declarator.init, sources, depth + 1) : false;
     if (declarator) return false;
     child = current;
   }
   return false;
+}
+
+function traceInitializer(init: AnyNode, sources: FlowSources, depth: number): boolean {
+  const memo = sources.tracingProjection ? undefined : sources.initializerResults;
+  if (!memo) return flows(init, sources, depth);
+  let results = memo.get(init);
+  if (!results) memo.set(init, (results = new Map()));
+  const previous = results.get(depth);
+  if (previous !== undefined) return previous;
+  const result = flows(init, sources, depth);
+  results.set(depth, result);
+  return result;
 }
 
 /** Whether `node` refers to the program-scope binding `name` rather than a nearer declaration. */
@@ -176,13 +708,13 @@ function staticValue(
     if (left === UNKNOWN_VALUE || shortCircuits(node.operator, left)) return left;
     return staticValue(node.right, programBinding, depth + 1);
   }
-  const binding = provenConstBinding(node, programBinding);
+  const binding = constIdentifierBinding(node, programBinding);
   if (binding && binding.end <= node.start)
     return staticValue(binding.init, programBinding, depth + 1);
   return UNKNOWN_VALUE;
 }
 
-function provenConstBinding(
+function constIdentifierBinding(
   node: AnyNode,
   programBinding?: RequestValueSources["programBinding"],
 ): AnyNode {

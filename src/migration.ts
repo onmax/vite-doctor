@@ -100,6 +100,18 @@ export async function createMigrationReport(
   const retained: string[] = [];
   const migrationScopes = new Map<string, Map<string, "source" | "dependencies">>();
   const packages = projectWorkspacePackages(current);
+  const unshimmedScopes = new Set(
+    packages
+      .filter(({ root }) => {
+        const before = workspaceProjectView(current, root).runtimeGraph;
+        const after = workspaceProjectView(targetProject, root).runtimeGraph;
+        return (
+          (before?.nuxtH3MayBeShimmed && !after?.nuxtH3MayBeShimmed) ||
+          (before?.nuxtH3AutoImports === "legacy" && after?.nuxtH3AutoImports === "native")
+        );
+      })
+      .map(({ root }) => root),
+  );
   const explicitNitroOnly = runtimeTarget.standaloneNitro && !targetSpec.runtime.nuxt;
   if (explicitNitroOnly) {
     const blockedScopes = packages.flatMap(({ root }) => {
@@ -163,11 +175,34 @@ export async function createMigrationReport(
     rules: migrationScopes.size ? [...migrationScopes.keys()].join(",") : "__doctor_no_rules__",
     cache: false,
   });
+  const shimSensitiveRules = [...migrationScopes]
+    .filter(
+      ([id, scopes]) =>
+        (id.startsWith("h3/") || id === "nitro/h3/prefer-nitro-h3") &&
+        [...unshimmedScopes].some((scope) => scopes.get(scope) === "source"),
+    )
+    .map(([id]) => id);
+  const shimSensitive = new Set(shimSensitiveRules);
+  const diagnosticKey = (item: Diagnostic) => JSON.stringify([item.ruleId, item.file, item.range]);
+  const installedDiagnostics = new Set(
+    shimSensitiveRules.length
+      ? (
+          await runViteDoctor({ root, rules: shimSensitiveRules.join(","), cache: false })
+        ).diagnostics.map(diagnosticKey)
+      : [],
+  );
   const sourceDiagnostics: MigrationDiagnostic[] = [];
   const targetDiagnostics: MigrationDiagnostic[] = [];
   for (const item of result.diagnostics) {
     const owner = owningWorkspacePackage(packages, relative(root, item.file));
-    const stage = migrationScopes.get(item.ruleId)?.get(owner);
+    let stage = migrationScopes.get(item.ruleId)?.get(owner);
+    if (
+      stage === "source" &&
+      unshimmedScopes.has(owner) &&
+      shimSensitive.has(item.ruleId) &&
+      !installedDiagnostics.has(diagnosticKey(item))
+    )
+      stage = "dependencies";
     if (stage === "source") sourceDiagnostics.push(migrationDiagnostic(root, item));
     if (stage === "dependencies") targetDiagnostics.push(migrationDiagnostic(root, item));
   }

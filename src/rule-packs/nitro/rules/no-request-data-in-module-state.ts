@@ -8,6 +8,7 @@ import {
   type RequestValueSources,
 } from "../../../core/internal/request-values.js";
 import { scriptNodesOfType } from "../../../core/internal/script-index.js";
+import { h3Name } from "./request-helpers.js";
 import { isNitroRuntimeFile } from "./server-layout.js";
 import {
   type AnyNode,
@@ -18,7 +19,6 @@ import {
 } from "./shared.js";
 
 const RULE_ID = "nitro/state/no-request-data-in-module-state";
-const H3_SOURCES = /^(?:h3|nitro\/h3|nitropack\/runtime(?:\/.*)?|#imports)$/;
 // h3 utilities that read the incoming request. Nitro auto-imports every h3 export.
 const REQUEST_READERS = new Set([
   "getQuery",
@@ -449,24 +449,6 @@ function holdsStoredRequestValue(value: AnyNode) {
       (reference === stored || !isCallArgument(reference)),
   };
   return holdsRequestValue(value, sources);
-}
-
-/** The h3 export `callee` names, through an import or Nitro's auto-import, or null. */
-function h3Name(callee: AnyNode): string | null {
-  if (callee?.type !== "Identifier" || !resolvesToModuleBinding(callee, callee.name)) return null;
-  let program = callee;
-  while (program.__doctorParent) program = program.__doctorParent;
-  for (const statement of program.body ?? []) {
-    if (statement.type !== "ImportDeclaration") continue;
-    for (const specifier of statement.specifiers ?? []) {
-      if (specifier.local?.name !== callee.name) continue;
-      if (statement.importKind === "type" || specifier.importKind === "type") return null;
-      if (specifier.type !== "ImportSpecifier" || !H3_SOURCES.test(String(statement.source.value)))
-        return null;
-      return String(specifier.imported?.name ?? specifier.imported?.value);
-    }
-  }
-  return moduleNames(callee).has(callee.name) ? null : callee.name;
 }
 
 function isHandlerCallback(fn: AnyNode) {

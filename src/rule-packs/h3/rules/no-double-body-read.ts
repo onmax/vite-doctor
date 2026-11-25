@@ -13,6 +13,7 @@ import {
   createRule,
   handlerFor,
   h3ExportName,
+  canUseNativeH3,
   isH3HandlerFile,
   isHandlerEvent,
   report,
@@ -136,9 +137,11 @@ function statementBodyUses(ctx: RuleContext, statement: AnyNode): BodyUse[] {
 }
 
 function bodyUse(ctx: RuleContext, call: AnyNode): BodyUse | undefined {
-  if (handlerFor(ctx, nearestFunction(call))?.bodyless) return undefined;
+  const handler = handlerFor(ctx, nearestFunction(call));
+  if (handler?.bodyless) return undefined;
   const name = h3ExportName(ctx, call.callee);
   if (name && (readUtils.has(name) || proxyUtils.has(name))) {
+    if (!canUseNativeH3(ctx, call.callee)) return undefined;
     const event = eventBinding(ctx, call.arguments?.[0]);
     if (!event) return undefined;
     const proxy = proxyUtils.has(name);
@@ -149,7 +152,12 @@ function bodyUse(ctx: RuleContext, call: AnyNode): BodyUse | undefined {
   const method = memberName(callee);
   if (!method || !requestReads.has(method)) return undefined;
   const request = unwrapExpression(callee.object);
-  if (memberName(request) !== "req" || !isHandlerEvent(ctx, request.object)) return undefined;
+  if (
+    (ctx.project.runtimeGraph?.nuxtH3MayBeShimmed && !handler?.native) ||
+    memberName(request) !== "req" ||
+    !isHandlerEvent(ctx, request.object)
+  )
+    return undefined;
   const event = eventBinding(ctx, request.object);
   const label = `${unwrapExpression(request.object).name}.req.${method}()`;
   return event ? { node: call, event, label, proxy: false } : undefined;

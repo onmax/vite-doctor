@@ -1,10 +1,4 @@
-import {
-  codeForRuleId,
-  createRule as defineH3Rule,
-  diagnosticForCode,
-  type DoctorRule,
-  type RuleContext,
-} from "../../../core/index.js";
+import { codeForRuleId, diagnosticForCode, type RuleContext } from "../../../core/index.js";
 import type { AnyNode } from "../../../core/rule-authoring.js";
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
 import {
@@ -16,16 +10,7 @@ import {
 import { isNitroRouteFile, isNitroServerFile } from "../../../core/internal/server-files.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../diagnostics.js";
 
-export function createRule(rule: DoctorRule): DoctorRule {
-  if (!rule.meta.applicability?.runtimes?.h3) return defineH3Rule(rule);
-  return defineH3Rule({
-    ...rule,
-    create(ctx) {
-      if (ctx.project.runtimeGraph?.nuxtH3MayBeShimmed && !importsOnlyNativeH3(ctx)) return;
-      return rule.create(ctx);
-    },
-  });
-}
+export { createRule } from "../../../core/index.js";
 export {
   nearestFunctionOrProgram,
   sourceForNode,
@@ -70,24 +55,6 @@ const h3SourcePattern = /["'](?:h3|nitro\/h3|h3\/[\w-]+)["']/;
 /** Whether an import source is one of h3's entry points, including Nitro's `nitro/h3`. */
 export function isH3Source(source: unknown): boolean {
   return typeof source === "string" && h3Sources.has(source);
-}
-
-function importsOnlyNativeH3(ctx: RuleContext): boolean {
-  return perFile(ctx, "h3:native-imports", () => {
-    if (!ctx.file.text.includes("nitro/h3")) return false;
-    let native = false;
-    for (const node of fileScriptScope(ctx)?.ast.body ?? []) {
-      if (
-        !["ImportDeclaration", "ExportNamedDeclaration", "ExportAllDeclaration"].includes(node.type)
-      )
-        continue;
-      const source = node.source?.value;
-      if (!isH3Source(source)) continue;
-      if (source !== "nitro/h3") return false;
-      native = true;
-    }
-    return native;
-  });
 }
 
 export interface H3ImportBindings {
@@ -148,18 +115,31 @@ export function h3ExportName(ctx: RuleContext, node: AnyNode): string | null {
   return variable && h3Import(variable) === namespaceImport ? property : null;
 }
 
-export function bindsNativeH3(ctx: RuleContext, node: AnyNode): boolean {
+export function canUseNativeH3Source(ctx: RuleContext, source: unknown): boolean {
+  return !ctx.project.runtimeGraph?.nuxtH3MayBeShimmed || source === "nitro/h3";
+}
+
+export function canUseNativeH3(ctx: RuleContext, node: AnyNode, includeTypes = false): boolean {
+  const graph = ctx.project.runtimeGraph;
+  if (!graph?.nuxtH3MayBeShimmed && graph?.nuxtH3AutoImports !== "legacy") return true;
   const expression = unwrap(node);
   const identifier =
     expression?.type === "MemberExpression" ? unwrap(expression.object) : expression;
   if (identifier?.type !== "Identifier") return false;
+  const variable = resolveVariable(ctx, identifier);
+  if (!variable) return graph.nuxtH3AutoImports === "native";
+  const definition = variable.defs.find(
+    (definition) =>
+      definition.type === "ImportBinding" &&
+      definition.parent.type === "ImportDeclaration" &&
+      (includeTypes ||
+        (definition.parent.importKind !== "type" &&
+          (definition.node.type !== "ImportSpecifier" || definition.node.importKind !== "type"))),
+  );
   return (
-    resolveVariable(ctx, identifier)?.defs.some(
-      (definition) =>
-        definition.type === "ImportBinding" &&
-        definition.parent.type === "ImportDeclaration" &&
-        definition.parent.source.value === "nitro/h3",
-    ) ?? false
+    definition?.type === "ImportBinding" &&
+    definition.parent.type === "ImportDeclaration" &&
+    canUseNativeH3Source(ctx, definition.parent.source.value)
   );
 }
 
@@ -201,40 +181,55 @@ const appChainMethods = new Set([...appRouteMethods, "mount", "register"]);
  * reassigned, a parameter typed `H3`, or a `this.app` class field whose every initializer and
  * assignment in the class is one of these.
  */
-export function isH3AppReceiver(ctx: RuleContext, node: AnyNode, depth = 0): boolean {
+export function isH3AppReceiver(
+  ctx: RuleContext,
+  node: AnyNode,
+  nativeOnly = false,
+  depth = 0,
+): boolean {
   const expression = unwrap(node);
   if (!expression || depth > 16) return false;
   if (expression.type === "NewExpression")
-    return appClasses.has(h3ExportName(ctx, expression.callee) ?? "");
+    return (
+      appClasses.has(h3ExportName(ctx, expression.callee) ?? "") &&
+      (!nativeOnly || canUseNativeH3(ctx, expression.callee))
+    );
   if (expression.type === "CallExpression") {
-    if (appFactories.has(h3ExportName(ctx, expression.callee) ?? "")) return true;
+    if (appFactories.has(h3ExportName(ctx, expression.callee) ?? ""))
+      return !nativeOnly || canUseNativeH3(ctx, expression.callee);
     const callee = unwrap(expression.callee);
     return (
       callee?.type === "MemberExpression" &&
       appChainMethods.has(memberName(callee) ?? "") &&
-      isH3AppReceiver(ctx, callee.object, depth + 1)
+      isH3AppReceiver(ctx, callee.object, nativeOnly, depth + 1)
     );
   }
-  if (expression.type === "MemberExpression") return isH3AppField(ctx, expression, depth);
+  if (expression.type === "MemberExpression")
+    return isH3AppField(ctx, expression, nativeOnly, depth);
   if (expression.type !== "Identifier") return false;
   const variable = resolveVariable(ctx, expression);
   const init = constantInit(variable);
-  if (init) return isH3AppReceiver(ctx, init, depth + 1);
-  return isH3AppParameter(ctx, variable);
+  if (init) return isH3AppReceiver(ctx, init, nativeOnly, depth + 1);
+  return isH3AppParameter(ctx, variable, nativeOnly);
 }
 
-function isH3AppParameter(ctx: RuleContext, variable: ScopeVariable | null): boolean {
+function isH3AppParameter(
+  ctx: RuleContext,
+  variable: ScopeVariable | null,
+  nativeOnly: boolean,
+): boolean {
   const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
   if (definition?.type !== "Parameter") return false;
   if (variable!.references.some((reference) => reference.isWrite())) return false;
-  return isH3AppType(ctx, definition.name.typeAnnotation);
+  return isH3AppType(ctx, definition.name.typeAnnotation, nativeOnly);
 }
 
 /** Whether a type annotation names h3's `H3` or `H3Core` class, imported as a value or a type. */
-function isH3AppType(ctx: RuleContext, annotation: AnyNode): boolean {
+function isH3AppType(ctx: RuleContext, annotation: AnyNode, nativeOnly: boolean): boolean {
   const type = annotation?.type === "TSTypeAnnotation" ? annotation.typeAnnotation : annotation;
   if (type?.type !== "TSTypeReference") return false;
   const name = type.typeName;
+  if (nativeOnly && !canUseNativeH3(ctx, name?.left ?? name, true)) return false;
   if (name?.type === "Identifier") {
     const variable = resolveVariable(ctx, name);
     return appClasses.has(String(variable && h3Import(variable, true)));
@@ -256,7 +251,12 @@ interface ClassFields {
   fields: Map<string, FieldSource[]>;
 }
 
-function isH3AppField(ctx: RuleContext, member: AnyNode, depth: number): boolean {
+function isH3AppField(
+  ctx: RuleContext,
+  member: AnyNode,
+  nativeOnly: boolean,
+  depth: number,
+): boolean {
   if (unwrap(member.object)?.type !== "ThisExpression") return false;
   const name = fieldName(member);
   const at = offset(member);
@@ -267,7 +267,9 @@ function isH3AppField(ctx: RuleContext, member: AnyNode, depth: number): boolean
   const sources = owner?.fields.get(name);
   if (!sources?.length) return false;
   return sources.every((source) =>
-    "init" in source ? isH3AppReceiver(ctx, source.init, depth + 1) : isH3AppType(ctx, source.type),
+    "init" in source
+      ? isH3AppReceiver(ctx, source.init, nativeOnly, depth + 1)
+      : isH3AppType(ctx, source.type, nativeOnly),
   );
 }
 
@@ -338,6 +340,7 @@ export interface H3Handler {
   /** The local name of the handler's event parameter, when it is a plain identifier. */
   event?: string;
   bodyless?: boolean;
+  native: boolean;
 }
 
 const handlerDefiners = new Set([
@@ -358,19 +361,25 @@ export function handlerFunctions(ctx: RuleContext): ReadonlyMap<number, H3Handle
     const handlers = new Map<number, H3Handler>();
     const scope = fileScriptScope(ctx);
     if (!scope) return handlers;
-    const add = (candidate: AnyNode, bodyless = false) => {
+    const add = (
+      candidate: AnyNode,
+      bodyless = false,
+      native = canUseNativeH3Source(ctx, undefined),
+    ) => {
       const fn = handlerFunctionNode(ctx, candidate);
       const start = offset(fn);
       if (start === undefined) return;
       const existing = handlers.get(start);
       if (existing) {
         existing.bodyless &&= bodyless;
+        existing.native &&= native;
         return;
       }
       const param = fn.params?.[0];
       handlers.set(start, {
         node: fn,
         bodyless,
+        native,
         event: param?.type === "Identifier" ? param.name : undefined,
       });
     };
@@ -469,9 +478,9 @@ function parentOf(node: AnyNode): AnyNode {
 }
 
 /** The h3 runtime major version the file's package runs, when Doctor resolved it. */
-export function h3Major(ctx: RuleContext): number | undefined {
+export function h3Major(ctx: RuleContext, binding?: AnyNode): number | undefined {
   const graph = ctx.project.runtimeGraph;
-  if (graph?.nuxtH3MayBeShimmed && !importsOnlyNativeH3(ctx)) return undefined;
+  if (!canUseNativeH3(ctx, binding)) return undefined;
   const major = Number.parseInt(graph?.packages.h3?.version ?? "", 10);
   if (
     graph?.directH3 &&
@@ -485,17 +494,18 @@ export function h3Major(ctx: RuleContext): number | undefined {
 function collectHandlers(
   ctx: RuleContext,
   call: AnyNode,
-  add: (node: AnyNode, bodyless?: boolean) => void,
+  add: (node: AnyNode, bodyless?: boolean, native?: boolean) => void,
 ) {
   const name = h3ExportName(ctx, call.callee);
   if (name && handlerDefiners.has(name)) {
+    const native = canUseNativeH3(ctx, call.callee);
     const input = unwrap(call.arguments?.[0]);
     if (input?.type === "ObjectExpression") {
       for (const property of input.properties ?? []) {
         if (property.type === "Property" && propertyKey(property) === "handler")
-          add(property.value);
+          add(property.value, false, native);
       }
-    } else add(input);
+    } else add(input, false, native);
     return;
   }
   const callee = unwrap(call.callee);
@@ -507,7 +517,11 @@ function collectHandlers(
     return;
   const method = memberName(callee);
   for (const argument of call.arguments ?? []) {
-    add(argument, isFunctionNode(unwrap(argument)) && (method === "get" || method === "head"));
+    add(
+      argument,
+      isFunctionNode(unwrap(argument)) && (method === "get" || method === "head"),
+      canUseNativeH3Source(ctx, undefined) || isH3AppReceiver(ctx, callee.object, true),
+    );
   }
 }
 
@@ -559,7 +573,8 @@ export function autoImportsH3(ctx: RuleContext): boolean {
 }
 
 function resolveIdentifier(ctx: RuleContext, identifier: AnyNode): string | null {
-  const autoImports = autoImportsH3(ctx);
+  const autoImports =
+    ctx.project.runtimeGraph?.nuxtH3AutoImports !== "disabled" && autoImportsH3(ctx);
   if (!autoImports && !h3ImportBindings(ctx).named.has(identifier.name)) return null;
   const references = referencesByOffset(ctx);
   if (!references) return autoImports ? identifier.name : null;

@@ -51,6 +51,44 @@ import {
 import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
 import { selectHtmlPaths } from "./source-inventory.js";
 
+function copyDiagnosticData(data: object, ruleId: string): Record<string, unknown> {
+  const ancestors = new Set<object>();
+  function invalid(): never {
+    throw new TypeError(`Rule "${ruleId}" must report Diagnostic data as a plain JSON object.`);
+  }
+  function copyProperty(object: object, key: string): unknown {
+    const property = Object.getOwnPropertyDescriptor(object, key);
+    if (!property?.enumerable || !("value" in property)) return invalid();
+    return copyValue(property.value);
+  }
+  function copyValue(value: unknown): unknown {
+    if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "object" || value === null || ancestors.has(value)) return invalid();
+    ancestors.add(value);
+    try {
+      if (Array.isArray(value)) {
+        if (Reflect.ownKeys(value).length !== value.length + 1) return invalid();
+        return Array.from({ length: value.length }, (_, index) =>
+          copyProperty(value, String(index)),
+        );
+      }
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) return invalid();
+      return Object.fromEntries(
+        Reflect.ownKeys(value).map((key) => {
+          if (typeof key !== "string") return invalid();
+          return [key, copyProperty(value, key)];
+        }),
+      );
+    } finally {
+      ancestors.delete(value);
+    }
+  }
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return invalid();
+  return copyValue(data) as Record<string, unknown>;
+}
+
 interface RuleRun {
   context: RuleContext;
   frame: RuleInputFrame;
@@ -382,6 +420,18 @@ function selectedAnalyses(session: ScanSession): Set<string> {
   );
 }
 
+const workspaceReportingContexts = new WeakMap<RuleContext, (file?: string) => boolean>();
+
+export function canReportFromWorkspace(context: RuleContext, file?: string): boolean {
+  return workspaceReportingContexts.get(context)?.(file) ?? false;
+}
+
+function projectDiagnosticConfig(session: ScanSession, ruleId: string): ResolvedRuleConfig {
+  return session.overrideOnlyRules.has(ruleId)
+    ? { enabled: false }
+    : topLevelRuleConfig(session, ruleId);
+}
+
 function createRuleRun(
   session: ScanSession,
   file: SourceFileHandle,
@@ -410,10 +460,11 @@ function createRuleRun(
     get options() {
       return currentRuleConfig.options;
     },
-    report(diagnostic, { projectLevel, ...metadata } = {}) {
+    report(diagnostic, { projectLevel, data, ...metadata } = {}) {
       const atProjectRoot = projectLevel && phase === "workspace";
       const input = normalizeDiagnostic({
         ...metadata,
+        ...(data === undefined ? {} : { data: copyDiagnosticData(data, rule.meta.id) }),
         ruleId: metadata.ruleId ?? rule.meta.id,
         severity: metadata.severity ?? currentSeverity,
         category: metadata.category ?? rule.meta.category,
@@ -433,9 +484,8 @@ function createRuleRun(
       }
       // Overrides apply to the file a Diagnostic is located in, which a project-scoped Rule can
       // choose, so its config is resolved per Diagnostic.
-      if (atProjectRoot && session.overrideOnlyRules.has(input.ruleId)) return;
       const diagnosticConfig = atProjectRoot
-        ? topLevelRuleConfig(session, input.ruleId)
+        ? projectDiagnosticConfig(session, input.ruleId)
         : fileRuleConfig(session, input.ruleId, input.file);
       if (diagnosticConfig.enabled === false) return;
       if (input.file !== file.path) frame.log.push(`t:${resolve(session.root, input.file)}`);
@@ -501,6 +551,14 @@ function createRuleRun(
         : undefined;
     },
   };
+  if (phase === "workspace") {
+    workspaceReportingContexts.set(context, (file) => {
+      const config = file
+        ? fileRuleConfig(session, rule.meta.id, file)
+        : projectDiagnosticConfig(session, rule.meta.id);
+      return config.enabled !== false;
+    });
+  }
   return {
     context,
     frame,

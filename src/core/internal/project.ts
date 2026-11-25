@@ -191,6 +191,8 @@ async function detectNuxtInventory(
     graph,
     resolveNuxtCompatibility(appRoot, graph, facts.manifest, facts.configs, facts.manifestCurrent),
     runtimeTarget,
+    appRoot,
+    facts.configs,
   );
   return {
     root: packageRoot,

@@ -57,6 +57,10 @@ describe("MCP tool annotations", () => {
       ),
     });
     expect(found.map((diagnostic) => diagnostic.code).sort()).toEqual(["MCP0001", "MCP0002"]);
+    expect(found.map((diagnostic) => diagnostic.data)).toEqual([
+      { tool: "publish" },
+      { tool: "publish" },
+    ]);
     expect(found.find((diagnostic) => diagnostic.code === "MCP0001")?.message).toContain(
       'top-level title "Publish"',
     );
@@ -620,7 +624,10 @@ describe("MCP tool output", () => {
 describe("MCP Rule Pack", () => {
   test("activates on MCP server libraries and recommends the source Rules and lost-tool client limits", () => {
     expect(mcpRulePack.name).toBe("vite-doctor/mcp");
-    expect(mcpRulePack.activation).toEqual({ packages: expect.any(Array) });
+    expect(mcpRulePack.activation).toEqual({
+      packages: expect.any(Array),
+      runtimeEvidence: expect.any(Function),
+    });
     const { packages } = mcpRulePack.activation || {};
     expect(packages?.toSorted()).toEqual([
       "@modelcontextprotocol/sdk",

@@ -283,7 +283,8 @@ function eslintVueRuntime(templateReferences = false) {
     optionalImport<typeof import("eslint-plugin-vue")>("eslint-plugin-vue"),
     optionalImport<typeof import("vue-eslint-parser")>("vue-eslint-parser"),
     optionalImport<typeof import("@typescript-eslint/parser")>("@typescript-eslint/parser"),
-  ]).then(([{ Linter }, vuePlugin, vueParser, tsParser]) => {
+    templateReferences ? optionalImport<typeof import("typescript")>("typescript") : undefined,
+  ]).then(([{ Linter }, vuePlugin, vueParser, tsParser, typescript]) => {
     const tsParserRuntime = defaultExport(tsParser);
     return {
       linter: new Linter({ configType: "flat" }),
@@ -299,7 +300,9 @@ function eslintVueRuntime(templateReferences = false) {
             jsx: tsParserRuntime,
             ts: tsParserRuntime,
             tsx: tsParserRuntime,
-            "<template>": templateReferences ? tsParserRuntime : "espree",
+            "<template>": typescript
+              ? vueTemplateParser(tsParserRuntime, defaultExport(typescript))
+              : "espree",
           },
           ecmaVersion: "latest",
           sourceType: "module",
@@ -309,6 +312,43 @@ function eslintVueRuntime(templateReferences = false) {
   });
   eslintVueRuntimePromises.set(templateReferences, promise);
   return promise;
+}
+
+function vueTemplateParser(
+  parser: typeof import("@typescript-eslint/parser"),
+  typescript: typeof import("typescript"),
+) {
+  const parseForESLint: typeof parser.parseForESLint = (code, options) => {
+    const result = parser.parseForESLint(code, { ...options, lib: [] });
+    const scope = result.scopeManager.globalScope;
+    if (scope) {
+      scope.through = scope.through.filter((reference) => {
+        if (!reference.isValueReference) return false;
+        let child: import("typescript").Node | undefined;
+        for (
+          let node: import("typescript").Node | undefined =
+            result.services.esTreeNodeToTSNodeMap.get(reference.identifier);
+          node;
+          child = node, node = node.parent
+        ) {
+          if (typescript.isExpressionWithTypeArguments(node) && node.expression === child) {
+            const parent = node.parent;
+            if (
+              !typescript.isHeritageClause(parent) ||
+              (parent.token === typescript.SyntaxKind.ExtendsKeyword &&
+                typescript.isClassLike(parent.parent))
+            ) {
+              continue;
+            }
+          }
+          if (typescript.isTypeNode(node)) return false;
+        }
+        return true;
+      });
+    }
+    return result;
+  };
+  return { meta: parser.meta, parseForESLint };
 }
 
 function reportEslintMessage(

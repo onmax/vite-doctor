@@ -45,7 +45,7 @@ export function h3AppMethod(ctx: RuleContext, node: AnyNode): string | null {
   if (node?.type !== "CallExpression") return null;
   const callee = unwrap(node.callee);
   const method = memberName(callee);
-  return method && isH3AppReceiver(ctx, callee.object) ? method : null;
+  return method && isH3AppReceiver(ctx, callee.object, true) ? method : null;
 }
 
 /**

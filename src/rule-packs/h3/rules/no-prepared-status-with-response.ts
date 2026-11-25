@@ -1,10 +1,11 @@
 import {
   type AnyNode,
+  canUseNativeH3,
   createRule,
   isH3Call,
   isH3HandlerFile,
   isHandlerEvent,
-  isHandlerFunction,
+  handlerFor,
   nearestFunctionOrProgram,
   report,
 } from "./shared.js";
@@ -80,7 +81,8 @@ function preparedFields(ctx: RuleContext, statement: AnyNode): Field[] | null {
     if (!isHandlerEvent(ctx, res.object)) return null;
     return field === "status" && isDefaultStatus(expression.right) ? [] : [field];
   }
-  if (!isH3Call(ctx, expression, ["setResponseStatus"])) return null;
+  if (!isH3Call(ctx, expression, ["setResponseStatus"]) || !canUseNativeH3(ctx, expression.callee))
+    return null;
   const [event, code, text] = expression.arguments;
   if (!isHandlerEvent(ctx, event)) return null;
   const fields: Field[] = [];
@@ -162,7 +164,7 @@ export const noPreparedStatusWithResponse = createRule({
         if (init === undefined) return;
         const block = parentOf(node);
         if (block?.type !== "BlockStatement") return;
-        if (!isHandlerFunction(ctx, nearestFunctionOrProgram(node))) return;
+        if (!handlerFor(ctx, nearestFunctionOrProgram(node))?.native) return;
         const statements: AnyNode[] = block.body;
         for (let index = statements.indexOf(node) - 1; index >= 0; index--) {
           const statement = statements[index];

@@ -1,6 +1,6 @@
 import { createRule } from "../../../core/index.js";
 import { propertyKey, unwrap } from "./_migration-helpers.js";
-import { type AnyNode, bindsNativeH3, h3ExportName, isH3HandlerFile, report } from "./shared.js";
+import { type AnyNode, canUseNativeH3, h3ExportName, isH3HandlerFile, report } from "./shared.js";
 
 const ruleId = "h3/migration/no-ignored-hooks";
 
@@ -53,8 +53,6 @@ export const noIgnoredHooks = createRule({
   },
   create(ctx) {
     if (!isH3HandlerFile(ctx)) return;
-    const canInspect = (callee: AnyNode) =>
-      !ctx.project.runtimeGraph?.nuxtH3MayBeShimmed || bindsNativeH3(ctx, callee);
     const check = (options: AnyNode, hooks: Record<string, [string, string]>) => {
       const object = unwrap(options);
       if (object?.type !== "ObjectExpression") return;
@@ -66,14 +64,17 @@ export const noIgnoredHooks = createRule({
     };
     return {
       CallExpression(node: AnyNode) {
-        if (!canInspect(node.callee)) return;
+        if (!canUseNativeH3(ctx, node.callee)) return;
         const name = h3ExportName(ctx, node.callee);
         if (!name) return;
         if (handlerDefiners.has(name)) check(node.arguments?.[0], handlerHooks);
         else if (appFactories.has(name)) check(node.arguments?.[0], appHooks);
       },
       NewExpression(node: AnyNode) {
-        if (canInspect(node.callee) && appClasses.has(h3ExportName(ctx, node.callee) ?? ""))
+        if (
+          canUseNativeH3(ctx, node.callee) &&
+          appClasses.has(h3ExportName(ctx, node.callee) ?? "")
+        )
           check(node.arguments?.[0], appHooks);
       },
     };

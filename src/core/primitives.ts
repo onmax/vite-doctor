@@ -105,6 +105,12 @@ export interface Diagnostic {
   suppressionReason?: string;
   confidence?: Confidence;
   evidence?: DiagnosticEvidence[];
+  /**
+   * Plain JSON the Rule attaches for agents, such as the MCP tool and the client findings behind
+   * the message. The Rule owns its shape and its Diagnostic Code docs describe it. Reports emit it
+   * as is, and the cache stores it as JSON. `ctx.report` validates and copies the payload.
+   */
+  data?: Record<string, unknown>;
   fixGroupId?: string;
   analysisPhase?: ExecutionKind;
   cacheHit?: boolean;
@@ -323,6 +329,9 @@ export interface NuxtProjectInfo {
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+    resolvedRouteRules?: Record<string, unknown>;
+    routeRulePagesCurrent?: boolean;
+    nitroPreset?: string;
     pages?: NuxtDoctorManifest["pages"];
     /** Route middleware Nuxt resolved, with absolute paths. Absent in manifests that predate it. */
     middleware?: NuxtResolvedMiddleware[];
@@ -481,6 +490,11 @@ export interface NuxtDoctorManifest {
   granularCachedData?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
+  /** Nitro's resolved `routeRules`; unset when the manifest was written before Nitro started. */
+  resolvedRouteRules?: Record<string, unknown>;
+  routeRulePageMtimes?: Record<string, number | null>;
+  routeRulePageInventory?: Record<string, string[]>;
+  nitroPreset?: string;
   ssr?: boolean;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
@@ -540,6 +554,8 @@ export interface ProjectInfo {
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
   evidenceGaps?: Array<{ source: string; message: string; files: string[]; instanceKey?: string }>;
+  /** Runtime Evidence the run read, such as each MCP server's `tools/list`, so a clean report shows what it covered. */
+  evidenceUsed?: Array<{ source: string; message: string }>;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
 }
@@ -652,6 +668,7 @@ export interface RuntimeGraph {
   packages: Partial<Record<RuntimePackageName, RuntimePackageInstance>>;
   directH3?: RuntimePackageInstance;
   nuxtH3MayBeShimmed?: true;
+  nuxtH3AutoImports?: "disabled" | "legacy" | "native";
   nuxtServerBuilder?: "vite";
   edges: RuntimeGraphEdge[];
 }
@@ -1068,10 +1085,12 @@ export type DoctorDiagnosticInput = Omit<
 
 export type DoctorDiagnosticMetadata = Omit<
   Diagnostic,
-  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range"
+  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range" | "data"
 > & {
   file?: string;
   range?: SourceRange;
+  /** Plain JSON; `ctx.report` rejects anything else at runtime. Interfaces need no index signature. */
+  data?: object;
 };
 
 export interface SourceFileHandle {
@@ -1332,6 +1351,12 @@ export interface RulePack {
          */
         runtimes?: RuntimePackageName[];
         nuxt?: string;
+        /**
+         * Activates the Rule Pack for every workspace package when this returns true for the
+         * Doctor Run's Runtime Evidence, whatever the other conditions say. The MCP Rule Pack uses
+         * it so a configured MCP server is checked in a project without an MCP package.
+         */
+        runtimeEvidence?: (runtimeEvidence: Record<string, unknown>) => boolean;
       };
 }
 

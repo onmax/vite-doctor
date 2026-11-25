@@ -1,5 +1,7 @@
 import { removedH3Types, removedH3Values } from "./_h3-v1-exports.js";
 import {
+  canUseNativeH3,
+  canUseNativeH3Source,
   type AnyNode,
   createRule,
   h3ExportName,
@@ -52,7 +54,7 @@ export const noRemovedExports = createRule({
     const isRemoved = (name: unknown): name is string =>
       typeof name === "string" && (removedH3Values.has(name) || removedH3Types.has(name));
     const checkSpecifiers = (node: AnyNode, nameOf: (specifier: AnyNode) => unknown) => {
-      if (!isH3Source(node.source?.value)) return;
+      if (!isH3Source(node.source?.value) || !canUseNativeH3Source(ctx, node.source.value)) return;
       for (const specifier of node.specifiers ?? []) {
         const name = nameOf(specifier);
         if (isRemoved(name)) reportRemoved(specifier, name);
@@ -60,7 +62,7 @@ export const noRemovedExports = createRule({
     };
     return {
       MemberExpression(node: AnyNode) {
-        if (h3ImportBindings(ctx).namespaces.size === 0) return;
+        if (h3ImportBindings(ctx).namespaces.size === 0 || !canUseNativeH3(ctx, node)) return;
         const name = h3ExportName(ctx, node);
         if (name && removedH3Values.has(name)) reportRemoved(node, name);
       },

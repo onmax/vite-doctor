@@ -1,4 +1,6 @@
 import {
+  canUseNativeH3,
+  canUseNativeH3Source,
   type AnyNode,
   createRule,
   h3ExportName,
@@ -40,10 +42,15 @@ export const preferH3WithBase = createRule({
       );
     return {
       MemberExpression(node: AnyNode) {
-        if (h3ExportName(ctx, node) === "useBase") reportUse(node);
+        if (canUseNativeH3(ctx, node) && h3ExportName(ctx, node) === "useBase") reportUse(node);
       },
       ImportDeclaration(node: AnyNode) {
-        if (node.importKind === "type" || !isH3Source(node.source?.value)) return;
+        if (
+          node.importKind === "type" ||
+          !isH3Source(node.source?.value) ||
+          !canUseNativeH3Source(ctx, node.source.value)
+        )
+          return;
         for (const specifier of node.specifiers ?? []) {
           if (specifier.importKind !== "type" && specifier.imported?.name === "useBase")
             reportUse(specifier);

@@ -304,7 +304,51 @@ export function applyRuntimeTarget(
   graph: RuntimeGraph,
   compatibility: NuxtCompatibilityInfo | undefined,
   target: RuntimeTarget | undefined,
+  nuxtRoot?: string,
+  configs: NuxtConfigCache = new Map(),
 ): { graph: RuntimeGraph; compatibility: NuxtCompatibilityInfo | undefined } {
+  const installedManifest = graph.packages.nuxt?.packageJsonPath;
+  const targetsShimCapableBuilder =
+    target?.nuxt &&
+    graph.packages.h3?.owner === "nitro" &&
+    installedManifest &&
+    packageDeclaration(readPackageManifest(installedManifest), nuxtNitroV3Builder) !== undefined;
+  if (nuxtRoot && (graph.nuxtH3MayBeShimmed || targetsShimCapableBuilder)) {
+    const config = readNuxtConfig(nuxtRoot, configs);
+    const legacy = config
+      ? readExportedNuxtOption(config.file, config.text, "nitroLegacy")
+      : undefined;
+    const inheritsConfig =
+      legacy === undefined &&
+      ((config && readExportedNuxtOption(config.file, config.text, "extends") !== undefined) ||
+        autoRegisteredNuxtLayers(nuxtRoot).length > 0);
+    const compatibilityVersion = target?.nuxtCompatibility ?? compatibility?.version;
+    const legacyEnabled =
+      legacy === undefined
+        ? inheritsConfig || compatibilityVersion !== 5
+        : legacy?.type !== "Literal" || legacy.value !== false;
+    const legacyOption = (key: string) => {
+      if (legacy?.type !== "ObjectExpression" || !config) return legacyEnabled;
+      const option = readExportedNuxtOption(config.file, config.text, "nitroLegacy", key);
+      return option?.type !== "Literal" || option.value !== false;
+    };
+    const autoImports = config
+      ? readExportedNuxtOption(config.file, config.text, "experimental", "nitroAutoImports")
+      : undefined;
+    const autoImportsOff =
+      autoImports?.type === "Literal"
+        ? autoImports.value === false
+        : compatibilityVersion === 5 && autoImports === undefined && !inheritsConfig;
+    graph = {
+      ...graph,
+      nuxtH3MayBeShimmed: legacyOption("h3") ? true : undefined,
+      nuxtH3AutoImports: autoImportsOff
+        ? "disabled"
+        : legacyOption("imports") || (autoImports !== undefined && autoImports?.type !== "Literal")
+          ? "legacy"
+          : "native",
+    };
+  }
   if (!target) return { graph, compatibility };
   const packages = { ...graph.packages };
   let directH3 = graph.directH3;

@@ -133,7 +133,10 @@ export interface ResolvedRuleOverride {
   selects: ReadonlySet<string>;
 }
 
-export async function createScanSession(options: DoctorRunOptions): Promise<ScanSession> {
+export async function createScanSession(
+  options: DoctorRunOptions,
+  fullRunWhen?: (project: ProjectInfo) => boolean,
+): Promise<ScanSession> {
   const root = resolve(options.root ?? options.project?.root ?? process.cwd());
   const timings: Record<string, number> = {};
   const phases: Record<string, number> = {};
@@ -153,6 +156,10 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
+  if (options.affectedFiles && fullRunWhen?.(project)) {
+    options = { ...options, affectedFiles: undefined };
+    sessionBase.options = options;
+  }
   const registeredRules = new Map(registry.rules.map((rule) => [rule.meta.id, rule]));
   const ruleConfigs = resolveRuleConfigs(registeredRules, config.rules);
   const activations = resolveRulePackActivations(registry.packs, project);

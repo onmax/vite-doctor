@@ -1,5 +1,6 @@
 import { parentOf, unwrapExpression } from "./_errors-helpers.js";
 import {
+  canUseNativeH3,
   type AnyNode,
   createRule,
   h3ExportName,
@@ -55,6 +56,7 @@ export const noDiscardedResponse = createRule({
     if (!isH3HandlerFile(ctx)) return;
     return {
       CallExpression(node: AnyNode) {
+        if (!canUseNativeH3(ctx, node.callee)) return;
         if (!isH3Call(ctx, node, builders)) return;
         if (!isHandlerFunction(ctx, nearestFunctionOrProgram(node))) return;
         const name = h3ExportName(ctx, node.callee);

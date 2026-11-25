@@ -1,5 +1,5 @@
 import { nearestFunction, parentOf, propertyKey, unwrapExpression } from "./_errors-helpers.js";
-import { type AnyNode, createRule, isH3HandlerFile, isHandlerFunction, report } from "./shared.js";
+import { type AnyNode, createRule, handlerFor, isH3HandlerFile, report } from "./shared.js";
 
 const ruleId = "h3/errors/no-throw-plain-object";
 const statusKeys = new Set(["status", "statusCode"]);
@@ -36,7 +36,7 @@ export const noThrowPlainObject = createRule({
         );
         if (!status) return;
         const handler = nearestFunction(node);
-        if (!handler || !isHandlerFunction(ctx, handler)) return;
+        if (!handler || !handlerFor(ctx, handler)?.native) return;
         if (caughtBefore(node, handler)) return;
         const value = unwrapExpression(status.value);
         const code =

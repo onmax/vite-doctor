@@ -1534,6 +1534,8 @@ test.each([false, true])(
 
 test.each([
   { scenario: "app opt-in", modern: true },
+  { scenario: "explicit legacy shim", modern: true, config: "{ nitroLegacy: true }" },
+  { scenario: "selective legacy shim", modern: true, config: "{ nitroLegacy: { h3: true } }" },
   { scenario: "workspace opt-in", workspace: true, modern: true },
   { scenario: "missing builder", missing: true },
   { scenario: "app nitropack", workspace: true, appLegacy: true },
@@ -1552,6 +1554,8 @@ test.each([
     const native = `${appRoot}server/api/native.ts`;
     const shimmed = `${appRoot}server/api/shimmed.ts`;
     const auto = `${appRoot}server/api/auto.ts`;
+    const cors = `${appRoot}server/api/cors.ts`;
+    const redirect = `${appRoot}server/api/native-redirect.ts`;
     const hook = `export default defineEventHandler({ handler: () => "ok", onBeforeResponse: () => {} })`;
     await withFixture(
       {
@@ -1584,6 +1588,14 @@ export const legacy = legacyHandler({ handler: () => "ok", onBeforeResponse: () 
 ${hook}`,
         [shimmed]: `import { defineEventHandler } from "h3"\n${hook}`,
         [auto]: hook,
+        [cors]: `import type { H3Event } from "nitro/h3"
+export default defineEventHandler((event: H3Event) => {
+  if (handleCors(event, {})) return
+  return "ok"
+})`,
+        [redirect]: `import type { H3Event } from "h3"
+import { redirect } from "nitro/h3"
+export default defineEventHandler((_event: H3Event) => { redirect("/new") })`,
         "node_modules/nuxt/package.json": JSON.stringify({
           name: "nuxt",
           version: "4.7.0",
@@ -1629,6 +1641,11 @@ ${hook}`,
         expect(result.code, JSON.stringify(report.target)).toBe(usesModern ? 1 : 3);
         const scan = await runCli([".", "--no-cache", "--format", "json"], root);
         const diagnostics = JSON.parse(scan.output).diagnostics;
+        expect(diagnostics.filter((item: { code: string }) => item.code === "H30011")).toEqual(
+          usesModern
+            ? [expect.objectContaining({ location: expect.objectContaining({ path: redirect }) })]
+            : [],
+        );
         expect(diagnostics.filter((item: { code: string }) => item.code === "H30018")).toEqual(
           usesModern
             ? [expect.objectContaining({ location: expect.objectContaining({ path: native }) })]
@@ -1646,6 +1663,15 @@ ${hook}`,
             report.stages[0].diagnostics.filter((item: { code: string }) => item.code === "H30018"),
           ).toEqual([expect.objectContaining({ file: native })]);
           expect(report.stages[1].changes).toEqual([]);
+          const migration = await runCli(
+            ["migrate", ".", "--to", "nuxt@5", "--format", "json"],
+            root,
+          );
+          const [source, dependencies] = JSON.parse(migration.output).stages;
+          const hooks = (stage: { diagnostics: { code: string; file: string }[] }) =>
+            stage.diagnostics.filter((item) => item.code === "H30018").map((item) => item.file);
+          expect(hooks(source)).toEqual([native]);
+          expect(new Set(hooks(dependencies))).toEqual(new Set(config ? [] : [native, shimmed]));
           expect(report.stages[2].checks).not.toContainEqual(
             expect.objectContaining({ id: "install-target" }),
           );

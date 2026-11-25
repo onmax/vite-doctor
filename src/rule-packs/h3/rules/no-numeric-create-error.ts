@@ -32,7 +32,7 @@ export const noNumericCreateError = createRule({
     const check = (node: AnyNode, callee: string) => {
       const status = staticValue(ctx, node.arguments?.[0]);
       if (typeof status !== "number") return;
-      const major = h3Major(ctx);
+      const major = h3Major(ctx, node.callee);
       const fix =
         major === 1
           ? `Use createError({ statusCode: ${status} }).`

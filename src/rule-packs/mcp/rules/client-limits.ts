@@ -1,4 +1,4 @@
-import { relative } from "pathe";
+import { relative, resolve } from "pathe";
 import type {
   Confidence,
   DiagnosticEvidence,
@@ -8,25 +8,15 @@ import type {
   SourceRange,
 } from "../../../core/index.js";
 import type { DoctorDiagnosticHandle } from "../../../core/diagnostics.js";
+import { canReportFromWorkspace } from "../../../core/internal/rule-execution.js";
+import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
 import { sha256 } from "../../../core/internal/utils.js";
-import { checkMcpToolList } from "../../../mcp/check.js";
 import { mcpEndpointId, mcpEndpointLabel } from "../../../mcp/endpoint.js";
-import { readMcpServers, type McpServerToolsEvidence } from "../../../mcp/evidence.js";
-import type { McpClient, McpEffect, McpFinding } from "../../../mcp/types.js";
-import { collectMcpTools, type McpToolDefinition } from "./shared.js";
+import type { McpServerToolsEvidence } from "../../../mcp/evidence.js";
+import type { McpEffect, McpFinding } from "../../../mcp/types.js";
+import { collectMcpTools, MCP_PACKAGES, type McpToolDefinition } from "./shared.js";
 import { nameProblems } from "./valid-name.js";
-
-export const MCP_CLIENT_LABELS: Record<McpClient, string> = {
-  "claude-code": "Claude Code",
-  claude: "Claude",
-  "claude-directory": "Anthropic's Connectors Directory",
-  chatgpt: "ChatGPT",
-  codex: "Codex",
-  cursor: "Cursor",
-  vscode: "VS Code",
-  "gemini-cli": "Gemini CLI",
-  "copilot-studio": "Copilot Studio",
-};
+import { MCP_CLIENT_LABELS, markChecked, serverFindings, staticTool } from "./wire.js";
 
 export interface ClientLimitOptions {
   ruleId: string;
@@ -34,28 +24,6 @@ export interface ClientLimitOptions {
   effect: McpEffect;
   /** Completes "Tool `x` of MCP server "y" …" and "MCP server "y" …", such as "is left out". */
   outcome: string;
-}
-
-interface ServerFindings {
-  server: McpServerToolsEvidence;
-  findings: McpFinding[];
-}
-
-const checked = new WeakMap<object, ServerFindings[]>();
-
-/** Every MCP server's findings, checked once per Doctor Run and shared by the client-limit Rules. */
-function serverFindings(ctx: RuleContext): ServerFindings[] {
-  let found = checked.get(ctx.project);
-  if (!found) {
-    found = readMcpServers(ctx.project.runtimeEvidence)
-      .filter((server): server is McpServerToolsEvidence => "tools" in server)
-      .map((server) => ({
-        server,
-        findings: checkMcpToolList(server, { serverName: server.clientAlias }),
-      }));
-    checked.set(ctx.project, found);
-  }
-  return found;
 }
 
 const SEVERITY_RANK: Record<McpFinding["severity"], number> = { info: 0, warn: 1, error: 2 };
@@ -68,19 +36,24 @@ const SEVERITY_RANK: Record<McpFinding["severity"], number> = { info: 0, warn: 1
 export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOptions): RuleVisitor {
   return {
     async onWorkspaceEnd() {
-      const groups = serverFindings(ctx).flatMap(({ server, findings }) =>
+      const checked = serverFindings(ctx);
+      if (canReportFromWorkspace(ctx)) checked.projectWide = checked.clientLimits = true;
+      const groups = checked.servers.flatMap(({ server, findings }) =>
         groupByTool(
           server,
           findings.filter((finding) => finding.effect === options.effect),
         ),
       );
-      if (!groups.length) return;
-      const tools = await collectMcpTools(ctx);
+      if (!groups.length && (checked.projectWide || !checked.servers.length)) return;
+      const tools = mcpPackageTools(ctx, await collectMcpTools(ctx));
+      markChecked(ctx, tools);
       for (const group of groups) {
         const definition = group.tool === undefined ? undefined : staticTool(tools, group.tool);
-        const findings = definition?.name
-          ? group.findings.filter((finding) => !repeatsValidName(finding, definition.name!.value))
-          : group.findings;
+        const name = definition?.name?.value;
+        const findings =
+          name === undefined
+            ? group.findings
+            : group.findings.filter((finding) => !repeatsValidName(finding, name));
         if (findings.length) report(ctx, options, group.server, group.tool, findings, definition);
       }
     },
@@ -94,10 +67,23 @@ function groupByTool(server: McpServerToolsEvidence, findings: McpFinding[]) {
   return [...byTool].map(([tool, grouped]) => ({ server, tool, findings: grouped }));
 }
 
-/** The tool's definition in source, when exactly one has the name the server sends. */
-function staticTool(tools: McpToolDefinition[], name: string): McpToolDefinition | undefined {
-  const matches = tools.filter((tool) => tool.name?.value === name);
-  return matches.length === 1 ? matches[0] : undefined;
+/**
+ * Definitions in workspace packages that depend on an MCP package. These Rules run across the
+ * workspace, and a tool of the same name in another package is not the one the server sends.
+ * Without such a package, nothing ties the server to this project's source.
+ */
+function mcpPackageTools(ctx: RuleContext, tools: McpToolDefinition[]): McpToolDefinition[] {
+  const packages = projectWorkspacePackages(ctx.project).map((item) => ({
+    root: resolve(ctx.project.root, item.root),
+    mcp: MCP_PACKAGES.some((name) => name in item.packages),
+  }));
+  if (!packages.some((item) => item.mcp)) return [];
+  return tools.filter((tool) => {
+    const owner = packages
+      .filter((item) => tool.file.startsWith(`${item.root}/`))
+      .sort((left, right) => right.root.length - left.root.length)[0];
+    return owner?.mcp ?? false;
+  });
 }
 
 // MCP0003 already asks to rename a tool whose name breaks MCP's rules; a client renaming that
@@ -118,6 +104,7 @@ function report(
 ): void {
   const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
   const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
+  const name = server.name ?? server.initialize?.serverInfo?.name;
   const locations = new Set(
     findings.flatMap(({ rule, pointer, affectedPointers }) =>
       (affectedPointers ?? [pointer ?? null]).map((location) => JSON.stringify([rule, location])),
@@ -126,15 +113,9 @@ function report(
   const anchor =
     endpointId ?? (definition?.name?.range ? relative(ctx.project.root, definition.file) : null);
   const fingerprint = sha256(
-    JSON.stringify([
-      options.ruleId,
-      server.name ?? null,
-      anchor,
-      tool ?? null,
-      [...locations].sort(),
-    ]),
+    JSON.stringify([options.ruleId, name ?? null, anchor, tool ?? null, [...locations].sort()]),
   );
-  const label = server.name ?? endpoint ?? "an MCP server";
+  const label = name ?? endpoint ?? "an MCP server";
   const subject =
     tool === undefined
       ? `MCP server ${JSON.stringify(label)}`
@@ -186,6 +167,14 @@ function report(
       instanceKey: endpointId ? fingerprint : undefined,
       confidence,
       evidence,
+      data: {
+        server: {
+          ...(name === undefined ? {} : { name }),
+          ...(endpoint === undefined ? {} : { url: endpoint }),
+        },
+        ...(tool === undefined ? {} : { tool }),
+        findings,
+      },
     },
   );
 }

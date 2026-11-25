@@ -1,4 +1,5 @@
 import {
+  canUseNativeH3,
   type AnyNode,
   createRule,
   isH3Call,
@@ -45,6 +46,7 @@ export const noHtmlPlainString = createRule({
     if (!isH3HandlerFile(ctx)) return;
     return {
       CallExpression(node: AnyNode) {
+        if (!canUseNativeH3(ctx, node.callee)) return;
         if (!isH3Call(ctx, node, ["html"]) || node.arguments.length !== 1) return;
         if (!hasMarkup(node.arguments[0])) return;
         const markup = sourceForNode(node.arguments[0], ctx.file.text);

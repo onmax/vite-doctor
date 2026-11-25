@@ -1,6 +1,7 @@
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { collectMcpTools } from "./shared.js";
+import { reportWireTool, wireToolLabel, wireTools } from "./wire.js";
 
 const NAME_CHARACTERS = /^[A-Za-z0-9_.-]+$/;
 const MAX_NAME_LENGTH = 64;
@@ -42,13 +43,31 @@ export const validName = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast"],
+    consumesEvidence: ["ast", "runtime"],
     cost: "medium",
   },
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        for (const tool of await collectMcpTools(ctx)) {
+        const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
+        for (const wire of sent) {
+          const problems = nameProblems(wire.tool.name);
+          if (!problems.length) continue;
+          reportWireTool(
+            ctx,
+            wire,
+            diagnostics.MCP0003({
+              why: `MCP tool ${wireToolLabel(wire)} has a name that ${problems.join(" and ")} in its tools/list entry. Anthropic's Connectors Directory rejects names over 64 characters, and MCP allows only letters, digits, \`_\`, \`-\`, and \`.\`.`,
+              fix: "Rename the tool to at most 64 letters, digits, `_`, `-`, or `.`.",
+            }),
+            {
+              ruleId: "mcp/tools/valid-name",
+              range: (tool) => tool.name?.range ?? tool.callee,
+              findings: wire.findings.filter((finding) => finding.pointer === "/name"),
+            },
+          );
+        }
+        for (const tool of sourceOnly) {
           const name = tool.name;
           if (!name) continue;
           const problems = nameProblems(name.value);
@@ -71,6 +90,7 @@ export const validName = createRule({
               file: tool.file,
               range: name.range,
               confidence: name.source === "file" ? "heuristic-medium" : "heuristic-high",
+              data: { tool: name.value },
               evidence: [
                 {
                   kind: "ast",

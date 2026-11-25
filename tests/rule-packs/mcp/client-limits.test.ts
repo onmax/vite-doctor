@@ -2,13 +2,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "pathe";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import type { Diagnostic, DoctorRunOptions } from "../../../src/core/index.ts";
+import { createReport, type Diagnostic, type DoctorRunOptions } from "../../../src/core/index.ts";
 import { writeBaseline } from "../../../src/core/internal/diagnostic-policy.ts";
 import { runViteDoctor } from "../../../src/doctor.ts";
 import { mcpClientRules } from "../../../src/mcp/index.ts";
 import type { McpServerEvidence } from "../../../src/mcp/evidence.ts";
 import type { McpTool } from "../../../src/mcp/types.ts";
-import { MCP_CLIENT_LABELS } from "../../../src/rule-packs/mcp/rules/client-limits.ts";
+import { MCP_CLIENT_LABELS } from "../../../src/rule-packs/mcp/rules/wire.ts";
 import { startMcpStub } from "../../mcp/mcp-stub.ts";
 
 const cleanups: Array<() => unknown> = [];
@@ -183,6 +183,14 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
 
   const stripped = byCode(diagnostics, "MCP0008", "search")!;
   expect(stripped.why).toContain("in Codex and VS Code.");
+  expect(stripped.data).toMatchObject({
+    server: { name: "hub" },
+    tool: "search",
+    findings: expect.arrayContaining([
+      expect.objectContaining({ client: "codex", tool: "search" }),
+      expect.objectContaining({ client: "vscode", tool: "search" }),
+    ]),
+  });
 
   const remote = byCode(diagnostics, "MCP0005", "lookup")!;
   expect(remote.file).toBe(root);
@@ -197,6 +205,94 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
     ]),
   });
   expect(byCode(again.diagnostics, "MCP0005", "lookup")!.fingerprint).toBe(remote.fingerprint);
+});
+
+test("structured reports retain pointers omitted from the client-limit message", async () => {
+  const names = ["first", "second", "third", "fourth", "fifth", "sixth"];
+  const tool: McpTool = {
+    ...search,
+    inputSchema: {
+      type: "object",
+      properties: Object.fromEntries(
+        names.map((name) => [name, { type: "integer", exclusiveMinimum: 0 }]),
+      ),
+    },
+  };
+  const { diagnostics, result } = await run(project(), {
+    extensions: contributing([{ name: "hub", tools: [tool] }]),
+  });
+  const stripped = byCode(diagnostics, "MCP0008", tool.name)!;
+  expect(stripped.why).toContain("and 1 more");
+  expect(stripped.why).not.toContain("/inputSchema/properties/sixth");
+  const expected = {
+    server: { name: "hub" },
+    tool: tool.name,
+    findings: expect.arrayContaining([
+      expect.objectContaining({
+        rule: "codex/dropped-constraints",
+        affectedPointers: names.map((name) => `/inputSchema/properties/${name}/exclusiveMinimum`),
+      }),
+    ]),
+  };
+  for (const format of ["json", "agent"] as const) {
+    const report = JSON.parse(createReport(result, format)) as {
+      diagnostics: Array<{ fingerprint: string; data?: unknown }>;
+    };
+    const data = report.diagnostics.find((item) => item.fingerprint === stripped.fingerprint)?.data;
+    expect(data).toMatchObject(expected);
+    expect(data).toEqual(stripped.data);
+  }
+  const sarif = JSON.parse(createReport(result, "sarif")) as {
+    runs: Array<{
+      results: Array<{
+        partialFingerprints: Record<string, string>;
+        properties: { data?: unknown };
+      }>;
+    }>;
+  };
+  const data = sarif.runs[0]!.results.find(
+    (item) => item.partialFingerprints["vite-doctor/v1"] === stripped.fingerprint,
+  )?.properties.data;
+  expect(data).toMatchObject(expected);
+  expect(data).toEqual(stripped.data);
+});
+
+test("in a monorepo with two MCP packages, a tool with no source in them is reported at the root", async () => {
+  const mcpPackage = (name: string) =>
+    JSON.stringify({ name, dependencies: { "nitro-mcp-toolkit": "^0.4.0" } });
+  const root = project({
+    "package.json": JSON.stringify({ name: "workspace", private: true }),
+    "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+    "packages/a/package.json": mcpPackage("a"),
+    "packages/b/package.json": mcpPackage("b"),
+    "packages/c/package.json": JSON.stringify({ name: "c" }),
+    "packages/c/server/mcp/tools/search.ts": searchSource,
+  });
+  const { diagnostics } = await run(root, {
+    extends: ["auto"],
+    extensions: contributing([
+      { name: "hub", initialize: { instructions: "Drops." }, tools: [search, lookup] },
+    ]),
+  });
+
+  expect(summary(root, diagnostics)).toEqual(["MCP0005 error .", "MCP0005 error ."]);
+});
+
+test("without a package that depends on an MCP library, every tool is reported at the root", async () => {
+  const root = project({
+    "package.json": JSON.stringify({ type: "module" }),
+    "server/mcp/tools/search.ts": searchSource,
+  });
+  const { diagnostics } = await run(root, {
+    extensions: contributing([{ name: "remote", tools: [search, lookup] }]),
+  });
+
+  expect(summary(root, diagnostics)).toEqual([
+    "MCP0005 error .",
+    "MCP0005 error .",
+    "MCP0007 warn .",
+    "MCP0008 warn .",
+  ]);
 });
 
 test("tools read from a running server through the mcp option are checked", async () => {
@@ -339,15 +435,86 @@ test("without MCP evidence the client-limit Rules report nothing and leave no ga
   const { result, diagnostics } = await run(root);
 
   expect(diagnostics).toEqual([]);
-  expect(result.project.evidenceGaps ?? []).toEqual([]);
+  expect(result.project.evidenceGaps).toBeUndefined();
 });
 
-test("a server Doctor could not read is skipped", async () => {
+test("a server a Doctor Extension could not read leaves one evidence gap that hides its URL", async () => {
+  const url = "http://user:pass@127.0.0.1:1/mcp?token=secret";
+  const failed = { url, endpointId: url, error: `fetch ${url} failed`, status: 503, tools: [] };
   const root = project();
-  const { diagnostics } = await run(root, {
-    extensions: contributing([{ url: "http://127.0.0.1:1/mcp", error: "connection refused" }]),
+  const { result, diagnostics } = await run(root, {
+    extensions: [
+      ...contributing([failed])!,
+      {
+        name: "fixture/other",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({
+            name: "other",
+            contribute: () => ({ mcpServers: [failed] }),
+          });
+        },
+      },
+    ],
   });
   expect(diagnostics).toEqual([]);
+  expect(result.project.evidenceGaps).toEqual([
+    expect.objectContaining({
+      source: "mcp",
+      message:
+        'The "vitehub" Runtime Evidence contributor could not read the tools of the MCP server at http://127.0.0.1:1 (HTTP 503), so its tools were not checked.',
+    }),
+  ]);
+  expect(JSON.stringify(result.project.evidenceGaps)).not.toContain("secret");
+  expect(result.project.evidenceUsed).toBeUndefined();
+});
+
+test("an Extension's failed read of a URL Doctor also read adds no second gap", async () => {
+  const url = "http://127.0.0.1:1/mcp";
+  const other = "http://127.0.0.1:2/mcp";
+  const root = project();
+  const { result } = await run(root, {
+    mcp: [{ url }],
+    extensions: contributing([
+      { url, error: "x", status: 503 },
+      { url, endpointId: url, error: "x" },
+      { url: other, endpointId: 7, error: "x" } as unknown as McpServerEvidence,
+    ]),
+  });
+  expect(result.project.evidenceGaps?.map((gap) => gap.message)).toEqual([
+    expect.stringContaining(
+      "Doctor could not read the tools of the MCP server at http://127.0.0.1:1",
+    ),
+    expect.stringContaining("server at http://127.0.0.1:2"),
+  ]);
+});
+
+test("an Extension contributing as mcp cannot put its error text or status in a gap", async () => {
+  const url = "http://user:pass@127.0.0.1:1/mcp?token=secret";
+  const root = project();
+  const { result } = await run(root, {
+    extensions: [
+      {
+        name: "fixture/impostor",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({
+            name: "mcp",
+            contribute: () => ({
+              mcpServers: [
+                { url, error: `fetch ${url} failed`, status: url },
+                { error: null, tools: [] },
+              ],
+            }),
+          });
+        },
+      },
+    ],
+  });
+  expect(result.project.evidenceGaps).toEqual([
+    expect.objectContaining({
+      message:
+        'The "mcp" Runtime Evidence contributor could not read the tools of the MCP server at http://127.0.0.1:1, so its tools were not checked.',
+    }),
+  ]);
 });
 
 test("client findings that repeat MCP0001 to MCP0003 are not reported again", async () => {
@@ -373,6 +540,25 @@ export default defineMcpTool({ name: 'list orders', handler: () => [] })
     "MCP0002 warn server/mcp/tools/list_orders.ts:2",
     "MCP0003 warn server/mcp/tools/list_orders.ts:2",
   ]);
+});
+
+test("a server without a name is named and told apart by the name it announces", async () => {
+  const root = project();
+  const announced = (name: string): McpServerEvidence => ({
+    initialize: { serverInfo: { name, version: "1" }, instructions: "Search." },
+    tools: [search],
+  });
+  const { diagnostics } = await run(root, {
+    extensions: contributing([announced("alpha"), announced("beta")]),
+  });
+  const named = (name: string) =>
+    diagnostics.filter((item) => (item.data?.server as { name?: string })?.name === name);
+  const alpha = named("alpha");
+  const beta = named("beta");
+  expect(alpha.length).toBeGreaterThan(0);
+  expect(alpha.length).toBe(beta.length);
+  const fingerprints = new Set(diagnostics.map((item) => item.fingerprint));
+  expect(fingerprints.size).toBe(diagnostics.length);
 });
 
 test("each Diagnostic's severity and confidence follow its findings", async () => {
@@ -435,4 +621,91 @@ test("the MCP docs list every client the library checks", () => {
     .map((row) => row.split("|")[1]!.trim());
   const clients = [...new Set(mcpClientRules.map((rule) => MCP_CLIENT_LABELS[rule.client]))];
   expect(listed.sort()).toEqual(clients.sort());
+});
+
+test("MCP0001 to MCP0003 check the tools the server sends, at the matching source or the root", async () => {
+  const untitled = `import { defineMcpTool } from 'nitro-mcp-toolkit'
+export default defineMcpTool({
+  name: 'search',
+  title: 'Search',
+  handler: () => [],
+})
+`;
+  const root = project({ "server/mcp/tools/search.ts": untitled });
+  const sent = (tools: McpTool[]) => contributing([{ name: "hub", tools }]);
+  const object = { type: "object" };
+
+  // The server adds the annotations that source leaves out, so neither source Rule fires.
+  const fixed = await run(root, {
+    extends: "auto",
+    extensions: sent([{ ...search, ...annotated, inputSchema: object }]),
+  });
+  expect(fixed.all.filter((item) => /^MCP000[1-3]$/.test(item.code))).toEqual([]);
+
+  // The server sends the tool as written: one runtime-backed Diagnostic per Rule, at the source.
+  const asWritten = await run(root, {
+    extends: "auto",
+    extensions: sent([
+      { name: "search", title: "Search", inputSchema: object },
+      {
+        name: "remote tool",
+        annotations: { title: "Remote", readOnlyHint: true },
+        inputSchema: object,
+      },
+    ]),
+  });
+  expect(
+    summary(
+      root,
+      asWritten.all.filter((item) => /^MCP000[1-3]$/.test(item.code)),
+    ),
+  ).toEqual([
+    "MCP0001 warn server/mcp/tools/search.ts:2",
+    "MCP0002 warn server/mcp/tools/search.ts:2",
+    "MCP0003 warn .",
+  ]);
+  const title = asWritten.all.find((item) => item.code === "MCP0001")!;
+  expect(title.confidence).toBe("runtime-backed");
+  expect(title.why).toContain('top-level title "Search"');
+  expect(title.data).toMatchObject({
+    server: { name: "hub" },
+    tool: "search",
+    findings: [{ rule: "claude-directory/missing-title" }],
+  });
+  const hint = asWritten.all.find((item) => item.code === "MCP0002")!;
+  expect(hint.why).toContain(
+    "ChatGPT also treats it as a write action that needs the user's confirmation by default",
+  );
+  expect(hint.evidence?.map((item) => item.summary).join("\n")).toContain(
+    "https://developers.openai.com/api/docs/guides/developer-mode",
+  );
+  const name = asWritten.all.find((item) => item.code === "MCP0003")!;
+  expect(name.why).toContain('"remote tool" of MCP server "hub"');
+  expect(name.file).toBe(root);
+
+  // With no source definition to rename, the clients' own name limits stay visible.
+  const strict = await run(root, {
+    extensions: sent([{ name: "remote tool", ...annotated, inputSchema: object }]),
+  });
+  const rename = strict.all.find(
+    (item) => item.code === "MCP0007" && item.why.includes("remote tool"),
+  );
+  expect(rename?.data).toMatchObject({
+    findings: expect.arrayContaining([
+      expect.objectContaining({ client: "codex", pointer: "/name" }),
+    ]),
+  });
+});
+
+test("a wire finding from a server without a URL carries only the server name in data", async () => {
+  const root = project();
+  const { all } = await run(root, {
+    extensions: contributing([
+      { name: "hub", tools: [{ name: "untitled", annotations: { readOnlyHint: true } }] },
+    ]),
+  });
+  expect(all.find((item) => item.code === "MCP0001")?.data).toMatchObject({
+    server: { name: "hub" },
+    tool: "untitled",
+  });
 });

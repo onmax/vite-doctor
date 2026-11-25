@@ -96,7 +96,8 @@ export const noRemovedRouterApi = createRule({
       MemberExpression(node: AnyNode) {
         const name = memberName(node);
         const removed = name && Object.hasOwn(removedMembers, name) ? removedMembers[name] : null;
-        if (!removed || isAssignmentTarget(node) || !isH3AppReceiver(ctx, node.object)) return;
+        if (!removed || isAssignmentTarget(node) || !isH3AppReceiver(ctx, node.object, true))
+          return;
         reportAt(node, removed[0], removed[1]);
       },
       CallExpression(node: AnyNode) {

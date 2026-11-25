@@ -37,6 +37,8 @@ export function createTextReport(result: DoctorRunResult): string {
   for (const gap of result.project.evidenceGaps ?? []) {
     lines.push(`Evidence missing: ${gap.message} ${gap.files.join(", ")}`);
   }
+  for (const used of result.project.evidenceUsed ?? [])
+    lines.push(`Evidence used: ${used.message}`);
   for (const edge of result.project.runtimeGraph?.edges ?? []) {
     const runtime = result.project.runtimeGraph?.packages[edge.to];
     const identity =
@@ -169,6 +171,7 @@ export function createJsonReport(result: DoctorRunResult): string {
       rulePacks: result.rulePacks,
       workspacePackages: result.workspacePackages,
       evidenceGaps: result.project.evidenceGaps,
+      evidenceUsed: result.project.evidenceUsed,
       runtimeGraph: result.project.runtimeGraph,
       nuxtCompatibility: result.project.nuxtCompatibility,
     },
@@ -213,6 +216,7 @@ export function createAgentReport(
     ),
     fixes: result.fixes,
     evidenceGaps: result.project.evidenceGaps,
+    evidenceUsed: result.project.evidenceUsed,
     commands: Object.fromEntries(
       Object.entries(commandArgs).map(([name, args]) => [name, args.map(shellArgument).join(" ")]),
     ),
@@ -305,6 +309,7 @@ export function createSarifReport(result: DoctorRunResult): string {
                 ? diagnostic.evidence.map((item) => item.kind)
                 : undefined,
               analysisPhase: diagnostic.analysisPhase,
+              data: diagnostic.data,
             },
             locations: [
               {
@@ -500,6 +505,7 @@ function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
         : {}),
     },
     evidence: serializeEvidence(result, diagnostic),
+    data: diagnostic.data,
     editPlan: diagnostic.fix,
     related: diagnostic.related?.map((item) => ({
       path: relative(result.root, item.file),
@@ -529,6 +535,7 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
     remediation: diagnostic.diagnostic.fix,
     docs: diagnostic.docs,
     evidence: serializeEvidence(result, diagnostic),
+    data: diagnostic.data,
     editPlan: diagnostic.fix,
     related: diagnostic.related?.map((item) => ({
       path: relative(result.root, item.file),

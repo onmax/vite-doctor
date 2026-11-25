@@ -342,6 +342,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
 class ServeDoctorRun {
   private closed = false;
   private state: DiagnosticState | undefined;
+  private hadMcpEvidence = false;
   private active: ActiveRun | undefined;
   private pending = emptyChanges();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -434,7 +435,12 @@ class ServeDoctorRun {
     this.pending = emptyChanges();
     // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files.
     const affected =
-      full || !this.state || this.options.changed || this.options.since || this.options.mcp?.length
+      full ||
+      !this.state ||
+      this.options.changed ||
+      this.options.since ||
+      this.options.mcp?.length ||
+      this.hadMcpEvidence
         ? undefined
         : files;
     await this.execute({ affected, changed: [...changed], reported });
@@ -492,10 +498,11 @@ class ServeDoctorRun {
   private record(root: string, batch: RunBatch, outcome: SurfaceRunOutcome) {
     const previous = this.state;
     const next =
-      previous && batch.affected
+      previous && batch.affected && !outcome.hasMcpEvidence
         ? mergeAffectedRun(previous, batch.affected, outcome)
         : stateFromRun(outcome);
     this.state = next;
+    this.hadMcpEvidence = outcome.hasMcpEvidence;
     if (!previous) {
       this.logReport(outcome);
       return;
