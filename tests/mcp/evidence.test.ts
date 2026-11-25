@@ -301,8 +301,7 @@ server.registerTool('remote', {}, async () => ({ content: [] }))
     },
   ]);
   const text = createReport(result, "text");
-  expect(text).toContain("checked tools through file overrides only");
-  expect(text).not.toContain("but did not check them");
+  expect(text).toContain("no MCP client Rule checked them project-wide");
 });
 
 test("an extends list that leaves out the MCP Rule Pack leaves an evidence gap", async () => {
@@ -320,7 +319,7 @@ test("an extends list that leaves out the MCP Rule Pack leaves an evidence gap",
     expect.objectContaining({
       source: "mcp",
       message: expect.stringContaining(
-        `${new URL(server.url).origin} as Runtime Evidence but did not check them`,
+        `${new URL(server.url).origin} as Runtime Evidence, but no MCP client Rule checked them project-wide`,
       ),
     }),
   ]);

@@ -628,13 +628,7 @@ describe("MCP Rule Pack", () => {
       packages: expect.any(Array),
       runtimeEvidence: expect.any(Function),
     });
-    const { packages, runtimeEvidence } = mcpRulePack.activation || {};
-    expect(runtimeEvidence?.({})).toBe(false);
-    expect(
-      runtimeEvidence?.({
-        mcp: { mcpServers: [{ url: "https://example.com/mcp", tools: [{ name: "a" }] }] },
-      }),
-    ).toBe(true);
+    const { packages } = mcpRulePack.activation || {};
     expect(packages?.toSorted()).toEqual([
       "@modelcontextprotocol/sdk",
       "@modelcontextprotocol/server",

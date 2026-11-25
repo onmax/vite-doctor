@@ -156,7 +156,6 @@ export function mcpEvidenceUsed(
  */
 export function uncheckedMcpEvidenceGap(
   project: ProjectInfo,
-  fileOverridesOnly: boolean,
 ): NonNullable<ProjectInfo["evidenceGaps"]>[number] | undefined {
   const servers = readMcpServers(project.runtimeEvidence).filter(
     (server): server is McpServerToolsEvidence => "tools" in server,
@@ -165,12 +164,9 @@ export function uncheckedMcpEvidenceGap(
   const names = servers
     .map((server) => (server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server")))
     .join(", ");
-  const coverage = fileOverridesOnly
-    ? "checked tools through file overrides only, without project-wide coverage"
-    : "did not check them";
   return {
     source: MCP_EVIDENCE,
-    message: `Doctor read the tools of ${names} as Runtime Evidence but ${coverage}: the extends list leaves out the vite-doctor/mcp Rule Pack. Add "auto", or "mcp/recommended" ("mcp/strict" for the Strict Preset), to the selectors you already have; a CLI --extends replaces the configured list, so repeat them there.`,
+    message: `Doctor read the tools of ${names} as Runtime Evidence, but no MCP client Rule checked them project-wide: the extends list leaves out the vite-doctor/mcp Rule Pack. Add "auto", or "mcp/recommended" ("mcp/strict" for the Strict Preset), to the selectors you already have; a CLI --extends replaces the configured list, so repeat them there.`,
     files: [],
   };
 }
