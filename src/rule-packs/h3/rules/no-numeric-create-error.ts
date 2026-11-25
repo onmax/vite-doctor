@@ -1,4 +1,15 @@
-import { createRule } from "./shared.js";
+import { staticValue } from "./_errors-helpers.js";
+import {
+  type AnyNode,
+  createRule,
+  h3ExportName,
+  h3Major,
+  isH3Call,
+  isH3HandlerFile,
+  report,
+} from "./shared.js";
+
+const ruleId = "h3/errors/no-numeric-create-error";
 
 export const noNumericCreateError = createRule({
   meta: {
@@ -14,8 +25,40 @@ export const noNumericCreateError = createRule({
     fixable: "suggestion",
     docsUrl: "https://github.com/h3js/h3/blob/main/src/error.ts",
     requires: { script: true },
+    prefilter: { names: ["createError", "HTTPError"] },
   },
-  create() {
-    return undefined;
+  create(ctx) {
+    if (!isH3HandlerFile(ctx)) return;
+    const check = (node: AnyNode, callee: string) => {
+      const status = staticValue(ctx, node.arguments?.[0]);
+      if (typeof status !== "number") return;
+      const major = h3Major(ctx);
+      const fix =
+        major === 1
+          ? `Use createError({ statusCode: ${status} }).`
+          : callee === "HTTPError"
+            ? `Use HTTPError.status(${status}) or new HTTPError({ status: ${status} }).`
+            : major === undefined
+              ? `Use createError({ status: ${status} }) on H3 v2, or createError({ statusCode: ${status} }) on H3 v1.`
+              : `Use createError({ status: ${status} }) or HTTPError.status(${status}).`;
+      const call = callee === "HTTPError" ? `new HTTPError(${status})` : `createError(${status})`;
+      report(
+        ctx,
+        node,
+        ruleId,
+        "error",
+        "errors",
+        `${call} reads ${status} as neither a status object nor a message, so the error responds with 500 instead of ${status}.`,
+        fix,
+      );
+    };
+    return {
+      CallExpression(node: AnyNode) {
+        if (isH3Call(ctx, node, ["createError"])) check(node, "createError");
+      },
+      NewExpression(node: AnyNode) {
+        if (h3ExportName(ctx, node.callee) === "HTTPError") check(node, "HTTPError");
+      },
+    };
   },
 });
