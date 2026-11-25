@@ -6,6 +6,7 @@ import { noStrippedConstraint } from "./no-stripped-constraint.js";
 import { noTruncatedText } from "./no-truncated-text.js";
 import { requireAnnotationTitle } from "./require-annotation-title.js";
 import { requireSafetyHint } from "./require-safety-hint.js";
+import { validAnnotations } from "./valid-annotations.js";
 import { validName } from "./valid-name.js";
 
 export { noExcludedTool } from "./no-excluded-tool.js";
@@ -16,6 +17,7 @@ export { noStrippedConstraint } from "./no-stripped-constraint.js";
 export { noTruncatedText } from "./no-truncated-text.js";
 export { requireAnnotationTitle } from "./require-annotation-title.js";
 export { requireSafetyHint } from "./require-safety-hint.js";
+export { validAnnotations } from "./valid-annotations.js";
 export { validName } from "./valid-name.js";
 
 export const mcpRules = [
@@ -23,6 +25,7 @@ export const mcpRules = [
   requireSafetyHint,
   validName,
   noIndentedJsonOutput,
+  validAnnotations,
   noExcludedTool,
   noTruncatedText,
   noRewrittenSchema,

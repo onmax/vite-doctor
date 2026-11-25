@@ -117,11 +117,34 @@ export function wireTools(ctx: RuleContext, sources: McpToolDefinition[]) {
       server,
       tool,
       definition: staticTool(sources, tool.name),
-      findings: findings.filter((finding) => finding.tool === tool.name),
+      // MCP0010 explains annotations that aren't ToolAnnotations; a missing title or hint in them
+      // would point the author at the wrong fix.
+      findings: findings.filter(
+        (finding) =>
+          finding.tool === tool.name &&
+          !(annotationsProblem(tool) && finding.pointer?.startsWith("/annotations")),
+      ),
     })),
   );
   const sent = new Set(tools.flatMap((wire) => (wire.definition ? [wire.definition] : [])));
   return { tools, sourceOnly: sources.filter((source) => !sent.has(source)) };
+}
+
+/**
+ * How a tool's `annotations` fail to be ToolAnnotations, whose fields are strings and booleans
+ * only. Mirrors the MCP SDK's own check for a schema passed in place of annotations.
+ */
+export function annotationsProblem(tool: McpTool): string | undefined {
+  const annotations: unknown = tool.annotations;
+  if (annotations === undefined || annotations === null) return;
+  if (Array.isArray(annotations)) return "are an array";
+  if (typeof annotations !== "object") return `are a ${typeof annotations}`;
+  const nested = Object.entries(annotations)
+    .filter(([, value]) => typeof value === "object" && value !== null)
+    .map(([key]) => `\`${key}\``);
+  if (!nested.length) return;
+  const zod = "_def" in annotations || "~standard" in annotations;
+  return `hold ${nested.length === 1 ? "an object" : "objects"} under ${nested.slice(0, 3).join(", ")}${nested.length > 3 ? ", …" : ""}${zod ? ", which looks like a serialized Zod schema" : ""}`;
 }
 
 /**

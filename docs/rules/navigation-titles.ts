@@ -149,6 +149,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "mcp/tools/require-safety-hint": "Safety hints",
   "mcp/tools/valid-name": "Tool names",
   "mcp/tools/no-indented-json-output": "Compact JSON output",
+  "mcp/tools/valid-annotations": "Annotation objects",
   "mcp/clients/no-excluded-tool": "Excluded tools",
   "mcp/clients/no-truncated-text": "Truncated text",
   "mcp/clients/no-rewritten-schema": "Rewritten tools",
