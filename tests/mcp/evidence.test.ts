@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { afterEach, expect, test, vi } from "vite-plus/test";
@@ -135,6 +135,22 @@ test("MCP evidence activates the MCP Rule Pack in a project without an MCP packa
     mcp: [{ url: server.url }],
   });
   expect(strict.project.evidenceGaps ?? []).toEqual([]);
+});
+
+test("MCP evidence activates the MCP Rule Pack for every workspace package", async () => {
+  const server = await stub();
+  const root = project();
+  writeFileSync(join(root, "pnpm-workspace.yaml"), 'packages:\n  - "packages/*"\n');
+  for (const name of ["a", "b"]) {
+    mkdirSync(join(root, "packages", name), { recursive: true });
+    writeFileSync(join(root, "packages", name, "package.json"), JSON.stringify({ name }));
+    writeFileSync(join(root, "packages", name, "index.ts"), "export const ok = 1;\n");
+  }
+  const result = await runViteDoctor({ root, cache: false, mcp: [{ url: server.url }] });
+
+  const pack = result.rulePacks?.find((item) => item.name === "vite-doctor/mcp");
+  expect(pack?.selected).toBe(true);
+  expect(pack?.activatedBy).toEqual(expect.arrayContaining(["packages/a", "packages/b"]));
 });
 
 test("an extends list that leaves out the MCP Rule Pack leaves an evidence gap", async () => {
