@@ -1406,8 +1406,9 @@ export default defineNuxtConfig({
 
       expect(configChange).toMatchObject({
         to: "future.compatibilityVersion: 5",
-        instruction:
+        instruction: expect.stringContaining(
           "Verify that the effective future.compatibilityVersion resolves to 5; Doctor could not prove it from the composed Nuxt config.",
+        ),
       });
       expect(report.summary.errors).toBe(0);
       expect(JSON.parse(formatMigrationReport(report, "agent")).status).toBe("findings");
@@ -1533,10 +1534,33 @@ test.each([false, true])(
 );
 
 test.each([
-  { scenario: "app opt-in", modern: true },
+  { scenario: "app opt-in", modern: true, needsExplicitImports: true },
   { scenario: "explicit legacy shim", modern: true, config: "{ nitroLegacy: true }" },
   { scenario: "selective legacy shim", modern: true, config: "{ nitroLegacy: { h3: true } }" },
-  { scenario: "workspace opt-in", workspace: true, modern: true },
+  {
+    scenario: "legacy imports disabled",
+    modern: true,
+    config: "{ nitroLegacy: { imports: false } }",
+    needsExplicitImports: true,
+  },
+  {
+    scenario: "legacy imports override experimental off",
+    modern: true,
+    config: "{ nitroLegacy: true, experimental: { nitroAutoImports: false } }",
+  },
+  {
+    scenario: "both import switches off",
+    modern: true,
+    config: "{ nitroLegacy: { imports: false }, experimental: { nitroAutoImports: false } }",
+    importsOff: true,
+  },
+  {
+    scenario: "H3 shim off with auto-imports enabled",
+    modern: true,
+    config: "{ nitroLegacy: { h3: false }, experimental: { nitroAutoImports: true } }",
+    h3ShimOff: true,
+  },
+  { scenario: "workspace opt-in", workspace: true, modern: true, needsExplicitImports: true },
   { scenario: "missing builder", missing: true },
   { scenario: "app nitropack", workspace: true, appLegacy: true },
   { scenario: "both at workspace root", workspace: true, rootLegacy: true },
@@ -1546,7 +1570,18 @@ test.each([
   { scenario: "computed builder", config: "{ server: { builder: process.env.BUILDER } }" },
 ])(
   "Nitro migration checks the effective builder ($scenario)",
-  async ({ workspace, modern: usesModern, missing, appLegacy, rootLegacy, optional, config }) => {
+  async ({
+    workspace,
+    modern: usesModern,
+    missing,
+    appLegacy,
+    rootLegacy,
+    optional,
+    config,
+    importsOff,
+    needsExplicitImports,
+    h3ShimOff,
+  }) => {
     const nitro = "3.0.261103-rc";
     const legacy = "node_modules/nuxt/node_modules/@nuxt/nitro-server";
     const modern = "node_modules/nuxt/node_modules/@nuxt/nitro-v3-server";
@@ -1556,6 +1591,7 @@ test.each([
     const auto = `${appRoot}server/api/auto.ts`;
     const cors = `${appRoot}server/api/cors.ts`;
     const redirect = `${appRoot}server/api/native-redirect.ts`;
+    const hooksWithKnownAPI = h3ShimOff ? [native, native, shimmed] : [native];
     const hook = `export default defineEventHandler({ handler: () => "ok", onBeforeResponse: () => {} })`;
     await withFixture(
       {
@@ -1587,14 +1623,14 @@ import { defineEventHandler as legacyHandler } from "h3"
 export const legacy = legacyHandler({ handler: () => "ok", onBeforeResponse: () => {} })
 ${hook}`,
         [shimmed]: `import { defineEventHandler } from "h3"\n${hook}`,
-        [auto]: hook,
+        [auto]: `${hook}\nexport const notFound = () => createError(404)\nexport const auto = defineEventHandler(() => { redirect("/new") })`,
         [cors]: `import type { H3Event } from "nitro/h3"
 export default defineEventHandler((event: H3Event) => {
   if (handleCors(event, {})) return
   return "ok"
 })`,
         [redirect]: `import type { H3Event } from "h3"
-import { redirect } from "nitro/h3"
+import { defineEventHandler, redirect } from "nitro/h3"
 export default defineEventHandler((_event: H3Event) => { redirect("/new") })`,
         "node_modules/nuxt/package.json": JSON.stringify({
           name: "nuxt",
@@ -1648,29 +1684,42 @@ export default defineEventHandler((_event: H3Event) => { redirect("/new") })`,
         );
         expect(diagnostics.filter((item: { code: string }) => item.code === "H30018")).toEqual(
           usesModern
-            ? [expect.objectContaining({ location: expect.objectContaining({ path: native }) })]
+            ? hooksWithKnownAPI.map((path) =>
+                expect.objectContaining({ location: expect.objectContaining({ path }) }),
+              )
             : [],
         );
-        expect(diagnostics).not.toContainEqual(
-          expect.objectContaining({
-            code: "NITRO0027",
-            location: expect.objectContaining({ path: shimmed }),
-          }),
-        );
+        if (!h3ShimOff) {
+          expect(diagnostics).not.toContainEqual(
+            expect.objectContaining({
+              code: "NITRO0027",
+              location: expect.objectContaining({ path: shimmed }),
+            }),
+          );
+        }
         if (usesModern) {
+          expect(diagnostics.some((item: { code: string }) => item.code === "H30014")).toBe(
+            !importsOff,
+          );
           expect(report.target.blockedScopes).toBeUndefined();
           expect(
             report.stages[0].diagnostics.filter((item: { code: string }) => item.code === "H30018"),
-          ).toEqual([expect.objectContaining({ file: native })]);
+          ).toEqual(hooksWithKnownAPI.map((file) => expect.objectContaining({ file })));
           expect(report.stages[1].changes).toEqual([]);
           const migration = await runCli(
             ["migrate", ".", "--to", "nuxt@5", "--format", "json"],
             root,
           );
           const [source, dependencies] = JSON.parse(migration.output).stages;
+          const compatibilityChange = dependencies.changes.find(
+            (change: { kind: string }) => change.kind === "config",
+          );
+          expect(
+            compatibilityChange.instruction.includes("make server auto-imports explicit"),
+          ).toBe(Boolean(needsExplicitImports));
           const hooks = (stage: { diagnostics: { code: string; file: string }[] }) =>
             stage.diagnostics.filter((item) => item.code === "H30018").map((item) => item.file);
-          expect(hooks(source)).toEqual([native]);
+          expect(hooks(source)).toEqual(hooksWithKnownAPI);
           expect(new Set(hooks(dependencies))).toEqual(new Set(config ? [] : [native, shimmed]));
           expect(report.stages[2].checks).not.toContainEqual(
             expect.objectContaining({ id: "install-target" }),

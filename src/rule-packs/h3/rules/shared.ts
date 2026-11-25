@@ -121,13 +121,13 @@ export function canUseNativeH3Source(ctx: RuleContext, source: unknown): boolean
 
 export function canUseNativeH3(ctx: RuleContext, node: AnyNode, includeTypes = false): boolean {
   const graph = ctx.project.runtimeGraph;
-  if (!graph?.nuxtH3MayBeShimmed && graph?.nuxtH3AutoImports !== "legacy") return true;
+  if (!graph?.nuxtH3MayBeShimmed && graph?.nuxtServerAutoImports === undefined) return true;
   const expression = unwrap(node);
   const identifier =
     expression?.type === "MemberExpression" ? unwrap(expression.object) : expression;
   if (identifier?.type !== "Identifier") return false;
   const variable = resolveVariable(ctx, identifier);
-  if (!variable) return graph.nuxtH3AutoImports === "native";
+  if (!variable) return false;
   const definition = variable.defs.find(
     (definition) =>
       definition.type === "ImportBinding" &&
@@ -573,8 +573,9 @@ export function autoImportsH3(ctx: RuleContext): boolean {
 }
 
 function resolveIdentifier(ctx: RuleContext, identifier: AnyNode): string | null {
+  const nuxtImports = ctx.project.runtimeGraph?.nuxtServerAutoImports;
   const autoImports =
-    ctx.project.runtimeGraph?.nuxtH3AutoImports !== "disabled" && autoImportsH3(ctx);
+    (nuxtImports === undefined || nuxtImports === "enabled") && autoImportsH3(ctx);
   if (!autoImports && !h3ImportBindings(ctx).named.has(identifier.name)) return null;
   const references = referencesByOffset(ctx);
   if (!references) return autoImports ? identifier.name : null;

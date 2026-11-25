@@ -668,7 +668,7 @@ export interface RuntimeGraph {
   packages: Partial<Record<RuntimePackageName, RuntimePackageInstance>>;
   directH3?: RuntimePackageInstance;
   nuxtH3MayBeShimmed?: true;
-  nuxtH3AutoImports?: "disabled" | "legacy" | "native";
+  nuxtServerAutoImports?: "enabled" | "disabled" | "unknown";
   nuxtServerBuilder?: "vite";
   edges: RuntimeGraphEdge[];
 }

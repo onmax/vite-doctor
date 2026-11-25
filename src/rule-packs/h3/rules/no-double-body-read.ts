@@ -153,7 +153,9 @@ function bodyUse(ctx: RuleContext, call: AnyNode): BodyUse | undefined {
   if (!method || !requestReads.has(method)) return undefined;
   const request = unwrapExpression(callee.object);
   if (
-    (ctx.project.runtimeGraph?.nuxtH3MayBeShimmed && !handler?.native) ||
+    ((ctx.project.runtimeGraph?.nuxtH3MayBeShimmed ||
+      ctx.project.runtimeGraph?.nuxtServerAutoImports !== undefined) &&
+      !handler?.native) ||
     memberName(request) !== "req" ||
     !isHandlerEvent(ctx, request.object)
   )

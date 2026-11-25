@@ -319,34 +319,37 @@ export function applyRuntimeTarget(
       ? readExportedNuxtOption(config.file, config.text, "nitroLegacy")
       : undefined;
     const inheritsConfig =
-      legacy === undefined &&
-      ((config && readExportedNuxtOption(config.file, config.text, "extends") !== undefined) ||
-        autoRegisteredNuxtLayers(nuxtRoot).length > 0);
+      (config && readExportedNuxtOption(config.file, config.text, "extends") !== undefined) ||
+      autoRegisteredNuxtLayers(nuxtRoot).length > 0;
     const compatibilityVersion = target?.nuxtCompatibility ?? compatibility?.version;
-    const legacyEnabled =
-      legacy === undefined
-        ? inheritsConfig || compatibilityVersion !== 5
-        : legacy?.type !== "Literal" || legacy.value !== false;
+    const compatibilityDefault =
+      inheritsConfig || compatibilityVersion === undefined ? undefined : compatibilityVersion < 5;
+    const booleanOption = (option: AnyRuntimeNode | null | undefined, fallback?: boolean) =>
+      option === undefined
+        ? fallback
+        : option?.type === "Literal" && typeof option.value === "boolean"
+          ? (option.value as boolean)
+          : undefined;
     const legacyOption = (key: string) => {
-      if (legacy?.type !== "ObjectExpression" || !config) return legacyEnabled;
+      if (legacy?.type !== "ObjectExpression" || !config)
+        return booleanOption(legacy, compatibilityDefault);
       const option = readExportedNuxtOption(config.file, config.text, "nitroLegacy", key);
-      return option?.type !== "Literal" || option.value !== false;
+      return booleanOption(option, inheritsConfig ? undefined : true);
     };
     const autoImports = config
       ? readExportedNuxtOption(config.file, config.text, "experimental", "nitroAutoImports")
       : undefined;
-    const autoImportsOff =
-      autoImports?.type === "Literal"
-        ? autoImports.value === false
-        : compatibilityVersion === 5 && autoImports === undefined && !inheritsConfig;
+    const experimentalImports = booleanOption(autoImports, compatibilityDefault);
+    const legacyImports = legacyOption("imports");
     graph = {
       ...graph,
-      nuxtH3MayBeShimmed: legacyOption("h3") ? true : undefined,
-      nuxtH3AutoImports: autoImportsOff
-        ? "disabled"
-        : legacyOption("imports") || (autoImports !== undefined && autoImports?.type !== "Literal")
-          ? "legacy"
-          : "native",
+      nuxtH3MayBeShimmed: legacyOption("h3") === false ? undefined : true,
+      nuxtServerAutoImports:
+        experimentalImports === true || legacyImports === true
+          ? "enabled"
+          : experimentalImports === false && legacyImports === false
+            ? "disabled"
+            : "unknown",
     };
   }
   if (!target) return { graph, compatibility };

@@ -105,10 +105,7 @@ export async function createMigrationReport(
       .filter(({ root }) => {
         const before = workspaceProjectView(current, root).runtimeGraph;
         const after = workspaceProjectView(targetProject, root).runtimeGraph;
-        return (
-          (before?.nuxtH3MayBeShimmed && !after?.nuxtH3MayBeShimmed) ||
-          (before?.nuxtH3AutoImports === "legacy" && after?.nuxtH3AutoImports === "native")
-        );
+        return before?.nuxtH3MayBeShimmed && !after?.nuxtH3MayBeShimmed;
       })
       .map(({ root }) => root),
   );
@@ -497,7 +494,8 @@ function dependencyChanges(
   }
   for (const { root } of packages) {
     if (layers.has(resolve(project.root, root))) continue;
-    const before = workspaceProjectView(project, root).nuxtCompatibility;
+    const installed = workspaceProjectView(project, root);
+    const before = installed.nuxtCompatibility;
     const after = workspaceProjectView(targetProject, root);
     if (
       after.runtimeGraph?.packages.nuxt?.provenance !== "target" ||
@@ -506,13 +504,22 @@ function dependencyChanges(
     )
       continue;
     const location = root === "." ? "" : ` in ${root}`;
+    const compatibilityInstruction =
+      before?.state === "unknown"
+        ? `Verify that the effective future.compatibilityVersion resolves to 5${location}; Doctor could not prove it from the composed Nuxt config.`
+        : `Set future.compatibilityVersion to 5${location} while preparing the Nuxt upgrade, then resolve the reported compatibility diagnostics.`;
+    const importsPrerequisite =
+      after.runtimeGraph.nuxtServerBuilder !== "vite" &&
+      installed.runtimeGraph?.nuxtServerAutoImports !== "disabled" &&
+      after.runtimeGraph.nuxtServerAutoImports !== "enabled"
+        ? `Before applying this setting${location}, make server auto-imports explicit (including those used by layers), or explicitly enable experimental.nitroAutoImports until those imports are migrated.`
+        : "";
     changes.push({
       kind: "config",
       to: "future.compatibilityVersion: 5",
-      instruction:
-        before?.state === "unknown"
-          ? `Verify that the effective future.compatibilityVersion resolves to 5${location}; Doctor could not prove it from the composed Nuxt config.`
-          : `Set future.compatibilityVersion to 5${location} while preparing the Nuxt upgrade, then resolve the reported compatibility diagnostics.`,
+      instruction: importsPrerequisite
+        ? `${importsPrerequisite} ${compatibilityInstruction}`
+        : compatibilityInstruction,
     });
   }
   return changes;
