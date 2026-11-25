@@ -52,7 +52,9 @@ export function analyzeScriptProgram(
 ): ScopeManager {
   return loadScopeTools().analyze(
     program as unknown as Parameters<typeof import("@typescript-eslint/scope-manager").analyze>[0],
-    { sourceType },
+    // Rules read an unresolved reference as a global. Since scope-manager 8.74, the default lib
+    // declares value globals such as `JSON` and `Map`, so their references resolve instead.
+    { sourceType, lib: [] },
   );
 }
 
