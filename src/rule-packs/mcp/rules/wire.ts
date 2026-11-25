@@ -35,6 +35,8 @@ interface CheckedServers {
   servers: ServerFindings[];
   /** An MCP Rule that reads tools/list ran for the whole project. */
   projectWide: boolean;
+  /** A client-limit Rule ran for the whole project, which closes the explicit-extends gap. */
+  clientLimits: boolean;
   /** Servers whose tools only file overrides checked. */
   scoped: Set<McpServerToolsEvidence>;
 }
@@ -46,6 +48,7 @@ export function checkedMcpServers(project: ProjectInfo) {
   return {
     projectWide: result?.projectWide ? result.servers.map(({ server }) => server) : [],
     scoped: result?.projectWide ? [] : [...(result?.scoped ?? [])],
+    clientLimits: !!result?.clientLimits,
   };
 }
 
@@ -59,7 +62,7 @@ export function serverFindings(ctx: RuleContext): CheckedServers {
         server,
         findings: checkMcpToolList(server, { serverName: server.clientAlias }),
       }));
-    found = { servers, projectWide: false, scoped: new Set() };
+    found = { servers, projectWide: false, clientLimits: false, scoped: new Set() };
     checked.set(ctx.project, found);
   }
   return found;

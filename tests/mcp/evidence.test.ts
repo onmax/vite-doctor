@@ -255,6 +255,14 @@ test("only project-wide client Rules cover remote-only MCP tools without the MCP
   expect(reportStatus(fileOnly)).toBe("incomplete");
   expect(fileOnly.project.evidenceUsed).toBeUndefined();
 
+  const titleOnly = await runViteDoctor({
+    ...options,
+    config: { rules: { "mcp/tools/require-annotation-title": "error" } },
+  });
+  expect(titleOnly.diagnostics.map(({ code }) => code)).toContain("MCP0001");
+  expect(reportStatus(titleOnly)).toBe("incomplete");
+  expect(titleOnly.project.evidenceUsed).toHaveLength(1);
+
   const projectWide = await runViteDoctor({ ...options, config: { rules } });
   expect(projectWide.diagnostics.map(({ code }) => code)).toContain("MCP0005");
   expect(projectWide.project.evidenceGaps ?? []).toHaveLength(0);

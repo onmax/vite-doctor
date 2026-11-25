@@ -54,7 +54,7 @@ export const requireSafetyHint = createRule({
             ctx,
             wire,
             diagnostics.MCP0002({
-              why: `MCP tool ${wireToolLabel(wire)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true in its tools/list entry. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.${chatgpt ? " ChatGPT also asks the user to confirm every call, because it has no `readOnlyHint`." : ""}`,
+              why: `MCP tool ${wireToolLabel(wire)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true in its tools/list entry. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.${chatgpt ? " ChatGPT also treats it as a write action that needs the user's confirmation by default, because it has no `readOnlyHint`." : ""}`,
               fix: "Add `readOnlyHint: true` to the annotations if the tool only reads, or `destructiveHint: true` if it changes or deletes data. Only you can tell which one is true.",
             }),
             {

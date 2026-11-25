@@ -36,7 +36,7 @@ export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOption
   return {
     async onWorkspaceEnd() {
       const checked = serverFindings(ctx);
-      if (canReportFromWorkspace(ctx)) checked.projectWide = true;
+      if (canReportFromWorkspace(ctx)) checked.projectWide = checked.clientLimits = true;
       const groups = checked.servers.flatMap(({ server, findings }) =>
         groupByTool(
           server,
