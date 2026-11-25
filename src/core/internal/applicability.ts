@@ -124,6 +124,9 @@ function evaluateWorkspacePackageActivation(
         : inactive(`Rule Pack ${pack.name} package or module activation did not match.`),
     );
   }
+  if (activation.runtimeEvidence && !activation.frameworks && !results.length) {
+    return inactive(`Rule Pack ${pack.name} Runtime Evidence activation did not match.`);
+  }
   return combineApplicability(results);
 }
 

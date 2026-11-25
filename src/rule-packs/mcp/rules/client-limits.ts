@@ -3,6 +3,7 @@ import type {
   Confidence,
   DiagnosticEvidence,
   DoctorSeverity,
+  ProjectInfo,
   RuleContext,
   RuleVisitor,
   SourceRange,
@@ -41,7 +42,11 @@ interface ServerFindings {
   findings: McpFinding[];
 }
 
-const checked = new WeakMap<object, ServerFindings[]>();
+const checked = new WeakMap<ProjectInfo, ServerFindings[]>();
+
+export function checkedMcpServers(project: ProjectInfo): McpServerToolsEvidence[] {
+  return checked.get(project)?.map(({ server }) => server) ?? [];
+}
 
 /** Every MCP server's findings, checked once per Doctor Run and shared by the client-limit Rules. */
 function serverFindings(ctx: RuleContext): ServerFindings[] {

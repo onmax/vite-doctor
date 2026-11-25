@@ -1,11 +1,12 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build, createServer, type InlineConfig, type Logger, type Plugin } from "vite";
 import { expect, test, vi } from "vite-plus/test";
 import { readMcpServers } from "../../src/mcp/evidence.ts";
 import { doctor, type ViteDoctorSurfaceOptions } from "../../src/plugin.ts";
-import type { runViteDoctor } from "../../src/doctor.ts";
+import { runViteDoctor } from "../../src/doctor.ts";
+import { defineDoctorExtension } from "../../src/extension.ts";
 import { mcpStubHandler, stubTools } from "../mcp/mcp-stub.ts";
 
 type RunResult = Awaited<ReturnType<typeof runViteDoctor>>;
@@ -39,10 +40,11 @@ async function withProject(run: (root: string) => Promise<void>) {
 }
 
 function captureLogger() {
+  const infos: string[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
   const logger: Logger = {
-    info() {},
+    info: (message) => void infos.push(message),
     warn: (message) => void warnings.push(message),
     warnOnce() {},
     error: (message) => void errors.push(message),
@@ -50,7 +52,7 @@ function captureLogger() {
     hasErrorLogged: () => false,
     hasWarned: false,
   };
-  return { logger, errors, warnings };
+  return { logger, errors, warnings, infos };
 }
 
 const mcpEndpoint: Plugin = {
@@ -169,5 +171,62 @@ test("in a build, an MCP path is a config error", async () => {
         build: { write: false, lib: { entry: "entry.ts", formats: ["es"] } },
       }),
     ).rejects.toThrow("a build has no dev server to resolve it against");
+  });
+});
+
+test("dev refreshes project findings as Extension MCP evidence appears and disappears", async () => {
+  await withProject(async (root) => {
+    const toggle = join(root, "toggle.ts");
+    await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
+    const extension = defineDoctorExtension({
+      name: "fixture/mcp-contributor",
+      setup(api) {
+        api.registerRuntimeEvidenceContributor({
+          name: "fixture-mcp",
+          async contribute() {
+            const present = await access(toggle).then(
+              () => true,
+              () => false,
+            );
+            return present
+              ? {
+                  mcpServers: [
+                    {
+                      name: "remote",
+                      tools: [
+                        {
+                          name: "search",
+                          inputSchema: { type: "object", properties: { "page size": {} } },
+                        },
+                      ],
+                    },
+                  ],
+                }
+              : {};
+          },
+        });
+      },
+    });
+    const { logger, infos, warnings } = captureLogger();
+    const options = { cache: false, extensions: [extension] };
+    const server = await createServer({
+      ...config(root, logger, { run: "serve", ...options }),
+      server: { middlewareMode: true, ws: false, watch: null },
+    });
+    try {
+      await vi.waitFor(() => expect(infos.join("\n")).toContain("Summary"), { timeout: 15_000 });
+      await writeFile(toggle, "export const present = true;\n");
+      server.watcher.emit("add", toggle);
+      await vi.waitFor(() => expect(warnings.join("\n")).toContain("MCP0005"), { timeout: 3_000 });
+      await rm(toggle);
+      server.watcher.emit("unlink", toggle);
+      await vi.waitFor(() => expect(infos.join("\n")).toContain("resolved: MCP0005"), {
+        timeout: 3_000,
+      });
+      const fresh = await runViteDoctor({ root, ...options });
+      expect(fresh.diagnostics.map(({ code }) => code)).not.toContain("MCP0005");
+    } finally {
+      await server.close();
+    }
   });
 });

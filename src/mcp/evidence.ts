@@ -136,18 +136,17 @@ export function assertAbsoluteMcpUrl(url: string): void {
   );
 }
 
-/** One line per MCP server whose `tools/list` the run read, so a clean report names what it covered. */
-export function mcpEvidenceUsed(project: ProjectInfo): NonNullable<ProjectInfo["evidenceUsed"]> {
-  return readMcpServers(project.runtimeEvidence)
-    .filter((server): server is McpServerToolsEvidence => "tools" in server)
-    .map((server) => {
-      const label = server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server");
-      const count = `${server.tools.length} ${server.tools.length === 1 ? "tool" : "tools"}`;
-      return {
-        source: MCP_EVIDENCE,
-        message: `tools/list of the MCP server at ${label}, ${count}`,
-      };
-    });
+export function mcpEvidenceUsed(
+  checked: readonly McpServerToolsEvidence[],
+): NonNullable<ProjectInfo["evidenceUsed"]> {
+  return checked.map((server) => {
+    const label = server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server");
+    const count = `${server.tools.length} ${server.tools.length === 1 ? "tool" : "tools"}`;
+    return {
+      source: MCP_EVIDENCE,
+      message: `tools/list of the MCP server at ${label}, ${count}`,
+    };
+  });
 }
 
 /**
@@ -157,9 +156,7 @@ export function mcpEvidenceUsed(project: ProjectInfo): NonNullable<ProjectInfo["
  */
 export function uncheckedMcpEvidenceGap(
   project: ProjectInfo,
-  mcpPackSelected: boolean,
 ): NonNullable<ProjectInfo["evidenceGaps"]>[number] | undefined {
-  if (mcpPackSelected) return undefined;
   const servers = readMcpServers(project.runtimeEvidence).filter(
     (server): server is McpServerToolsEvidence => "tools" in server,
   );

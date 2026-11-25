@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
-import { createReport, reportStatus } from "../../src/core/index.ts";
+import { createReport, reportStatus, runDoctor } from "../../src/core/index.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
+import { createRule, defineRulePack } from "../../src/extension.ts";
 import { readMcpServers } from "../../src/mcp/evidence.ts";
 import { startMcpStub, stubTools, type StubRequest } from "./mcp-stub.ts";
 
@@ -153,6 +154,76 @@ test("MCP evidence activates the MCP Rule Pack for every workspace package", asy
   expect(pack?.activatedBy).toEqual(expect.arrayContaining(["packages/a", "packages/b"]));
 });
 
+test("an evidence-only Rule Pack requires matching Runtime Evidence", async () => {
+  const create = vi.fn(() => ({}));
+  const rule = createRule({
+    meta: {
+      id: "acme/check",
+      title: "Check Acme evidence",
+      category: "architecture",
+      severity: "warn",
+      execution: "workspace",
+    },
+    create,
+  });
+  const pack = defineRulePack({
+    name: "acme",
+    version: "1.0.0",
+    activation: { runtimeEvidence: (evidence) => "acme" in evidence },
+    rules: [rule],
+    presets: { recommended: [rule.meta.id] },
+  });
+  const root = project();
+  const extension = { name: "fixture/acme", rulePacks: [pack] };
+  const without = await runDoctor({ root, cache: false, extensions: [extension] });
+  expect(without.rulePacks).toEqual([]);
+  expect(create).not.toHaveBeenCalled();
+
+  const withEvidence = await runDoctor({
+    root,
+    cache: false,
+    extensions: [
+      extension,
+      {
+        name: "fixture/acme-evidence",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({ name: "acme", contribute: () => ({}) });
+        },
+      },
+    ],
+  });
+  expect(withEvidence.rulePacks).toEqual([{ name: "acme", selected: true, activatedBy: ["."] }]);
+  expect(create).toHaveBeenCalledOnce();
+});
+
+test("fetched MCP evidence is not reported as used when client Rules are filtered out", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    const { method, id } = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+    if (method === "notifications/initialized") return new Response(null, { status: 202 });
+    const tools = [
+      { name: "remote", inputSchema: { type: "object", properties: { "page size": {} } } },
+    ];
+    return Response.json({ id, result: method === "initialize" ? {} : { tools } });
+  });
+  const options = { root: project(), cache: false, mcp: [{ url: "https://example.test/mcp" }] };
+  const checked = await runViteDoctor(options);
+  expect(checked.diagnostics.map(({ code }) => code)).toContain("MCP0005");
+  expect(checked.project.evidenceUsed).toEqual([
+    { source: "mcp", message: "tools/list of the MCP server at https://example.test, 1 tool" },
+  ]);
+  for (const filter of [
+    { rules: "typescript/*" },
+    { rules: "mcp/tools/*" },
+    { analyses: "graph" },
+  ]) {
+    const result = await runViteDoctor({ ...options, ...filter });
+    expect(readMcpServers(result.project.runtimeEvidence)).toHaveLength(1);
+    expect(reportStatus(result)).toBe("clean");
+    expect(result.project.evidenceUsed).toBeUndefined();
+    expect(createReport(result, "text")).not.toContain("Evidence used:");
+  }
+});
+
 test("an extends list that leaves out the MCP Rule Pack leaves an evidence gap", async () => {
   const server = await stub();
   const result = await runViteDoctor({
@@ -163,6 +234,7 @@ test("an extends list that leaves out the MCP Rule Pack leaves an evidence gap",
   });
 
   expect(reportStatus(result)).toBe("incomplete");
+  expect(result.project.evidenceUsed).toBeUndefined();
   expect(result.project.evidenceGaps).toEqual([
     expect.objectContaining({
       source: "mcp",
