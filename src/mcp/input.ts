@@ -27,7 +27,9 @@ export function normalizeToolList(input: unknown): McpToolList {
 export function normalizeToolResult(input: unknown): McpToolResult {
   if (isSchema(input)) {
     rejectJsonRpcError(input, "tools/call");
-    const result = "jsonrpc" in input ? input.result : input;
+    const isEnvelope =
+      "jsonrpc" in input && ("id" in input || "result" in input || "error" in input);
+    const result = isEnvelope ? input.result : input;
     if (isSchema(result) && (result.content === undefined || Array.isArray(result.content)))
       return result as McpToolResult;
   }

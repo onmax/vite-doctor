@@ -137,8 +137,12 @@ function mentions(prose: string, keyword: string, value: unknown): boolean {
   if (!prose) return false;
   if (typeof value === "number")
     return new RegExp(`(?<![\\d.])${escapeRegExp(String(value))}(?![\\d])`).test(prose);
-  if (typeof value === "boolean")
-    return keyword === "uniqueItems" ? /unique|duplicate/i.test(prose) : false;
+  if (typeof value === "boolean") {
+    if (keyword === "uniqueItems") return /unique|duplicate/i.test(prose);
+    return (
+      keyword === "default" && new RegExp(`\\bdefaults?\\s+to\\s+\`?${value}\\b`, "i").test(prose)
+    );
+  }
   if (typeof value === "string") return prose.toLowerCase().includes(value.toLowerCase());
   return prose.includes(JSON.stringify(value));
 }

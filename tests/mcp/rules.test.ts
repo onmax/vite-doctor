@@ -276,6 +276,22 @@ describe("rule details", () => {
     expect(hits("codex/dropped-constraints", described)).toHaveLength(1);
   });
 
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s skips only boolean defaults stated correctly",
+    (rule) => {
+      for (const defaultValue of [true, false]) {
+        const withDescription = (description: string) =>
+          schema(object({ enabled: { type: "boolean", default: defaultValue, description } }));
+        expect(hits(rule, withDescription(`Defaults to ${defaultValue}.`))).toEqual([]);
+        for (const description of ["Enable the feature.", `Defaults to ${!defaultValue}.`]) {
+          expect(hits(rule, withDescription(description))[0]?.pointer).toBe(
+            "/inputSchema/properties/enabled/default",
+          );
+        }
+      }
+    },
+  );
+
   test("VS Code checks gpt-4 constraints only along the paths its normalizer walks", () => {
     const defs = schema(object({}, { $defs: { q: { type: "string", maxLength: 3 } } }));
     expect(hits("vscode/gpt-4-dropped-constraints", defs)).toEqual([]);

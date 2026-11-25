@@ -53,6 +53,7 @@ describe("tools/call input", () => {
     const rules = (input: unknown) =>
       checkMcpToolResult(input, { clients: ["claude"] }).map((finding) => finding.rule);
     expect(rules(result)).toEqual(["claude/result-size"]);
+    expect(rules({ ...result, jsonrpc: "2.0" })).toEqual(["claude/result-size"]);
     expect(rules({ jsonrpc: "2.0", id: 1, result })).toEqual(["claude/result-size"]);
   });
 
