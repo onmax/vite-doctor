@@ -6,6 +6,7 @@ import { runViteDoctor } from "../../../src/doctor.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
 import {
   mcpRulePack,
+  noIndentedJsonOutput,
   requireAnnotationTitle,
   requireSafetyHint,
   validName,
@@ -13,7 +14,8 @@ import {
 
 const nitroToolkit = { "nitro-mcp-toolkit": "^0.4.0", h3: "^2.0.0" };
 const nuxtToolkit = { "@nuxtjs/mcp-toolkit": "^0.24.0", nuxt: "^4.0.0" };
-const rules = [requireAnnotationTitle, requireSafetyHint, validName];
+const viteHub = { "vite-hub": "^0.5.0", vite: "^8.0.0" };
+const rules = [requireAnnotationTitle, requireSafetyHint, validName, noIndentedJsonOutput];
 
 async function codes(
   files: Record<string, string>,
@@ -361,6 +363,98 @@ describe("MCP tool names", () => {
   });
 });
 
+describe("ViteHub MCP tools", () => {
+  test("names a tool after its path below mcp/tools and fills no title", async () => {
+    const found = await messages(
+      {
+        "server/mcp/tools/add.ts":
+          "import { defineMcpTool } from 'vite-hub/mcp'\nexport default defineMcpTool({ description: 'Add', handler: () => 1 })\n",
+        "server/mcp/tools/orders/index.ts":
+          "import { defineMcpTool } from '@vite-hub/mcp'\nexport default defineMcpTool({ title: 'Orders', annotations: { title: 'Orders', readOnlyHint: true }, handler: () => [] })\n",
+        "server/mcp/tools/list orders.ts":
+          "import { defineMcpTool } from 'vite-hub/mcp'\nexport default defineMcpTool({ annotations: { title: 'List', readOnlyHint: true }, handler: () => [] })\n",
+      },
+      viteHub,
+    );
+    expect(
+      found.map((diagnostic) => `${diagnostic.code} ${relativePath(diagnostic.file)}`).sort(),
+    ).toEqual([
+      "MCP0001 server/mcp/tools/add.ts",
+      "MCP0002 server/mcp/tools/add.ts",
+      "MCP0003 server/mcp/tools/list orders.ts",
+    ]);
+    const title = found.find((diagnostic) => diagnostic.code === "MCP0001");
+    expect(title?.message).toContain('"add"');
+    expect(title?.message).not.toContain("top-level title");
+    expect(found.find((diagnostic) => diagnostic.code === "MCP0003")?.message).toContain(
+      '"list orders"',
+    );
+  });
+});
+
+describe("MCP tool output", () => {
+  test("reports indented JSON that a tool returns as its text", async () => {
+    expect(
+      await codes({
+        "src/text.ts": tool(
+          "{ name: 'text', annotations: { title: 'Text', readOnlyHint: true }, handler: async () => ({ content: [{ type: 'text', text: JSON.stringify(await rows(), null, 2) }] }) }",
+        ),
+        "src/return.ts": tool(
+          "{ name: 'ret', annotations: { title: 'Return', readOnlyHint: true }, async handler() { const value = await rows()\n return JSON.stringify(value, undefined, '\\t') } }",
+        ),
+        "src/arrow.ts": tool(
+          "{ name: 'arrow', annotations: { title: 'Arrow', readOnlyHint: true }, handler: () => (JSON.stringify(rows(), null, 2) as string) }",
+        ),
+      }),
+    ).toEqual(["MCP0004 src/arrow.ts", "MCP0004 src/return.ts", "MCP0004 src/text.ts"]);
+  });
+
+  test("follows a helper the tool returns, like the Quiver portal before compact output", async () => {
+    const found = await messages(
+      {
+        "server/utils/mcp/structuredResult.ts":
+          "export function toMcpStructuredResult(value: unknown, legacy?: unknown) {\n  const text = legacy ?? value\n  return { content: [{ type: 'text', text: JSON.stringify(text, null, 2) ?? String(text) }], structuredContent: value }\n}\n",
+        "server/utils/mcp/format.ts":
+          "import { toMcpStructuredResult } from './structuredResult'\nexport const formatRows = (rows: unknown[]) => toMcpStructuredResult({ rows })\n",
+        "server/mcp/tools/list-alerts.ts":
+          "export default defineMcpTool({\n  name: 'list_alerts',\n  annotations: { title: 'List alerts', readOnlyHint: true },\n  handler: async () => {\n    const alerts = await loadAlerts()\n    return toMcpStructuredResult({ alerts })\n  },\n})\n",
+        "server/mcp/tools/list-rows.ts":
+          "import { formatRows } from '../../utils/mcp/format'\nexport default defineMcpTool({\n  name: 'list_rows',\n  annotations: { title: 'List rows', readOnlyHint: true },\n  handler: async () => formatRows(await loadRows()),\n})\n",
+      },
+      nuxtToolkit,
+    );
+    expect(
+      found.map((diagnostic) => `${diagnostic.code} ${relativePath(diagnostic.file)}`).sort(),
+    ).toEqual(["MCP0004 server/mcp/tools/list-alerts.ts", "MCP0004 server/mcp/tools/list-rows.ts"]);
+    expect(found[0]?.message).toContain("server/utils/mcp/structuredResult.ts");
+    expect(relativePath(found[0]?.evidence?.[0]?.file ?? "")).toBe(
+      "server/utils/mcp/structuredResult.ts",
+    );
+  });
+
+  test("reports the SDK handler argument of registerTool", async () => {
+    expect(
+      await codes(
+        {
+          "src/server.ts":
+            "import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'\nconst server = new McpServer({ name: 's', version: '1' })\nserver.registerTool('list', { annotations: { title: 'List', readOnlyHint: true } }, async () => ({ content: [{ type: 'text', text: JSON.stringify(await rows(), null, 2) }] }))\n",
+        },
+        { "@modelcontextprotocol/sdk": "^1.20.0" },
+      ),
+    ).toEqual(["MCP0004 src/server.ts"]);
+  });
+
+  test("accepts compact JSON, logs, and indents Doctor can't read", async () => {
+    expect(
+      await codes({
+        "src/compact.ts": tool(
+          "{ name: 'compact', annotations: { title: 'Compact', readOnlyHint: true }, handler: async () => { const value = await rows()\n console.log(JSON.stringify(value, null, 2))\n const pretty = JSON.stringify(value, null, 2)\n void pretty\n return { content: [{ type: 'text', text: JSON.stringify(value) }, { type: 'text', text: JSON.stringify(value, null, 0) }, { type: 'text', text: JSON.stringify(value, null, indent) }] } } }",
+        ),
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe("MCP Rule Pack", () => {
   test("activates on MCP server libraries with every Rule recommended", () => {
     expect(mcpRulePack.name).toBe("vite-doctor/mcp");
@@ -370,9 +464,11 @@ describe("MCP Rule Pack", () => {
       "@modelcontextprotocol/sdk",
       "@modelcontextprotocol/server",
       "@nuxtjs/mcp-toolkit",
+      "@vite-hub/mcp",
       "h3-mcp",
       "nitro-mcp-toolkit",
       "okmcp",
+      "vite-hub",
     ]);
     expect(mcpRulePack.presets.recommended.toSorted()).toEqual(
       rules.map((rule) => rule.meta.id).toSorted(),

@@ -17,6 +17,7 @@ export type McpLibrary =
   | "h3-mcp"
   | "nitro-mcp-toolkit"
   | "@nuxtjs/mcp-toolkit"
+  | "@vite-hub/mcp"
   | "@modelcontextprotocol/sdk";
 
 export interface McpStaticValue {
@@ -50,6 +51,15 @@ export interface McpToolDefinition {
   name?: McpStaticValue;
   title?: McpStaticValue;
   annotations: McpToolAnnotations;
+  /** `JSON.stringify()` calls with an indent whose result the tool returns as its text. */
+  indentedJson: McpIndentedJson[];
+}
+
+export interface McpIndentedJson {
+  /** The stringify call, or the call of the helper that returns it, in the tool's file. */
+  range: SourceRange;
+  /** The stringify call inside a helper that the tool returns. */
+  helper?: { file: string; displayPath: string; range: SourceRange };
 }
 
 export const MCP_PACKAGES = [
@@ -57,6 +67,8 @@ export const MCP_PACKAGES = [
   "okmcp",
   "nitro-mcp-toolkit",
   "@nuxtjs/mcp-toolkit",
+  "@vite-hub/mcp",
+  "vite-hub",
   "@modelcontextprotocol/sdk",
   "@modelcontextprotocol/server",
 ];
@@ -81,6 +93,8 @@ function libraryForImport(source: string, imported: string): McpLibrary | undefi
       source === "#imports"
     )
       return "@nuxtjs/mcp-toolkit";
+    // Apps install `vite-hub` and import its `vite-hub/mcp` entry, which re-exports `@vite-hub/mcp`.
+    if (source === "vite-hub/mcp" || source === "@vite-hub/mcp") return "@vite-hub/mcp";
   }
   if (imported === "defineTool" && /^(?:h3-mcp|okmcp)(?:\/|$)/.test(source)) return "h3-mcp";
   return undefined;
@@ -139,7 +153,7 @@ interface ParsedModule {
   references: Map<number, ScopeReference>;
   /** Readable `const` initializers keyed by their binding identifier offset. */
   constants: Map<number, AnyNode>;
-  /** Exported top-level `const` initializers by exported name. */
+  /** Exported top-level `const` initializers and function declarations by exported name. */
   exportedConstants: Map<string, AnyNode>;
 }
 
@@ -226,6 +240,10 @@ function loadModule(
   for (const statement of (program as AnyNode).body ?? []) {
     if (statement.type !== "ExportNamedDeclaration") continue;
     const declaration = statement.declaration;
+    if (declaration?.type === "FunctionDeclaration" && declaration.id?.name) {
+      module.exportedConstants.set(declaration.id.name, declaration);
+      continue;
+    }
     if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") continue;
     for (const declarator of declaration.declarations ?? []) {
       if (declarator.id?.type !== "Identifier" || !declarator.init) continue;
@@ -352,11 +370,12 @@ function readDefinition(
   const property = (key: string) => findProperty(found.options, key);
   const callee = range(unwrap(found.call.callee));
   const fileName = basename(module.file).replace(/\.[cm]?[jt]s$/, "");
+  const toolPath = /(?:^|\/)mcp\/tools\/(.+)\.[cm]?[jt]s$/.exec(module.displayPath)?.[1];
   const discovered =
     found.defaultExport &&
     found.library !== "h3-mcp" &&
     found.library !== "@modelcontextprotocol/sdk" &&
-    /(?:^|\/)mcp\/tools\//.test(module.displayPath);
+    toolPath !== undefined;
 
   const nameNode = found.nameNode ?? property("name")?.value;
   const literalName = staticString(nameNode);
@@ -364,11 +383,7 @@ function readDefinition(
     literalName !== undefined
       ? { value: literalName, source: "literal", range: range(unwrap(nameNode)) }
       : !nameNode && discovered
-        ? {
-            value: found.library === "@nuxtjs/mcp-toolkit" ? kebabCase(fileName) : fileName,
-            source: "file",
-            range: callee,
-          }
+        ? { value: fileToolName(found.library, fileName, toolPath), source: "file", range: callee }
         : undefined;
 
   const titleNode = property("title")?.value;
@@ -376,7 +391,7 @@ function readDefinition(
   const title: McpStaticValue | undefined =
     literalTitle !== undefined
       ? { value: literalTitle, source: "literal", range: range(unwrap(titleNode)) }
-      : !titleNode && discovered
+      : !titleNode && discovered && found.library !== "@vite-hub/mcp"
         ? { value: titleCase(fileName), source: "file", range: callee }
         : undefined;
 
@@ -409,7 +424,140 @@ function readDefinition(
     name,
     title,
     annotations,
+    indentedJson: findIndentedJsonOutput(modules, module, found.call, 0).map((site) => ({
+      range: range(site.call),
+      ...(site.module !== module
+        ? {
+            helper: {
+              file: site.module.file,
+              displayPath: site.module.displayPath,
+              range: modules.ctx.helpers.rangeFromOffsets(
+                site.module.file,
+                site.module.text,
+                site.stringify.start,
+                site.stringify.end,
+              ),
+            },
+          }
+        : {}),
+    })),
   };
+}
+
+function fileToolName(library: McpLibrary, fileName: string, toolPath: string | undefined) {
+  if (library === "@nuxtjs/mcp-toolkit") return kebabCase(fileName);
+  // ViteHub names a tool after its path below `mcp/tools/`, without the extension or a trailing `/index`.
+  if (library === "@vite-hub/mcp" && toolPath) return toolPath.replace(/\/index$/i, "");
+  return fileName;
+}
+
+const NO_INDENT = new Set([0, ""]);
+const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
+const MAX_HELPER_DEPTH = 2;
+
+interface IndentedJsonSite {
+  /** The call in the walked code: the stringify itself, or the helper call that returns one. */
+  call: AnyNode;
+  module: ParsedModule;
+  stringify: AnyNode;
+}
+
+/**
+ * `JSON.stringify(value, replacer, indent)` calls whose string is the tool's text: the value of a `text` property, a
+ * `return`, or an arrow function's body, also through `??`, `||`, a conditional, or `await`. A helper called in such a
+ * place is followed into its file, two levels deep. Only a literal indent counts, so a variable indent or a stringify
+ * for a log stays silent.
+ */
+function findIndentedJsonOutput(
+  modules: ProjectModules,
+  module: ParsedModule,
+  root: AnyNode,
+  depth: number,
+): IndentedJsonSite[] {
+  const found: IndentedJsonSite[] = [];
+  walkWithAncestors(root, [], (node, ancestors) => {
+    if (node.type !== "CallExpression" || !isOutput(node, ancestors)) return;
+    if (isJsonStringify(node.callee)) {
+      if (hasLiteralIndent(node)) found.push({ call: node, module, stringify: node });
+      return;
+    }
+    const callee = unwrap(node.callee);
+    if (callee?.type !== "Identifier" || depth >= MAX_HELPER_DEPTH) return;
+    const target = resolveIdentifier(modules, module, callee);
+    if ("reason" in target || !FUNCTION_TYPES.has(unwrap(target.node)?.type)) return;
+    for (const site of findIndentedJsonOutput(
+      modules,
+      target.module,
+      unwrap(target.node),
+      depth + 1,
+    ))
+      found.push({ call: node, module: site.module, stringify: site.stringify });
+  });
+  return found;
+}
+
+function hasLiteralIndent(call: AnyNode): boolean {
+  const indent = unwrap(call.arguments?.[2]);
+  return (
+    indent?.type === "Literal" &&
+    (typeof indent.value === "number" || typeof indent.value === "string") &&
+    !NO_INDENT.has(indent.value)
+  );
+}
+
+function isOutput(node: AnyNode, ancestors: AnyNode[]): boolean {
+  let child = node;
+  for (let index = ancestors.length - 1; index >= 0; index--) {
+    const parent = ancestors[index];
+    if (
+      (parent.type === "LogicalExpression" && parent.operator !== "&&") ||
+      (parent.type === "ConditionalExpression" && unwrap(parent.test) !== child) ||
+      parent.type === "AwaitExpression"
+    ) {
+      child = parent;
+      continue;
+    }
+    return (
+      parent.type === "ReturnStatement" ||
+      (parent.type === "ArrowFunctionExpression" && unwrap(parent.body) === child) ||
+      (parent.type === "Property" &&
+        unwrap(parent.value) === child &&
+        !parent.computed &&
+        (parent.key?.name === "text" || parent.key?.value === "text"))
+    );
+  }
+  return false;
+}
+
+function isJsonStringify(callee: AnyNode): boolean {
+  const value = unwrap(callee);
+  return (
+    value?.type === "MemberExpression" &&
+    !value.computed &&
+    unwrap(value.object)?.type === "Identifier" &&
+    unwrap(value.object).name === "JSON" &&
+    value.property?.name === "stringify"
+  );
+}
+
+/** Like `walk`, with the ancestors that aren't TypeScript wrappers or parentheses. */
+function walkWithAncestors(
+  node: AnyNode,
+  ancestors: AnyNode[],
+  visit: (node: AnyNode, ancestors: AnyNode[]) => void,
+) {
+  if (!node || typeof node !== "object" || typeof node.type !== "string") return;
+  visit(node, ancestors);
+  const next = TRANSPARENT_WRAPPERS.has(node.type) ? ancestors : [...ancestors, node];
+  for (const key of getNodeVisitorKeys(node)) {
+    const value = node[key];
+    if (Array.isArray(value)) for (const child of value) walkWithAncestors(child, next, visit);
+    else walkWithAncestors(value, next, visit);
+  }
 }
 
 type ResolvedObject =
