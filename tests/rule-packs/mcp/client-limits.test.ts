@@ -152,7 +152,7 @@ test("only an explicit client alias affects alias-based exclusions", async () =>
 
 test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the tool's source or the root", async () => {
   const root = project({ "server/mcp/tools/search.ts": searchSource });
-  const { diagnostics, result } = await run(root, {
+  const { diagnostics } = await run(root, {
     extensions: contributing([
       {
         name: "hub",
@@ -183,32 +183,14 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
 
   const stripped = byCode(diagnostics, "MCP0008", "search")!;
   expect(stripped.why).toContain("in Codex and VS Code.");
-  expect(stripped.data).toMatchObject({ server: { name: "hub" }, tool: "search" });
-  const findings = (stripped.data as { findings: Array<{ client: string; tool: string }> })
-    .findings;
-  expect(new Set(findings.map((finding) => finding.client))).toEqual(new Set(["codex", "vscode"]));
-  expect(findings.every((finding) => finding.tool === "search")).toBe(true);
-  for (const format of ["json", "agent"] as const) {
-    const report = JSON.parse(createReport(result, format)) as {
-      diagnostics: Array<{ fingerprint: string; data?: unknown }>;
-    };
-    expect(
-      report.diagnostics.find((item) => item.fingerprint === stripped.fingerprint)?.data,
-    ).toEqual(stripped.data);
-  }
-  const sarif = JSON.parse(createReport(result, "sarif")) as {
-    runs: Array<{
-      results: Array<{
-        partialFingerprints: Record<string, string>;
-        properties: { data?: unknown };
-      }>;
-    }>;
-  };
-  expect(
-    sarif.runs[0]!.results.find(
-      (item) => item.partialFingerprints["vite-doctor/v1"] === stripped.fingerprint,
-    )?.properties.data,
-  ).toEqual(stripped.data);
+  expect(stripped.data).toMatchObject({
+    server: { name: "hub" },
+    tool: "search",
+    findings: expect.arrayContaining([
+      expect.objectContaining({ client: "codex", tool: "search" }),
+      expect.objectContaining({ client: "vscode", tool: "search" }),
+    ]),
+  });
 
   const remote = byCode(diagnostics, "MCP0005", "lookup")!;
   expect(remote.file).toBe(root);
@@ -223,6 +205,56 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
     ]),
   });
   expect(byCode(again.diagnostics, "MCP0005", "lookup")!.fingerprint).toBe(remote.fingerprint);
+});
+
+test("structured reports retain pointers omitted from the client-limit message", async () => {
+  const names = ["first", "second", "third", "fourth", "fifth", "sixth"];
+  const tool: McpTool = {
+    ...search,
+    inputSchema: {
+      type: "object",
+      properties: Object.fromEntries(
+        names.map((name) => [name, { type: "integer", exclusiveMinimum: 0 }]),
+      ),
+    },
+  };
+  const { diagnostics, result } = await run(project(), {
+    extensions: contributing([{ name: "hub", tools: [tool] }]),
+  });
+  const stripped = byCode(diagnostics, "MCP0008", tool.name)!;
+  expect(stripped.why).toContain("and 1 more");
+  expect(stripped.why).not.toContain("/inputSchema/properties/sixth");
+  const expected = {
+    server: { name: "hub" },
+    tool: tool.name,
+    findings: expect.arrayContaining([
+      expect.objectContaining({
+        rule: "codex/dropped-constraints",
+        affectedPointers: names.map((name) => `/inputSchema/properties/${name}/exclusiveMinimum`),
+      }),
+    ]),
+  };
+  for (const format of ["json", "agent"] as const) {
+    const report = JSON.parse(createReport(result, format)) as {
+      diagnostics: Array<{ fingerprint: string; data?: unknown }>;
+    };
+    const data = report.diagnostics.find((item) => item.fingerprint === stripped.fingerprint)?.data;
+    expect(data).toMatchObject(expected);
+    expect(data).toEqual(stripped.data);
+  }
+  const sarif = JSON.parse(createReport(result, "sarif")) as {
+    runs: Array<{
+      results: Array<{
+        partialFingerprints: Record<string, string>;
+        properties: { data?: unknown };
+      }>;
+    }>;
+  };
+  const data = sarif.runs[0]!.results.find(
+    (item) => item.partialFingerprints["vite-doctor/v1"] === stripped.fingerprint,
+  )?.properties.data;
+  expect(data).toMatchObject(expected);
+  expect(data).toEqual(stripped.data);
 });
 
 test("tools read from a running server through the mcp option are checked", async () => {

@@ -187,7 +187,10 @@ function report(
       confidence,
       evidence,
       data: {
-        server: { name: server.name, url: endpoint },
+        server: {
+          ...(server.name === undefined ? {} : { name: server.name }),
+          ...(endpoint === undefined ? {} : { url: endpoint }),
+        },
         ...(tool === undefined ? {} : { tool }),
         findings,
       },

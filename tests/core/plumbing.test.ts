@@ -932,6 +932,43 @@ test("rule diagnostics must include actionable fix text", async () => {
   });
 });
 
+test.each<{ label: string; data: Record<string, unknown> }>([
+  { label: "BigInt", data: { count: 1n } },
+  { label: "undefined", data: { nested: [undefined] } },
+  { label: "Date", data: { when: new Date(0) } },
+  { label: "non-finite number", data: { amount: Infinity } },
+  {
+    label: "cycle",
+    data: {
+      circular: (() => {
+        const values: unknown[] = [];
+        values.push(values);
+        return values;
+      })(),
+    },
+  },
+])("Rule diagnostic data must be plain JSON ($label)", async ({ data }) => {
+  const rule = createRule({
+    meta: { ...reportProgramRule.meta, id: "test/invalid-data" },
+    create(ctx) {
+      return {
+        Program() {
+          ctx.report(allDiagnostics.DOC9999({ why: "Test data.", fix: "Inspect data." }), {
+            data,
+          });
+        },
+      };
+    },
+  });
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    await expect(
+      runDoctor({ root, framework: "vue", cache: false, extensions: [pluginWith(rule)] }),
+    ).rejects.toThrow(
+      'Rule "test/invalid-data" must report Diagnostic data as a plain JSON object.',
+    );
+  });
+});
+
 test.each([false, true])(
   "ambiguous short Rule Pack aliases fail regardless of registration order (%s)",
   async (reverse) => {

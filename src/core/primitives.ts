@@ -108,7 +108,7 @@ export interface Diagnostic {
   /**
    * Plain JSON the Rule attaches for agents, such as the MCP tool and the client findings behind
    * the message. The Rule owns its shape and its Diagnostic Code docs describe it. Reports emit it
-   * as is, and the cache stores it as JSON.
+   * as is, and the cache stores it as JSON. `ctx.report` validates and copies the payload.
    */
   data?: Record<string, unknown>;
   fixGroupId?: string;
