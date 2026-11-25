@@ -557,3 +557,16 @@ export default defineMcpTool({
     asWritten.all.some((item) => item.code === "MCP0007" && item.why.includes("remote tool")),
   ).toBe(false);
 });
+
+test("a wire finding from a server without a URL carries only the server name in data", async () => {
+  const root = project();
+  const { all } = await run(root, {
+    extensions: contributing([
+      { name: "hub", tools: [{ name: "untitled", annotations: { readOnlyHint: true } }] },
+    ]),
+  });
+  expect(all.find((item) => item.code === "MCP0001")?.data).toMatchObject({
+    server: { name: "hub" },
+    tool: "untitled",
+  });
+});
