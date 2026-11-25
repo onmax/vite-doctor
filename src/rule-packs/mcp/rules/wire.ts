@@ -6,6 +6,7 @@ import type {
   SourceRange,
 } from "../../../core/index.js";
 import type { Diagnostic as NosticsDiagnostic } from "nostics";
+import { canReportFromWorkspace } from "../../../core/internal/rule-execution.js";
 import { sha256 } from "../../../core/internal/utils.js";
 import { checkMcpToolList } from "../../../mcp/check.js";
 import { mcpEndpointId, mcpEndpointLabel } from "../../../mcp/endpoint.js";
@@ -32,7 +33,7 @@ export interface ServerFindings {
 
 interface CheckedServers {
   servers: ServerFindings[];
-  /** A client-limit Rule ran for the whole project, so every server's list was checked. */
+  /** An MCP Rule that reads tools/list ran for the whole project. */
   projectWide: boolean;
   /** Servers whose tools only file overrides checked. */
   scoped: Set<McpServerToolsEvidence>;
@@ -64,6 +65,26 @@ export function serverFindings(ctx: RuleContext): CheckedServers {
   return found;
 }
 
+/** Records which servers' tools/list the running Rule checks, for the report's evidence lines. */
+export function markChecked(ctx: RuleContext, sources: McpToolDefinition[]): void {
+  const checked = serverFindings(ctx);
+  if (checked.projectWide) return;
+  if (canReportFromWorkspace(ctx)) {
+    checked.projectWide = true;
+    return;
+  }
+  for (const { server } of checked.servers) {
+    if (
+      server.tools.some(({ name }) => {
+        const definition = staticTool(sources, name);
+        return definition && canReportFromWorkspace(ctx, definition.file);
+      })
+    ) {
+      checked.scoped.add(server);
+    }
+  }
+}
+
 /** The tool's definition in source, when exactly one has the name the server sends. */
 export function staticTool(
   tools: McpToolDefinition[],
@@ -87,6 +108,7 @@ export interface WireTool {
  * clients receive, and source can't show what a hook or plugin changed.
  */
 export function wireTools(ctx: RuleContext, sources: McpToolDefinition[]) {
+  markChecked(ctx, sources);
   const tools: WireTool[] = serverFindings(ctx).servers.flatMap(({ server, findings }) =>
     server.tools.map((tool) => ({
       server,

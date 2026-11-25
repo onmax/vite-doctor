@@ -15,7 +15,7 @@ import type { McpServerToolsEvidence } from "../../../mcp/evidence.js";
 import type { McpEffect, McpFinding } from "../../../mcp/types.js";
 import { collectMcpTools, type McpToolDefinition } from "./shared.js";
 import { nameProblems } from "./valid-name.js";
-import { MCP_CLIENT_LABELS, serverFindings, staticTool } from "./wire.js";
+import { MCP_CLIENT_LABELS, markChecked, serverFindings, staticTool } from "./wire.js";
 
 export interface ClientLimitOptions {
   ruleId: string;
@@ -45,18 +45,7 @@ export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOption
       );
       if (!groups.length && (checked.projectWide || !checked.servers.length)) return;
       const tools = await collectMcpTools(ctx);
-      if (!checked.projectWide) {
-        for (const { server } of checked.servers) {
-          if (
-            server.tools.some(({ name }) => {
-              const definition = staticTool(tools, name);
-              return definition && canReportFromWorkspace(ctx, definition.file);
-            })
-          ) {
-            checked.scoped.add(server);
-          }
-        }
-      }
+      markChecked(ctx, tools);
       for (const group of groups) {
         const definition = group.tool === undefined ? undefined : staticTool(tools, group.tool);
         const name = definition?.name?.value;
