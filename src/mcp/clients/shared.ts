@@ -128,6 +128,7 @@ export function undescribedConstraints(
       if (!dropped.has(keyword)) continue;
       if (node.schema.type === "integer" && isSafeIntegerBound(keyword, node.schema[keyword]))
         continue;
+      if (isHarmless(keyword, node.schema[keyword])) continue;
       if (mentions(prose, keyword, node.schema[keyword])) continue;
       found.push({ pointer: inputPointer(`${node.pointer}/${keyword}`), keyword });
     }
@@ -143,6 +144,23 @@ function isSafeIntegerBound(keyword: string, value: unknown): boolean {
   );
 }
 
+// An empty or `false` default means the same as leaving the field out, and a minimum of 1 only
+// rejects an empty value, so a model that never sees them sends nothing the server would refuse.
+function isHarmless(keyword: string, value: unknown): boolean {
+  if (keyword === "default")
+    return (
+      value === null ||
+      value === false ||
+      value === "" ||
+      (typeof value === "object" && Object.keys(value).length === 0)
+    );
+  return (
+    (keyword === "minLength" || keyword === "minItems" || keyword === "minProperties") &&
+    typeof value === "number" &&
+    value <= 1
+  );
+}
+
 function mentions(prose: string, keyword: string, value: unknown): boolean {
   if (!prose) return false;
   if (typeof value === "number")
@@ -150,11 +168,35 @@ function mentions(prose: string, keyword: string, value: unknown): boolean {
   if (typeof value === "boolean") {
     if (keyword === "uniqueItems") return /unique|duplicate/i.test(prose);
     return (
-      keyword === "default" && new RegExp(`\\bdefaults?\\s+to\\s+\`?${value}\\b`, "i").test(prose)
+      keyword === "default" &&
+      new RegExp(
+        `\\bdefault(?:s?\\s+to|\\s+is|\\s*:)\\s*\`?${value}\\b|\\b${value}\`?\\s+by\\s+default\\b`,
+        "i",
+      ).test(prose)
     );
   }
-  if (typeof value === "string") return prose.toLowerCase().includes(value.toLowerCase());
-  return prose.includes(JSON.stringify(value));
+  if (typeof value === "string") {
+    if (keyword === "pattern" && /\bYYYY-MM-DD\b/.test(prose) && isDatePattern(value)) return true;
+    return prose.toLowerCase().includes(value.toLowerCase());
+  }
+  return compactJson(prose).includes(compactJson(JSON.stringify(value)));
+}
+
+function compactJson(text: string): string {
+  return text.replaceAll(/\s+/g, "").replaceAll("'", '"');
+}
+
+function isDatePattern(pattern: string): boolean {
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern);
+  } catch {
+    return false;
+  }
+  return (
+    ["2024-02-29", "1999-12-31", "2026-01-01"].every((date) => regex.test(date)) &&
+    !["2026-13-01", "2026-1-1", "2026-01-01T00:00:00Z"].some((date) => regex.test(date))
+  );
 }
 
 function escapeRegExp(text: string): string {
