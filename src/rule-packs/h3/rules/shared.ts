@@ -311,7 +311,7 @@ function h3Import(variable: ScopeVariable): string | typeof namespaceImport | nu
 }
 
 // Nitro and Nuxt auto-import h3 utilities into their server files.
-function autoImportsH3(ctx: RuleContext): boolean {
+export function autoImportsH3(ctx: RuleContext): boolean {
   return perFile(ctx, "h3:auto-imports", () => isNitroServerFile(ctx));
 }
 

@@ -3023,3 +3023,165 @@ test.each(["nitro", "nuxt"] as const)("scopes Nuxt route layout to %s", async (f
   });
   expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(framework === "nuxt");
 });
+
+const h3V2Project = createProjectFixture({
+  framework: "nitro",
+  dependencies: { nitro: "3.0.0-beta.1", h3: "2.0.8" },
+});
+afterAll(() => h3V2Project.dispose());
+
+test.each([
+  [
+    "new HTTPError details",
+    'import { HTTPError } from "h3";',
+    "try { throw new HTTPError({ status: 404 }) } catch { throw new HTTPError({ status: 500 }) }",
+    1,
+  ],
+  [
+    "new HTTPError message and details",
+    'import { HTTPError } from "h3";',
+    'try { throw new HTTPError("Missing", { status: 404 }) } catch { throw new Error() }',
+    1,
+  ],
+  [
+    "new HTTPError with an unknown message",
+    'import { HTTPError } from "h3";',
+    "const fail = (message) => { throw new HTTPError(message, { status: 404 }) }; try { fail(text) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "deprecated statusCode alias",
+    'import { HTTPError } from "h3";',
+    "try { throw new HTTPError({ statusCode: 401 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "HTTPError.status factory",
+    'import { HTTPError } from "h3";',
+    "try { throw HTTPError.status(404) } catch { throw HTTPError.status(500) }",
+    1,
+  ],
+  [
+    "HTTPError.status with details",
+    'import { HTTPError } from "h3";',
+    'try { throw HTTPError.status(403, "Forbidden", { message: "No" }) } catch { throw new Error() }',
+    1,
+  ],
+  [
+    "nitro/h3 import",
+    'import { HTTPError } from "nitro/h3";',
+    "try { throw new HTTPError({ status: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "namespace import",
+    'import * as h3 from "h3";',
+    "try { throw new h3.HTTPError({ status: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "Nitro auto-import",
+    "",
+    "try { throw new HTTPError({ status: 401 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "createError prefers status over statusCode",
+    "",
+    "try { throw createError({ status: 404, statusCode: 500 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "local class shadowing HTTPError in the guard",
+    "",
+    "try { throw new HTTPError({ status: 404 }) } catch (error) { class HTTPError {}; if (error instanceof HTTPError) throw error; throw new Error() }",
+    1,
+  ],
+  [
+    "HTTPError.isError guard",
+    "",
+    "try { throw new HTTPError({ status: 404 }) } catch (error) { if (HTTPError.isError(error)) throw error; throw new HTTPError({ status: 500 }) }",
+    0,
+  ],
+  [
+    "instanceof HTTPError guard",
+    'import { HTTPError } from "h3";',
+    "try { throw HTTPError.status(404) } catch (error) { if (error instanceof HTTPError) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "deprecated isError guard",
+    "",
+    "try { throw new HTTPError({ status: 404 }) } catch (error) { if (isError(error)) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "instanceof Error guard",
+    "",
+    "try { throw new HTTPError({ status: 404 }) } catch (error) { if (error instanceof Error) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "user-defined HTTPError class",
+    "",
+    "class HTTPError extends Error { constructor(options) { super(); this.status = options.status } }; try { throw new HTTPError({ status: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "HTTPError from another package",
+    'import { HTTPError } from "ky";',
+    "try { throw new HTTPError({ status: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "status outside the HTTP range becomes 500",
+    "",
+    "try { throw new HTTPError({ status: 99 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "status read from an unknown cause",
+    "",
+    "try { throw new HTTPError({ cause: reason }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "message-only HTTPError",
+    "",
+    'try { throw new HTTPError("failed") } catch { throw new Error() }',
+    0,
+  ],
+])("recognises h3 v2 HTTPError: %s", async (_name, imports, body, count) => {
+  const result = await h3V2Project.run({
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `${imports} export default defineEventHandler(() => { ${body} })`,
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
+});
+
+test("does not treat HTTPError as an h3 error on h3 v1", async () => {
+  const result = await nitroProject.run({
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "export default defineEventHandler(() => { try { throw new HTTPError({ status: 404 }) } catch { throw new Error() } })",
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(0);
+});
+
+test.each([
+  ["h3 v2", h3V2Project, "Rethrow errors that pass HTTPError.isError(error)"],
+  ["h3 v1", nitroProject, "Rethrow errors that pass isError(error)"],
+] as const)("suggests the installed guard on %s", async (_name, project, guard) => {
+  const result = await project.run({
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "export default defineEventHandler(() => { try { throw createError({ statusCode: 401 }) } catch { throw new Error() } })",
+    },
+  });
+  expect(result.diagnostics.find((item) => item.code === "H30004")?.suggestion).toContain(guard);
+});
