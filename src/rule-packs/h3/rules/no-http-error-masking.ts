@@ -1,8 +1,10 @@
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
+import type { RuleContext } from "../../../core/index.js";
 import { createRule, isNitroServerFile, report, walkScriptLocal, type AnyNode } from "./shared.js";
 
 const ruleId = "h3/errors/no-http-error-masking";
 const analysisLimit = Symbol("HTTP error analysis limit");
+const h3Sources = new Set(["h3", "nitro/h3"]);
 
 export const noHttpErrorMasking = createRule({
   meta: {
@@ -18,6 +20,14 @@ export const noHttpErrorMasking = createRule({
           "try { throw createError({ statusCode: 401 }) } catch { throw createError({ statusCode: 500 }) }",
         valid:
           "try { throw createError({ statusCode: 401 }) } catch (error) { if (isError(error)) throw error; throw createError({ statusCode: 500 }) }",
+      },
+      {
+        title: "Preserve intentional H3 v2 errors",
+        language: "ts",
+        invalid:
+          "try { throw new HTTPError({ status: 401 }) } catch { throw new HTTPError({ status: 500 }) }",
+        valid:
+          "try { throw new HTTPError({ status: 401 }) } catch (error) { if (HTTPError.isError(error)) throw error; throw new HTTPError({ status: 500 }) }",
       },
     ],
     title: "Preserve intentional HTTP errors in Nitro handlers",
@@ -42,8 +52,10 @@ export const noHttpErrorMasking = createRule({
         let root = node;
         while (root.__doctorParent) root = root.__doctorParent;
         const lexical = lexicalBindings(root);
+        const h3Major = h3RuntimeMajor(ctx);
         const initial: Path = {
           outcome: "normal",
+          h3Major,
           budget: { remaining: 4096 },
           conditions: new Map(),
           resolveBinding: lexical.resolve,
@@ -91,7 +103,9 @@ export const noHttpErrorMasking = createRule({
           "warn",
           "request",
           `This catch turns an intentional HTTP ${status} error into a generic server failure.`,
-          "Preserve H3 errors before converting unexpected failures to HTTP 500.",
+          h3Major === undefined
+            ? "Preserve H3 errors before converting unexpected failures to HTTP 500."
+            : `Rethrow errors that pass ${h3Major >= 2 ? "HTTPError.isError(error)" : "isError(error)"} before converting unexpected failures to HTTP 500.`,
         );
       },
     };
@@ -119,9 +133,12 @@ interface Path {
   arrayIteratorElements?: AnyNode[] | null;
   asyncBody?: boolean;
   adoptingAsync?: boolean;
+  /** Major version of the resolved h3 runtime; unset when Doctor could not resolve it. */
+  h3Major?: number;
 }
 
-type ErrorValue = { id: number; status: Outcome; instanceofError?: boolean };
+// `httpError` marks values h3 v2 builds with `new HTTPError()`, so `instanceof HTTPError` holds.
+type ErrorValue = { id: number; status: Outcome; instanceofError?: boolean; httpError?: boolean };
 type Value =
   | { error: ErrorValue }
   | { literal: unknown }
@@ -192,21 +209,8 @@ function outcomes(
             error: {
               id: --current.budget.remaining,
               status,
-              instanceofError:
-                expression?.type === "CallExpression" &&
-                isH3Reference(
-                  unwrapExpression(expression.callee),
-                  "createError",
-                  current.resolveBinding,
-                ) &&
-                resolvedObject(expression.arguments[0], current)?.properties.every(
-                  (property: AnyNode) =>
-                    property.type !== "SpreadElement" &&
-                    !property.computed &&
-                    !["constructor", "__proto__"].includes(
-                      property.key?.name ?? property.key?.value,
-                    ),
-                ),
+              instanceofError: isHttpErrorInstance(expression, current),
+              httpError: isHttpErrorInstance(expression, current) && (current.h3Major ?? 2) >= 2,
             },
           },
         };
@@ -855,6 +859,14 @@ function evaluateOutcomes(
           node.right.name === "Error" &&
           !right.resolveBinding(node.right) &&
           leftValue.error.instanceofError === true
+        )
+          value = { literal: true };
+        if (
+          node.operator === "instanceof" &&
+          leftValue &&
+          "error" in leftValue &&
+          leftValue.error.httpError === true &&
+          isHttpErrorClass(unwrapExpression(node.right), right)
         )
           value = { literal: true };
         if (leftValue && "literal" in leftValue && rightValue && "literal" in rightValue) {
@@ -1523,8 +1535,7 @@ function evaluateOutcomes(
     }
     const objects = new Map(normal.objects);
     if (node.type === "CallExpression" || node.type === "NewExpression") {
-      const callee = unwrapExpression(node.callee);
-      if (!isH3Reference(callee, "createError", path.resolveBinding)) {
+      if (!httpErrorFactory(node, path)) {
         for (const argument of node.arguments) {
           const reference = unwrapExpression(
             argument.type === "SpreadElement" ? argument.argument : argument,
@@ -1973,7 +1984,8 @@ function conditionPaths(
     const guarded = unwrapExpression(valueNode.arguments?.[0]);
     const caught =
       valueNode.type === "CallExpression" &&
-      isH3Reference(guard, "isError", current.resolveBinding) &&
+      (isH3Reference(guard, "isError", current.resolveBinding) ||
+        isHttpErrorMember(guard, "isError", current)) &&
       valueNode.arguments.length === 1 &&
       guarded?.type === "Identifier"
         ? errorStatus(values.get(current.resolveBinding(guarded)), current)
@@ -2049,7 +2061,7 @@ function isH3Reference(node: AnyNode, name: string, resolve: Path["resolveBindin
       specifier?.type === "ImportNamespaceSpecifier" &&
       declaration?.type === "ImportDeclaration" &&
       declaration.importKind !== "type" &&
-      declaration.source.value === "h3"
+      h3Sources.has(declaration.source.value)
     );
   }
   if (node?.type !== "Identifier") return false;
@@ -2063,7 +2075,53 @@ function isH3Reference(node: AnyNode, name: string, resolve: Path["resolveBindin
     specifier.importKind !== "type" &&
     declaration?.type === "ImportDeclaration" &&
     declaration.importKind !== "type" &&
-    declaration.source.value === "h3"
+    h3Sources.has(declaration.source.value)
+  );
+}
+
+function h3RuntimeMajor(ctx: RuleContext): number | undefined {
+  const h3 = ctx.project.runtimeGraph?.packages.h3;
+  const major = h3?.state === "resolved" ? Number.parseInt(h3.version ?? "", 10) : Number.NaN;
+  return Number.isFinite(major) ? major : undefined;
+}
+
+// h3 1.x has no HTTPError export, so there the name builds no HTTP error.
+function isHttpErrorClass(node: AnyNode, path: Path): boolean {
+  return (path.h3Major ?? 2) >= 2 && isH3Reference(node, "HTTPError", path.resolveBinding);
+}
+
+/** `HTTPError.<name>`, such as the `HTTPError.isError` guard or the `HTTPError.status` factory. */
+function isHttpErrorMember(node: AnyNode, name: string, path: Path): boolean {
+  if (node?.type !== "MemberExpression") return false;
+  const key = node.computed ? knownLiteral(node.property, path) : node.property.name;
+  return key === name && isHttpErrorClass(unwrapExpression(node.object), path);
+}
+
+/** Which h3 API builds the HTTP error in a call: `createError`, or h3 v2's `HTTPError`. */
+function httpErrorFactory(node: AnyNode, path: Path): "createError" | "HTTPError" | undefined {
+  node = unwrapExpression(node);
+  const callee = unwrapExpression(node?.callee);
+  if (node?.type === "NewExpression")
+    return isHttpErrorClass(callee, path) ? "HTTPError" : undefined;
+  if (node?.type !== "CallExpression") return;
+  if (isH3Reference(callee, "createError", path.resolveBinding)) return "createError";
+  if (isHttpErrorMember(callee, "status", path)) return "HTTPError";
+}
+
+function isHttpErrorInstance(node: AnyNode, path: Path): boolean {
+  const factory = httpErrorFactory(node, path);
+  if (factory === "HTTPError") return true;
+  if (factory !== "createError") return false;
+  // h3 v2's createError always constructs a new HTTPError; v1 returns option objects that look
+  // like H3 errors as they are.
+  if ((path.h3Major ?? 0) >= 2) return true;
+  return Boolean(
+    resolvedObject(node.arguments[0], path)?.properties.every(
+      (property: AnyNode) =>
+        property.type !== "SpreadElement" &&
+        !property.computed &&
+        !["constructor", "__proto__"].includes(property.key?.name ?? property.key?.value),
+    ),
   );
 }
 
@@ -2194,8 +2252,14 @@ function httpStatus(node: AnyNode, path: Path): number | "server-error" | undefi
     ].includes(callee?.name)
   )
     return "server-error";
-  if (node?.type !== "CallExpression" || !isH3Reference(callee, "createError", path.resolveBinding))
-    return;
+  const factory = httpErrorFactory(node, path);
+  if (!factory) return;
+  if (node.type === "CallExpression" && factory === "HTTPError") {
+    // HTTPError.status(status, statusText, details) spreads details first, so its status wins.
+    const status = numericStatus(node.arguments[0], path);
+    return status ? sanitizedStatus(status) : undefined;
+  }
+  if (factory === "HTTPError" || (path.h3Major ?? 0) >= 2) return httpErrorStatus(node, path);
   let options = unwrapExpression(node.arguments?.[0]);
   if (options?.type === "Identifier") options = path.objects?.get(path.resolveBinding(options));
   if (!options || (options.type === "Literal" && typeof options.value === "string")) return 500;
@@ -2203,6 +2267,44 @@ function httpStatus(node: AnyNode, path: Path): number | "server-error" | undefi
   const statuses = optionStatuses(options, path, new Set());
   if (statuses.has("statusCode")) return statuses.get("statusCode");
   return statuses.has("status") ? statuses.get("status") : 500;
+}
+
+// new HTTPError(message?, details) and h3 v2's createError read `status || statusCode`, then the
+// cause's status, and sanitize anything outside 100-599 to 500.
+function httpErrorStatus(node: AnyNode, path: Path): number | undefined {
+  const [first, second] = (node.arguments ?? []).map(unwrapExpression);
+  if (first?.type === "SpreadElement" || second?.type === "SpreadElement") return;
+  // The typed overloads take details second only after a string message.
+  const message =
+    first?.type === "TemplateLiteral" ||
+    typeof knownLiteral(first, path) === "string" ||
+    (second && !resolvedObject(first, path));
+  if (first && !message) return detailsStatus(first, path);
+  return second ? detailsStatus(second, path) : 500;
+}
+
+function detailsStatus(node: AnyNode, path: Path): number | undefined {
+  if (isUndefinedArgument(node, path.resolveBinding) || knownNullish(node, path)) return 500;
+  const details = resolvedObject(node, path);
+  if (!details) return;
+  const statuses = optionStatuses(details, path, new Set());
+  for (const key of ["status", "statusCode"]) {
+    if (!statuses.has(key)) continue;
+    const status = statuses.get(key);
+    if (status === undefined) return;
+    if (status) return sanitizedStatus(status);
+  }
+  const hasCause = details.properties.some(
+    (property: AnyNode) =>
+      property.type === "SpreadElement" ||
+      property.computed ||
+      (property.key?.name ?? property.key?.value) === "cause",
+  );
+  return hasCause ? undefined : 500;
+}
+
+function sanitizedStatus(status: number): number {
+  return Number.isInteger(status) && status >= 100 && status <= 599 ? status : 500;
 }
 
 function optionStatuses(
