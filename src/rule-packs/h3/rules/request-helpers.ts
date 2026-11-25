@@ -1,4 +1,5 @@
 import { fileTextScope } from "../../../core/internal/script-scope.js";
+import { constantValue } from "./_migration-helpers.js";
 import {
   type AnyNode,
   createRule,
@@ -84,11 +85,7 @@ export function rawInputValidatedNearby(
   if (!variable) return null;
   const scope = nearestFunctionOrProgram(node);
   const references = bindings.get(node.id.start);
-  if (
-    !scope ||
-    !references ||
-    !hasValidationOfVariable(scope, references, ctx.file.text, node.start ?? 0)
-  )
+  if (!scope || !references || !hasValidationOfVariable(ctx, scope, references, node.start ?? 0))
     return null;
   return {
     node,
@@ -210,9 +207,9 @@ function variableReferences(ctx: RuleContext): Map<number, Set<number>> {
 }
 
 function hasValidationOfVariable(
+  ctx: RuleContext,
   scope: AnyNode,
   references: Set<number>,
-  source: string,
   after: number,
 ) {
   let found = false;
@@ -220,20 +217,48 @@ function hasValidationOfVariable(
     if (found || node.type !== "CallExpression") return;
     if (typeof node.start === "number" && node.start <= after) return;
     if (
-      isDirectValidatorCall(node, references) ||
-      isSchemaMethodValidatorCall(node, references, source)
+      isDirectValidatorCall(ctx, node, references) ||
+      isSchemaMethodValidatorCall(node, references, ctx.file.text)
     )
       found = true;
   });
   return found;
 }
 
-function isDirectValidatorCall(node: AnyNode, references: Set<number>) {
+function isDirectValidatorCall(ctx: RuleContext, node: AnyNode, references: Set<number>) {
   const name = calleeName(node);
-  return (
-    Boolean(name && /^(validate|validator|parse|safeParse|assert|check)\w*$/i.test(name)) &&
-    node.arguments?.some((arg: AnyNode) => arg.type === "Identifier" && references.has(arg.start))
-  );
+  if (
+    !name ||
+    !node.arguments?.some((arg: AnyNode) => arg.type === "Identifier" && references.has(arg.start))
+  )
+    return false;
+  if (/^(?:validate|validator|assert|check)\w*$/i.test(name)) return true;
+  if (/^(?:safe)?parse(?:Async)?$/i.test(name)) return true;
+  // `parseLimit(query)` is as often a coercer that never rejects as a validator, so only a local
+  // helper that can throw or return false counts as validation.
+  return /^parse\w+$/i.test(name) && localHelperCanReject(ctx, node.callee);
+}
+
+function localHelperCanReject(ctx: RuleContext, callee: AnyNode) {
+  if (callee?.type !== "Identifier") return false;
+  const helper = constantValue(ctx, callee);
+  if (
+    helper?.type !== "FunctionDeclaration" &&
+    helper?.type !== "FunctionExpression" &&
+    helper?.type !== "ArrowFunctionExpression"
+  )
+    return false;
+  let rejects = false;
+  walkScriptLocal(helper.body, (node) => {
+    if (node.type === "ThrowStatement") rejects = true;
+    if (
+      node.type === "ReturnStatement" &&
+      node.argument?.type === "Literal" &&
+      node.argument.value === false
+    )
+      rejects = true;
+  });
+  return rejects;
 }
 
 function isSchemaMethodValidatorCall(node: AnyNode, references: Set<number>, source: string) {

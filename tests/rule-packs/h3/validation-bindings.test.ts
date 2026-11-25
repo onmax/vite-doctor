@@ -23,6 +23,9 @@ for (const { rule, read } of cases) {
     "const other = {}; schema.parse(other); return input",
     "schema.parse(input.item); return input",
     "class Unused { value = schema.parse(input) }; return input",
+    "function parseSince(q) { return Number(q.since) || 0 }; return parseSince(input)",
+    "const parseScope = (q) => (typeof q.scope === 'string' ? q.scope : null); return parseScope(input)",
+    "return parseUnresolved(input)",
   ])(`${rule.meta.id} ignores unrelated or deferred validation: %s`, async (body) => {
     const result = await runRuleFixture({
       rule,
@@ -41,6 +44,9 @@ for (const { rule, read } of cases) {
     "if (enabled) { schema.parse(input) }; return input",
     "function unrelated(input) { return input }; return schema.parse(input)",
     "{ const input = {}; use(input) }; return schema.parse(input)",
+    "function parseWindow(q) { if (!q.from) throw new Error('from'); return q }; return parseWindow(input)",
+    "const parseWindow = (q) => { const ms = (v) => { if (!v) throw new Error('v'); return v }; return ms(q.from) }; return parseWindow(input)",
+    "const parseFlag = (q) => { if (!q.flag) return false; return q }; return parseFlag(input)",
   ])(`${rule.meta.id} preserves validation of the request binding: %s`, async (body) => {
     const result = await runRuleFixture({
       rule,
