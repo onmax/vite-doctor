@@ -563,7 +563,7 @@ Object.assign(cart, { items: [] }, { total: 0 })`,
     expect(diagnostic!.diagnostic.fix).toContain("addItem()");
   });
 
-  test("counts this.$patch() in an action, ++ and v-model in templates", async () => {
+  test("counts this.$patch(), template updates to lib-named bindings and v-model", async () => {
     const result = await run({
       "src/stores/counter.ts": `import { defineStore } from 'pinia'
 export const useCounterStore = defineStore('counter', {
@@ -577,9 +577,9 @@ export const useCounterStore = defineStore('counter', {
 `,
       "src/components/A.vue": `<script setup lang="ts">
 import { useCounterStore } from '../stores/counter'
-const counter = useCounterStore()
+const DataView = useCounterStore()
 </script>
-<template><button @click="counter.count++">+</button></template>
+<template><button @click="DataView.count++">+</button></template>
 `,
       "src/components/B.vue": `<script setup lang="ts">
 import { useCounterStore } from '../stores/counter'

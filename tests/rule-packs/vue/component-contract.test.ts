@@ -144,6 +144,7 @@ test("no-unused-props sees template, script, style and whole-props reads", async
     files: {
       "template.vue": `<script setup lang="ts">\ndefineProps<{ title: string }>()\n</script>\n<template><h1>{{ title }}</h1></template>`,
       "ts-template.vue": `<script setup lang="ts">\ndefineProps<{ count: number | string }>()\n</script>\n<template><p>{{ (count as number).toFixed(1) }}</p></template>`,
+      "lib-named-prop.vue": `<script setup lang="ts">\ndefineProps<{ JSON: string }>()\n</script>\n<template><p>{{ JSON }}</p></template>`,
       "script.vue": `<script setup lang="ts">\nconst { label } = defineProps<{ label: string }>()\nconsole.log(label)\n</script>\n<template><p /></template>`,
       "style.vue": `<script setup lang="ts">\ndefineProps<{ color: string }>()\n</script>\n<template><p /></template>\n<style scoped>p { color: v-bind(color) }</style>`,
       "forwarded.vue": `<script setup lang="ts">\nconst props = defineProps<{ a: string; b: string }>()\nuseThing(props)\n</script>\n<template><p /></template>`,

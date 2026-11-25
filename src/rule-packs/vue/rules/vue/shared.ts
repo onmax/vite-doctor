@@ -301,6 +301,7 @@ function eslintVueRuntime(templateReferences = false) {
             tsx: tsParserRuntime,
             "<template>": templateReferences ? tsParserRuntime : "espree",
           },
+          lib: [],
           ecmaVersion: "latest",
           sourceType: "module",
         },
