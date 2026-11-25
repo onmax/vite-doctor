@@ -82,6 +82,7 @@ Check a migration before changing dependencies:
 pnpm dlx vite-doctor migrate .
 pnpm dlx vite-doctor migrate . --to nuxt@5 --format json
 pnpm dlx vite-doctor migrate . --to nitro@3
+pnpm dlx vite-doctor migrate . --to h3@2
 ```
 
 The migration report stages source changes that are safe on the installed runtime, then dependency, configuration, and source changes that must land together, followed by checks that require the target runtime. It does not rewrite the project.

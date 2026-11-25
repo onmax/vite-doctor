@@ -4,6 +4,7 @@ import type {
   DoctorFramework,
   DoctorReportFormat,
   ProjectInfo,
+  RuntimePackageInstance,
   RuntimePackageName,
   RuntimeTarget,
 } from "./core/index.js";
@@ -48,6 +49,8 @@ interface MigrationDependencyStage {
   changes: Array<{
     kind: "dependency" | "config";
     package?: string;
+    /** The package.json to change, relative to the workspace root. */
+    file?: string;
     from?: string;
     to: string;
     instruction: string;
@@ -78,7 +81,7 @@ export async function createMigrationReport(
   const targetSpec = requestedTargets.length
     ? parseExplicitTargets(requestedTargets)
     : inferTarget(current);
-  validateTargetFramework(current.framework, targetSpec.requested);
+  validateTargets(current, targetSpec.requested);
   const targetProject = await detectProject(root, current.framework, targetSpec.runtime);
   const packs = await viteDoctorRulePacks({ root, framework: current.framework });
   const activated: string[] = [];
@@ -145,6 +148,15 @@ export async function createMigrationReport(
             id: "install-target",
             instruction: "Install the target dependency graph with the project package manager.",
           },
+          ...(targetSpec.requested.includes("h3@2")
+            ? [
+                {
+                  id: "serve-h3-app",
+                  instruction:
+                    "Where the app is served with createServer(toNodeListener(app)), serve it with serve(app) from h3, which runs on srvx, or replace toNodeListener with toNodeHandler.",
+                },
+              ]
+            : []),
           {
             id: "rerun-doctor",
             instruction:
@@ -234,8 +246,14 @@ function inferTarget(project: ProjectInfo): MigrationReport["target"] {
   ) {
     return targetFromRequested(["nitro@3"], "inferred");
   }
+  if (
+    (project.runtimeGraph?.packages.h3?.owner ?? "project") === "project" &&
+    projectH3Packages(project).some(({ h3 }) => h3.state === "resolved" && major(h3.version) < 2)
+  ) {
+    return targetFromRequested(["h3@2"], "inferred");
+  }
   throw new Error(
-    "Doctor cannot infer one supported next runtime target from the installed graph. Pass --to nuxt@5 or --to nitro@3.",
+    "Doctor cannot infer one supported next runtime target from the installed graph. Pass --to nuxt@5, --to nitro@3, or --to h3@2.",
   );
 }
 
@@ -249,8 +267,13 @@ function parseExplicitTargets(targets: string[]): MigrationReport["target"] {
   );
 }
 
-function validateTargetFramework(framework: DoctorFramework, targets: string[]): void {
+function validateTargets(project: ProjectInfo, targets: string[]): void {
+  const framework = project.framework;
   for (const target of targets) {
+    if (target === "h3@2") {
+      validateH3Target(project);
+      continue;
+    }
     const supported =
       target === "nuxt@5"
         ? framework === "nuxt"
@@ -259,6 +282,42 @@ function validateTargetFramework(framework: DoctorFramework, targets: string[]):
       throw new Error(`Migration target ${target} is not supported for ${framework} projects.`);
     }
   }
+}
+
+function validateH3Target(project: ProjectInfo): void {
+  const runH3 = project.runtimeGraph?.packages.h3;
+  // The target applies to the whole run graph, so Nitro's h3 would be evaluated as v2 too.
+  if (runH3 && runH3.owner !== "project") {
+    throw new Error(
+      `Migration target h3@2 is not supported for ${project.framework} projects: Nitro provides h3. Use --to nitro@3, which moves Nitro to h3 v2.`,
+    );
+  }
+  const packages = projectH3Packages(project);
+  if (!packages.length) {
+    throw new Error(
+      `Migration target h3@2 is not supported for ${project.framework} projects that do not declare h3.`,
+    );
+  }
+  if (!packages.some(({ h3 }) => needsH3Upgrade(h3))) {
+    throw new Error(
+      `Migration target h3@2 is not supported: h3 is already ${packages.map(({ h3 }) => h3.version).join(", ")}.`,
+    );
+  }
+}
+
+/** Workspace packages that declare and run their own h3, outside Nitro and Nuxt. */
+function projectH3Packages(
+  project: ProjectInfo,
+): Array<{ root: string; h3: RuntimePackageInstance }> {
+  return (project.workspacePackages ?? []).flatMap((item) => {
+    if (!item.declaredRuntimes?.includes("h3")) return [];
+    const h3 = (project.workspaceRuntimeGraphs?.[item.root] ?? project.runtimeGraph)?.packages.h3;
+    return h3?.owner === "project" ? [{ root: item.root, h3 }] : [];
+  });
+}
+
+function needsH3Upgrade(h3: RuntimePackageInstance): boolean {
+  return h3.state !== "resolved" || !(major(h3.version) >= 2);
 }
 
 function targetFromRequested(
@@ -279,7 +338,11 @@ function targetFromRequested(
       runtime.h3 = "2.0.0-0";
       continue;
     }
-    throw new Error(`Unsupported migration target "${target}". Use nuxt@5 or nitro@3.`);
+    if (target === "h3@2") {
+      runtime.h3 = "2.0.0-0";
+      continue;
+    }
+    throw new Error(`Unsupported migration target "${target}". Use nuxt@5, nitro@3, or h3@2.`);
   }
   if (!requested.length) throw new Error("Migration requires at least one target.");
   return { source, requested, runtime };
@@ -292,6 +355,10 @@ function dependencyChanges(
 ): MigrationDependencyStage["changes"] {
   const changes: MigrationDependencyStage["changes"] = [];
   for (const target of requested) {
+    if (target === "h3@2") {
+      changes.push(...h3DependencyChanges(project));
+      continue;
+    }
     const [runtimeName, targetMajor] = target.split("@") as [RuntimePackageName, string];
     const current = project.runtimeGraph?.packages[runtimeName];
     const packageName =
@@ -315,6 +382,23 @@ function dependencyChanges(
     });
   }
   return changes;
+}
+
+function h3DependencyChanges(project: ProjectInfo): MigrationDependencyStage["changes"] {
+  return projectH3Packages(project)
+    .filter(({ h3 }) => needsH3Upgrade(h3))
+    .map(({ root, h3 }) => {
+      const file = root === "." ? "package.json" : `${root}/package.json`;
+      const from = h3.state === "resolved" ? h3.version : h3.declaration;
+      return {
+        kind: "dependency",
+        package: "h3",
+        file,
+        from,
+        to: "h3@2",
+        instruction: `Update ${h3.name ?? "h3"}${from ? ` from ${from}` : ""} to h3@2 in ${file}.`,
+      };
+    });
 }
 
 function migrationDiagnostic(root: string, diagnostic: Diagnostic): MigrationDiagnostic {
