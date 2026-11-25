@@ -484,16 +484,25 @@ export const ruleDocumentationMetadata = {
     ],
   },
   "h3/migration/no-removed-exports": {
-    description: "Flags send() and sendError(), which H3 v2 removes.",
-    why: "H3 v2 handlers return Web API response values and throw HTTPError instances instead of using imperative send helpers.",
+    description:
+      "Flags imports, re-exports, and h3 namespace reads of the 19 values and 38 types H3 1.15 exported and H3 v2 removed, such as send(), sendError(), MIMES, and the App type.",
+    why: "H3 v2 no longer exports these names. Importing a removed value fails when the module loads, and importing a removed type fails the typecheck.",
     recommendedReplacement:
-      "Return the response value from the handler, or throw an HTTPError for an error response.",
+      "Use the replacement the H3 migration guide names, which each diagnostic repeats: return the value instead of send(), throw an HTTPError instead of sendError(), and type the app as H3 instead of App.",
     examples: [
       {
         title: "Return the response body",
         language: "ts",
-        invalid: 'export default defineHandler((event) => {\n  return send(event, "ready")\n})',
-        valid: 'export default defineHandler(() => {\n  return "ready"\n})',
+        invalid:
+          'import { defineHandler, send } from "h3"\n\nexport default defineHandler((event) => {\n  return send(event, "ready")\n})',
+        valid:
+          'import { defineHandler } from "h3"\n\nexport default defineHandler(() => {\n  return "ready"\n})',
+      },
+      {
+        title: "Type the app as H3",
+        language: "ts",
+        invalid: 'import type { App } from "h3"\n\nexport function mount(app: App) {}',
+        valid: 'import type { H3 } from "h3"\n\nexport function mount(app: H3) {}',
       },
     ],
   },
@@ -633,9 +642,9 @@ export const ruleDocumentationMetadata = {
         title: "Read the body once",
         language: "ts",
         invalid:
-          "export default defineHandler((event) => {\n  await audit(await readBody(event))\n  return save(await readBody(event))\n})",
+          "export default defineHandler(async (event) => {\n  await audit(await readBody(event))\n  return save(await readBody(event))\n})",
         valid:
-          "export default defineHandler((event) => {\n  const body = await readBody(event)\n  await audit(body)\n  return save(body)\n})",
+          "export default defineHandler(async (event) => {\n  const body = await readBody(event)\n  await audit(body)\n  return save(body)\n})",
       },
     ],
   },
