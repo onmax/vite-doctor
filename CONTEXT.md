@@ -41,7 +41,7 @@ The surface configuration field that selects rule-pack-qualified presets.
 _Avoid_: Preset list
 
 **Activation**:
-The conditions that make a rule pack and its default preset apply automatically to a project.
+The conditions that make a rule pack and its default preset apply automatically to a project. Runtime Evidence can activate a rule pack for every workspace package, as MCP servers read with `--mcp-url` activate the MCP rule pack.
 _Avoid_: Detection, matching
 
 **Vite Doctor**:
@@ -79,6 +79,10 @@ _Avoid_: Project metadata, scan data
 **Runtime Evidence**:
 Facts that explain where and how code executes across client, server, build, and framework runtimes.
 _Avoid_: Context, environment
+
+**Build Evidence**:
+Runtime Evidence that the Vite Plugin Surface collects from a finished `vite build`: each environment's consumer, its output chunks with their module ids, and Vite's importers for each module.
+_Avoid_: Bundle stats, build manifest
 
 **Plugin Surface**:
 A framework or build-tool integration that runs Doctor inside the host system and can contribute project inventory or runtime evidence.
@@ -138,6 +142,7 @@ _Avoid_: Agent surface
 - A **Plugin Surface** attaches **Doctor Extensions** that other host plugins or modules register through the host, such as Vite plugin `api.doctor` or the Nuxt `doctor:extendExtensions` hook.
 - A **CLI Surface** loads host-registered **Doctor Extensions** only from a host command or an explicit opt-in.
 - The **Vite Plugin Surface** is a **Plugin Surface**.
+- The **Vite Plugin Surface** contributes **Build Evidence** during `vite build`; the **CLI Surface** has none.
 - The **Nuxt 4 Bridge** is a transitional **Plugin Surface** boundary, not a **Rule Pack**.
 - The **Nuxt 4 Bridge** can expose the **Nuxt Doctor Command**.
 - A **Rule Catalog** documents **Rule Packs** and **Rules**.

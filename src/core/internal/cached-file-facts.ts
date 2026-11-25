@@ -79,6 +79,7 @@ function componentFacts(value: unknown): boolean {
     ) &&
     (value.inheritAttrs === undefined || typeof value.inheritAttrs === "boolean") &&
     typeof value.readsAttrs === "boolean" &&
+    facts(value.nuxtAttrsReferences, (item) => named(item) && typeof item.explicit === "boolean") &&
     Array.isArray(value.comparisons) &&
     value.comparisons.every(
       (item) => record(item) && typeof item.left === "string" && typeof item.right === "string",
@@ -88,7 +89,10 @@ function componentFacts(value: unknown): boolean {
       (item) =>
         typeof item.tag === "string" &&
         Array.isArray(item.attributes) &&
-        facts(item.bindings, (binding) => typeof binding.vnodeKey === "string") &&
+        facts(
+          item.bindings,
+          (binding) => typeof binding.vnodeKey === "string" && optionalString(binding.modifiersKey),
+        ) &&
         Array.isArray(item.spreads) &&
         facts(
           item.listeners,

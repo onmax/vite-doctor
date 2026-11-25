@@ -2,11 +2,11 @@ import type { SFCDescriptor } from "@vue/compiler-sfc";
 import type { AST } from "vue-eslint-parser";
 import type { RuleContext } from "../../../../core/index.js";
 import { camelize } from "../../../../core/internal/component-facts.js";
+import { scriptNodesOfType } from "../../../../core/internal/script-index.js";
 import { fileScriptScope, type ScopeVariable } from "../../../../core/internal/script-scope.js";
 import { diagnostics } from "../../diagnostics.js";
 import { unwrap } from "./nuxt-config-ast.js";
 import { AnyNode, createRule, isRuntimeAppFile } from "./shared.js";
-import { scriptNodesOfType } from "./script-index.js";
 
 const RULE_ID = "nuxt/routing/navigate-to-external";
 // ufo's hasProtocol(toPath, { acceptRelative: true }), which navigateTo uses to spot external URLs.

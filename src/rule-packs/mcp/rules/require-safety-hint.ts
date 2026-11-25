@@ -1,6 +1,11 @@
 import { createRule } from "../../../core/index.js";
+import { declaredHintFix } from "../../../mcp/clients/claude-directory.js";
 import { diagnostics } from "../diagnostics.js";
 import { annotationsEvidence, collectMcpTools, toolLabel } from "./shared.js";
+import { reportWireTool, wireToolLabel, wireTools } from "./wire.js";
+
+const UNDECLARED_FIX =
+  "Add `readOnlyHint: true` to the annotations if the tool only reads, or `destructiveHint: true` if it changes or deletes data. Only you can tell which one is true.";
 
 export const requireSafetyHint = createRule({
   meta: {
@@ -31,13 +36,40 @@ export const requireSafetyHint = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast"],
+    consumesEvidence: ["ast", "runtime"],
     cost: "medium",
   },
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        for (const tool of await collectMcpTools(ctx)) {
+        const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
+        for (const wire of sent) {
+          if (!wire.findings.some((finding) => finding.rule === "claude-directory/missing-hint"))
+            continue;
+          // ChatGPT's confirmation prompt is the same condition seen from a client, so its source
+          // backs this Diagnostic instead of becoming a second one.
+          const findings = wire.findings.filter(
+            (finding) =>
+              finding.rule === "claude-directory/missing-hint" ||
+              finding.rule === "chatgpt/missing-read-only-hint",
+          );
+          const chatgpt = findings.some((finding) => finding.client === "chatgpt");
+          reportWireTool(
+            ctx,
+            wire,
+            diagnostics.MCP0002({
+              why: `MCP tool ${wireToolLabel(wire)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true in its tools/list entry. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.${chatgpt ? " ChatGPT also treats it as a write action that needs the user's confirmation by default, because it has no `readOnlyHint`." : ""}`,
+              fix: declaredHintFix(wire.tool.annotations ?? {}) ?? UNDECLARED_FIX,
+            }),
+            {
+              ruleId: "mcp/tools/require-safety-hint",
+              range: (tool) =>
+                tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
+              findings,
+            },
+          );
+        }
+        for (const tool of sourceOnly) {
           const { annotations } = tool;
           if (annotations.state === "partial") continue;
           const hints =
@@ -54,7 +86,11 @@ export const requireSafetyHint = createRule({
           ctx.report(
             diagnostics.MCP0002({
               why: `MCP tool ${toolLabel(tool)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.`,
-              fix: "Add `readOnlyHint: true` to the annotations if the tool only reads, or `destructiveHint: true` if it changes or deletes data. Only you can tell which one is true.",
+              fix:
+                declaredHintFix({
+                  readOnlyHint: hints[0]?.state === "resolved" ? hints[0].value : undefined,
+                  destructiveHint: hints[1]?.state === "resolved" ? hints[1].value : undefined,
+                }) ?? UNDECLARED_FIX,
             }),
             {
               ruleId: "mcp/tools/require-safety-hint",
@@ -63,6 +99,7 @@ export const requireSafetyHint = createRule({
               file: tool.file,
               range: annotations.state === "resolved" ? annotations.range : tool.callee,
               confidence: "heuristic-high",
+              data: tool.name ? { tool: tool.name.value } : undefined,
               evidence: annotationsEvidence(tool),
             },
           );

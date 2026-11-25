@@ -48,6 +48,9 @@ export { requireToggleInsideTransition } from "./require-toggle-inside-transitio
 export { requireExplicitEmits } from "./require-explicit-emits.js";
 export { noExternalSharedStateMutation } from "./no-external-shared-state-mutation.js";
 export { noMultiRootFallthrough } from "./no-multi-root-fallthrough.js";
+export { noShallowRefDeepMutation } from "./no-shallow-ref-deep-mutation.js";
+export { noPropertyReadWatchSource } from "./no-property-read-watch-source.js";
+export { noRedirectCycle } from "./no-redirect-cycle.js";
 export { noInvalidRootNesting } from "./no-invalid-root-nesting.js";
 
 import { definePropsWatchGetter } from "./define-props-watch-getter.js";
@@ -100,6 +103,9 @@ import { requireToggleInsideTransition } from "./require-toggle-inside-transitio
 import { requireExplicitEmits } from "./require-explicit-emits.js";
 import { noExternalSharedStateMutation } from "./no-external-shared-state-mutation.js";
 import { noMultiRootFallthrough } from "./no-multi-root-fallthrough.js";
+import { noShallowRefDeepMutation } from "./no-shallow-ref-deep-mutation.js";
+import { noPropertyReadWatchSource } from "./no-property-read-watch-source.js";
+import { noRedirectCycle } from "./no-redirect-cycle.js";
 import { noInvalidRootNesting } from "./no-invalid-root-nesting.js";
 
 import { defineRulePack } from "../../../../core/index.js";
@@ -156,6 +162,9 @@ const rules = [
   requireExplicitEmits,
   noExternalSharedStateMutation,
   noMultiRootFallthrough,
+  noShallowRefDeepMutation,
+  noPropertyReadWatchSource,
+  noRedirectCycle,
   noInvalidRootNesting,
 ];
 

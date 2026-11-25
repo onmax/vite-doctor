@@ -269,8 +269,19 @@ describe("pinia rule pack", () => {
     expect(piniaRulePack.name).toBe("vite-doctor/pinia");
     expect(piniaRulePack.activation).toEqual({ packages: ["pinia", "@pinia/nuxt"] });
     expect(piniaRulePack.presets.recommended).not.toContain(storeNameMatchesId.meta.id);
-    expect(piniaRulePack.presets.recommended).toEqual(["pinia/stores/unique-store-id"]);
+    expect(piniaRulePack.presets.recommended).toEqual([
+      "pinia/stores/unique-store-id",
+      "pinia/stores/no-circular-setup-state-read",
+      "pinia/state/no-store-destructure",
+      "pinia/stores/no-module-scope-store",
+      "pinia/stores/no-unreturned-setup-state",
+    ]);
     expect(piniaRulePack.presets.strict?.toSorted()).toEqual([
+      "pinia/state/no-action-bypass",
+      "pinia/state/no-store-destructure",
+      "pinia/stores/no-circular-setup-state-read",
+      "pinia/stores/no-module-scope-store",
+      "pinia/stores/no-unreturned-setup-state",
       "pinia/stores/store-name-matches-id",
       "pinia/stores/unique-store-id",
     ]);
@@ -315,6 +326,27 @@ describe("pinia rule pack", () => {
   test("documents every rule and diagnostic code", async () => {
     const documents = getRuleDocuments().filter((rule) => rule.framework === "pinia");
     expect(documents.map((rule) => [rule.id, rule.path, rule.diagnosticCodes])).toEqual([
+      ["pinia/state/no-action-bypass", "/pinia/rules/state/no-action-bypass", ["PINIA0004"]],
+      [
+        "pinia/stores/no-circular-setup-state-read",
+        "/pinia/rules/stores/no-circular-setup-state-read",
+        ["PINIA0003"],
+      ],
+      [
+        "pinia/stores/no-module-scope-store",
+        "/pinia/rules/stores/no-module-scope-store",
+        ["PINIA0006"],
+      ],
+      [
+        "pinia/state/no-store-destructure",
+        "/pinia/rules/state/no-store-destructure",
+        ["PINIA0005"],
+      ],
+      [
+        "pinia/stores/no-unreturned-setup-state",
+        "/pinia/rules/stores/no-unreturned-setup-state",
+        ["PINIA0007"],
+      ],
       [
         "pinia/stores/store-name-matches-id",
         "/pinia/rules/stores/store-name-matches-id",
@@ -322,8 +354,10 @@ describe("pinia rule pack", () => {
       ],
       ["pinia/stores/unique-store-id", "/pinia/rules/stores/unique-store-id", ["PINIA0001"]],
     ]);
-    const page = await rulesCollectionSource.getItem(documents[1]!.key);
+    const page = await rulesCollectionSource.getItem(documents[6]!.key);
     expect(page).toContain("defineStore('checkout'");
+    const cyclePage = await rulesCollectionSource.getItem(documents[1]!.key);
+    expect(cyclePage).toContain("https://pinia.vuejs.org/cookbook/composing-stores.html");
     const diagnosticPages = getDiagnosticDocuments().filter((diagnostic) =>
       diagnostic.code.startsWith("PINIA"),
     );
@@ -332,6 +366,15 @@ describe("pinia rule pack", () => {
         diagnosticPages.map((diagnostic) => diagnosticsCollectionSource.getItem(diagnostic.key)),
       ),
     ).toEqual([
+      expect.stringContaining(
+        "pnpm vite-doctor . --extends auto,pinia/strict --rules pinia/state/no-action-bypass",
+      ),
+      expect.stringContaining(
+        "pnpm vite-doctor . --rules pinia/stores/no-circular-setup-state-read",
+      ),
+      expect.stringContaining("pnpm vite-doctor . --rules pinia/stores/no-module-scope-store"),
+      expect.stringContaining("pnpm vite-doctor . --rules pinia/state/no-store-destructure"),
+      expect.stringContaining("pnpm vite-doctor . --rules pinia/stores/no-unreturned-setup-state"),
       expect.stringContaining(
         "pnpm vite-doctor . --extends auto,pinia/strict --rules pinia/stores/store-name-matches-id",
       ),
@@ -342,6 +385,11 @@ describe("pinia rule pack", () => {
         .filter((diagnostic) => diagnostic.code.startsWith("PINIA"))
         .map((diagnostic) => [diagnostic.code, diagnostic.rulePath]),
     ).toEqual([
+      ["PINIA0004", "/pinia/rules/state/no-action-bypass"],
+      ["PINIA0003", "/pinia/rules/stores/no-circular-setup-state-read"],
+      ["PINIA0006", "/pinia/rules/stores/no-module-scope-store"],
+      ["PINIA0005", "/pinia/rules/state/no-store-destructure"],
+      ["PINIA0007", "/pinia/rules/stores/no-unreturned-setup-state"],
       ["PINIA0002", "/pinia/rules/stores/store-name-matches-id"],
       ["PINIA0001", "/pinia/rules/stores/unique-store-id"],
     ]);

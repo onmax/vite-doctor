@@ -1,4 +1,5 @@
 import { relative } from "pathe";
+import { isMcpHeaderName } from "../mcp/endpoint.js";
 import pc from "picocolors";
 import { formatDiagnostic } from "nostics";
 import type {
@@ -35,6 +36,8 @@ export function createTextReport(result: DoctorRunResult): string {
   for (const gap of result.project.evidenceGaps ?? []) {
     lines.push(`Evidence missing: ${gap.message} ${gap.files.join(", ")}`);
   }
+  for (const used of result.project.evidenceUsed ?? [])
+    lines.push(`Evidence used: ${used.message}`);
   for (const edge of result.project.runtimeGraph?.edges ?? []) {
     const runtime = result.project.runtimeGraph?.packages[edge.to];
     const identity =
@@ -167,6 +170,7 @@ export function createJsonReport(result: DoctorRunResult): string {
       rulePacks: result.rulePacks,
       workspacePackages: result.workspacePackages,
       evidenceGaps: result.project.evidenceGaps,
+      evidenceUsed: result.project.evidenceUsed,
       runtimeGraph: result.project.runtimeGraph,
       nuxtCompatibility: result.project.nuxtCompatibility,
     },
@@ -211,6 +215,7 @@ export function createAgentReport(
     ),
     fixes: result.fixes,
     evidenceGaps: result.project.evidenceGaps,
+    evidenceUsed: result.project.evidenceUsed,
     commands: Object.fromEntries(
       Object.entries(commandArgs).map(([name, args]) => [name, args.map(shellArgument).join(" ")]),
     ),
@@ -303,6 +308,7 @@ export function createSarifReport(result: DoctorRunResult): string {
                 ? diagnostic.evidence.map((item) => item.kind)
                 : undefined,
               analysisPhase: diagnostic.analysisPhase,
+              data: diagnostic.data,
             },
             locations: [
               {
@@ -509,6 +515,7 @@ function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
         : {}),
     },
     evidence: serializeEvidence(result, diagnostic),
+    data: diagnostic.data,
     editPlan: diagnostic.fix,
     related: diagnostic.related?.map((item) => ({
       path: relative(result.root, item.file),
@@ -538,6 +545,7 @@ function serializeAgentDiagnostic(result: DoctorRunResult, diagnostic: Diagnosti
     remediation: diagnostic.diagnostic.fix,
     docs: diagnostic.docs,
     evidence: serializeEvidence(result, diagnostic),
+    data: diagnostic.data,
     editPlan: diagnostic.fix,
     related: diagnostic.related?.map((item) => ({
       path: relative(result.root, item.file),
@@ -586,6 +594,11 @@ function agentRunArguments(
   ] as const) {
     if (value !== undefined) args.push(flag, String(value));
   }
+  for (let index = 0; index < (options?.mcp?.length ?? 0); index++)
+    args.push("--mcp-url", "<mcp-url>");
+  // Header values carry tokens, so commands name the header and leave its value to the agent.
+  for (const name of Object.keys(options?.mcp?.[0]?.headers ?? {}))
+    if (isMcpHeaderName(name)) args.push("--mcp-header", `${name}: <value>`);
   if (options?.newOnly) args.push("--new-only");
   if (options?.profile) args.push("--profile");
   if (options?.cache !== undefined) args.push(options.cache ? "--cache" : "--no-cache");

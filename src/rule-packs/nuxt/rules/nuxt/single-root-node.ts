@@ -64,18 +64,32 @@ export const singleRootNode = createRule({
             return sfc;
           };
           const pending = new Map<string, { kind: "page" | "layout"; source: string }>();
-          const outlets = new Map<string, ReturnType<typeof reachableOutlets>>();
-          const getPageOutlets = (file: string) => {
-            let result = outlets.get(file);
-            if (!result) {
-              result = reachableOutlets(ctx, graph, file, PAGE_OUTLETS, PAGE_OUTLET_MENTION);
-              outlets.set(file, result);
+          const pageOutlets = new Map<string, ComponentUsageFact | null>();
+          const getPageOutlet = (file: string) => {
+            if (!pageOutlets.has(file)) {
+              pageOutlets.set(
+                file,
+                routeOutlet(reachableOutlets(ctx, graph, file, PAGE_OUTLETS, PAGE_OUTLET_MENTION)),
+              );
             }
-            return result;
+            return pageOutlets.get(file);
           };
-          const layoutOutlets = app
-            ? reachableOutlets(ctx, graph, app, LAYOUT_OUTLETS, LAYOUT_OUTLET_MENTION).usages
-            : [undefined];
+          const layoutOutlets = new Map<string, ComponentUsageFact[]>();
+          const getLayoutOutlets = (file: string | undefined) => {
+            if (!file) return [undefined];
+            let usages = layoutOutlets.get(file);
+            if (!usages) {
+              usages = reachableOutlets(
+                ctx,
+                graph,
+                file,
+                LAYOUT_OUTLETS,
+                LAYOUT_OUTLET_MENTION,
+              ).usages;
+              layoutOutlets.set(file, usages);
+            }
+            return usages;
+          };
           const byFile = new Map<string, PageRoute | null>();
           for (const route of routes) byFile.set(route.file, byFile.has(route.file) ? null : route);
           const defaultParents = new Set(
@@ -85,11 +99,6 @@ export const singleRootNode = createRule({
             if (defaultParents.has(route.file)) continue;
             const chain = routeChain(route, byFile);
             if (!chain) continue;
-            const routeOutlets = chain.map(({ parent }) => {
-              const owner = parent ?? app;
-              return owner ? routeOutlet(getPageOutlets(owner)) : undefined;
-            });
-            if (routeOutlets.includes(null)) continue;
             let pageMeta: MetaFlag;
             let layoutMeta: MetaFlag;
             let layoutName: LayoutName;
@@ -103,8 +112,20 @@ export const singleRootNode = createRule({
               layoutMeta = pageMetaFlag(sfc.script, "layoutTransition") ?? layoutMeta;
               layoutName = pageMetaValue(sfc.script, "layout", staticLayoutName) ?? layoutName;
             }
-            for (const [index, { file }] of chain.entries()) {
-              const outlet = routeOutlets[index];
+            const layoutSource = enabledTransition(
+              ctx,
+              layoutMeta,
+              layoutConfig,
+              "layoutTransition",
+            );
+            if (layoutSource) {
+              for (const outlet of getLayoutOutlets(app))
+                addLayout(outlet, layoutName, layoutSource);
+            }
+            for (const { file, parent } of chain) {
+              const owner = parent ?? app;
+              const outlet = owner ? getPageOutlet(owner) : undefined;
+              if (outlet === null) break;
               const flag = outlet ? outletTransition(outlet) : "unset";
               const source =
                 flag === "on"
@@ -113,15 +134,15 @@ export const singleRootNode = createRule({
                     ? enabledTransition(ctx, pageMeta, pageConfig, "pageTransition")
                     : undefined;
               if (source) pending.set(file, { kind: "page", source });
-            }
-            const source = enabledTransition(ctx, layoutMeta, layoutConfig, "layoutTransition");
-            if (source) {
-              for (const outlet of layoutOutlets) addLayout(outlet, layoutName, source);
+              if (layoutSource) {
+                for (const layout of getLayoutOutlets(file))
+                  addLayout(layout, layoutName, layoutSource);
+              }
             }
           }
           if (!routes.length && layoutConfig?.state === "on") {
             const source = enabledTransition(ctx, undefined, layoutConfig, "layoutTransition")!;
-            for (const outlet of layoutOutlets) addLayout(outlet, undefined, source);
+            for (const outlet of getLayoutOutlets(app)) addLayout(outlet, undefined, source);
           }
           for (const [file, { kind, source }] of pending)
             if (file.endsWith(".vue")) await checkFile(ctx, file, kind, source);

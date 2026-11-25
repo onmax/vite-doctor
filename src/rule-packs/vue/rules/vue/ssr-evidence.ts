@@ -47,7 +47,8 @@ export function hydrationEvidence(
   if (
     nuxt.hydrationSsr !== true ||
     appsWithPossibleInlineSsrOptOut.has(nuxt) ||
-    !routeRulesKeepSsr(nuxt.routeRules)
+    !routeRulesKeepSsr(nuxt.routeRules) ||
+    (nuxt.manifest?.isCurrent && !routeRulesKeepSsr(nuxt.manifest.resolvedRouteRules))
   )
     return undefined;
   return "the Nuxt app enables SSR and has no known route-level SSR opt-out";

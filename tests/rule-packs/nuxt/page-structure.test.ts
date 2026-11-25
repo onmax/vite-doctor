@@ -320,6 +320,38 @@ describe("nuxt/pages/single-root-node", () => {
     ).toEqual([]);
   });
 
+  test("keeps parent and layout transition evidence when a nested outlet is missing", async () => {
+    const diagnostics = await run(id, {
+      "app/app.vue": template("<NuxtLayout><NuxtPage /></NuxtLayout>"),
+      "app/layouts/default.vue": template("<header /><slot />"),
+      "app/pages/users.vue": template("<h1>Users</h1><p>Welcome</p>"),
+      "app/pages/users/index.vue": template(
+        "<h1>User</h1><p>Profile</p>",
+        "definePageMeta({ pageTransition: true, layoutTransition: true })",
+      ),
+    });
+
+    expect(diagnostics.map((item) => item.file).sort()).toEqual([
+      expect.stringMatching(/layouts\/default\.vue$/),
+      expect.stringMatching(/pages\/users\.vue$/),
+    ]);
+  });
+
+  test("uses the route transition for a layout rendered by a page", async () => {
+    const diagnostics = await run(id, {
+      "app/app.vue": template("<NuxtPage />"),
+      "app/layouts/default.vue": template("<header /><slot />"),
+      "app/pages/index.vue": template(
+        "<NuxtLayout><main>Home</main></NuxtLayout>",
+        "definePageMeta({ layoutTransition: true })",
+      ),
+    });
+
+    expect(diagnostics.map((item) => item.file)).toEqual([
+      expect.stringMatching(/layouts\/default\.vue$/),
+    ]);
+  });
+
   test("treats a v-if chain as one root", async () => {
     const diagnostics = await run(id, {
       "nuxt.config.ts": pageTransition,
@@ -561,14 +593,11 @@ test("uses prepared routes across layers and Nuxt's effective layout registratio
     const manifest = JSON.parse(
       readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"),
     ) as NuxtDoctorManifest;
-    expect(manifest.components).toEqual(
+    expect(manifest.resolvedComponents).toEqual(
       expect.arrayContaining([
         { name: "Panel", file: join(root, "app/components/Panel.client.vue"), mode: "client" },
       ]),
     );
-    expect(
-      manifest.components.filter((entry) => (entry as { name?: string }).name === "Panel"),
-    ).toHaveLength(1);
     expect(manifest.pages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ file: join(root, "app/pages/users/[id].vue"), parentFile: null }),
@@ -648,6 +677,7 @@ test("scopes prepared routes and conventional fallbacks to each Nuxt app", async
     );
     write("package.json", JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }));
     write("nuxt.config.ts", "export default {}\n");
+    write("app/app.vue", template("<NuxtPage />"));
     write("app/pages/teams.vue", template("<div>Teams</div>"));
     write("docs/nuxt.config.ts", "export default { app: { pageTransition: true } }\n");
     write("docs/app/app.vue", template("<NuxtPage />"));
@@ -681,6 +711,13 @@ test("scopes prepared routes and conventional fallbacks to each Nuxt app", async
 
     write("app/pages/teams/[id].vue", template("<div>Team</div>"));
     expect(await issues()).toEqual(["NUXT0098 app/pages/teams.vue", ...docsIssues]);
+    write("app/layouts/default.vue", template("<div><slot /></div>"));
+    expect(await issues()).toEqual([
+      "NUXT0098 app/pages/teams.vue",
+      docsIssues[0],
+      "NUXT0099 app/app.vue",
+      ...docsIssues.slice(1),
+    ]);
   } finally {
     process.chdir(cwd);
     rmSync(root, { recursive: true, force: true });

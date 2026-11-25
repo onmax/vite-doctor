@@ -99,10 +99,18 @@ export interface Diagnostic {
   related?: Array<{ file: string; range?: SourceRange; message: string }>;
   tags?: string[];
   fingerprint?: string;
+  /** Distinguishes findings with identical text and source locations. */
+  instanceKey?: string;
   suppressed?: boolean;
   suppressionReason?: string;
   confidence?: Confidence;
   evidence?: DiagnosticEvidence[];
+  /**
+   * Plain JSON the Rule attaches for agents, such as the MCP tool and the client findings behind
+   * the message. The Rule owns its shape and its Diagnostic Code docs describe it. Reports emit it
+   * as is, and the cache stores it as JSON. `ctx.report` validates and copies the payload.
+   */
+  data?: Record<string, unknown>;
   fixGroupId?: string;
   analysisPhase?: ExecutionKind;
   cacheHit?: boolean;
@@ -245,6 +253,23 @@ export interface NuxtProjectInfo {
   autoImports: Map<string, AutoImportEntry>;
   /** All resolved auto-import entries, including names shadowed in the lookup map. */
   autoImportEntries?: AutoImportEntry[];
+  runtimeAutoImportEntries?: AutoImportEntry[];
+  /**
+   * Nitro's runtime auto-imports for server files, as Nitro resolved them. `entries` is unset when
+   * the manifest does not record them, and `authoritative` is false when the manifest is stale.
+   */
+  nitroAutoImports?: {
+    enabled: boolean;
+    authoritative: boolean;
+    entries?: AutoImportEntry[];
+    scanDirs?: string[];
+    plugins?: string[];
+    aliases?: Record<string, string>;
+    customResolver?: boolean;
+    installedPackageJsonPath?: string;
+    scan?: NuxtDoctorManifest["nitroAutoImportScan"];
+    transform?: NuxtDoctorManifest["nitroAutoImportTransform"];
+  };
   components: Map<
     string,
     {
@@ -297,6 +322,12 @@ export interface NuxtProjectInfo {
     scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
+    serverAppEntryFiles?: string[];
+    resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
+    resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
+    resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
+    hasServerPageIslands?: boolean;
+    componentIslands?: NuxtDoctorManifest["componentIslands"];
     keyedComposables: NuxtKeyedComposable[];
     aliases: Record<string, string>;
     autoImportTransform?: {
@@ -309,9 +340,18 @@ export interface NuxtProjectInfo {
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
-    pages?: NuxtDoctorManifest["pages"];
+    resolvedRouteRules?: Record<string, unknown>;
+    routeRulePagesCurrent?: boolean;
+    nitroPreset?: string;
     resolvedApp?: NuxtDoctorManifest["resolvedApp"];
     resolvedAppCurrent?: Record<NuxtAppInventoryKind, boolean>;
+    pages?: NuxtDoctorManifest["pages"];
+    /** Route middleware Nuxt resolved, with absolute paths. Absent in manifests that predate it. */
+    middleware?: NuxtResolvedMiddleware[];
+    /** Page routes Nuxt resolved, with absolute files. Absent unless `scanPageMeta` is on. */
+    routes?: NuxtResolvedRoute[];
+    /** Absolute router.options files Nuxt merges into the router. */
+    routerOptionsFiles?: string[];
     prerenderRoutes?: string[];
     buildManifest?: {
       hasBuildManifest: boolean;
@@ -324,6 +364,27 @@ export interface NuxtProjectInfo {
       serverRoutes: number;
     };
   };
+}
+
+/** One route middleware from Nuxt's resolved app, global when Nuxt runs it on every navigation. */
+export interface NuxtResolvedMiddleware {
+  name: string;
+  path: string;
+  global: boolean;
+}
+
+/**
+ * One page route record as Nuxt hands it to vue-router, with the full path vue-router matches.
+ * `redirect` is the statically extracted value; `dynamic` lists route fields Nuxt reads at runtime.
+ */
+export interface NuxtResolvedRoute {
+  path: string;
+  name?: string;
+  file?: string;
+  sourceHash?: string;
+  redirect?: unknown;
+  alias?: unknown;
+  dynamic?: string[];
 }
 
 export interface NuxtModuleSource {
@@ -369,6 +430,24 @@ export interface NuxtAppInventoryInputs {
   signature: string;
 }
 
+export interface NuxtAppRegistrationDirectory {
+  path: string;
+  patterns: string[];
+  ignore?: string[];
+}
+
+export interface NuxtAppRegistrationSnapshot {
+  directories: Array<NuxtAppRegistrationDirectory & { entries: string[] }>;
+  files: string[];
+}
+
+export interface NuxtAppRegistrationIgnore {
+  patterns: string[];
+  layerRoots: string[];
+  options?: { ignorecase?: boolean; ignoreCase?: boolean; allowRelativePaths?: boolean };
+  fileHash: string | null;
+}
+
 export interface NuxtDoctorManifest {
   scannedComposableFiles?: string[];
   autoRegisteredLayers?: string[];
@@ -387,7 +466,43 @@ export interface NuxtDoctorManifest {
     exclude: Array<{ source: string; flags: string }>;
   };
   autoImports: unknown[];
+  /** Runtime winners, separate from raw collision candidates in autoImports. */
+  runtimeAutoImports?: unknown[];
+  /** Unset when Nitro was not initialized, `false` when server auto-imports are off. */
+  nitroAutoImportEnabled?: boolean;
+  /** Nitro's resolved runtime auto-imports, with aliases resolved to paths. */
+  nitroAutoImports?: unknown[];
+  /** Resolved Nitro scan roots, separate from the server handler freshness inventory. */
+  nitroScanDirs?: string[];
+  nitroPlugins?: string[];
+  nitroAliases?: Record<string, string>;
+  nitroAutoImportCustomResolver?: boolean;
+  nitroAutoImportScan?: {
+    version: string;
+    dirs: Array<string | { glob: string; types?: boolean }>;
+    options: { cwd: string; types?: boolean; filePatterns?: string[] };
+    decisions?: Array<[file: string, included: boolean]>;
+    fingerprint: string;
+  };
+  nitroAutoImportTransform?: {
+    include: Array<{ glob: string } | { source: string; flags: string }>;
+    exclude: Array<{ glob: string } | { source: string; flags: string }>;
+    commentsDisable: string[];
+  };
   components: unknown[];
+  resolvedComponents?: Array<{
+    name: string;
+    file: string;
+    mode: "client" | "server" | "all";
+    global?: true;
+  }>;
+  hasServerPageIslands?: boolean;
+  appRegistrationIgnore?: NuxtAppRegistrationIgnore;
+  appRegistration?: Record<
+    "components" | "pages" | "plugins",
+    NuxtAppRegistrationSnapshot | undefined
+  >;
+  componentIslands?: boolean | "auto";
   componentTransformExclude?: Array<{ source: string; flags: string }>;
   layers: Array<{
     root: string;
@@ -407,6 +522,11 @@ export interface NuxtDoctorManifest {
   granularCachedData?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
+  /** Nitro's resolved `routeRules`; unset when the manifest was written before Nitro started. */
+  resolvedRouteRules?: Record<string, unknown>;
+  routeRulePageMtimes?: Record<string, number | null>;
+  routeRulePageInventory?: Record<string, string[]>;
+  nitroPreset?: string;
   ssr?: boolean;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
@@ -417,6 +537,7 @@ export interface NuxtDoctorManifest {
     fullPath?: string;
     file?: string;
     name?: string;
+    mode?: "all" | "client" | "server";
     parentFile?: string | null;
   }>;
   resolvedApp?: {
@@ -425,6 +546,9 @@ export interface NuxtDoctorManifest {
     pagesResolved?: boolean;
     inputs?: Partial<Record<NuxtAppInventoryKind, NuxtAppInventoryInputs>>;
   };
+  middleware?: NuxtResolvedMiddleware[];
+  routes?: NuxtResolvedRoute[];
+  routerOptionsFiles?: string[];
   prerenderRoutes?: string[];
   buildManifest?: {
     hasBuildManifest: boolean;
@@ -439,6 +563,10 @@ export interface NuxtDoctorManifest {
   keyedComposables?: unknown[];
   importsDirs?: string[];
   pluginFiles?: string[];
+  /** Nuxt-resolved app entries eligible for server-side rendering, relative to rootDir. */
+  serverAppEntryFiles?: string[];
+  resolvedPlugins?: Array<{ file: string; mode: "client" | "server" | "all" }>;
+  resolvedMiddleware?: string[];
   appScanRoots?: string[];
   sharedScanRoots?: string[];
 }
@@ -463,9 +591,30 @@ export interface ProjectInfo {
   nuxtModuleDefinitions?: NuxtModuleDefinition[];
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
-  evidenceGaps?: Array<{ source: string; message: string; files: string[] }>;
+  evidenceGaps?: Array<{ source: string; message: string; files: string[]; instanceKey?: string }>;
+  /** Runtime Evidence the run read, such as each MCP server's `tools/list`, so a clean report shows what it covered. */
+  evidenceUsed?: Array<{ source: string; message: string }>;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
+}
+
+/**
+ * A diagnostic a framework reported at runtime, such as a `nostics` report from the browser
+ * during dev. A Plugin Surface contributes them as `{ reports }` under the `frameworkDiagnostics`
+ * Runtime Evidence.
+ */
+export interface RuntimeFrameworkDiagnostic {
+  /** The framework's own Diagnostic Code, such as `NUXT_E3004`. */
+  code: string;
+  why: string;
+  fix?: string;
+  docs?: string;
+  /** Call sites exactly as the runtime reported them. */
+  sources: string[];
+  /** The source file, and the 1-based position when a source map proves it. */
+  location?: { file: string; line?: number; column?: number };
+  /** Why the location is missing or has no position. */
+  locationGap?: string;
 }
 
 export interface WorkspacePackage {
@@ -643,6 +792,7 @@ export interface ComponentUsageFact {
     expression: string;
     model?: boolean;
     modifiers?: boolean;
+    modifiersKey?: string;
     range: SourceRange;
   }>;
   /** Object spreads, `v-bind="attrs"` and `v-on="handlers"`, and dynamic arguments such as `:[name]`. */
@@ -757,8 +907,10 @@ export interface ComponentFacts {
    * when Doctor cannot read the option statically.
    */
   inheritAttrs?: boolean;
-  /** Whether the template reads `$attrs` or the script references `useAttrs` or `getCurrentInstance`. */
+  /** Whether the component reads `$attrs` or references a known Vue attrs reader. */
   readsAttrs: boolean;
+  /** Script references whose identity must be checked against the Nuxt auto-import inventory. */
+  nuxtAttrsReferences: Array<{ name: string; explicit: boolean }>;
   /** Equality comparisons between two member paths as written, such as `id === props.activeId`. */
   comparisons: Array<{ left: string; right: string; in: "script" | "template" }>;
   /** Components the template renders, in source order. */
@@ -828,18 +980,33 @@ export interface ImportGraphEdge {
   from: string;
   /** The imported file, when the specifier resolves to a source file in the Doctor Run. */
   to?: string;
-  /** The specifier as written, such as `./b` or `~/utils/format`. */
+  /**
+   * The specifier as written, such as `./b` or `~/utils/format`. For an `auto-import` edge, the
+   * auto-imported identifier, such as `useCart`.
+   */
   specifier: string;
-  /** `import` declarations, `export ... from` re-exports, or `import()` with a string literal. */
-  kind: "import" | "re-export" | "dynamic-import";
+  /**
+   * `import` declarations, `export ... from` re-exports, `import()` with a string literal, or a
+   * script reference to a Nuxt auto-import whose source is a file of the run.
+   */
+  kind: "import" | "re-export" | "dynamic-import" | "auto-import";
+  /** The transform that injects an auto-import. Written dependencies have no transform tag. */
+  autoImportBundle?: "nuxt" | "nitro";
+  /** Nuxt client participation; absent when unknown or not applicable. */
+  clientReachable?: boolean;
   /** Whether TypeScript erases the dependency: `import type` or `export type ... from`. */
   typeOnly: boolean;
-  /** The import or re-export declaration, or the `import()` call. */
+  /**
+   * The import or re-export declaration, the `import()` call, or the file's first
+   * unshadowed reference to the auto-imported identifier.
+   */
   range?: SourceRange;
 }
 
-/** Files that evaluate each other through static runtime imports. */
+/** Files that evaluate each other through static runtime imports and Nuxt auto-imports. */
 export interface ImportCycle {
+  /** The bundle view used to find this group, when not shared across views. */
+  autoImportBundle?: ImportGraphEdge["autoImportBundle"];
   /** Every file in the strongly connected group, as sorted absolute paths. */
   files: readonly string[];
   /**
@@ -850,19 +1017,23 @@ export interface ImportCycle {
   path: readonly ImportGraphEdge[];
 }
 
-/** Project Inventory of which source files import which, built from File Facts. */
+/** Project Inventory of which source files import or auto-import which, built from File Facts. */
 export interface ImportGraph {
   /** Every source file in the Doctor Run with File Facts, as absolute paths. */
   files: readonly string[];
-  /** Every import, re-export, and literal dynamic import, in source order per file. */
+  /**
+   * Every import, re-export, literal dynamic import, and project-owned Nuxt auto-import. Each
+   * file's written edges come in source order, followed by its auto-import edges.
+   */
   edges: readonly ImportGraphEdge[];
   /** Edges written in `file`, an absolute path. */
   importsOf(file: string): readonly ImportGraphEdge[];
   /** Edges that resolve to `file`, an absolute path. */
   importersOf(file: string): readonly ImportGraphEdge[];
   /**
-   * Groups of two or more files joined by static imports and re-exports. Type-only edges are
-   * erased and dynamic imports run later, so neither forms a cycle.
+   * Groups of two or more files joined by static imports, re-exports, and auto-imports, which Nuxt
+   * compiles to static imports. Nuxt app and Nitro auto-imports are analyzed independently.
+   * Type-only edges are erased and dynamic imports run later, so neither forms a cycle.
    */
   cycles: readonly ImportCycle[];
 }
@@ -871,7 +1042,7 @@ export interface ImportGraph {
 export interface RuleInventory {
   /** Available to `workspace` and `manifest` Rules, which see the whole project. */
   componentUsage(): Promise<ComponentUsageGraph>;
-  /** Available to `workspace` and `manifest` Rules, which see the whole project. */
+  /** Also available to uncached file Rules that require cross-file context. */
   importGraph(): Promise<ImportGraph>;
   /** Authored files selected by the run, including HTML when requested separately. */
   sourcePaths(kind?: "html"): Promise<readonly string[]>;
@@ -881,6 +1052,7 @@ export interface GraphEdge {
   from: number;
   to?: number;
   specifier?: string;
+  autoImportBundle?: ImportGraphEdge["autoImportBundle"];
   kind:
     | "import"
     | "type-import"
@@ -888,6 +1060,7 @@ export interface GraphEdge {
     | "export"
     | "re-export"
     | "type-re-export"
+    | "auto-import"
     | "virtual-root";
 }
 
@@ -962,7 +1135,11 @@ export interface RuleFileSystem {
 export interface DoctorHelpers {
   rangeFromOffsets(file: string, source: string, start: number, end?: number): SourceRange;
   isInSetupLikeContext(node: unknown): boolean;
-  isClientOnlyExecutionContext(node: unknown, source: string): boolean;
+  isClientOnlyExecutionContext(
+    node: unknown,
+    source: string,
+    runsImmediately?: (callback: unknown) => boolean,
+  ): boolean;
   isTypeOnlyContext(node: unknown): boolean;
   /**
    * Whether the identifier names a binding declared in an enclosing scope (parameter, variable,
@@ -1014,10 +1191,12 @@ export type DoctorDiagnosticInput = Omit<
 
 export type DoctorDiagnosticMetadata = Omit<
   Diagnostic,
-  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range"
+  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range" | "data"
 > & {
   file?: string;
   range?: SourceRange;
+  /** Plain JSON; `ctx.report` rejects anything else at runtime. Interfaces need no index signature. */
+  data?: object;
 };
 
 export interface SourceFileHandle {
@@ -1043,7 +1222,10 @@ export type RuleReportMetadata = Omit<
   DoctorDiagnosticMetadata,
   "ruleId" | "severity" | "category"
 > &
-  Partial<Pick<DoctorDiagnosticMetadata, "ruleId" | "severity" | "category">>;
+  Partial<Pick<DoctorDiagnosticMetadata, "ruleId" | "severity" | "category">> & {
+    /** A workspace-rule finding with no source owner; anchored at the project root. */
+    projectLevel?: boolean;
+  };
 
 export interface RuleContext {
   project: ProjectInfo;
@@ -1270,6 +1452,12 @@ export interface RulePack {
         packages?: string[];
         modules?: string[];
         nuxt?: string;
+        /**
+         * Activates the Rule Pack for every workspace package when this returns true for the
+         * Doctor Run's Runtime Evidence, whatever the other conditions say. The MCP Rule Pack uses
+         * it so a configured MCP server is checked in a project without an MCP package.
+         */
+        runtimeEvidence?: (runtimeEvidence: Record<string, unknown>) => boolean;
       };
 }
 

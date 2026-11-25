@@ -31,9 +31,10 @@ export const noCircularImportAtHmrBoundary = createRule({
         const vueHmr = clientHmrSetting(ctx);
         // Vite's importer graph, which HMR propagation walks: every resolved import, re-export
         // and literal import() that survives TypeScript's type erasure.
-        const successors = new Map<string, ImportGraphEdge[]>();
+        const successors = new Map<string, HmrImportEdge[]>();
         for (const edge of graph.edges) {
-          if (!edge.to || edge.to === edge.from || edge.typeOnly) continue;
+          if (edge.clientReachable === false || !edge.to || edge.to === edge.from || edge.typeOnly)
+            continue;
           const list = successors.get(edge.from);
           if (list) list.push(edge);
           else successors.set(edge.from, [edge]);
@@ -54,16 +55,23 @@ export const noCircularImportAtHmrBoundary = createRule({
           const loop = loopThroughBoundary(files, boundaries, successors);
           if (!loop) continue;
           const [edge, back] = [loop[0]!, loop[1]!];
+          const clientUnverified =
+            ctx.project.nuxt && loop.some((item) => item.clientReachable === undefined);
           const boundary = edge.to!;
           const steps = [...loop.map((item) => path(item.from)), path(edge.from)].join(" → ");
           const kind = boundary.endsWith(".vue")
             ? "a Vue SFC, which @vitejs/plugin-vue makes accept its own updates in dev"
             : "a module that calls import.meta.hot.accept() for its own updates";
           const backAt = back.range ? `${path(back.from)}:${back.range.line}` : path(back.from);
+          const dependency = back.kind === "auto-import" ? "auto-imported reference" : "import";
+          const alternative =
+            back.kind === "auto-import"
+              ? "pass it in at runtime without importing it"
+              : "read it at runtime instead of importing it, such as useRouter() in a component instead of the router module";
           ctx.report(
             diagnostics.VITE0029({
-              why: `Circular import through the HMR boundary ${path(boundary)}: ${steps}. ${path(boundary)} is ${kind}. When an edit inside this cycle reaches it, Vite marks the update as within a circular import, and the browser re-imports ${path(boundary)}, which can re-run modules of the cycle. If that re-import throws, for example because a module reads a binding of the cycle before it is initialized, Vite reloads the whole page instead of applying the update.`,
-              fix: `Remove the import that leads from ${path(boundary)} back into the cycle: ${backAt} imports '${back.specifier}'. Move what ${path(boundary)} needs from ${path(back.to!)} into a module that imports neither, or read it at runtime instead of importing it, such as useRouter() in a component instead of the router module. Loading ${path(boundary)} lazily with import() does not help: Vite records dynamic imports as importers for HMR, so the loop stays. Do not decline HMR with import.meta.hot.decline() or suppress this Diagnostic to hide the cycle.`,
+              why: `Circular import through the HMR boundary ${path(boundary)}: ${steps}. ${path(boundary)} is ${kind}. ${clientUnverified ? "The source graph does not establish that this whole loop runs in the browser. If it does, an edit that reaches this boundary can trigger a circular HMR update." : `When an edit inside this cycle reaches it, Vite marks the update as within a circular import, and the browser re-imports ${path(boundary)}, which can re-run modules of the cycle.`} If that re-import throws, for example because a module reads a binding of the cycle before it is initialized, Vite reloads the whole page instead of applying the update.`,
+              fix: `Remove the ${dependency} that leads from ${path(boundary)} back into the cycle: ${backAt} ${back.kind === "auto-import" ? EDGE_VERB[back.kind] : "imports"} '${back.specifier}'. Move what ${path(boundary)} needs from ${path(back.to!)} into a module that imports neither, or ${alternative}. Loading ${path(boundary)} lazily with import() does not help: Vite records dynamic imports as importers for HMR, so the loop stays. Do not decline HMR with import.meta.hot.decline() or suppress this Diagnostic to hide the cycle.`,
               sources: edge.range
                 ? [`${edge.from}:${edge.range.line}:${edge.range.column}`]
                 : undefined,
@@ -86,7 +94,7 @@ export const noCircularImportAtHmrBoundary = createRule({
                     boundary.endsWith(".vue")
                       ? `${path(boundary)} is a Vue SFC. ${vueHmr.note}`
                       : `${path(boundary)} calls import.meta.hot.accept() without a dependency.`
-                  } It is in a group of ${files.length} files joined by Vite's HMR importer edges: static imports, re-exports, and import() calls with a literal path.`,
+                  } It is in a group of ${files.length} files joined by ${clientUnverified ? "source dependencies that could participate in client HMR" : "Vite's HMR importer edges"}: static imports, re-exports, literal import() calls, or Nuxt auto-imports.`,
                 },
               ],
             },
@@ -97,10 +105,13 @@ export const noCircularImportAtHmrBoundary = createRule({
   },
 });
 
-const EDGE_VERB: Record<ImportGraphEdge["kind"], string> = {
+type HmrImportEdge = ImportGraphEdge;
+
+const EDGE_VERB: Record<HmrImportEdge["kind"], string> = {
   import: "imports",
   "re-export": "re-exports",
   "dynamic-import": "lazily imports",
+  "auto-import": "uses auto-imported",
 };
 
 /**
@@ -156,10 +167,10 @@ function clientHmrSetting(ctx: RuleContext): { disabled: boolean; note: string }
 function loopThroughBoundary(
   files: readonly string[],
   boundaries: ReadonlySet<string>,
-  successors: ReadonlyMap<string, ImportGraphEdge[]>,
-): ImportGraphEdge[] | undefined {
+  successors: ReadonlyMap<string, HmrImportEdge[]>,
+): HmrImportEdge[] | undefined {
   const group = new Set(files);
-  let loop: ImportGraphEdge[] | undefined;
+  let loop: HmrImportEdge[] | undefined;
   for (const boundary of [...boundaries].sort()) {
     const found = shortestLoopThrough(boundary, group, successors);
     if (found && (!loop || found.length < loop.length)) loop = found;
@@ -174,9 +185,9 @@ function loopThroughBoundary(
 function shortestLoopThrough(
   start: string,
   group: ReadonlySet<string>,
-  successors: ReadonlyMap<string, ImportGraphEdge[]>,
-): ImportGraphEdge[] | undefined {
-  const via = new Map<string, ImportGraphEdge>();
+  successors: ReadonlyMap<string, HmrImportEdge[]>,
+): HmrImportEdge[] | undefined {
+  const via = new Map<string, HmrImportEdge>();
   let frontier = [start];
   while (frontier.length) {
     const next: string[] = [];

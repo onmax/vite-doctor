@@ -7,9 +7,9 @@ catalogs:
   analysis:
     "@oxc-parser/binding-wasm32-wasi": ^0.159.0
     "@oxc-project/types": ^0.159.0
-    "@typescript-eslint/parser": ^8.66.0
-    "@typescript-eslint/scope-manager": ^8.66.0
-    "@typescript-eslint/visitor-keys": ^8.66.0
+    "@typescript-eslint/parser": ^8.74.0
+    "@typescript-eslint/scope-manager": ^8.74.0
+    "@typescript-eslint/visitor-keys": ^8.74.0
     "@types/semver": ^7.8.0
     "@vue/compiler-sfc": ^3.5.40
     eslint: ^10.8.0
@@ -56,19 +56,24 @@ catalogs:
     tailwindcss: ^4.3.3
     vue: ^3.5.40
   prod:
+    "@jridgewell/trace-mapping": ^0.3.31
+    ajv: ^8.20.0
     yaml: ^2.9.0
     c12: 4.0.0-rc.4
     cac: ^7.0.0
     consola: ^3.4.2
     detect-agent: ^1.2.0
     defu: ^6.1.7
-    ignore: ^7.0.6
+    ignore: ^7.0.14
+    mime: ^4.1.0
     pathe: ^2.0.3
     picocolors: ^1.1.1
     picomatch: ^4.0.7
+    radix3: ^1.1.2
     semver: ^7.8.5
     std-env: ^4.2.0
     tinyglobby: ^0.2.17
+    unimport: 6.4.0
     zod: ^4.4.3
     zod-to-json-schema: ^3.25.2
   release:

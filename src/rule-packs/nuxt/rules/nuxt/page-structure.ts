@@ -87,6 +87,8 @@ export const LAYOUT_OUTLETS = new Set(["NuxtLayout"]);
 export const PAGE_OUTLET_MENTION = /\b(?:NuxtPage|RouterView|nuxt-page|router-view)\b/;
 export const LAYOUT_OUTLET_MENTION = /\b(?:NuxtLayout|nuxt-layout)\b/;
 
+const componentNamesByGraph = new WeakMap<ComponentUsageGraph, Map<string, string[]>>();
+
 /**
  * Whether the SFC renders one of `outlets` itself or through components it renders. An outlet
  * Doctor could reach only through a guess, such as an auto-imported tag it cannot resolve or a
@@ -111,7 +113,7 @@ export function reachableOutlets(
   outlets: ReadonlySet<string>,
   mention: RegExp,
 ) {
-  const byName = componentsByName(graph);
+  let byName: Map<string, string[]> | undefined;
   const registry = ctx.project.nuxt?.components;
   const queue: Array<{ file: string; certain: boolean }> = [{ file: start, certain: true }];
   const seen = new Map<string, boolean>();
@@ -153,7 +155,7 @@ export function reachableOutlets(
         unknown ??= `Doctor cannot follow <${edge.usage.tag}> in ${name}.`;
         continue;
       }
-      for (const candidate of tagCandidates(tag, byName))
+      for (const candidate of tagCandidates(tag, (byName ??= componentsByName(graph))))
         queue.push({ file: candidate, certain: false });
     }
   }
@@ -161,6 +163,8 @@ export function reachableOutlets(
 }
 
 function componentsByName(graph: ComponentUsageGraph): Map<string, string[]> {
+  const cached = componentNamesByGraph.get(graph);
+  if (cached) return cached;
   const byName = new Map<string, string[]>();
   for (const file of graph.components.keys()) {
     const base = basename(file).replace(/\.vue$/, "");
@@ -169,6 +173,7 @@ function componentsByName(graph: ComponentUsageGraph): Map<string, string[]> {
     if (files) files.push(file);
     else byName.set(name, [file]);
   }
+  componentNamesByGraph.set(graph, byName);
   return byName;
 }
 

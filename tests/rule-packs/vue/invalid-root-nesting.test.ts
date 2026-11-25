@@ -121,6 +121,14 @@ test.each<Record<string, string>>([
     }),
   },
   {
+    ".nuxt/doctor.manifest.json": JSON.stringify({
+      generatedAt: new Date(Date.now() + 10000).toISOString(),
+      routeRules: {},
+      resolvedRouteRules: { "/**": { ssr: false } },
+      ssr: true,
+    }),
+  },
+  {
     "nuxt.config.ts":
       "export default defineNuxtConfig({ experimental: { inlineRouteRules: true } })",
     "app/pages/admin.vue":

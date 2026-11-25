@@ -6,7 +6,7 @@ import { parseSfcFile, parseVueScripts } from "../../../../core/internal/sfc.js"
 import { selectScanFiles } from "../../../../core/internal/source-inventory.js";
 import { diagnostics } from "../../diagnostics.js";
 import { exportedFunctions } from "./composable-analysis.js";
-import { patternNames } from "./script-index.js";
+import { patternNames } from "../../../../core/internal/script-index.js";
 import type { AnyNode } from "./shared.js";
 
 const RULE_ID = "nuxt/fetch/no-ssr-refetch-of-shared-key";

@@ -98,7 +98,14 @@ function fallthroughAttributes(
   const emits = facts.emits && new Set(facts.emits);
   const candidates = [
     ...usage.attributes.map(({ name, range }) => ({ name, vnodeKey: name, range })),
-    ...usage.bindings,
+    ...usage.bindings.flatMap((binding) =>
+      binding.modifiersKey
+        ? [
+            binding,
+            { name: binding.modifiersKey, vnodeKey: binding.modifiersKey, range: binding.range },
+          ]
+        : [binding],
+    ),
     ...usage.listeners.map(({ event, modifiers, vnodeKey, range }) => ({
       name: `@${[event, ...modifiers].join(".")}`,
       vnodeKey,

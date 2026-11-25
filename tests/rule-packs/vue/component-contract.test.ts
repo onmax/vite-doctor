@@ -137,6 +137,38 @@ const props = defineProps<{ title: string; legacySize?: string }>()
   expect(result.diagnostics[0]!.why).toContain('prop "legacySize"');
 });
 
+test.each(["Map<string, string> | unknown[]", "typeof Map"])(
+  "no-unused-props ignores a template reference to a lib-named prop in %s",
+  async (type) => {
+    const result = await runVueSfcRuleFixture(
+      noUnusedProps,
+      `<script setup lang="ts">
+defineProps<{ Map: string }>()
+</script>
+<template><p>{{ ([] as ${type}) }}</p></template>`,
+    );
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0037"]);
+    expect(result.diagnostics[0]!.why).toContain('prop "Map"');
+  },
+);
+
+test.each([
+  ["formatter: <T>(value: T) => T", '<Child :format="formatter<string>" />'],
+  ["formatter: <T>(value: T) => T", '<Child :format="formatter<typeof Map>" />'],
+  ["Base: new () => object", "<p>{{ new (class extends Base {})() }}</p>"],
+])("no-unused-props keeps runtime reads of %s in %s", async (prop, template) => {
+  const result = await runVueSfcRuleFixture(
+    noUnusedProps,
+    `<script setup lang="ts">
+defineOptions({ inheritAttrs: false })
+defineProps<{ ${prop}; Map: string }>()
+</script>
+<template>${template}</template>`,
+  );
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0037"]);
+  expect(result.diagnostics[0]!.why).toContain('prop "Map"');
+});
+
 test("no-unused-props sees template, script, style and whole-props reads", async () => {
   const result = await runProjectFixture({
     framework: "vue",
@@ -144,6 +176,7 @@ test("no-unused-props sees template, script, style and whole-props reads", async
     files: {
       "template.vue": `<script setup lang="ts">\ndefineProps<{ title: string }>()\n</script>\n<template><h1>{{ title }}</h1></template>`,
       "ts-template.vue": `<script setup lang="ts">\ndefineProps<{ count: number | string }>()\n</script>\n<template><p>{{ (count as number).toFixed(1) }}</p></template>`,
+      "lib-named-prop.vue": `<script setup lang="ts">\ndefineProps<{ JSON: string }>()\n</script>\n<template><p>{{ JSON }} {{ JSON as string }}</p></template>`,
       "script.vue": `<script setup lang="ts">\nconst { label } = defineProps<{ label: string }>()\nconsole.log(label)\n</script>\n<template><p /></template>`,
       "style.vue": `<script setup lang="ts">\ndefineProps<{ color: string }>()\n</script>\n<template><p /></template>\n<style scoped>p { color: v-bind(color) }</style>`,
       "forwarded.vue": `<script setup lang="ts">\nconst props = defineProps<{ a: string; b: string }>()\nuseThing(props)\n</script>\n<template><p /></template>`,

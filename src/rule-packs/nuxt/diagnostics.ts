@@ -102,6 +102,12 @@ export const nuxtDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0099", ruleId: "nuxt/layouts/app-renders-nuxtlayout" },
   { code: "NUXT0100", ruleId: "nuxt/pages/single-root-node" },
   { code: "NUXT0101", ruleId: "nuxt/routing/navigate-to-external" },
+  { code: "NUXT0102", ruleId: "nuxt/runtime/no-private-runtime-config-in-client" },
+  { code: "NUXT0103", ruleId: "nuxt/fetch/handler-must-return" },
+  { code: "NUXT0104", ruleId: "nuxt/plugins/no-island-disabled-dependency" },
+  { code: "NUXT0105", ruleId: "nuxt/ssr/no-request-data-in-module-state" },
+  { code: "NUXT0106", ruleId: "nuxt/ssr/no-request-state-in-cached-page" },
+  { code: "NUXT0107", ruleId: "nuxt/routing/no-global-middleware-redirect-loop" },
 ]);
 
 export const diagnostics = nuxtDiagnosticRegistry.diagnostics;

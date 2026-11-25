@@ -1,5 +1,5 @@
 import type { DoctorRunOptions } from "./config.js";
-import type { DoctorRunResult } from "./primitives.js";
+import type { DoctorRunResult, ProjectInfo } from "./primitives.js";
 import { parseSourceFiles } from "./internal/facts.js";
 import {
   buildGraphPhase,
@@ -23,6 +23,7 @@ import {
   createResult,
   reportRuntimeInventoryUnknown,
 } from "./internal/diagnostics.js";
+import { reportRuntimeFrameworkDiagnostics } from "./internal/runtime-diagnostics.js";
 
 export * from "./primitives.js";
 export * from "./config.js";
@@ -40,26 +41,34 @@ export { cacheStatus, cleanCache };
 export type { CacheRunStats, CacheStatus } from "./internal/cache-store.js";
 export { evaluatePackActivation, evaluateRuleApplicability } from "./internal/applicability.js";
 export { detectProject } from "./internal/project.js";
+export { FRAMEWORK_DIAGNOSTICS_EVIDENCE } from "./internal/runtime-diagnostics.js";
 
-export async function runDoctor(options: DoctorRunOptions = {}): Promise<DoctorRunResult> {
+export async function runDoctor(
+  options: DoctorRunOptions = {},
+  fullRunWhen?: (project: ProjectInfo) => boolean,
+): Promise<DoctorRunResult> {
   const requestedFixes = Boolean(options.fix || options.unsafeFix || options.structuralReview);
   const initial = await executeDoctorRun(
     requestedFixes && options.updateBaseline ? { ...options, updateBaseline: false } : options,
+    fullRunWhen,
   );
   if (!requestedFixes || (!initial.fixes?.edits && !options.updateBaseline)) return initial;
 
-  const verified = await executeDoctorRun({
-    ...options,
-    fix: false,
-    unsafeFix: false,
-    structuralReview: false,
-  });
+  const verified = await executeDoctorRun(
+    { ...options, fix: false, unsafeFix: false, structuralReview: false },
+    fullRunWhen,
+  );
   return { ...verified, fixes: initial.fixes };
 }
 
-async function executeDoctorRun(options: DoctorRunOptions): Promise<DoctorRunResult> {
-  const session = await createScanSession(options);
+async function executeDoctorRun(
+  input: DoctorRunOptions,
+  fullRunWhen?: (project: ProjectInfo) => boolean,
+): Promise<DoctorRunResult> {
+  const session = await createScanSession(input, fullRunWhen);
+  const { options } = session;
   reportRuntimeInventoryUnknown(session);
+  reportRuntimeFrameworkDiagnostics(session);
   await runPhase(session, "parseFileFacts", () => parseSourceFiles(session));
   await runPhase(session, "fileRules", () => runFileRules(session));
   await runPhase(session, "manifestRules", () => runManifestRules(session));

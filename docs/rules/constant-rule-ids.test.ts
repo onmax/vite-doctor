@@ -37,6 +37,20 @@ test("does not resolve IDs shadowed in unbraced local scopes", () => {
   expect(findMetaObjects(ast.program, visitorKeys).map(({ id }) => id)).toEqual(["module/rule"]);
 });
 
+test("VITE0033 rule and diagnostic pages verify findings through the Vite build", async () => {
+  const rule = getRuleDocuments().find((entry) => entry.diagnosticCodes.includes("VITE0033"));
+  const diagnostic = getDiagnosticDocuments().find((entry) => entry.code === "VITE0033");
+  expect(diagnostic?.rulePath).toBe(rule?.path);
+  for (const markdown of [
+    await rulesCollectionSource.getItem(rule!.key),
+    await diagnosticsCollectionSource.getItem(diagnostic!.key),
+  ]) {
+    expect(markdown).toContain("[Vite Doctor plugin](/vite)");
+    expect(markdown).toContain("`vite build`");
+    expect(markdown).not.toContain("--rules");
+  }
+});
+
 test.each([
   [htmlButtonHasType, "VUE0022"],
   [preferSameNamePropShorthand, "VUE0023"],
