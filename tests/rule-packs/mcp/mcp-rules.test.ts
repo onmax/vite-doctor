@@ -364,6 +364,29 @@ describe("MCP tool names", () => {
 });
 
 describe("ViteHub MCP tools", () => {
+  test("uses the discovered name in JSX and TSX files instead of an options override", async () => {
+    const longName = "a".repeat(65);
+    const found = await messages(
+      {
+        "server/mcp/tools/rows.tsx": tool(
+          "{ name: 'not a tool name', annotations: { title: 'Rows', readOnlyHint: true }, handler: () => { const view: unknown = <div />; return JSON.stringify(view, null, 2) } }",
+          "vite-hub/mcp",
+        ),
+        [`server/mcp/tools/${longName}.jsx`]: tool(
+          "{ name: 'reports', annotations: { title: 'Reports', readOnlyHint: true }, handler: () => <div /> }",
+          "@vite-hub/mcp",
+        ),
+      },
+      viteHub,
+    );
+    expect(found.map((diagnostic) => diagnostic.code).sort()).toEqual(["MCP0003", "MCP0004"]);
+    const invalidName = found.find((diagnostic) => diagnostic.code === "MCP0003");
+    expect(invalidName?.message).toContain(longName);
+    expect(invalidName?.suggestion).toContain("Rename or move the tool file");
+    expect(invalidName?.suggestion).not.toContain("set `name`");
+    expect(found.find((diagnostic) => diagnostic.code === "MCP0004")?.message).toContain('"rows"');
+  });
+
   test("names a tool after its path below mcp/tools and fills no title", async () => {
     const found = await messages(
       {
@@ -393,6 +416,57 @@ describe("ViteHub MCP tools", () => {
 });
 
 describe("MCP tool output", () => {
+  test("ignores JSON that does not reach the handler's text result", async () => {
+    const info = "name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }";
+    const pretty = "JSON.stringify({ a: 1 }, null, 2)";
+    expect(
+      await codes({
+        "src/metadata.ts": tool(`{ ${info}, description: ${pretty}, handler: () => 'ok' }`),
+        "src/metadata-text.ts": tool(`{ ${info}, text: ${pretty}, handler: () => 'ok' }`),
+        "src/callback.ts": tool(
+          `{ ${info}, handler() { console.log([1].map(() => ${pretty})); return 'ok' } }`,
+        ),
+        "src/structured.ts": tool(
+          `{ ${info}, handler: () => ({ structuredContent: { text: ${pretty} }, content: [{ type: 'text', text: '{}' }] }) }`,
+        ),
+        "src/nontext.ts": tool(
+          `{ ${info}, handler: () => ({ content: [{ type: 'image', text: ${pretty} }] }) }`,
+        ),
+        "src/overridden.ts": tool(`{ ${info}, handler: () => ${pretty}, ...otherOptions }`),
+      }),
+    ).toEqual([]);
+  });
+
+  test("does not treat shadowed JSON bindings as the built-in", async () => {
+    const info = "name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }";
+    expect(
+      await codes({
+        "src/format.ts": "export const JSON = { stringify: () => '{}' }",
+        "src/import.ts":
+          "import { JSON } from './format'\n" +
+          tool(`{ ${info}, handler: () => JSON.stringify({}, null, 2) }`),
+        "src/parameter.ts": tool(`{ ${info}, handler: (JSON) => JSON.stringify({}, null, 2) }`),
+      }),
+    ).toEqual([]);
+  });
+
+  test("preserves the replacer and points to the stringify in a same-file helper", async () => {
+    const stringify = "JSON.stringify({ id: 1, label: 'Example' }, ['id'], 2)";
+    const found = await messages({
+      "src/rows.ts":
+        `const format = () => ${stringify}\n` +
+        tool(
+          "{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, handler: () => format() }",
+        ),
+    });
+    expect(found.map((diagnostic) => diagnostic.code)).toEqual(["MCP0004"]);
+    expect(found[0]?.suggestion).toContain("keep the replacer");
+    expect(found[0]?.evidence?.[0]?.range).toMatchObject({
+      start: "const format = () => ".length,
+      end: "const format = () => ".length + stringify.length,
+    });
+  });
+
   test("reports indented JSON that a tool returns as its text", async () => {
     expect(
       await codes({
@@ -405,8 +479,19 @@ describe("MCP tool output", () => {
         "src/arrow.ts": tool(
           "{ name: 'arrow', annotations: { title: 'Arrow', readOnlyHint: true }, handler: () => (JSON.stringify(rows(), null, 2) as string) }",
         ),
+        "src/named.ts":
+          "function render() { return { content: [{ type: 'text', text: format() }] } }\n" +
+          "const format = () => JSON.stringify({}, null, 2)\n" +
+          tool(
+            "{ name: 'named', annotations: { title: 'Named', readOnlyHint: true }, handler: render }",
+          ),
       }),
-    ).toEqual(["MCP0004 src/arrow.ts", "MCP0004 src/return.ts", "MCP0004 src/text.ts"]);
+    ).toEqual([
+      "MCP0004 src/arrow.ts",
+      "MCP0004 src/named.ts",
+      "MCP0004 src/return.ts",
+      "MCP0004 src/text.ts",
+    ]);
   });
 
   test("follows a helper the tool returns, like the Quiver portal before compact output", async () => {
@@ -437,7 +522,7 @@ describe("MCP tool output", () => {
       await codes(
         {
           "src/server.ts":
-            "import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'\nconst server = new McpServer({ name: 's', version: '1' })\nserver.registerTool('list', { annotations: { title: 'List', readOnlyHint: true } }, async () => ({ content: [{ type: 'text', text: JSON.stringify(await rows(), null, 2) }] }))\n",
+            "import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'\nconst server = new McpServer({ name: 's', version: '1' })\nserver.registerTool('list', { annotations: { title: 'List', readOnlyHint: true } }, async () => ({ content: [{ type: 'text', text: JSON.stringify(await rows(), null, 2) }] }))\nserver.registerTool('compact', { text: JSON.stringify({}, null, 2), annotations: { title: 'Compact', readOnlyHint: true } }, () => ({ content: [{ type: 'text', text: '{}' }] }))\n",
         },
         { "@modelcontextprotocol/sdk": "^1.20.0" },
       ),

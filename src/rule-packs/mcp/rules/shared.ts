@@ -73,7 +73,7 @@ export const MCP_PACKAGES = [
   "@modelcontextprotocol/server",
 ];
 
-const SCRIPT_FILE = /\.[cm]?[jt]s$/;
+const SCRIPT_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const TOOL_CALLEES = /\b(?:defineMcpTool|defineTool|registerTool)\b/;
 const TRANSPARENT_WRAPPERS = new Set([
   "ParenthesizedExpression",
@@ -209,7 +209,7 @@ function loadModule(
   const references = new Map<number, ScopeReference>();
   try {
     scope = parseScriptScope(text, {
-      dialect: /\.[cm]?ts$/.test(file) ? "ts" : "jsx",
+      dialect: file.endsWith(".tsx") ? "tsx" : /\.[cm]?ts$/.test(file) ? "ts" : "jsx",
       sourceType: "module",
     });
     for (const reference of scope.references.values()) {
@@ -369,15 +369,20 @@ function readDefinition(
     modules.ctx.helpers.rangeFromOffsets(module.file, module.text, node.start, node.end);
   const property = (key: string) => findProperty(found.options, key);
   const callee = range(unwrap(found.call.callee));
-  const fileName = basename(module.file).replace(/\.[cm]?[jt]s$/, "");
-  const toolPath = /(?:^|\/)mcp\/tools\/(.+)\.[cm]?[jt]s$/.exec(module.displayPath)?.[1];
+  const fileName = basename(module.file).replace(SCRIPT_FILE, "");
+  const toolPath = /(?:^|\/)mcp\/tools\/(.+)$/.exec(
+    module.displayPath.replace(SCRIPT_FILE, ""),
+  )?.[1];
   const discovered =
     found.defaultExport &&
     found.library !== "h3-mcp" &&
     found.library !== "@modelcontextprotocol/sdk" &&
     toolPath !== undefined;
 
-  const nameNode = found.nameNode ?? property("name")?.value;
+  const nameNode =
+    discovered && found.library === "@vite-hub/mcp"
+      ? undefined
+      : (found.nameNode ?? property("name")?.value);
   const literalName = staticString(nameNode);
   const name: McpStaticValue | undefined =
     literalName !== undefined
@@ -416,6 +421,10 @@ function readDefinition(
           };
   }
 
+  const handler =
+    found.library === "@modelcontextprotocol/sdk"
+      ? found.call.arguments?.[2]
+      : outputProperty(found.options, "handler");
   return {
     file: module.file,
     displayPath: module.displayPath,
@@ -424,9 +433,9 @@ function readDefinition(
     name,
     title,
     annotations,
-    indentedJson: findIndentedJsonOutput(modules, module, found.call, 0).map((site) => ({
-      range: range(site.call),
-      ...(site.module !== module
+    indentedJson: findIndentedJsonOutput(modules, module, handler, found.library).map((site) => ({
+      range: range(site.anchor),
+      ...(site.anchor !== site.stringify
         ? {
             helper: {
               file: site.module.file,
@@ -451,7 +460,6 @@ function fileToolName(library: McpLibrary, fileName: string, toolPath: string | 
   return fileName;
 }
 
-const NO_INDENT = new Set([0, ""]);
 const FUNCTION_TYPES = new Set([
   "FunctionDeclaration",
   "FunctionExpression",
@@ -460,43 +468,85 @@ const FUNCTION_TYPES = new Set([
 const MAX_HELPER_DEPTH = 2;
 
 interface IndentedJsonSite {
-  /** The call in the walked code: the stringify itself, or the helper call that returns one. */
-  call: AnyNode;
+  anchor: AnyNode;
   module: ParsedModule;
   stringify: AnyNode;
 }
 
-/**
- * `JSON.stringify(value, replacer, indent)` calls whose string is the tool's text: the value of a `text` property, a
- * `return`, or an arrow function's body, also through `??`, `||`, a conditional, or `await`. A helper called in such a
- * place is followed into its file, two levels deep. Only a literal indent counts, so a variable indent or a stringify
- * for a log stays silent.
- */
+type OutputPosition = "result" | "content" | "block" | "text";
+
 function findIndentedJsonOutput(
   modules: ProjectModules,
   module: ParsedModule,
-  root: AnyNode,
-  depth: number,
+  handler: AnyNode,
+  library: McpLibrary,
 ): IndentedJsonSite[] {
   const found: IndentedJsonSite[] = [];
-  walkWithAncestors(root, [], (node, ancestors) => {
-    if (node.type !== "CallExpression" || !isOutput(node, ancestors)) return;
-    if (isJsonStringify(node.callee)) {
-      if (hasLiteralIndent(node)) found.push({ call: node, module, stringify: node });
+  const autoImports = library === "@nuxtjs/mcp-toolkit" || library === "nitro-mcp-toolkit";
+
+  function readFunction(
+    current: ParsedModule,
+    node: AnyNode,
+    position: OutputPosition,
+    depth: number,
+    anchor?: AnyNode,
+  ) {
+    const fn = unwrap(node);
+    if (!FUNCTION_TYPES.has(fn?.type) || fn.generator || !fn.body) return;
+    if (fn.body.type !== "BlockStatement") {
+      readValue(current, fn.body, position, depth, anchor);
+    } else {
+      visitReturns(fn.body, (value) => readValue(current, value, position, depth, anchor));
+    }
+  }
+
+  function readValue(
+    current: ParsedModule,
+    expression: AnyNode,
+    position: OutputPosition,
+    depth: number,
+    anchor?: AnyNode,
+  ) {
+    const node = unwrap(expression);
+    const read = (child: AnyNode, next = position) =>
+      readValue(current, child, next, depth, anchor);
+    if (node?.type === "ConditionalExpression") {
+      read(node.consequent);
+      read(node.alternate);
+    } else if (node?.type === "LogicalExpression") {
+      if (node.operator !== "&&") read(node.left);
+      read(node.right);
+    } else if (node?.type === "AwaitExpression") {
+      read(node.argument);
+    } else if (node?.type === "ObjectExpression" && position === "result") {
+      read(outputProperty(node, "content"), "content");
+    } else if (node?.type === "ArrayExpression" && position === "content") {
+      for (const element of node.elements) read(element, "block");
+    } else if (node?.type === "ObjectExpression" && position === "block") {
+      if (staticString(outputProperty(node, "type")) === "text")
+        read(outputProperty(node, "text"), "text");
+    }
+
+    if (node?.type !== "CallExpression") return;
+    if (isJsonStringify(current, node.callee)) {
+      if ((position === "text" || position === "result") && hasLiteralIndent(node))
+        found.push({ anchor: anchor ?? node, module: current, stringify: node });
       return;
     }
     const callee = unwrap(node.callee);
     if (callee?.type !== "Identifier" || depth >= MAX_HELPER_DEPTH) return;
-    const target = resolveIdentifier(modules, module, callee);
-    if ("reason" in target || !FUNCTION_TYPES.has(unwrap(target.node)?.type)) return;
-    for (const site of findIndentedJsonOutput(
-      modules,
-      target.module,
-      unwrap(target.node),
-      depth + 1,
-    ))
-      found.push({ call: node, module: site.module, stringify: site.stringify });
-  });
+    const target = resolveIdentifier(modules, current, callee, autoImports);
+    if (!("reason" in target))
+      readFunction(target.module, target.node, position, depth + 1, anchor ?? node);
+  }
+
+  const value = unwrap(handler);
+  if (value?.type === "Identifier") {
+    const target = resolveIdentifier(modules, module, value, autoImports);
+    if (!("reason" in target)) readFunction(target.module, target.node, "result", 0, value);
+  } else {
+    readFunction(module, value, "result", 0);
+  }
   return found;
 }
 
@@ -504,60 +554,49 @@ function hasLiteralIndent(call: AnyNode): boolean {
   const indent = unwrap(call.arguments?.[2]);
   return (
     indent?.type === "Literal" &&
-    (typeof indent.value === "number" || typeof indent.value === "string") &&
-    !NO_INDENT.has(indent.value)
+    (typeof indent.value === "number" ? indent.value >= 1 : !!staticString(indent)) &&
+    !call.arguments.slice(0, 3).some((argument: AnyNode) => argument.type === "SpreadElement")
   );
 }
 
-function isOutput(node: AnyNode, ancestors: AnyNode[]): boolean {
-  let child = node;
-  for (let index = ancestors.length - 1; index >= 0; index--) {
-    const parent = ancestors[index];
-    if (
-      (parent.type === "LogicalExpression" && parent.operator !== "&&") ||
-      (parent.type === "ConditionalExpression" && unwrap(parent.test) !== child) ||
-      parent.type === "AwaitExpression"
-    ) {
-      child = parent;
-      continue;
-    }
-    return (
-      parent.type === "ReturnStatement" ||
-      (parent.type === "ArrowFunctionExpression" && unwrap(parent.body) === child) ||
-      (parent.type === "Property" &&
-        unwrap(parent.value) === child &&
-        !parent.computed &&
-        (parent.key?.name === "text" || parent.key?.value === "text"))
-    );
-  }
-  return false;
-}
-
-function isJsonStringify(callee: AnyNode): boolean {
+function isJsonStringify(module: ParsedModule, callee: AnyNode): boolean {
   const value = unwrap(callee);
+  const receiver = unwrap(value?.object);
+  const reference = module.references.get(receiver?.start);
   return (
     value?.type === "MemberExpression" &&
     !value.computed &&
-    unwrap(value.object)?.type === "Identifier" &&
-    unwrap(value.object).name === "JSON" &&
-    value.property?.name === "stringify"
+    receiver?.type === "Identifier" &&
+    receiver.name === "JSON" &&
+    value.property?.name === "stringify" &&
+    reference !== undefined &&
+    !reference.resolved
   );
 }
 
-/** Like `walk`, with the ancestors that aren't TypeScript wrappers or parentheses. */
-function walkWithAncestors(
-  node: AnyNode,
-  ancestors: AnyNode[],
-  visit: (node: AnyNode, ancestors: AnyNode[]) => void,
-) {
-  if (!node || typeof node !== "object" || typeof node.type !== "string") return;
-  visit(node, ancestors);
-  const next = TRANSPARENT_WRAPPERS.has(node.type) ? ancestors : [...ancestors, node];
+function visitReturns(node: AnyNode, visit: (value: AnyNode) => void) {
+  if (!node || FUNCTION_TYPES.has(node.type)) return;
+  if (node.type === "ReturnStatement") {
+    visit(node.argument);
+    return;
+  }
   for (const key of getNodeVisitorKeys(node)) {
     const value = node[key];
-    if (Array.isArray(value)) for (const child of value) walkWithAncestors(child, next, visit);
-    else walkWithAncestors(value, next, visit);
+    if (Array.isArray(value)) for (const child of value) visitReturns(child, visit);
+    else visitReturns(value, visit);
   }
+}
+
+function outputProperty(object: AnyNode, key: string): AnyNode {
+  for (let index = object.properties.length - 1; index >= 0; index--) {
+    const item = object.properties[index];
+    if (item.type !== "Property") return undefined;
+    const name =
+      !item.computed && item.key.type === "Identifier" ? item.key.name : staticString(item.key);
+    if (name === undefined && item.computed) return undefined;
+    if (name === key) return item.kind === "init" ? item.value : undefined;
+  }
+  return undefined;
 }
 
 type ResolvedObject =
@@ -645,12 +684,15 @@ function resolveIdentifier(
   modules: ProjectModules,
   module: ParsedModule,
   identifier: AnyNode,
+  autoImports = true,
 ): { module: ParsedModule; node: AnyNode } | { reason: string } {
   const name = identifier.name;
   const reference = module.references.get(identifier.start);
   if (!reference) return { reason: `Doctor can't read the binding of \`${name}\`.` };
   if (reference.resolved) {
     for (const definition of reference.resolved.defs) {
+      if (definition.type === "FunctionName" && definition.node.type === "FunctionDeclaration")
+        return { module, node: definition.node };
       if (definition.type === "Variable" && definition.parent.kind === "const") {
         const local = module.constants.get(definition.name.range[0]);
         if (local) return { module, node: local };
@@ -672,7 +714,7 @@ function resolveIdentifier(
     }
     return { reason: `Doctor can't read the binding of \`${name}\`.` };
   }
-  const candidates = autoImportedConstants(modules).get(name) ?? [];
+  const candidates = (autoImports && autoImportedConstants(modules).get(name)) || [];
   if (candidates.length === 1) return candidates[0]!;
   return {
     reason:
@@ -705,8 +747,10 @@ function resolveRelativeModule(ctx: RuleContext, from: string, source: string): 
   const stem = base.replace(/\.[cm]?js$/, "");
   const candidates = [
     base,
-    ...["ts", "mts", "cts", "js", "mjs", "cjs"].map((extension) => `${stem}.${extension}`),
-    ...["ts", "js"].map((extension) => join(base, `index.${extension}`)),
+    ...["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"].map(
+      (extension) => `${stem}.${extension}`,
+    ),
+    ...["ts", "tsx", "js", "jsx"].map((extension) => join(base, `index.${extension}`)),
   ];
   return candidates.find((candidate) => SCRIPT_FILE.test(candidate) && ctx.fs.exists(candidate));
 }

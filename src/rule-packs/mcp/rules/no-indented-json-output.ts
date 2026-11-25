@@ -9,15 +9,16 @@ export const noIndentedJsonOutput = createRule({
     description:
       "Report MCP tools that return `JSON.stringify(value, replacer, indent)` with an indent as their text.",
     why: "The model reads a tool's text result as tokens in its context window. Indentation adds a newline and spaces before every key and item, which carries no data: in the Quiver Portal MCP it was about a third of each answer's characters. Claude Code flags a result over 10,000 tokens, and replaces one over 25,000 tokens or 50,000 characters with the path of a file that holds it, so padding pushes a large answer past those limits sooner.",
-    recommendedReplacement: "Call `JSON.stringify(value)` without an indent.",
+    recommendedReplacement:
+      "Remove only the third argument of `JSON.stringify(value, replacer, indent)`; keep the replacer.",
     examples: [
       {
         title: "Return compact JSON",
         language: "ts",
         invalid:
-          "export default defineMcpTool({\n  handler: async () => ({\n    content: [{ type: 'text', text: JSON.stringify(await listDrops(), null, 2) }],\n  }),\n})",
+          "export default defineMcpTool({\n  handler: async () => ({\n    content: [{ type: 'text', text: JSON.stringify(await listDrops(), ['id'], 2) }],\n  }),\n})",
         valid:
-          "export default defineMcpTool({\n  handler: async () => ({\n    content: [{ type: 'text', text: JSON.stringify(await listDrops()) }],\n  }),\n})",
+          "export default defineMcpTool({\n  handler: async () => ({\n    content: [{ type: 'text', text: JSON.stringify(await listDrops(), ['id']) }],\n  }),\n})",
       },
     ],
     category: "tools",
@@ -44,9 +45,7 @@ export const noIndentedJsonOutput = createRule({
                 why: helper
                   ? `MCP tool ${toolLabel(tool)} returns indented JSON from a helper in ${helper.displayPath}. The indentation reaches the model as tokens that carry no data.`
                   : `MCP tool ${toolLabel(tool)} returns indented JSON as its text. The indentation reaches the model as tokens that carry no data.`,
-                fix: helper
-                  ? `Drop the indent argument of \`JSON.stringify()\` in ${helper.displayPath}.`
-                  : "Drop the indent argument so the tool returns `JSON.stringify(value)`.",
+                fix: `Remove only the third argument of \`JSON.stringify()\`${helper ? ` in ${helper.displayPath}` : ""}; keep the replacer.`,
               }),
               {
                 ruleId: "mcp/tools/no-indented-json-output",
