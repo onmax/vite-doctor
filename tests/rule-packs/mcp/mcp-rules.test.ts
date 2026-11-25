@@ -108,6 +108,30 @@ describe("MCP tool annotations", () => {
     },
   );
 
+  test("follows the declared safety hints in the fix", async () => {
+    const found = await messages({
+      "src/write.ts": tool(
+        "{ name: 'write', annotations: { title: 'Write', readOnlyHint: false }, handler: () => 1 }",
+      ),
+      "src/both.ts": tool(
+        "{ name: 'both', annotations: { title: 'Both', readOnlyHint: false, destructiveHint: false }, handler: () => 1 }",
+      ),
+      "src/none.ts": tool("{ name: 'none', annotations: { title: 'None' }, handler: () => 1 }"),
+    });
+    const fix = (name: string) =>
+      found.find(
+        (diagnostic) =>
+          diagnostic.code === "MCP0002" && relativePath(diagnostic.file) === `src/${name}.ts`,
+      )?.diagnostic.fix;
+    expect(fix("write")).toContain("Add `destructiveHint: true`");
+    expect(fix("write")).not.toContain("readOnlyHint: true");
+    expect(fix("both")).toContain("Set whichever one is true");
+    expect(fix("both")).not.toContain("readOnlyHint: true");
+    expect(fix("none")).toContain(
+      "Add `readOnlyHint: true` to the annotations if the tool only reads",
+    );
+  });
+
   test("keeps unresolved annotation values conservative per rule", async () => {
     expect(
       await codes({

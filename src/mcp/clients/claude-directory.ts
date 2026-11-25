@@ -45,6 +45,20 @@ export const missingTitle: McpClientRule = {
   },
 };
 
+/**
+ * The fix for a tool with neither safety hint true, when its declared hints narrow it down.
+ * A write tool that declares `readOnlyHint: false` must never be told to set it to true.
+ */
+export function declaredHintFix(hints: {
+  readOnlyHint?: unknown;
+  destructiveHint?: unknown;
+}): string | undefined {
+  if (hints.readOnlyHint !== false) return;
+  if (hints.destructiveHint === false)
+    return "The tool declares both `readOnlyHint: false` and `destructiveHint: false`, but the Connectors Directory needs one of them true. Set whichever one is true for this tool.";
+  return "Add `destructiveHint: true` to the annotations. The tool declares `readOnlyHint: false`, and the Connectors Directory asks for `destructiveHint: true` on tools that modify or delete data.";
+}
+
 export const missingHint: McpClientRule = {
   client: "claude-directory",
   rule: "claude-directory/missing-hint",
@@ -58,7 +72,9 @@ export const missingHint: McpClientRule = {
     if (annotations.readOnlyHint === true || annotations.destructiveHint === true) return;
     return {
       message: `Directory review requires \`readOnlyHint: true\` or \`destructiveHint: true\` on every tool; \`${tool.name}\` has neither.`,
-      fix: "Set `annotations.readOnlyHint: true` on read-only tools and `annotations.destructiveHint: true` on tools that modify or delete data.",
+      fix:
+        declaredHintFix(annotations) ??
+        "Set `annotations.readOnlyHint: true` on read-only tools and `annotations.destructiveHint: true` on tools that modify or delete data.",
       pointer: "/annotations",
     };
   },

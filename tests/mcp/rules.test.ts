@@ -401,3 +401,16 @@ test("ChatGPT's readOnlyHint check skips a tool that declares itself destructive
   );
   expect(rules({ annotations: {} })).toContain("chatgpt/missing-read-only-hint");
 });
+
+test("the Directory hint fix follows the hints a tool declares", () => {
+  const fix = (annotations: McpTool["annotations"]) =>
+    checkMcpToolList({ tools: [tool({ annotations })] }).find(
+      (finding) => finding.rule === "claude-directory/missing-hint",
+    )?.fix;
+  expect(fix({ readOnlyHint: false })).toContain("Add `destructiveHint: true`");
+  expect(fix({ readOnlyHint: false })).not.toContain("readOnlyHint: true");
+  const both = fix({ readOnlyHint: false, destructiveHint: false });
+  expect(both).toContain("Set whichever one is true");
+  expect(both).not.toContain("readOnlyHint: true");
+  expect(fix({})).toContain("`annotations.readOnlyHint: true` on read-only tools");
+});
