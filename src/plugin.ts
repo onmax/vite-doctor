@@ -342,6 +342,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
 class ServeDoctorRun {
   private closed = false;
   private state: DiagnosticState | undefined;
+  private mcpEvidence = false;
   private active: ActiveRun | undefined;
   private pending = emptyChanges();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -435,12 +436,7 @@ class ServeDoctorRun {
     // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files, and
     // neither can a run that rereads MCP servers, whose gaps and Diagnostics have no saved file.
     const affected =
-      full ||
-      !this.state ||
-      this.options.changed ||
-      this.options.since ||
-      this.options.mcp?.length ||
-      hasMcpServerState(this.state)
+      full || !this.state || this.options.changed || this.options.since || this.mcpEvidence
         ? undefined
         : files;
     await this.execute({ affected, changed: [...changed], reported });
@@ -496,6 +492,7 @@ class ServeDoctorRun {
   }
 
   private record(root: string, batch: RunBatch, outcome: SurfaceRunOutcome) {
+    this.mcpEvidence = outcome.mcpEvidence;
     const previous = this.state;
     const next =
       previous && batch.affected
@@ -769,12 +766,4 @@ function viteRuntimeEvidence(config: ResolvedConfig, targets?: BuildTarget[]) {
 function shouldRun(run: NonNullable<ViteDoctorSurfaceOptions["run"]>, command: "build" | "serve") {
   if (run === "both") return true;
   return run === command;
-}
-
-// Doctor Extensions such as ViteHub read MCP servers too, so the last run's report is what shows one.
-function hasMcpServerState(state: DiagnosticState): boolean {
-  return (
-    [...state.evidenceGaps.values()].some((gap) => gap.source === "mcp") ||
-    [...state.diagnostics.values()].some((diagnostic) => /^MCP000[5-9] /.test(diagnostic.summary))
-  );
 }
