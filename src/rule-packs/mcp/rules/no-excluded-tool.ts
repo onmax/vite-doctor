@@ -28,6 +28,7 @@ export const noExcludedTool = createRule({
     diagnosticCodes: ["MCP0005"],
     docsUrl: "https://code.claude.com/docs/en/mcp#tools-with-invalid-input-schemas",
     execution: "workspace",
+    activationScope: "workspace",
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],

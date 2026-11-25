@@ -1,4 +1,5 @@
 import type { DoctorExtension, ProjectInfo } from "../core/primitives.js";
+import { sha256 } from "../core/internal/utils.js";
 import { mcpEndpointId, mcpEndpointLabel, parseMcpEndpoint } from "./endpoint.js";
 import { fetchMcpToolList, McpFetchError } from "./fetch.js";
 import { isMcpTool } from "./input.js";
@@ -13,7 +14,11 @@ export interface McpServerTarget {
   url: string;
   /** Request headers, such as `authorization`. They never reach a report. */
   headers?: Record<string, string>;
-  /** Client-configured alias, also used in reports when provided. */
+  /**
+   * The name clients know the server by, such as its key in `.mcp.json`, which they prefix to tool
+   * names. Without it, reports name the server by the `serverInfo.name` it sends, and name-length
+   * checks assume a one-character name.
+   */
   serverName?: string;
 }
 
@@ -33,6 +38,7 @@ export interface McpServerToolsEvidence {
 export interface McpServerErrorEvidence {
   name?: string;
   url: string;
+  endpointId?: string;
   error: string;
   status?: number;
 }
@@ -62,8 +68,7 @@ function isMcpServerEvidence(value: unknown): value is McpServerEvidence {
 
 /**
  * Doctor Extension that reads `tools/list` from each configured server as `mcp` Runtime Evidence.
- * A server Doctor cannot read leaves an evidence gap, so the report is `incomplete` rather than
- * clean.
+ * A server Doctor cannot read is contributed as `{ url, error }`.
  */
 export function mcpEvidenceExtension(
   targets: readonly McpServerTarget[],
@@ -77,8 +82,19 @@ export function mcpEvidenceExtension(
         name: MCP_EVIDENCE,
         async contribute(project) {
           const mcpServers = await Promise.all(
-            targets.map((target) => readServer(project, target, options)),
+            targets.map((target) => readServer(target, options)),
           );
+          const gaps = new Map<string, NonNullable<ProjectInfo["evidenceGaps"]>[number]>();
+          for (const server of mcpServers) {
+            if (!("error" in server) || !server.endpointId || gaps.has(server.endpointId)) continue;
+            gaps.set(server.endpointId, {
+              source: MCP_EVIDENCE,
+              message: `Doctor could not read the tools of the MCP server at ${server.url}, so its tools were not checked: ${server.error}${authHint(server.status)}`,
+              files: [],
+              instanceKey: server.endpointId,
+            });
+          }
+          project.evidenceGaps = [...(project.evidenceGaps ?? []), ...gaps.values()];
           return { mcpServers };
         },
       });
@@ -87,7 +103,6 @@ export function mcpEvidenceExtension(
 }
 
 async function readServer(
-  project: ProjectInfo,
   { url, headers, serverName }: McpServerTarget,
   options: { fetch?: typeof globalThis.fetch; timeout?: number },
 ): Promise<McpServerEvidence> {
@@ -106,22 +121,10 @@ async function readServer(
   } catch (error) {
     const reason = error instanceof McpFetchError ? error.message : "The request failed.";
     const status = error instanceof McpFetchError ? error.status : undefined;
-    const hint =
-      status === 401 || status === 403
-        ? ' On the CLI, pass it with --mcp-header "Authorization: Bearer <token>".'
-        : "";
-    project.evidenceGaps = [
-      ...(project.evidenceGaps ?? []),
-      {
-        source: MCP_EVIDENCE,
-        message: `Doctor could not read the tools of the MCP server at ${label}, so its tools were not checked: ${reason}${hint}`,
-        files: [],
-        instanceKey: endpointId,
-      },
-    ];
     return {
       ...(serverName ? { name: serverName } : {}),
       url: label,
+      endpointId,
       error: reason,
       ...(status === undefined ? {} : { status }),
     };
@@ -148,6 +151,44 @@ export function mcpEvidenceUsed(
       message: `tools/list of the MCP server at ${label}, ${count}${fileOverridesOnly ? " (file overrides only)" : ""}`,
     };
   });
+}
+
+/**
+ * One evidence gap per MCP server that any Runtime Evidence contributor could not read, so the
+ * report is `incomplete` rather than clean.
+ */
+export function unreadMcpServerGaps(
+  project: ProjectInfo,
+): NonNullable<ProjectInfo["evidenceGaps"]> {
+  const gaps = new Map<string, NonNullable<ProjectInfo["evidenceGaps"]>[number]>();
+  const read = new Set(
+    (project.evidenceGaps ?? []).flatMap((gap) =>
+      gap.source === MCP_EVIDENCE && gap.instanceKey ? [gap.instanceKey] : [],
+    ),
+  );
+  for (const [contributor, entry] of Object.entries(project.runtimeEvidence ?? {})) {
+    for (const server of readMcpServers({ [contributor]: entry })) {
+      if (typeof (server as Partial<McpServerErrorEvidence>).error !== "string") continue;
+      const { url, endpointId, status } = server as McpServerErrorEvidence;
+      const instanceKey = endpointId ?? mcpEndpointId(url) ?? sha256(url);
+      if (read.has(instanceKey) || gaps.has(instanceKey)) continue;
+      const code = Number.isInteger(status) ? status : undefined;
+      // A contributor's error text can carry the URL and its credentials, so only the status is shown.
+      gaps.set(instanceKey, {
+        source: MCP_EVIDENCE,
+        message: `The ${JSON.stringify(contributor)} Runtime Evidence contributor could not read the tools of the MCP server at ${mcpEndpointLabel(url)}${code ? ` (HTTP ${code})` : ""}, so its tools were not checked.${authHint(code)}`,
+        files: [],
+        instanceKey,
+      });
+    }
+  }
+  return [...gaps.values()];
+}
+
+function authHint(status: number | undefined): string {
+  return status === 401 || status === 403
+    ? ' On the CLI, pass it with --mcp-header "Authorization: Bearer <token>".'
+    : "";
 }
 
 /**

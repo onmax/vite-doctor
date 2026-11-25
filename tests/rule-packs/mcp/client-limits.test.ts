@@ -257,6 +257,44 @@ test("structured reports retain pointers omitted from the client-limit message",
   expect(data).toEqual(stripped.data);
 });
 
+test("in a monorepo with two MCP packages, a tool with no source in them is reported at the root", async () => {
+  const mcpPackage = (name: string) =>
+    JSON.stringify({ name, dependencies: { "nitro-mcp-toolkit": "^0.4.0" } });
+  const root = project({
+    "package.json": JSON.stringify({ name: "workspace", private: true }),
+    "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
+    "packages/a/package.json": mcpPackage("a"),
+    "packages/b/package.json": mcpPackage("b"),
+    "packages/c/package.json": JSON.stringify({ name: "c" }),
+    "packages/c/server/mcp/tools/search.ts": searchSource,
+  });
+  const { diagnostics } = await run(root, {
+    extends: ["auto"],
+    extensions: contributing([
+      { name: "hub", initialize: { instructions: "Drops." }, tools: [search, lookup] },
+    ]),
+  });
+
+  expect(summary(root, diagnostics)).toEqual(["MCP0005 error .", "MCP0005 error ."]);
+});
+
+test("without a package that depends on an MCP library, every tool is reported at the root", async () => {
+  const root = project({
+    "package.json": JSON.stringify({ type: "module" }),
+    "server/mcp/tools/search.ts": searchSource,
+  });
+  const { diagnostics } = await run(root, {
+    extensions: contributing([{ name: "remote", tools: [search, lookup] }]),
+  });
+
+  expect(summary(root, diagnostics)).toEqual([
+    "MCP0005 error .",
+    "MCP0005 error .",
+    "MCP0007 warn .",
+    "MCP0008 warn .",
+  ]);
+});
+
 test("tools read from a running server through the mcp option are checked", async () => {
   const server = await startMcpStub({ tools: [search, lookup] });
   cleanups.push(server.close);
@@ -400,15 +438,64 @@ test("without MCP evidence the client-limit Rules report nothing and leave no ga
   expect(result.project.evidenceGaps ?? []).toEqual([]);
 });
 
-test("a server Doctor could not read is skipped", async () => {
+test("a server a Doctor Extension could not read leaves one evidence gap that hides its URL", async () => {
+  const url = "http://user:pass@127.0.0.1:1/mcp?token=secret";
+  const failed = { url, error: `fetch ${url} failed`, status: 503 };
   const root = project();
-  const { diagnostics } = await run(root, {
-    extensions: contributing([{ url: "http://127.0.0.1:1/mcp", error: "connection refused" }]),
+  const { result, diagnostics } = await run(root, {
+    extensions: [
+      ...contributing([failed])!,
+      {
+        name: "fixture/other",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({
+            name: "other",
+            contribute: () => ({ mcpServers: [failed] }),
+          });
+        },
+      },
+    ],
   });
   expect(diagnostics).toEqual([]);
+  expect(result.project.evidenceGaps).toEqual([
+    expect.objectContaining({
+      source: "mcp",
+      message:
+        'The "vitehub" Runtime Evidence contributor could not read the tools of the MCP server at http://127.0.0.1:1 (HTTP 503), so its tools were not checked.',
+    }),
+  ]);
 });
 
-test("client findings that repeat MCP0001 to MCP0003 are not reported again", async () => {
+test("an Extension contributing as mcp cannot put its error text or status in a gap", async () => {
+  const url = "http://user:pass@127.0.0.1:1/mcp?token=secret";
+  const root = project();
+  const { result } = await run(root, {
+    extensions: [
+      {
+        name: "fixture/impostor",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({
+            name: "mcp",
+            contribute: () => ({
+              mcpServers: [
+                { url, error: `fetch ${url} failed`, status: url },
+                { error: null, tools: [] },
+              ],
+            }),
+          });
+        },
+      },
+    ],
+  });
+  expect(result.project.evidenceGaps).toEqual([
+    expect.objectContaining({
+      message:
+        'The "mcp" Runtime Evidence contributor could not read the tools of the MCP server at http://127.0.0.1:1, so its tools were not checked.',
+    }),
+  ]);
+});
+
+test("a client renaming a tool is reported beside MCP0003, whose fix may not cover it", async () => {
   const root = project({
     "server/mcp/tools/list_orders.ts": `import { defineMcpTool } from 'nitro-mcp-toolkit'
 export default defineMcpTool({ name: 'list orders', handler: () => [] })
@@ -430,6 +517,7 @@ export default defineMcpTool({ name: 'list orders', handler: () => [] })
     "MCP0001 warn server/mcp/tools/list_orders.ts:2",
     "MCP0002 warn server/mcp/tools/list_orders.ts:2",
     "MCP0003 warn server/mcp/tools/list_orders.ts:2",
+    "MCP0007 info server/mcp/tools/list_orders.ts:2",
   ]);
 });
 

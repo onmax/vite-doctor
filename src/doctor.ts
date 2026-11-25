@@ -34,6 +34,7 @@ import {
   mcpEvidenceUsed,
   readMcpServers,
   uncheckedMcpEvidenceGap,
+  unreadMcpServerGaps,
 } from "./mcp/evidence.js";
 import { checkedMcpServers } from "./rule-packs/mcp/rules/client-limits.js";
 import { viteDoctorVersion } from "./version.js";
@@ -103,7 +104,11 @@ export async function runViteDoctor(options: DoctorRunOptions, fullRunForMcpEvid
     !projectWide.length &&
     !mcpPackSelected &&
     uncheckedMcpEvidenceGap(result.project, !!scoped.length);
-  if (unchecked) result.project.evidenceGaps = [...(result.project.evidenceGaps ?? []), unchecked];
+  result.project.evidenceGaps = [
+    ...(result.project.evidenceGaps ?? []),
+    ...unreadMcpServerGaps(result.project),
+    ...(unchecked ? [unchecked] : []),
+  ];
   if (used.length) result.project.evidenceUsed = [...(result.project.evidenceUsed ?? []), ...used];
   return { ...result, version: viteDoctorVersion };
 }
