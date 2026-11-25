@@ -365,3 +365,21 @@ describe("rule details", () => {
     expect(found[0]?.message).toContain("`/inputSchema/properties/b/items/enum`");
   });
 });
+
+test("the Directory title check reads annotations.title, not the top-level title", () => {
+  const rules = (fields: Partial<McpTool>) =>
+    checkMcpToolList({ tools: [tool(fields)] }).map((finding) => finding.rule);
+  expect(rules({ title: "Search docs" })).toContain("claude-directory/missing-title");
+  expect(rules({ annotations: { title: "Search docs" } })).not.toContain(
+    "claude-directory/missing-title",
+  );
+});
+
+test("ChatGPT's readOnlyHint check skips a tool that declares itself destructive", () => {
+  const rules = (fields: Partial<McpTool>) =>
+    checkMcpToolList({ tools: [tool(fields)] }).map((finding) => finding.rule);
+  expect(rules({ annotations: { destructiveHint: true } })).not.toContain(
+    "chatgpt/missing-read-only-hint",
+  );
+  expect(rules({ annotations: {} })).toContain("chatgpt/missing-read-only-hint");
+});

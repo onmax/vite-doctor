@@ -35,7 +35,7 @@ import {
   readMcpServers,
   uncheckedMcpEvidenceGap,
 } from "./mcp/evidence.js";
-import { checkedMcpServers } from "./rule-packs/mcp/rules/client-limits.js";
+import { checkedMcpServers } from "./rule-packs/mcp/rules/wire.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
