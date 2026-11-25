@@ -382,10 +382,10 @@ function selectedAnalyses(session: ScanSession): Set<string> {
   );
 }
 
-const projectReportingContexts = new WeakSet<RuleContext>();
+const workspaceReportingContexts = new WeakMap<RuleContext, (file?: string) => boolean>();
 
-export function canReportAtProjectRoot(context: RuleContext): boolean {
-  return projectReportingContexts.has(context);
+export function canReportFromWorkspace(context: RuleContext, file?: string): boolean {
+  return workspaceReportingContexts.get(context)?.(file) ?? false;
 }
 
 function projectDiagnosticConfig(session: ScanSession, ruleId: string): ResolvedRuleConfig {
@@ -512,8 +512,13 @@ function createRuleRun(
         : undefined;
     },
   };
-  if (phase === "workspace" && projectDiagnosticConfig(session, rule.meta.id).enabled !== false) {
-    projectReportingContexts.add(context);
+  if (phase === "workspace") {
+    workspaceReportingContexts.set(context, (file) => {
+      const config = file
+        ? fileRuleConfig(session, rule.meta.id, file)
+        : projectDiagnosticConfig(session, rule.meta.id);
+      return config.enabled !== false;
+    });
   }
   return {
     context,

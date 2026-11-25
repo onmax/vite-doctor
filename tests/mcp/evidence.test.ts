@@ -253,6 +253,40 @@ test("only project-wide client Rules cover remote-only MCP tools without the MCP
   ]);
 });
 
+test("a file override reports scoped MCP evidence without clearing the project-wide gap", async () => {
+  mockRemoteToolWithIncompatibleSchema();
+  const root = project();
+  const file = join(root, "index.ts");
+  writeFileSync(
+    file,
+    `
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+const server = new McpServer({ name: 'fixture', version: '1' })
+server.registerTool('remote', {}, async () => ({ content: [] }))
+`,
+  );
+  const result = await runViteDoctor({
+    root,
+    cache: false,
+    extends: ["vite-doctor/typescript/recommended"],
+    config: {
+      overrides: [{ files: ["index.ts"], rules: { "mcp/clients/no-excluded-tool": "error" } }],
+    },
+    mcp: [{ url: "https://example.test/mcp" }],
+  });
+  expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "MCP0005", file }));
+  expect(reportStatus(result)).toBe("incomplete");
+  expect(result.project.evidenceUsed).toEqual([
+    {
+      source: "mcp",
+      message: "tools/list of the MCP server at https://example.test, 1 tool (file overrides only)",
+    },
+  ]);
+  const text = createReport(result, "text");
+  expect(text).toContain("checked tools through file overrides only");
+  expect(text).not.toContain("but did not check them");
+});
+
 test("an extends list that leaves out the MCP Rule Pack leaves an evidence gap", async () => {
   const server = await stub();
   const result = await runViteDoctor({

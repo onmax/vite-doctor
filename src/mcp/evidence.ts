@@ -138,24 +138,25 @@ export function assertAbsoluteMcpUrl(url: string): void {
 
 export function mcpEvidenceUsed(
   checked: readonly McpServerToolsEvidence[],
+  fileOverridesOnly = false,
 ): NonNullable<ProjectInfo["evidenceUsed"]> {
   return checked.map((server) => {
     const label = server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server");
     const count = `${server.tools.length} ${server.tools.length === 1 ? "tool" : "tools"}`;
     return {
       source: MCP_EVIDENCE,
-      message: `tools/list of the MCP server at ${label}, ${count}`,
+      message: `tools/list of the MCP server at ${label}, ${count}${fileOverridesOnly ? " (file overrides only)" : ""}`,
     };
   });
 }
 
 /**
- * MCP Runtime Evidence that no Rule checked because an explicit extends list leaves the MCP Rule
- * Pack out; the evidence itself activates it. Reported as an evidence gap so a run that read a
- * server's tools never looks clean for them.
+ * MCP Runtime Evidence without project-wide coverage because an explicit extends list leaves
+ * the MCP Rule Pack out. File overrides can check source-located tools without closing the gap.
  */
 export function uncheckedMcpEvidenceGap(
   project: ProjectInfo,
+  fileOverridesOnly: boolean,
 ): NonNullable<ProjectInfo["evidenceGaps"]>[number] | undefined {
   const servers = readMcpServers(project.runtimeEvidence).filter(
     (server): server is McpServerToolsEvidence => "tools" in server,
@@ -164,9 +165,12 @@ export function uncheckedMcpEvidenceGap(
   const names = servers
     .map((server) => (server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server")))
     .join(", ");
+  const coverage = fileOverridesOnly
+    ? "checked tools through file overrides only, without project-wide coverage"
+    : "did not check them";
   return {
     source: MCP_EVIDENCE,
-    message: `Doctor read the tools of ${names} as Runtime Evidence but did not check them: the extends list leaves out the vite-doctor/mcp Rule Pack. Add "auto", or "mcp/recommended" ("mcp/strict" for the Strict Preset), to the selectors you already have; a CLI --extends replaces the configured list, so repeat them there.`,
+    message: `Doctor read the tools of ${names} as Runtime Evidence but ${coverage}: the extends list leaves out the vite-doctor/mcp Rule Pack. Add "auto", or "mcp/recommended" ("mcp/strict" for the Strict Preset), to the selectors you already have; a CLI --extends replaces the configured list, so repeat them there.`,
     files: [],
   };
 }

@@ -94,11 +94,15 @@ export async function runViteDoctor(options: DoctorRunOptions, fullRunForMcpEvid
       ? (project) => readMcpServers(project.runtimeEvidence).length > 0
       : undefined,
   );
-  const used = mcpEvidenceUsed(checkedMcpServers(result.project));
+  const { projectWide, scoped } = checkedMcpServers(result.project);
+  const used = [...mcpEvidenceUsed(projectWide), ...mcpEvidenceUsed(scoped, true)];
   const mcpPackSelected = result.rulePacks?.some(
     (pack) => pack.name === mcpRulePack.name && pack.selected,
   );
-  const unchecked = !used.length && !mcpPackSelected && uncheckedMcpEvidenceGap(result.project);
+  const unchecked =
+    !projectWide.length &&
+    !mcpPackSelected &&
+    uncheckedMcpEvidenceGap(result.project, !!scoped.length);
   if (unchecked) result.project.evidenceGaps = [...(result.project.evidenceGaps ?? []), unchecked];
   if (used.length) result.project.evidenceUsed = [...(result.project.evidenceUsed ?? []), ...used];
   return { ...result, version: viteDoctorVersion };
