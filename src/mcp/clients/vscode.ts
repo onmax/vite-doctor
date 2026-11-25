@@ -39,12 +39,12 @@ const NORMALIZED_STRUCTURE = new Set([
   "contains",
 ]);
 
-// gpt4oUnsupportedSchemaKeywords, limited to keywords whose value a description can state.
+// gpt4oUnsupportedSchemaKeywords, limited to keywords that constrain a value; losing `default`
+// never makes the server reject a call.
 const GPT4_DROPPED_CONSTRAINTS = new Set([
   "minLength",
   "maxLength",
   "pattern",
-  "default",
   "format",
   "minimum",
   "maximum",

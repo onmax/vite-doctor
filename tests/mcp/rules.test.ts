@@ -256,12 +256,26 @@ describe("rule details", () => {
   test("Codex ignores constraint values a description states", () => {
     const tool_ = tool({
       description: "Search the docs. Returns between 1 and 50 results.",
-      inputSchema: object({ limit: { type: "integer", minimum: 1, maximum: 50, default: 10 } }),
+      inputSchema: object({ limit: { type: "integer", minimum: 1, maximum: 50, multipleOf: 5 } }),
     });
     const [finding] = hits("codex/dropped-constraints", tool_);
-    expect(finding?.pointer).toBe("/inputSchema/properties/limit/default");
-    expect(finding?.message).toContain("`default`");
+    expect(finding?.pointer).toBe("/inputSchema/properties/limit/multipleOf");
     expect(finding?.message).not.toContain("`maximum`");
+  });
+
+  test("dropped constraints skip defaults and Zod's safe-integer bounds", () => {
+    const zod = tool({
+      inputSchema: object({
+        offset: {
+          type: "integer",
+          default: 0,
+          minimum: Number.MIN_SAFE_INTEGER,
+          maximum: Number.MAX_SAFE_INTEGER,
+        },
+      }),
+    });
+    expect(hits("codex/dropped-constraints", zod)).toEqual([]);
+    expect(hits("vscode/gpt-4-dropped-constraints", zod)).toEqual([]);
   });
 
   test("Codex keywords count only descriptions that survive compaction", () => {

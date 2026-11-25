@@ -15,6 +15,7 @@ const NAME_LIMIT = 128;
 const DELIMITER = "__";
 
 // Keywords outside the JsonSchema struct (types.rs) that constrain a value; Codex drops them all.
+// `default` is left out: losing it never makes the server reject a call.
 const DROPPED_CONSTRAINTS = new Set([
   "minimum",
   "maximum",
@@ -29,7 +30,6 @@ const DROPPED_CONSTRAINTS = new Set([
   "uniqueItems",
   "minProperties",
   "maxProperties",
-  "default",
 ]);
 const KEPT_STRUCTURE = new Set([
   "properties",
@@ -81,8 +81,8 @@ export const droppedConstraints: McpClientRule = {
   severity: "info",
   confidence: "high",
   source: source(
-    `${CODEX}/tools/src/json_schema/types.rs#L35-L78`,
-    "/// Generic JSON-Schema subset needed for our tool definitions.",
+    `${CODEX}/tools/src/json_schema_tests.rs#L226-L241`,
+    'let schema = parse_tool_input_schema(&serde_json::json!({\n        "minimum": 1\n    }))\n    .expect("parse schema");\n\n    assert_eq!(schema, JsonSchema::number(/*description*/ None));',
   ),
   check(tool) {
     const descriptionsSurvive = !reduceCodexInputSchema(tool.inputSchema)?.passes.includes(
