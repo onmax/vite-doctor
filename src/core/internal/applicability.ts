@@ -9,6 +9,7 @@ import type {
 } from "../primitives.js";
 import { workspaceProjectView } from "./workspace-nuxt.js";
 import { packageFrameworks } from "./workspace-packages.js";
+import { declaredRuntimes, runtimeProviders } from "./runtime-packages.js";
 
 export interface ApplicabilityResult {
   state: ApplicabilityState;
@@ -73,8 +74,25 @@ export function projectWorkspacePackages(project: ProjectInfo): WorkspacePackage
         root: ".",
         framework: project.framework,
         packages: (project.inventory?.packages ?? {}) as Record<string, string>,
+        declaredRuntimes: declaredRuntimes({ dependencies: project.inventory?.packages }),
       },
     ]
+  );
+}
+
+/**
+ * Whether a workspace package runs `runtime`: its package.json declares it, installed or not, or
+ * its framework provides it.
+ */
+export function packageRunsRuntime(
+  workspacePackage: WorkspacePackage,
+  runtime: RuntimePackageName,
+): boolean {
+  return (
+    workspacePackage.declaredRuntimes?.includes(runtime) === true ||
+    packageFrameworks(workspacePackage).some((framework) =>
+      runtimeProviders[runtime].includes(framework),
+    )
   );
 }
 
@@ -108,6 +126,16 @@ function evaluateWorkspacePackageActivation(
     const matched = activation.languages.some((language) => languages.has(language));
     results.push(
       matched ? active() : inactive(`Rule Pack ${pack.name} language activation did not match.`),
+    );
+  }
+
+  if (activation.runtimes?.length) {
+    results.push(
+      activation.runtimes.some((runtime) => packageRunsRuntime(workspacePackage, runtime))
+        ? active()
+        : inactive(
+            `Rule Pack ${pack.name} requires a workspace package that runs ${activation.runtimes.join(" or ")}.`,
+          ),
     );
   }
 

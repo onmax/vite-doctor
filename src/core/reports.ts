@@ -17,6 +17,7 @@ import { codeForRuleId } from "./diagnostics.js";
 import { diagnosticMetadataByCode, diagnosticMetadataByRuleId } from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
 import { shellArgument } from "./internal/utils.js";
+import { governingRuntimes } from "./internal/runtime-packages.js";
 
 export interface DoctorReportContext {
   runOptions?: Readonly<DoctorRunOptions>;
@@ -469,17 +470,10 @@ export function explainRule(
 
 export function reportStatus(result: DoctorRunResult): "clean" | "findings" | "incomplete" {
   if (result.project.evidenceGaps?.length) return "incomplete";
-  const expectedRuntimes =
-    result.project.framework === "nuxt"
-      ? (["nuxt", "nitro", "h3"] as const)
-      : result.project.framework === "nitro"
-        ? (["nitro", "h3"] as const)
-        : result.project.framework === "vue"
-          ? (["vue"] as const)
-          : [];
-  const unresolvedRuntime = expectedRuntimes.some(
-    (runtime) => result.project.runtimeGraph?.packages[runtime]?.state === "unknown",
-  );
+  const unresolvedRuntime = governingRuntimes(
+    result.project.framework,
+    result.project.runtimeGraph,
+  ).some((runtime) => result.project.runtimeGraph?.packages[runtime]?.state === "unknown");
   if (unresolvedRuntime || result.project.nuxtCompatibility?.state === "unknown") {
     return "incomplete";
   }

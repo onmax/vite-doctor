@@ -17,12 +17,14 @@ import {
   type RuntimeEvidenceContributor,
   type RulePack,
   type RulePackActivation,
+  type RuntimePackageName,
   type SourceFileHandle,
   type WorkspaceGraph,
+  type WorkspacePackage,
   type WorkspacePackageActivation,
 } from "../primitives.js";
 import { detectProject } from "./project.js";
-import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
+import { workspaceProjectView, workspaceViewRoots } from "./workspace-nuxt.js";
 import {
   GitChangeUnavailableError,
   selectSourceInventory,
@@ -45,6 +47,7 @@ import { reportedDoctorRuleIds } from "../diagnostic-registry.js";
 import {
   activatingWorkspacePackages,
   evaluateRuleApplicability,
+  packageRunsRuntime,
   projectWorkspacePackages,
 } from "./applicability.js";
 
@@ -524,8 +527,8 @@ function selectRules(
     .filter(
       (rule) => !wanted?.length || wanted.some((pattern) => nativeMatch(rule.meta.id, pattern)),
     );
-  const nuxtRoots = workspaceNuxtRoots(project);
-  if (!nuxtRoots.length) {
+  const viewRoots = workspaceViewRoots(project);
+  if (!viewRoots.length) {
     const rules = candidates.filter(
       (rule) => evaluateRuleApplicability(rule, project).state === "active",
     );
@@ -543,7 +546,7 @@ function selectRules(
     const runActive = evaluateRuleApplicability(rule, project).state === "active";
     const active = new Set(
       roots.filter((root) =>
-        nuxtRoots.includes(root)
+        viewRoots.includes(root)
           ? evaluateRuleApplicability(rule, workspaceProjectView(project, root)).state === "active"
           : runActive,
       ),
@@ -581,10 +584,28 @@ function workspacePackageActivations(
     framework: item.framework,
     ...(item.nuxtIntegration ? { nuxtIntegration: true as const } : {}),
     ...(item.ssr ? { ssr: item.ssr } : {}),
+    ...packageRuntimes(workspaceProjectView(project, item.root), item),
     rulePacks: [...activations]
       .filter(([, roots]) => roots.includes(item.root))
       .map(([pack]) => pack.name),
   }));
+}
+
+/** The runtimes a workspace package runs, as its project view resolved them. */
+function packageRuntimes(
+  view: ProjectInfo,
+  item: WorkspacePackage,
+): Pick<WorkspacePackageActivation, "runtimes"> {
+  const runtimes: NonNullable<WorkspacePackageActivation["runtimes"]> = {};
+  for (const [runtime, instance] of Object.entries(view.runtimeGraph?.packages ?? {})) {
+    if (!instance || !packageRunsRuntime(item, runtime as RuntimePackageName)) continue;
+    runtimes[runtime as RuntimePackageName] = {
+      state: instance.state,
+      ...(instance.version ? { version: instance.version } : {}),
+      owner: instance.owner,
+    };
+  }
+  return Object.keys(runtimes).length ? { runtimes } : {};
 }
 
 function resolveExtends(

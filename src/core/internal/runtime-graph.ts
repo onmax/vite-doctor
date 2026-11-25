@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "pathe";
 import { valid } from "semver";
 import { parseScript } from "./script.js";
 import { RuleInputs } from "./rule-inputs.js";
+import { declaredRuntimes, runtimePackageNames } from "./runtime-packages.js";
 import type {
   DoctorFramework,
   NuxtCompatibilityInfo,
@@ -24,12 +25,7 @@ import type {
   RuleFileSystem,
 } from "../primitives.js";
 
-const packageCandidates: Record<RuntimePackageName, string[]> = {
-  nuxt: ["nuxt"],
-  nitro: ["nitro", "nitropack"],
-  h3: ["h3"],
-  vue: ["vue"],
-};
+const packageCandidates = runtimePackageNames;
 
 const acceptedIdentities: Record<RuntimePackageName, Set<string>> = {
   nuxt: new Set(["nuxt", "nuxt-nightly"]),
@@ -78,8 +74,35 @@ export function resolveRuntimeGraph(
     packages.vue = resolveRuntimePackage("vue", rootManifest, "project");
     edges.push(edge("project", packages.vue));
   }
+  // Without Nitro, a package that declares h3 runs its own, such as an h3 server on srvx.
+  if (!packages.h3 && declaredRuntimes(readPackageManifest(rootManifest)).includes("h3")) {
+    packages.h3 = resolveProjectRuntime("h3", rootManifest);
+    edges.push(edge("project", packages.h3));
+  }
 
   return { packages, edges };
+}
+
+/** The `runtime` a package resolves for itself from its own package.json. */
+export function resolveProjectRuntime(
+  runtime: RuntimePackageName,
+  manifest: string,
+): RuntimePackageInstance {
+  return resolveRuntimePackage(runtime, manifest, "project");
+}
+
+/** `graph` with `instance` as the project-owned resolution of its runtime. */
+export function withProjectRuntime(
+  graph: RuntimeGraph,
+  instance: RuntimePackageInstance,
+): RuntimeGraph {
+  return {
+    packages: { ...graph.packages, [instance.runtime]: instance },
+    edges: [
+      ...graph.edges.filter((item) => item.to !== instance.runtime),
+      edge("project", instance),
+    ],
+  };
 }
 
 /** nuxt.config sources keyed by layer root, scoped to one Doctor Run. */

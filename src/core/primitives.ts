@@ -522,6 +522,12 @@ export interface ProjectInfo {
    * through `ctx.project` for files those packages own.
    */
   workspaceNuxt?: WorkspaceNuxtInventory[];
+  /**
+   * Runtime graphs of workspace packages that resolve a runtime themselves instead of through the
+   * Doctor Run's framework, such as a Vite or Vue package that declares `h3`, keyed by package root.
+   * Rules read the package's runtimes through `ctx.project` for files that package owns.
+   */
+  workspaceRuntimeGraphs?: Record<string, RuntimeGraph>;
   tsconfigPath?: string;
   languages?: ProjectLanguage[];
   nuxt?: NuxtProjectInfo;
@@ -563,6 +569,8 @@ export interface WorkspacePackage {
    */
   nuxtIntegration?: true;
   packages: Record<string, string>;
+  /** Runtimes the package.json declares in any dependency field, peer dependencies included. */
+  declaredRuntimes?: RuntimePackageName[];
   /**
    * Why Doctor treats the package's Vue components as server-rendered, such as a `./nuxt` export or
    * a server-rendered workspace package that depends on it. Unset for Nuxt packages, whose own
@@ -588,7 +596,18 @@ export interface WorkspacePackageActivation {
   nuxtIntegration?: true;
   /** Why Doctor treats the package's Vue components as server-rendered. */
   ssr?: string;
+  /**
+   * The runtimes the package runs, declared or provided by its framework, as Doctor resolved them
+   * for the package's files. Version gates such as `applicability.runtimes.h3` read these.
+   */
+  runtimes?: Partial<Record<RuntimePackageName, WorkspacePackageRuntime>>;
   rulePacks: string[];
+}
+
+export interface WorkspacePackageRuntime {
+  state: RuntimePackageInstance["state"];
+  version?: string;
+  owner: RuntimePackageInstance["owner"];
 }
 
 /**
@@ -1293,6 +1312,11 @@ export interface RulePack {
         languages?: ProjectLanguage[];
         packages?: string[];
         modules?: string[];
+        /**
+         * Runtimes a workspace package must run: declared in its package.json, or provided by its
+         * framework, as Nitro and Nuxt provide `h3`.
+         */
+        runtimes?: RuntimePackageName[];
         nuxt?: string;
       };
 }

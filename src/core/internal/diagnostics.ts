@@ -20,9 +20,12 @@ import type {
   DoctorSeverity,
   FixEdit,
   DoctorFramework,
+  NuxtCompatibilityInfo,
   ProjectInfo,
+  RuntimePackageName,
   SourceRange,
 } from "../primitives.js";
+import { governingRuntimes } from "./runtime-packages.js";
 import type { GraphSummary } from "./cache-store.js";
 import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
 import { defaultConfigDiagnosticMetadata } from "../diagnostic-metadata.js";
@@ -1115,39 +1118,50 @@ export function pushDiagnostic(
 }
 
 export function reportRuntimeInventoryUnknown(session: ScanSession): void {
-  const nuxtRoots = workspaceNuxtRoots(session.project);
+  const project = session.project;
+  const nuxtRoots = workspaceNuxtRoots(project);
   // Without a run owner, the run graph is borrowed from a Nuxt app that reports it below.
-  const ownerless =
-    session.project.framework === "nuxt" && !session.project.nuxt && nuxtRoots.length;
-  if (!ownerless) reportUnresolvedRuntime(session, session.project, ".");
+  const ownerless = project.framework === "nuxt" && !project.nuxt && nuxtRoots.length;
+  if (!ownerless)
+    reportUnresolvedRuntime(
+      session,
+      project,
+      ".",
+      governingRuntimes(project.framework, project.runtimeGraph),
+      project.nuxtCompatibility,
+    );
   for (const root of nuxtRoots) {
-    reportUnresolvedRuntime(session, workspaceProjectView(session.project, root), root);
+    const view = workspaceProjectView(project, root);
+    reportUnresolvedRuntime(
+      session,
+      view,
+      root,
+      governingRuntimes("nuxt", view.runtimeGraph),
+      view.nuxtCompatibility,
+    );
   }
+  // The rest of these graphs is the run's, reported above.
+  for (const root of Object.keys(project.workspaceRuntimeGraphs ?? {}))
+    reportUnresolvedRuntime(session, workspaceProjectView(project, root), root, ["h3"], undefined);
 }
 
 function reportUnresolvedRuntime(
   session: ScanSession,
   project: ProjectInfo,
   packageRoot: string,
+  expected: readonly RuntimePackageName[],
+  compatibility: NuxtCompatibilityInfo | undefined,
 ): void {
   const packageJson = resolve(session.root, packageRoot, "package.json");
-  const expected =
-    project.framework === "nuxt"
-      ? ["nuxt", "nitro", "h3"]
-      : project.framework === "nitro"
-        ? ["nitro", "h3"]
-        : project.framework === "vue"
-          ? ["vue"]
-          : [];
   const unresolved = expected
-    .map((runtime) => project.runtimeGraph?.packages[runtime as "nuxt" | "nitro" | "h3" | "vue"])
+    .map((runtime) => project.runtimeGraph?.packages[runtime])
     .filter((item) => item?.state === "unknown");
   const details = [
     ...unresolved.map(
       (item) => `${item?.owner} -> ${item?.runtime}: ${item?.reason ?? "unresolved"}`,
     ),
-    ...(project.nuxtCompatibility?.state === "unknown"
-      ? [`Nuxt compatibility: ${project.nuxtCompatibility.reason ?? "unresolved"}`]
+    ...(compatibility?.state === "unknown"
+      ? [`Nuxt compatibility: ${compatibility.reason ?? "unresolved"}`]
       : []),
   ];
   if (!details.length) return;
@@ -1157,7 +1171,7 @@ function reportUnresolvedRuntime(
     : "Install project dependencies and run Doctor from the target project package. If the project uses Yarn PnP, run Doctor through Yarn so its loader is active.";
   const compatibilityFix =
     "Make the effective future.compatibilityVersion statically provable in nuxt.config, or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.";
-  const compatibilityUnknown = project.nuxtCompatibility?.state === "unknown";
+  const compatibilityUnknown = compatibility?.state === "unknown";
   pushDiagnostic(session, {
     ruleId: "doctor/inventory/unresolved-runtime",
     severity: "warn",
@@ -1165,7 +1179,7 @@ function reportUnresolvedRuntime(
     file:
       unresolved.length || !compatibilityUnknown
         ? packageJson
-        : (project.nuxtCompatibility?.file ?? packageJson),
+        : (compatibility?.file ?? packageJson),
     why: `Doctor could not resolve the governing runtime graph${packageRoot === "." ? "" : ` of ${packageRoot}`}: ${details.join("; ")}`,
     suggestion: [
       unresolved.length ? runtimeFix : undefined,
@@ -1187,12 +1201,12 @@ function reportUnresolvedRuntime(
               file: item?.packageJsonPath,
             },
       ),
-      ...(project.nuxtCompatibility?.state === "unknown"
+      ...(compatibility?.state === "unknown"
         ? [
             {
               kind: "manifest" as const,
               summary: "Nuxt compatibility behavior is unresolved.",
-              file: project.nuxtCompatibility?.file ?? project.nuxt?.manifestPath,
+              file: compatibility?.file ?? project.nuxt?.manifestPath,
             },
           ]
         : []),
