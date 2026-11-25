@@ -113,38 +113,101 @@ export interface WireTool {
 export function wireTools(ctx: RuleContext, sources: McpToolDefinition[]) {
   markChecked(ctx, sources);
   const tools: WireTool[] = serverFindings(ctx).servers.flatMap(({ server, findings }) =>
-    server.tools.map((tool) => ({
-      server,
-      tool,
-      definition: staticTool(sources, tool.name),
-      // MCP0010 explains annotations that aren't ToolAnnotations; a missing title or hint in them
-      // would point the author at the wrong fix.
-      findings: findings.filter(
-        (finding) =>
-          finding.tool === tool.name &&
-          !(annotationsProblem(tool) && finding.pointer?.startsWith("/annotations")),
-      ),
-    })),
+    server.tools.map((tool) => {
+      const definition = staticTool(sources, tool.name);
+      // When MCP0010 explains annotations that aren't ToolAnnotations, a missing title or hint in
+      // them would point the author at the wrong fix.
+      const replaced =
+        !!annotationsProblem(tool) &&
+        canReportFromWorkspace(ctx, definition?.file, "mcp/tools/valid-annotations");
+      return {
+        server,
+        tool,
+        definition,
+        findings: findings.filter(
+          (finding) =>
+            finding.tool === tool.name &&
+            !(replaced && finding.pointer?.startsWith("/annotations")),
+        ),
+      };
+    }),
   );
   const sent = new Set(tools.flatMap((wire) => (wire.definition ? [wire.definition] : [])));
   return { tools, sourceOnly: sources.filter((source) => !sent.has(source)) };
 }
 
+const ANNOTATION_TYPES: Record<string, string> = {
+  title: "string",
+  readOnlyHint: "boolean",
+  destructiveHint: "boolean",
+  idempotentHint: "boolean",
+  openWorldHint: "boolean",
+};
+
+const SDK_REJECTS =
+  "The MCP TypeScript SDK's client rejects the whole tools/list response when it can't parse a tool's annotations, so clients built on it get no tools from this server.";
+
+export interface AnnotationsProblem {
+  why: string;
+  /** The annotations hold a serialized schema, so the input schema likely went missing too. */
+  schema: boolean;
+}
+
 /**
- * How a tool's `annotations` fail to be ToolAnnotations, whose fields are strings and booleans
- * only. Mirrors the MCP SDK's own check for a schema passed in place of annotations.
+ * How a tool's `annotations` fail to be ToolAnnotations, checked the way the MCP SDK's client
+ * parses them: an object whose known fields have their declared types. Unknown fields are allowed
+ * and dropped, so only keys a serialized schema carries count against them.
  */
-export function annotationsProblem(tool: McpTool): string | undefined {
+export function annotationsProblem(tool: McpTool): AnnotationsProblem | undefined {
+  if (tool.annotations === undefined) return;
   const annotations: unknown = tool.annotations;
-  if (annotations === undefined || annotations === null) return;
-  if (Array.isArray(annotations)) return "are an array";
-  if (typeof annotations !== "object") return `are a ${typeof annotations}`;
-  const nested = Object.entries(annotations)
-    .filter(([, value]) => typeof value === "object" && value !== null)
-    .map(([key]) => `\`${key}\``);
-  if (!nested.length) return;
-  const zod = "_def" in annotations || "~standard" in annotations;
-  return `hold ${nested.length === 1 ? "an object" : "objects"} under ${nested.slice(0, 3).join(", ")}${nested.length > 3 ? ", …" : ""}${zod ? ", which looks like a serialized Zod schema" : ""}`;
+  if (annotations === null || typeof annotations !== "object" || Array.isArray(annotations)) {
+    const kind =
+      annotations === null
+        ? "null"
+        : Array.isArray(annotations)
+          ? "an array"
+          : `a ${typeof annotations}`;
+    return {
+      why: `sends \`annotations\` as ${kind}, not an object. ${SDK_REJECTS}`,
+      schema: false,
+    };
+  }
+  const record = annotations as Record<string, unknown>;
+  const wrong = Object.entries(ANNOTATION_TYPES).flatMap(([key, type]) =>
+    key in record && typeof record[key] !== type
+      ? [`\`${key}\` to ${valueKind(record[key])} instead of a ${type}`]
+      : [],
+  );
+  if (wrong.length) {
+    return {
+      why: `sets ${wrong.join(", ")} in \`annotations\`. ${SDK_REJECTS}`,
+      schema: false,
+    };
+  }
+  const markers = ["_def", "~standard", "_zod"].filter((key) => key in record);
+  // Zod 4 schemas serialize to their `def`, whose `type` repeats at the top level.
+  const def = record.def as Record<string, unknown> | null | undefined;
+  if (
+    typeof record.type === "string" &&
+    def &&
+    typeof def === "object" &&
+    def.type === record.type
+  ) {
+    markers.push("def");
+  }
+  if (!markers.length) return;
+  return {
+    why: `sends a serialized schema as \`annotations\` (it has ${markers.map((key) => `\`${key}\``).join(", ")}). Clients drop the fields \`ToolAnnotations\` doesn't define, so the tool reaches them with no title or safety hints.`,
+    schema: true,
+  };
+}
+
+function valueKind(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  const type = typeof value;
+  return type === "object" ? "an object" : `a ${type}`;
 }
 
 /**
