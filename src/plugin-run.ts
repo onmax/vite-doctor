@@ -93,7 +93,7 @@ export async function hasEnabledBuildEvidenceCandidate(
   if (!evidence) return false;
   const options = surfaceDoctorOptions(input, extensions);
   const session = await createScanSession(
-    await viteDoctorRunOptions({ ...options, rules: BUILD_EVIDENCE_RULE }),
+    await viteDoctorRunOptions({ ...options, rules: BUILD_EVIDENCE_RULE, mcp: undefined }),
   );
   if (!session.enabledRules.some((rule) => rule.meta.id === BUILD_EVIDENCE_RULE)) return false;
   const files = new Map(session.files.map((file) => [file.path, file]));
@@ -123,7 +123,7 @@ export async function runBuildEvidenceDoctor(
   extensions: DoctorExtensionInput[],
 ): Promise<SurfaceRunOutcome> {
   return runSurfaceDoctor(
-    { ...input, options: { ...input.options, rules: BUILD_EVIDENCE_RULE } },
+    { ...input, options: { ...input.options, rules: BUILD_EVIDENCE_RULE, mcp: undefined } },
     extensions,
   );
 }
