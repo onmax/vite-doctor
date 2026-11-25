@@ -51,6 +51,20 @@ import {
 import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
 import { selectHtmlPaths } from "./source-inventory.js";
 
+const objectConstructorSource = Function.prototype.toString.call(Object);
+
+function hasPlainJsonPrototype(value: object): boolean {
+  const prototype: object | null = Object.getPrototypeOf(value);
+  if (prototype === null || prototype === Object.prototype) return true;
+  if (Object.getPrototypeOf(prototype) !== null) return false;
+  const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value;
+  return (
+    typeof constructor === "function" &&
+    constructor.prototype === prototype &&
+    Function.prototype.toString.call(constructor) === objectConstructorSource
+  );
+}
+
 function copyDiagnosticData(data: object, ruleId: string): Record<string, unknown> {
   const ancestors = new Set<object>();
   function invalid(): never {
@@ -73,8 +87,7 @@ function copyDiagnosticData(data: object, ruleId: string): Record<string, unknow
           copyProperty(value, String(index)),
         );
       }
-      const prototype = Object.getPrototypeOf(value);
-      if (prototype !== Object.prototype && prototype !== null) return invalid();
+      if (!hasPlainJsonPrototype(value)) return invalid();
       return Object.fromEntries(
         Reflect.ownKeys(value).map((key) => {
           if (typeof key !== "string") return invalid();
@@ -420,10 +433,18 @@ function selectedAnalyses(session: ScanSession): Set<string> {
   );
 }
 
-const workspaceReportingContexts = new WeakMap<RuleContext, (file?: string) => boolean>();
+const workspaceReportingContexts = new WeakMap<
+  RuleContext,
+  (file?: string, ruleId?: string) => boolean
+>();
 
-export function canReportFromWorkspace(context: RuleContext, file?: string): boolean {
-  return workspaceReportingContexts.get(context)?.(file) ?? false;
+/** Whether the running workspace Rule, or the Rule `ruleId` when given, reports for `file`. */
+export function canReportFromWorkspace(
+  context: RuleContext,
+  file?: string,
+  ruleId?: string,
+): boolean {
+  return workspaceReportingContexts.get(context)?.(file, ruleId) ?? false;
 }
 
 function projectDiagnosticConfig(session: ScanSession, ruleId: string): ResolvedRuleConfig {
@@ -552,10 +573,11 @@ function createRuleRun(
     },
   };
   if (phase === "workspace") {
-    workspaceReportingContexts.set(context, (file) => {
+    workspaceReportingContexts.set(context, (file, ruleId = rule.meta.id) => {
+      if (!session.enabledRules.some((enabled) => enabled.meta.id === ruleId)) return false;
       const config = file
-        ? fileRuleConfig(session, rule.meta.id, file)
-        : projectDiagnosticConfig(session, rule.meta.id);
+        ? fileRuleConfig(session, ruleId, file)
+        : projectDiagnosticConfig(session, ruleId);
       return config.enabled !== false;
     });
   }

@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import ignore from "ignore";
 import { join, relative, resolve } from "pathe";
 import { globSync } from "tinyglobby";
-import { isNuxtManifestCurrent } from "./runtime-graph.js";
+import { isNuxtManifestCurrent, nuxtServerInventory } from "./runtime-graph.js";
 import { sha256 } from "./utils.js";
 import type {
   NuxtAppRegistrationIgnore,
@@ -18,6 +18,7 @@ export interface NuxtProjectInventory {
   scannedComposableFiles?: string[];
   importsDirs: string[];
   pluginFiles: string[];
+  serverAppEntryFiles?: string[];
   resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
   resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
   resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
@@ -35,6 +36,9 @@ export interface NuxtProjectInventory {
   isCurrent: boolean;
   serverHandlers: NuxtDoctorManifest["serverHandlers"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+  resolvedRouteRules?: Record<string, unknown>;
+  routeRulePagesCurrent?: boolean;
+  nitroPreset?: string;
   pages: NonNullable<NuxtDoctorManifest["pages"]>;
   middleware?: NuxtResolvedMiddleware[];
   routes?: NuxtResolvedRoute[];
@@ -66,6 +70,9 @@ export function createNuxtProjectInventory(
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
+    serverAppEntryFiles: discovery
+      ? manifest?.serverAppEntryFiles?.map((file) => resolve(root, file))
+      : undefined,
     resolvedPlugins: current("plugins")
       ? manifest?.resolvedPlugins?.map((plugin) => ({
           ...plugin,
@@ -95,6 +102,11 @@ export function createNuxtProjectInventory(
       ...handler,
       file: resolve(root, handler.file),
     })),
+    resolvedRouteRules: manifest?.resolvedRouteRules,
+    routeRulePagesCurrent: manifest?.resolvedRouteRules
+      ? routeRulePagesCurrent(root, manifest)
+      : undefined,
+    nitroPreset: manifest?.nitroPreset,
     pages: manifest?.pages ?? [],
     middleware: manifest?.middleware?.map((entry) => ({
       ...entry,
@@ -113,6 +125,23 @@ export function createNuxtProjectInventory(
       serverRoutes: manifest?.serverHandlers?.length ?? 0,
     },
   };
+}
+
+function routeRulePagesCurrent(root: string, manifest: NuxtDoctorManifest) {
+  if (!manifest.routeRulePageMtimes) return false;
+  try {
+    return (
+      Object.entries(manifest.routeRulePageMtimes).every(
+        ([file, mtime]) => mtime !== null && statSync(resolve(root, file)).mtimeMs === mtime,
+      ) &&
+      Object.entries(manifest.routeRulePageInventory ?? {}).every(
+        ([directory, files]) =>
+          JSON.stringify(nuxtServerInventory(resolve(root, directory))) === JSON.stringify(files),
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function nuxtIgnoreFileHash(root: string): string | null {

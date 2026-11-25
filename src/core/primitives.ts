@@ -312,6 +312,7 @@ export interface NuxtProjectInfo {
     scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
+    serverAppEntryFiles?: string[];
     resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
     resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
     resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
@@ -329,6 +330,9 @@ export interface NuxtProjectInfo {
     isCurrent: boolean;
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
+    resolvedRouteRules?: Record<string, unknown>;
+    routeRulePagesCurrent?: boolean;
+    nitroPreset?: string;
     pages?: NuxtDoctorManifest["pages"];
     /** Route middleware Nuxt resolved, with absolute paths. Absent in manifests that predate it. */
     middleware?: NuxtResolvedMiddleware[];
@@ -487,6 +491,11 @@ export interface NuxtDoctorManifest {
   granularCachedData?: boolean;
   aliases: Record<string, string>;
   routeRules: Record<string, unknown>;
+  /** Nitro's resolved `routeRules`; unset when the manifest was written before Nitro started. */
+  resolvedRouteRules?: Record<string, unknown>;
+  routeRulePageMtimes?: Record<string, number | null>;
+  routeRulePageInventory?: Record<string, string[]>;
+  nitroPreset?: string;
   ssr?: boolean;
   serverHandlers: Array<{ route?: string; file: string; method?: string; middleware?: boolean }>;
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
@@ -510,6 +519,8 @@ export interface NuxtDoctorManifest {
   keyedComposables?: unknown[];
   importsDirs?: string[];
   pluginFiles?: string[];
+  /** Nuxt-resolved app entries eligible for server-side rendering, relative to rootDir. */
+  serverAppEntryFiles?: string[];
   resolvedPlugins?: Array<{ file: string; mode: "client" | "server" | "all" }>;
   resolvedMiddleware?: string[];
   appScanRoots?: string[];

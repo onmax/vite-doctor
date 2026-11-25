@@ -666,6 +666,7 @@ describe("MCP Rule Pack", () => {
     expect(mcpRulePack.presets.recommended.toSorted()).toEqual(
       [
         ...rules.map((rule) => rule.meta.id),
+        "mcp/tools/valid-annotations",
         "mcp/clients/no-excluded-tool",
         "mcp/clients/no-truncated-text",
       ].toSorted(),
