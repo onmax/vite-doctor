@@ -51,10 +51,7 @@ import {
 import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
 import { selectHtmlPaths } from "./source-inventory.js";
 
-function copyDiagnosticData(
-  data: Record<string, unknown>,
-  ruleId: string,
-): Record<string, unknown> {
+function copyDiagnosticData(data: object, ruleId: string): Record<string, unknown> {
   const ancestors = new Set<object>();
   function invalid(): never {
     throw new TypeError(`Rule "${ruleId}" must report Diagnostic data as a plain JSON object.`);

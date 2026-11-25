@@ -1046,10 +1046,12 @@ export type DoctorDiagnosticInput = Omit<
 
 export type DoctorDiagnosticMetadata = Omit<
   Diagnostic,
-  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range"
+  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range" | "data"
 > & {
   file?: string;
   range?: SourceRange;
+  /** Plain JSON; `ctx.report` rejects anything else at runtime. Interfaces need no index signature. */
+  data?: object;
 };
 
 export interface SourceFileHandle {

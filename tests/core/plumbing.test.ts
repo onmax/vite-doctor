@@ -969,6 +969,38 @@ test.each<{ label: string; data: Record<string, unknown> }>([
   });
 });
 
+interface ToolData {
+  tool: string;
+  pointers: string[];
+}
+
+test("Rule diagnostic data can be a value typed by an interface", async () => {
+  const data: ToolData = { tool: "search", pointers: ["/name"] };
+  const rule = createRule({
+    meta: { ...reportProgramRule.meta, id: "test/interface-data" },
+    create(ctx) {
+      return {
+        Program() {
+          ctx.report(allDiagnostics.DOC9999({ why: "Test data.", fix: "Inspect data." }), {
+            data,
+          });
+        },
+      };
+    },
+  });
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    const result = await runDoctor({
+      root,
+      framework: "vue",
+      cache: false,
+      extensions: [pluginWith(rule)],
+    });
+    expect(result.diagnostics.find((item) => item.ruleId === "test/interface-data")?.data).toEqual(
+      data,
+    );
+  });
+});
+
 test.each([false, true])(
   "ambiguous short Rule Pack aliases fail regardless of registration order (%s)",
   async (reverse) => {
