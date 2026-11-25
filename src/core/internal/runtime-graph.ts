@@ -48,7 +48,7 @@ export function resolveRuntimeGraph(
     const nuxtManifest =
       packages.nuxt.state === "resolved" ? packages.nuxt.packageJsonPath : undefined;
     packages.nitro = nuxtManifest
-      ? resolveNuxtNitro(nuxtManifest)
+      ? resolveNuxtNitro(nuxtManifest, rootManifest, join(root, "package.json"))
       : blockedRuntime("nitro", "nuxt", packages.nuxt);
     edges.push(edge("nuxt", packages.nitro));
     packages.h3 =
@@ -366,15 +366,16 @@ function resolveRuntimePackage(
   runtime: RuntimePackageName,
   ownerManifest: string,
   owner: RuntimePackageInstance["owner"],
+  names = packageCandidates[runtime],
 ): RuntimePackageInstance {
   const ownerPackage = readPackageManifest(ownerManifest);
   const require = createRequire(ownerManifest);
   let lastReason = `No ${runtime} package is resolvable from ${ownerManifest}.`;
   let danglingLink: RuntimePackageInstance["danglingLink"];
-  const declaredCandidates = packageCandidates[runtime].filter(
+  const declaredCandidates = names.filter(
     (name) => packageDeclaration(ownerPackage, name) !== undefined,
   );
-  const candidates = declaredCandidates.length ? declaredCandidates : packageCandidates[runtime];
+  const candidates = declaredCandidates.length ? declaredCandidates : names;
 
   for (const requestedName of candidates) {
     const declaration = packageDeclaration(ownerPackage, requestedName);
@@ -438,20 +439,32 @@ function resolveRuntimePackage(
 }
 
 /** Nuxt 4.5 moved its Nitro dependency into @nuxt/nitro-server. */
-function resolveNuxtNitro(nuxtManifest: string): RuntimePackageInstance {
+function resolveNuxtNitro(
+  nuxtManifest: string,
+  appManifest: string,
+  workspaceManifest: string,
+): RuntimePackageInstance {
   const nuxt = readPackageManifest(nuxtManifest);
-  const declaresNitro = packageCandidates.nitro.some(
-    (name) => packageDeclaration(nuxt, name) !== undefined,
-  );
-  const serverDeclaration = packageDeclaration(nuxt, "@nuxt/nitro-server");
-  if (declaresNitro || serverDeclaration === undefined)
+  const v3Builder = "@nuxt/nitro-v3-server";
+  const usesV3Builder =
+    packageDeclaration(nuxt, v3Builder) !== undefined &&
+    (packageDeclaration(readPackageManifest(appManifest), "nitro") !== undefined ||
+      (workspaceManifest !== appManifest &&
+        packageDeclaration(readPackageManifest(workspaceManifest), "nitro") !== undefined));
+  const builder = usesV3Builder ? v3Builder : "@nuxt/nitro-server";
+  const serverDeclaration = packageDeclaration(nuxt, builder);
+  if (
+    !usesV3Builder &&
+    (serverDeclaration === undefined ||
+      packageCandidates.nitro.some((name) => packageDeclaration(nuxt, name) !== undefined))
+  )
     return resolveRuntimePackage("nitro", nuxtManifest, "nuxt");
   let serverManifest: string;
   try {
-    serverManifest = resolvePackageJson(createRequire(nuxtManifest), "@nuxt/nitro-server");
+    serverManifest = resolvePackageJson(createRequire(nuxtManifest), builder);
   } catch (error) {
-    const danglingLink = findDanglingLink(nuxtManifest, "@nuxt/nitro-server");
-    return unknownRuntime("nitro", "@nuxt/nitro-server", "nuxt", serverDeclaration, {
+    const danglingLink = findDanglingLink(nuxtManifest, builder);
+    return unknownRuntime("nitro", builder, "nuxt", serverDeclaration, {
       reason: danglingLink
         ? danglingLinkReason(danglingLink)
         : error instanceof Error
@@ -460,7 +473,12 @@ function resolveNuxtNitro(nuxtManifest: string): RuntimePackageInstance {
       danglingLink,
     });
   }
-  return resolveRuntimePackage("nitro", serverManifest, "nuxt");
+  return resolveRuntimePackage(
+    "nitro",
+    serverManifest,
+    "nuxt",
+    usesV3Builder ? ["nitro"] : undefined,
+  );
 }
 
 function danglingLinkReason(link: NonNullable<RuntimePackageInstance["danglingLink"]>): string {

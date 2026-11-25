@@ -1533,6 +1533,99 @@ test.each([false, true])(
 );
 
 test.each([
+  { scope: "app", builderInstalled: true },
+  { scope: "workspace", builderInstalled: true },
+  { scope: "app", builderInstalled: false },
+])(
+  "Nitro migration checks the opted-in builder ($scope, installed: $builderInstalled)",
+  async ({ scope, builderInstalled }) => {
+    const nitro = "3.0.261103-rc";
+    const legacy = "node_modules/nuxt/node_modules/@nuxt/nitro-server";
+    const modern = "node_modules/nuxt/node_modules/@nuxt/nitro-v3-server";
+    const appRoot = scope === "workspace" ? "apps/web/" : "";
+    await withFixture(
+      {
+        "package.json": JSON.stringify(
+          scope === "workspace"
+            ? { workspaces: ["apps/*"], devDependencies: { nitro } }
+            : { dependencies: { nuxt: "4.7.0", nitro, vue: "3.5.18" } },
+        ),
+        ...(appRoot
+          ? {
+              [`${appRoot}package.json`]: JSON.stringify({
+                dependencies: { nuxt: "4.7.0", vue: "3.5.18" },
+              }),
+            }
+          : {}),
+        [`${appRoot}nuxt.config.ts`]: "export default defineNuxtConfig({})",
+        [`${appRoot}server/api/redirect.ts`]: h3RedirectHandler,
+        "node_modules/nuxt/package.json": JSON.stringify({
+          name: "nuxt",
+          version: "4.7.0",
+          dependencies: { "@nuxt/nitro-server": "4.7.0", "@nuxt/nitro-v3-server": "4.7.0" },
+        }),
+        [`${legacy}/package.json`]: JSON.stringify({
+          name: "@nuxt/nitro-server",
+          version: "4.7.0",
+          dependencies: { nitropack: "2.13.1" },
+        }),
+        [`${legacy}/node_modules/nitropack/package.json`]: JSON.stringify({
+          name: "nitropack",
+          version: "2.13.1",
+          dependencies: { h3: "1.15.11" },
+        }),
+        [`${legacy}/node_modules/nitropack/node_modules/h3/package.json`]: JSON.stringify({
+          name: "h3",
+          version: "1.15.11",
+        }),
+        ...(builderInstalled
+          ? {
+              [`${modern}/package.json`]: JSON.stringify({
+                name: "@nuxt/nitro-v3-server",
+                version: "4.7.0",
+                peerDependencies: { nitro },
+              }),
+            }
+          : {}),
+        "node_modules/nitro/package.json": JSON.stringify({
+          name: "nitro",
+          version: nitro,
+          dependencies: { h3: "2.0.8" },
+        }),
+        "node_modules/nitro/node_modules/h3/package.json": JSON.stringify({
+          name: "h3",
+          version: "2.0.8",
+        }),
+        "node_modules/vue/package.json": JSON.stringify({ name: "vue", version: "3.5.18" }),
+      },
+      async (root) => {
+        const result = await runCli(["migrate", ".", "--to", "nitro@3", "--format", "agent"], root);
+        const report = JSON.parse(result.output);
+        expect(result.code, JSON.stringify(report.target)).toBe(builderInstalled ? 1 : 3);
+        if (builderInstalled) {
+          expect(report.target.blockedScopes).toBeUndefined();
+          expect(report.stages[0].diagnostics).toContainEqual(
+            expect.objectContaining({ code: "H30001", file: `${appRoot}server/api/redirect.ts` }),
+          );
+          expect(report.stages[1].changes).toEqual([]);
+          expect(report.stages[2].checks).not.toContainEqual(
+            expect.objectContaining({ id: "install-target" }),
+          );
+        } else {
+          expect(report.target.blockedScopes).toEqual([expect.objectContaining({ root: "." })]);
+          expect(report.stages[0].diagnostics).not.toContainEqual(
+            expect.objectContaining({ code: "H30001" }),
+          );
+          expect(report.stages[1].diagnostics).not.toContainEqual(
+            expect.objectContaining({ code: "H30001" }),
+          );
+        }
+      },
+    );
+  },
+);
+
+test.each([
   ["nitro@3", nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" })],
   ["nuxt@5", nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" })],
 ] as const)(

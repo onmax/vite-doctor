@@ -100,11 +100,11 @@ export async function createMigrationReport(
   const retained: string[] = [];
   const migrationScopes = new Map<string, Map<string, "source" | "dependencies">>();
   const packages = projectWorkspacePackages(current);
-  if (targetSpec.requested.includes("nitro@3") && !targetSpec.runtime.nuxt) {
+  const explicitNitroOnly = runtimeTarget.standaloneNitro && !targetSpec.runtime.nuxt;
+  if (explicitNitroOnly) {
     const blockedScopes = packages.flatMap(({ root }) => {
       const nitro = workspaceProjectView(current, root).runtimeGraph?.packages.nitro;
-      if (nitro?.owner !== "nuxt" || (nitro.state === "resolved" && major(nitro.version) >= 3))
-        return [];
+      if (nitro?.owner !== "nuxt" || isInstalledNitro3(nitro)) return [];
       return [
         {
           root,
@@ -126,11 +126,14 @@ export async function createMigrationReport(
       if (rule.meta.id.startsWith("h3/")) {
         const graph = after.runtimeGraph;
         const ownsH3 = graph?.directH3 || graph?.packages.h3?.owner === "project";
-        const upgradesProvider =
+        const targetsProvider =
           providerH3 &&
-          graph?.packages.h3?.provenance === "target" &&
-          graph.packages.h3.owner === "nitro";
-        if (!(directH3 && ownsH3) && !upgradesProvider) continue;
+          graph?.packages.h3?.owner === "nitro" &&
+          (graph.packages.h3.provenance === "target" ||
+            (explicitNitroOnly &&
+              graph.packages.nitro?.owner === "nuxt" &&
+              isInstalledNitro3(graph.packages.nitro)));
+        if (!(directH3 && ownsH3) && !targetsProvider) continue;
       }
       if (evaluateRuleApplicability(rule, after).state !== "active") continue;
       const wasActive = evaluateRuleApplicability(rule, before).state === "active";
@@ -188,7 +191,7 @@ export async function createMigrationReport(
         id: "deferred",
         title: "Checks after the target runtime is installed",
         checks: [
-          ...(!targetSpec.blockedScopes || changes.length
+          ...(changes.length || (!explicitNitroOnly && !targetSpec.blockedScopes)
             ? [
                 {
                   id: "install-target",
@@ -421,6 +424,7 @@ function dependencyChanges(
       const next = workspaceProjectView(targetProject, root).runtimeGraph?.packages[runtimeName];
       if (next?.provenance !== "target") continue;
       if (current?.owner !== "project") continue;
+      if (runtimeName === "nitro" && isInstalledNitro3(current)) continue;
       const file = root === "." ? undefined : `${root}/package.json`;
       changes.push({
         kind: "dependency",
@@ -497,6 +501,10 @@ function migrationDiagnostic(root: string, diagnostic: Diagnostic): MigrationDia
     why: diagnostic.why,
     fix: diagnostic.suggestion ?? diagnostic.diagnostic.fix ?? "Review this migration diagnostic.",
   };
+}
+
+function isInstalledNitro3(nitro: RuntimePackageInstance): boolean {
+  return nitro.state === "resolved" && major(nitro.version) >= 3;
 }
 
 function major(version: string | undefined): number {
