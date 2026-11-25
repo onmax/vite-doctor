@@ -697,6 +697,35 @@ export default defineMcpTool({
   });
 });
 
+test("MCP0002 on a sent tool follows the hints it declares", async () => {
+  const object = { type: "object" };
+  const { all } = await run(project(), {
+    extensions: contributing([
+      {
+        name: "hub",
+        tools: [
+          {
+            name: "create_issue",
+            annotations: { title: "Create issue", readOnlyHint: false },
+            inputSchema: object,
+          },
+          {
+            name: "both",
+            annotations: { title: "Both", readOnlyHint: false, destructiveHint: false },
+            inputSchema: object,
+          },
+        ],
+      },
+    ]),
+  });
+  const fix = (tool: string) =>
+    all.find((item) => item.code === "MCP0002" && item.data?.tool === tool)?.diagnostic.fix;
+  expect(fix("create_issue")).toContain("Add `destructiveHint: true`");
+  expect(fix("create_issue")).not.toContain("readOnlyHint: true");
+  expect(fix("both")).toContain("which MCP uses for tools that only add data");
+  expect(fix("both")).not.toContain("readOnlyHint: true");
+});
+
 test("a wire finding from a server without a URL carries only the server name in data", async () => {
   const root = project();
   const { all } = await run(root, {

@@ -10,6 +10,7 @@ export const mcpDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "MCP0007", ruleId: "mcp/clients/no-rewritten-schema" },
   { code: "MCP0008", ruleId: "mcp/clients/no-stripped-constraint" },
   { code: "MCP0009", ruleId: "mcp/clients/no-reduced-context" },
+  { code: "MCP0010", ruleId: "mcp/tools/valid-annotations" },
 ]);
 
 export const diagnostics = mcpDiagnosticRegistry.diagnostics;
