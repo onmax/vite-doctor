@@ -330,9 +330,8 @@ export function applyRuntimeTarget(
         : option?.type === "Literal" && typeof option.value === "boolean"
           ? (option.value as boolean)
           : undefined;
-    const legacyOption = (key: string) => {
-      if (legacy?.type !== "ObjectExpression" || !config)
-        return booleanOption(legacy, compatibilityDefault);
+    const legacyOption = (key: string, fallback = compatibilityDefault) => {
+      if (legacy?.type !== "ObjectExpression" || !config) return booleanOption(legacy, fallback);
       const option = readExportedNuxtOption(config.file, config.text, "nitroLegacy", key);
       return booleanOption(option, inheritsConfig ? undefined : true);
     };
@@ -340,7 +339,12 @@ export function applyRuntimeTarget(
       ? readExportedNuxtOption(config.file, config.text, "experimental", "nitroAutoImports")
       : undefined;
     const experimentalImports = booleanOption(autoImports, compatibilityDefault);
-    const legacyImports = legacyOption("imports");
+    const legacyImportsDefault = inheritsConfig
+      ? undefined
+      : compatibilityDefault === false || experimentalImports === false
+        ? false
+        : compatibilityDefault && experimentalImports;
+    const legacyImports = legacyOption("imports", legacyImportsDefault);
     graph = {
       ...graph,
       nuxtH3MayBeShimmed: legacyOption("h3") === false ? undefined : true,

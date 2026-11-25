@@ -1544,6 +1544,13 @@ test.each([
     needsExplicitImports: true,
   },
   {
+    scenario: "experimental imports off with default legacy settings",
+    modern: true,
+    config: "{ experimental: { nitroAutoImports: false } }",
+    importsOff: true,
+    dropsDefaultShim: true,
+  },
+  {
     scenario: "legacy imports override experimental off",
     modern: true,
     config: "{ nitroLegacy: true, experimental: { nitroAutoImports: false } }",
@@ -1581,6 +1588,7 @@ test.each([
     importsOff,
     needsExplicitImports,
     h3ShimOff,
+    dropsDefaultShim,
   }) => {
     const nitro = "3.0.261103-rc";
     const legacy = "node_modules/nuxt/node_modules/@nuxt/nitro-server";
@@ -1624,6 +1632,15 @@ export const legacy = legacyHandler({ handler: () => "ok", onBeforeResponse: () 
 ${hook}`,
         [shimmed]: `import { defineEventHandler } from "h3"\n${hook}`,
         [auto]: `${hook}\nexport const notFound = () => createError(404)\nexport const auto = defineEventHandler(() => { redirect("/new") })`,
+        ...(importsOff
+          ? {
+              [`${appRoot}server/api/custom-error.ts`]: `import { defineEventHandler } from "nitro/h3"
+export default defineEventHandler(() => createError(404))`,
+              [`${appRoot}server/utils/custom.ts`]: `export function createError(status: number) {
+  return new Response("custom", { status })
+}`,
+            }
+          : {}),
         [cors]: `import type { H3Event } from "nitro/h3"
 export default defineEventHandler((event: H3Event) => {
   if (handleCors(event, {})) return
@@ -1720,7 +1737,9 @@ export default defineEventHandler((_event: H3Event) => { redirect("/new") })`,
           const hooks = (stage: { diagnostics: { code: string; file: string }[] }) =>
             stage.diagnostics.filter((item) => item.code === "H30018").map((item) => item.file);
           expect(hooks(source)).toEqual(hooksWithKnownAPI);
-          expect(new Set(hooks(dependencies))).toEqual(new Set(config ? [] : [native, shimmed]));
+          expect(new Set(hooks(dependencies))).toEqual(
+            new Set(!config || dropsDefaultShim ? [native, shimmed] : []),
+          );
           expect(report.stages[2].checks).not.toContainEqual(
             expect.objectContaining({ id: "install-target" }),
           );
