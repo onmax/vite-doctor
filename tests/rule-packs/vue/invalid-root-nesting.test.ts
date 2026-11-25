@@ -148,6 +148,63 @@ test.each<Record<string, string>>([
 });
 
 test.each([false, true])(
+  "VUE0052 ignores stale inline route rules without losing Nitro opt-outs (Nitro opt-out: %s)",
+  async (nitroOptOut) => {
+    const root = mkdtempSync(join(tmpdir(), "doctor-hydration-routes-"));
+    const page = caller(["Card"], "<p><Card /></p>", "../components");
+    const pagePath = join(root, "app/pages/index.vue");
+    try {
+      symlinkSync(
+        fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+        join(root, "node_modules"),
+        "junction",
+      );
+      mkdirSync(join(root, "app/pages"), { recursive: true });
+      mkdirSync(join(root, "app/components"), { recursive: true });
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }),
+      );
+      writeFileSync(
+        join(root, "nuxt.config.ts"),
+        `export default defineNuxtConfig({ experimental: { inlineRouteRules: true },
+          ${nitroOptOut ? "nitro: { routeRules: { '/': { ssr: false } } }" : ""}
+        })`,
+      );
+      writeFileSync(join(root, "app/components/Card.vue"), component("<div />"));
+      writeFileSync(
+        pagePath,
+        page.replace("</script>", "defineRouteRules({ ssr: false })\n</script>"),
+      );
+      const nuxt = await loadNuxt({
+        cwd: root,
+        overrides: { _prepare: true, modules: [nuxtDoctorModule], telemetry: false },
+      });
+      try {
+        await buildNuxt(nuxt);
+      } finally {
+        await nuxt.close();
+      }
+      const scan = () =>
+        runDoctor({
+          root,
+          framework: "nuxt",
+          cache: false,
+          rules: noInvalidRootNesting.meta.id,
+          extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
+        });
+      expect(located(await scan())).toEqual([]);
+      writeFileSync(pagePath, page);
+      expect(located(await scan())).toEqual(
+        nitroOptOut ? [] : [["VUE0052", "app/pages/index.vue", 5]],
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([false, true])(
   "VUE0052 distinguishes Nuxt ClientOnly slots and callers (mixed: %s)",
   async (mixed) => {
     const result = await runRuleFixture({

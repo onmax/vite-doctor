@@ -88,6 +88,7 @@ type NitroAutoImportEvidence = Pick<
 
 type NuxtDoctorEvidence = {
   nitroOptions?: { routeRules?: Record<string, unknown>; dev?: boolean; preset?: string };
+  prePageRouteRules?: NuxtDoctorManifest["prePageRouteRules"];
   routeRulePageMtimes?: NuxtDoctorManifest["routeRulePageMtimes"];
   routeRulePageInventory?: NuxtDoctorManifest["routeRulePageInventory"];
   appRegistration?: NuxtDoctorManifest["appRegistration"];
@@ -118,6 +119,7 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
 
   const evidence = {
     nitroOptions: undefined as NuxtDoctorEvidence["nitroOptions"],
+    prePageRouteRules: undefined as NuxtDoctorEvidence["prePageRouteRules"],
     routeRulePageMtimes: undefined as NuxtDoctorEvidence["routeRulePageMtimes"],
     routeRulePageInventory: undefined as NuxtDoctorEvidence["routeRulePageInventory"],
     appRegistration: undefined as NuxtDoctorManifest["appRegistration"],
@@ -149,6 +151,9 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
 
   nuxt.hook?.("nitro:init", async (nitro: any) => {
     evidence.nitroOptions = nitro.options;
+    if (nuxt.options.experimental?.inlineRouteRules && nitro.options.routeRules) {
+      evidence.prePageRouteRules = JSON.parse(JSON.stringify(nitro.options.routeRules));
+    }
     if (!evidence.routeRulePageMtimes) capturePageInputs(nuxt, evidence);
     evidence.nitroAutoImports = await captureNitroAutoImports(nitro, nuxt.options.rootDir);
     const captureHandlers = async () => {
@@ -577,6 +582,7 @@ export async function writeManifest(
     resolvedRouteRules: evidence?.nitroOptions?.routeRules
       ? JSON.parse(JSON.stringify(evidence.nitroOptions.routeRules))
       : undefined,
+    prePageRouteRules: evidence?.prePageRouteRules,
     routeRulePageMtimes: evidence?.routeRulePageMtimes,
     routeRulePageInventory: evidence?.routeRulePageInventory,
     nitroPreset: !evidence?.nitroOptions?.dev ? evidence?.nitroOptions?.preset : undefined,

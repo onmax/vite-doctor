@@ -39,6 +39,7 @@ export interface NuxtProjectInventory {
   serverHandlers: NuxtDoctorManifest["serverHandlers"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   resolvedRouteRules?: Record<string, unknown>;
+  prePageRouteRules?: NuxtDoctorManifest["prePageRouteRules"];
   routeRulePagesCurrent?: boolean;
   nitroPreset?: string;
   pages: NonNullable<NuxtDoctorManifest["pages"]>;
@@ -114,6 +115,7 @@ export function createNuxtProjectInventory(
       file: resolve(root, handler.file),
     })),
     resolvedRouteRules: manifest?.resolvedRouteRules,
+    prePageRouteRules: manifest?.prePageRouteRules,
     routeRulePagesCurrent: manifest?.resolvedRouteRules
       ? routeRulePagesCurrent(root, manifest)
       : undefined,

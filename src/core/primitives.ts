@@ -341,6 +341,7 @@ export interface NuxtProjectInfo {
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedRouteRules?: Record<string, unknown>;
+    prePageRouteRules?: NuxtDoctorManifest["prePageRouteRules"];
     routeRulePagesCurrent?: boolean;
     nitroPreset?: string;
     resolvedApp?: NuxtDoctorManifest["resolvedApp"];
@@ -524,6 +525,8 @@ export interface NuxtDoctorManifest {
   routeRules: Record<string, unknown>;
   /** Nitro's resolved `routeRules`; unset when the manifest was written before Nitro started. */
   resolvedRouteRules?: Record<string, unknown>;
+  /** Nitro's resolved rules before Nuxt merges enabled inline page rules. */
+  prePageRouteRules?: Record<string, unknown>;
   routeRulePageMtimes?: Record<string, number | null>;
   routeRulePageInventory?: Record<string, string[]>;
   nitroPreset?: string;
