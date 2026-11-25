@@ -105,7 +105,7 @@ export function unresolvedRuntimeInventory(project: ProjectInfo) {
         return (
           graph?.packages.h3?.owner === "project" || graph?.packages.nitro?.state === "resolved"
         );
-      return runtime === "nitro" && selected === "nuxt";
+      return selected === "nuxt" && (runtime === "nitro" || runtime === "vue");
     });
     const unresolved = [
       ...runtimes.map((runtime) => graph?.packages[runtime]),

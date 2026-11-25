@@ -292,7 +292,10 @@ export function applyRuntimeTarget(
   if (!target) return { graph, compatibility };
   const packages = { ...graph.packages };
   let directH3 = graph.directH3;
-  const upgradesNitro = !target.nuxt || packages.nuxt || target.standaloneNitro;
+  const upgradesNitro =
+    packages.nitro?.owner === "nuxt"
+      ? Boolean(target.nuxt && packages.nuxt)
+      : !target.nuxt || target.standaloneNitro;
   const upgrade = (current: RuntimePackageInstance, version: string): RuntimePackageInstance => ({
     ...current,
     state: "resolved",

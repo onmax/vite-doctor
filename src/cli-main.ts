@@ -97,7 +97,7 @@ export async function main(
       const { createMigrationReport, formatMigrationReport } = await import("./migration.js");
       const report = await createMigrationReport(root, options.to ? [options.to] : []);
       process.stdout.write(formatMigrationReport(report, format));
-      exitCode = report.summary.errors > 0 ? 1 : 0;
+      exitCode = report.target.blockedScopes?.length ? 3 : report.summary.errors > 0 ? 1 : 0;
     });
   cli
     .command("rules", "List available Doctor rules.")

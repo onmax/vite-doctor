@@ -26,6 +26,7 @@ export interface MigrationReport {
     source: "inferred" | "explicit";
     requested: string[];
     runtime: RuntimeTarget;
+    blockedScopes?: Array<{ root: string; instruction: string }>;
   };
   applicability: {
     activated: string[];
@@ -99,6 +100,21 @@ export async function createMigrationReport(
   const retained: string[] = [];
   const migrationScopes = new Map<string, Map<string, "source" | "dependencies">>();
   const packages = projectWorkspacePackages(current);
+  if (targetSpec.requested.includes("nitro@3") && !targetSpec.runtime.nuxt) {
+    const blockedScopes = packages.flatMap(({ root }) => {
+      const nitro = workspaceProjectView(current, root).runtimeGraph?.packages.nitro;
+      if (nitro?.owner !== "nuxt" || (nitro.state === "resolved" && major(nitro.version) >= 3))
+        return [];
+      return [
+        {
+          root,
+          instruction:
+            "Nuxt manages Nitro in this package. If your Nuxt version supports opting into Nitro 3, declare and install nitro directly; otherwise plan the Nuxt upgrade with --to nuxt@5. Verify the effective Nitro version before applying Nitro 3 or H3 v2 source changes.",
+        },
+      ];
+    });
+    if (blockedScopes.length) targetSpec.blockedScopes = blockedScopes;
+  }
 
   for (const rule of packs.flatMap((pack) => pack.rules)) {
     let becameActive = false;
@@ -172,10 +188,15 @@ export async function createMigrationReport(
         id: "deferred",
         title: "Checks after the target runtime is installed",
         checks: [
-          {
-            id: "install-target",
-            instruction: "Install the target dependency graph with the project package manager.",
-          },
+          ...(!targetSpec.blockedScopes || changes.length
+            ? [
+                {
+                  id: "install-target",
+                  instruction:
+                    "Install the target dependency graph with the project package manager.",
+                },
+              ]
+            : []),
           ...(targetSpec.requested.includes("h3@2")
             ? [
                 {
@@ -216,7 +237,11 @@ export function formatMigrationReport(
   if (format === "agent") {
     return `${JSON.stringify({
       schema: "vite-doctor.migration/v1",
-      status: report.summary.diagnostics || report.summary.dependencyChanges ? "findings" : "clean",
+      status: report.target.blockedScopes?.length
+        ? "incomplete"
+        : report.summary.diagnostics || report.summary.dependencyChanges
+          ? "findings"
+          : "clean",
       ...report,
     })}\n`;
   }
@@ -225,6 +250,9 @@ export function formatMigrationReport(
     `Workspace: ${report.root}`,
     "",
   ];
+  for (const { root, instruction } of report.target.blockedScopes ?? []) {
+    lines.push(`Migration blocked in ${root}: ${instruction}`, "");
+  }
   for (const stage of report.stages) {
     lines.push(stage.title);
     if (stage.id === "source") {

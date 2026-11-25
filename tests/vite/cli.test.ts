@@ -1481,6 +1481,57 @@ export default defineEventHandler((event) => {
 })
 `;
 
+test.each([false, true])(
+  "Nitro migration leaves Nuxt-owned Nitro inactive (standalone sibling: %s)",
+  async (standalone) => {
+    const runtime = nuxtRuntimeFixture({ nuxt: "4.7.0", nitro: "2.13.1", h3: "1.15.11" });
+    const sibling = nitroRuntimeFixture({ nitro: "2.13.1", h3: "1.15.11" });
+    await withFixture(
+      {
+        ...runtime,
+        "package.json": JSON.stringify({
+          ...JSON.parse(runtime["package.json"]),
+          workspaces: ["packages/*"],
+        }),
+        "nuxt.config.ts": "export default defineNuxtConfig({})",
+        "server/api/redirect.ts": h3RedirectHandler,
+        ...(standalone
+          ? Object.fromEntries(
+              Object.entries({
+                ...sibling,
+                "server/api/redirect.ts": h3RedirectHandler,
+              }).map(([path, contents]) => [`packages/api/${path}`, contents]),
+            )
+          : {}),
+      },
+      async (root) => {
+        const result = await runCli(["migrate", ".", "--to", "nitro@3", "--format", "agent"], root);
+        expect(result.code, result.output).toBe(3);
+        const report = JSON.parse(result.output);
+        const stage = report.stages[1];
+        expect(
+          stage.diagnostics
+            .filter((item: { code: string }) => item.code === "H30001")
+            .map((item: { file: string }) => item.file),
+        ).toEqual(standalone ? ["packages/api/server/api/redirect.ts"] : []);
+        expect(stage.changes.map((item: { file: string }) => item.file)).toEqual(
+          standalone ? ["packages/api/package.json"] : [],
+        );
+        expect(report.status).toBe("incomplete");
+        expect(report.target.blockedScopes).toEqual([
+          { root: ".", instruction: expect.stringContaining("Nuxt manages Nitro") },
+        ]);
+        expect(formatMigrationReport(report)).toContain(
+          "Migration blocked in .: Nuxt manages Nitro",
+        );
+        expect(
+          report.stages[2].checks.some(({ id }: { id: string }) => id === "install-target"),
+        ).toBe(standalone);
+      },
+    );
+  },
+);
+
 test.each([
   ["nitro@3", nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" })],
   ["nuxt@5", nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" })],
@@ -1733,6 +1784,61 @@ test("an explicit Nitro run ignores a sibling's missing Nuxt but reports its own
         const automatic = await runCli(args, root);
         expect(automatic.code, automatic.output).toBe(3);
         expect(automatic.output).toContain("packages/module/package.json");
+      } finally {
+        if (nodePath !== undefined) process.env.NODE_PATH = nodePath;
+        initPaths();
+      }
+    },
+  );
+});
+
+test("an explicit Nuxt run reports missing Vue in a sibling covered by the Vue Rule Pack", async () => {
+  const runtime = nuxtRuntimeFixture({ nuxt: "4.7.0", nitro: "2.13.1", h3: "1.15.11" });
+  const { "node_modules/vue/package.json": vueManifest, ...files } = runtime;
+  await withFixture(
+    {
+      ...files,
+      "package.json": JSON.stringify({
+        dependencies: { nuxt: "4.7.0" },
+        workspaces: ["packages/*"],
+      }),
+      "node_modules/nuxt/node_modules/vue/package.json": vueManifest,
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "packages/frontend/package.json": JSON.stringify({ dependencies: { vue: "3.5.18" } }),
+      "packages/frontend/src/App.vue": `<script setup>
+defineProps(['modelValue'])
+defineEmits(['update:modelValue'])
+</script>`,
+    },
+    async (root) => {
+      const nodePath = process.env.NODE_PATH;
+      const initPaths = () => (Module as unknown as { _initPaths(): void })._initPaths();
+      delete process.env.NODE_PATH;
+      initPaths();
+      try {
+        const args = [
+          ".",
+          "--framework",
+          "nuxt",
+          "--strict",
+          "--rules",
+          "vue/style/prefer-define-model",
+          "--no-cache",
+          "--no-server",
+          "--format",
+          "json",
+        ];
+        const missing = await runCli(args, root);
+        expect(missing.code, missing.output).toBe(3);
+        expect(JSON.parse(missing.output).status).toBe("incomplete");
+        expect(missing.output).toContain("DOC0022");
+        expect(missing.output).toContain("packages/frontend/package.json");
+        const manifest = join(root, "packages/frontend/node_modules/vue/package.json");
+        mkdirSync(dirname(manifest), { recursive: true });
+        writeFileSync(manifest, vueManifest);
+        const installed = await runCli(args, root);
+        expect(installed.output).toContain("VUE0014");
+        expect(installed.output).not.toContain("DOC0022");
       } finally {
         if (nodePath !== undefined) process.env.NODE_PATH = nodePath;
         initPaths();
