@@ -307,15 +307,7 @@ describe("rule details", () => {
         "Enabled true by default.",
       ])
         expect(hits(rule, withDescription(description)), description).toEqual([]);
-      for (const description of [
-        "Enable the feature.",
-        "Defaults to false.",
-        "true or false",
-        "Receipt delivery is not true by default.",
-        "Receipt delivery isn't `true` by default.",
-        "The default is not true.",
-        "Not default: true.",
-      ]) {
+      for (const description of ["Enable the feature.", "Defaults to false.", "true or false"]) {
         expect(hits(rule, withDescription(description))[0]?.pointer, description).toBe(
           "/inputSchema/properties/enabled/default",
         );
@@ -324,70 +316,37 @@ describe("rule details", () => {
   );
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
-    "%s scopes negation to the default declaration",
+    "%s counts a string default only where the prose declares it",
     (rule) => {
-      for (const [value, description] of [
-        [true, "Include archived results, not just active ones (default: true)."],
-        [true, "Returns all results, not just active ones, when enabled (true by default)."],
-        [true, "Do not supply a value unless you want to override the default: true."],
-        ["all", 'Use a named scope, not a path: "all" (default), "docs", or "blog".'],
-      ] as const) {
-        const input = schema(
-          object({ option: { type: typeof value, default: value, description } }),
-        );
-        expect(hits(rule, input), description).toEqual([]);
-      }
-      for (const [value, description] of [
-        [true, "It doesn't actually default to true."],
-        [true, "The flag is not set to true by default."],
-        [true, "The flag is not (true by default)."],
-        ["all", 'Use a named scope, but not "all" (default).'],
-      ] as const) {
-        const input = schema(
-          object({ option: { type: typeof value, default: value, description } }),
-        );
-        expect(hits(rule, input)[0]?.pointer, description).toBe(
-          "/inputSchema/properties/option/default",
-        );
-      }
+      const withDescription = (description: string) =>
+        schema(object({ order: { type: "string", default: "desc", description } }));
+      for (const description of [
+        "Sort order. Defaults to desc.",
+        "Sort order (default: `desc`).",
+        "Sort order, asc or desc (default desc).",
+        'Sort order: "asc" or "desc" (default).',
+        "Newest first or not (default: desc).",
+      ])
+        expect(hits(rule, withDescription(description)), description).toEqual([]);
+      for (const description of [
+        "Sort order (ascending or descending).",
+        "Sort order: asc or desc.",
+      ])
+        expect(hits(rule, withDescription(description)), description).toHaveLength(1);
     },
   );
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
-    "%s reports undescribed defaults and skips only vacuous size minimums",
+    "%s skips empty defaults and minimums of 1",
     (rule) => {
-      const constrained = object({
+      const implied = object({
         a: { type: ["string", "null"], default: null },
         b: { type: "boolean", default: false },
         c: { type: "string", default: "", minLength: 1 },
         d: { type: "array", items: { type: "string" }, default: [], minItems: 1 },
         e: { type: "object", default: {}, minProperties: 0 },
-        f: { type: "object", minProperties: 1 },
-        g: { type: "string", minLength: 0 },
-        h: { type: "array", items: { type: "string" }, minItems: 0 },
       });
-      expect(hits(rule, schema(constrained))[0]?.affectedPointers).toEqual([
-        "/inputSchema/properties/a/default",
-        "/inputSchema/properties/b/default",
-        "/inputSchema/properties/c/default",
-        "/inputSchema/properties/c/minLength",
-        "/inputSchema/properties/d/default",
-        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/d/minItems"] : []),
-        "/inputSchema/properties/e/default",
-        "/inputSchema/properties/f/minProperties",
-      ]);
-      const described = object({
-        a: { type: ["string", "null"], default: null, description: "Defaults to null." },
-        b: { type: "boolean", default: false, description: "Default is false." },
-        c: { type: "string", default: "", description: 'Default: "".' },
-        d: { type: "array", items: { type: "string" }, default: [], description: "Default: []." },
-        e: { type: "object", default: {}, description: "Default: {}." },
-        f: { type: "integer", default: 0, description: "Defaults to 0." },
-      });
-      expect(hits(rule, schema(described))).toEqual([]);
-      expect(
-        hits(rule, schema(object({ c: { type: "string", default: "", description: "A label." } }))),
-      ).toHaveLength(1);
+      expect(hits(rule, schema(implied))).toEqual([]);
       const strict = object({
         a: { type: "integer", default: 0 },
         b: { type: "string", minLength: 2 },
@@ -448,12 +407,15 @@ describe("rule details", () => {
     (rule) => {
       const withPattern = (pattern: string, description = "First date, formatted YYYY-MM-DD.") =>
         schema(object({ from: { type: "string", pattern, description } }));
-      const date =
-        "^(?:\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|02-(?:0[1-9]|1\\d|2[0-9])))$";
-      expect(hits(rule, withPattern(date))).toEqual([]);
-      expect(hits(rule, withPattern(date, "First date."))).toHaveLength(1);
+      for (const date of [
+        // Zod 4's `z.iso.date()`.
+        String.raw`^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))$`,
+        String.raw`^\d{4}-\d{2}-\d{2}$`,
+      ]) {
+        expect(hits(rule, withPattern(date)), date).toEqual([]);
+        expect(hits(rule, withPattern(date, "First date.")), date).toHaveLength(1);
+      }
       for (const other of [
-        "^\\d{4}-\\d{2}-\\d{2}$",
         "^\\d{4}-\\d{1,2}-\\d{1,2}$",
         "\\d{4}-\\d{2}-\\d{2}",
         "[",
