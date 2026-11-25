@@ -235,7 +235,7 @@ test("a server a Doctor Extension could not read leaves an evidence gap", async 
   ]);
 });
 
-test("client findings that repeat MCP0001 to MCP0003 are not reported again", async () => {
+test("a client renaming a tool is reported beside MCP0003, whose fix may not cover it", async () => {
   const root = project({
     "server/mcp/tools/list_orders.ts": `import { defineMcpTool } from 'nitro-mcp-toolkit'
 export default defineMcpTool({ name: 'list orders', handler: () => [] })
@@ -257,6 +257,7 @@ export default defineMcpTool({ name: 'list orders', handler: () => [] })
     "MCP0001 warn server/mcp/tools/list_orders.ts:2",
     "MCP0002 warn server/mcp/tools/list_orders.ts:2",
     "MCP0003 warn server/mcp/tools/list_orders.ts:2",
+    "MCP0007 info server/mcp/tools/list_orders.ts:2",
   ]);
 });
 

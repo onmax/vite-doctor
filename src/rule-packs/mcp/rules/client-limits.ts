@@ -14,7 +14,6 @@ import { checkMcpToolList } from "../../../mcp/check.js";
 import { readMcpServers, type McpServerToolsEvidence } from "../../../mcp/evidence.js";
 import type { McpClient, McpEffect, McpFinding } from "../../../mcp/types.js";
 import { collectMcpTools, MCP_PACKAGES, type McpToolDefinition } from "./shared.js";
-import { nameProblems } from "./valid-name.js";
 
 export const MCP_CLIENT_LABELS: Record<McpClient, string> = {
   "claude-code": "Claude Code",
@@ -78,10 +77,7 @@ export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOption
       const tools = mcpPackageTools(ctx, await collectMcpTools(ctx));
       for (const group of groups) {
         const definition = group.tool === undefined ? undefined : staticTool(tools, group.tool);
-        const findings = definition?.name
-          ? group.findings.filter((finding) => !repeatsValidName(finding, definition.name!.value))
-          : group.findings;
-        if (findings.length) report(ctx, options, group.server, group.tool, findings, definition);
+        report(ctx, options, group.server, group.tool, group.findings, definition);
       }
     },
   };
@@ -116,14 +112,6 @@ function mcpPackageTools(ctx: RuleContext, tools: McpToolDefinition[]): McpToolD
 function staticTool(tools: McpToolDefinition[], name: string): McpToolDefinition | undefined {
   const matches = tools.filter((tool) => tool.name?.value === name);
   return matches.length === 1 ? matches[0] : undefined;
-}
-
-// MCP0003 already asks to rename a tool whose name breaks MCP's rules; a client renaming that
-// same name says nothing the fix doesn't cover.
-function repeatsValidName(finding: McpFinding, name: string): boolean {
-  return (
-    finding.effect === "rewritten" && finding.pointer === "/name" && nameProblems(name).length > 0
-  );
 }
 
 function report(
