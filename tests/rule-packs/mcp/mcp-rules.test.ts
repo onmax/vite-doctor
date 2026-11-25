@@ -545,6 +545,26 @@ describe("MCP tool output", () => {
     ).toEqual(["MCP0004 src/stable.ts"]);
   });
 
+  test("follows the runtime implementation of an overloaded helper", async () => {
+    const render = [
+      "function render(n: number): string",
+      "function render(n: string): string",
+      "function render(n: number | string) { return JSON.stringify({ n }, null, 2) }",
+    ];
+    const definition = tool(
+      "{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, handler: () => render(1) }",
+    );
+    expect(
+      await codes({
+        "src/local.ts": [...render, definition].join("\n"),
+        "src/imported.ts": "import { render } from './render'\n" + definition,
+        "src/render.ts": render.map((line) => `export ${line}`).join("\n"),
+        "src/reassigned.ts": [...render, "render = () => '{}'", definition].join("\n"),
+        "src/ambient.ts": "declare function render(n: number): string\n" + definition,
+      }),
+    ).toEqual(["MCP0004 src/imported.ts", "MCP0004 src/local.ts"]);
+  });
+
   test("traces only Nitro's imported toolResult envelope", async () => {
     const result =
       "{ content: [{ type: 'text', text: JSON.stringify({ n: 1 }, null, 2) }], structuredContent: { n: 1 } }";

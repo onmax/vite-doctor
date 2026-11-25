@@ -234,9 +234,12 @@ function loadModule(
   };
   for (const lexicalScope of scope?.scopeManager.scopes ?? []) {
     for (const variable of lexicalScope.variables) {
-      const [definition] = variable.defs;
+      const runtimeDefinitions = variable.defs.filter(
+        (definition) => definition.node.type !== "TSDeclareFunction",
+      );
+      const [definition] = runtimeDefinitions;
       if (
-        variable.defs.length === 1 &&
+        runtimeDefinitions.length === 1 &&
         definition?.type === "FunctionName" &&
         definition.node.type === "FunctionDeclaration" &&
         !variable.references.some((reference) => reference.isWrite())
