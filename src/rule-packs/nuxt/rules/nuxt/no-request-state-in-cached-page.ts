@@ -111,7 +111,10 @@ export const noRequestStateInCachedPage = createRule({
           const isr = pageIsrState(entry, ctx.project);
           const kinds = sharedCacheKinds(rules);
           if (isr === "on") kinds.unshift("isr");
-          if (isr === "unknown" && reads.some((read) => read.kind !== "query"))
+          if (
+            isr === "unknown" &&
+            (cookieFlowUncertain || reads.some((read) => read.kind !== "query"))
+          )
             recordRouteRulesGap(
               ctx.project,
               ctx.file.relativePath,
@@ -250,13 +253,16 @@ function requestReads(ctx: RuleContext, program: AnyNode) {
 function recordCookieFlowGap(ctx: RuleContext) {
   const file = ctx.file.relativePath;
   const source = `${RULE_ID}/cookie-flow`;
-  const gaps = (ctx.project.evidenceGaps ??= []);
+  const gaps = ctx.project.evidenceGaps ?? [];
   if (gaps.some((gap) => gap.source === source && gap.files.includes(file))) return;
-  gaps.push({
-    source,
-    files: [file],
-    message: `Doctor could not prove whether a cookie reaches the cached SSR template in ${file}: a write may change the rendered value. Inspect setup writes before sharing the response.`,
-  });
+  ctx.project.evidenceGaps = [
+    ...gaps,
+    {
+      source,
+      files: [file],
+      message: `Doctor could not prove whether a cookie reaches the cached SSR template in ${file}: a write may change the rendered value. Inspect setup writes before sharing the response.`,
+    },
+  ];
 }
 
 function renderedBinding(

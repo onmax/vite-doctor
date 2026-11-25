@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vite-plus/test";
-import { runProjectFixture, runRuleFixture } from "../../../src/core/testkit.ts";
+import {
+  createProjectFixture,
+  runProjectFixture,
+  runRuleFixture,
+} from "../../../src/core/testkit.ts";
+import { runViteDoctor } from "../../../src/doctor.ts";
 import nuxtRulePack from "../../../src/rule-packs/nuxt/rules/nuxt.ts";
 import { noPersonalizedCachedHandler } from "../../../src/rule-packs/nuxt/rules/nuxthub.ts";
 
@@ -53,6 +58,97 @@ async function run(files: Record<string, string>) {
 
 const page = (script: string, template = "<div />") =>
   `<script setup lang="ts">\n${script}\n</script>\n<template>${template}</template>\n`;
+
+const uncertainCookiePage = page(
+  `const preferences = { theme: useCookie('theme').value }
+function resetTheme() { preferences.theme = 'light' }
+if (shouldReset()) resetTheme()
+const rendered = preferences.theme`,
+  "<div>{{ rendered }}</div>",
+);
+
+test.each([false, true])(
+  "keeps both cookie-flow gaps on warm runs (seeded inventory: %s)",
+  async (seeded) => {
+    const files = ["app/pages/account.vue", "app/pages/profile.vue"];
+    const fixture = createProjectFixture({
+      framework: "nuxt",
+      files: {
+        [files[0]!]: uncertainCookiePage,
+        [files[1]!]: uncertainCookiePage,
+        ".nuxt/doctor.manifest.json": manifest(
+          [
+            { path: "/account", file: files[0]! },
+            { path: "/profile", file: files[1]! },
+          ],
+          { "/**": { swr: 60 } },
+        ),
+      },
+    });
+    try {
+      const { project: inventory } = await fixture.run({ run: { cache: false } });
+      const existing = { source: "fixture", files: ["package.json"], message: "Existing gap" };
+      const project = { ...inventory, evidenceGaps: seeded ? [existing] : undefined };
+      const options = { project, rules: RULE_ID, cache: true };
+      const cold = await runViteDoctor(options);
+      const warm = await runViteDoctor(options);
+
+      expect(project.evidenceGaps).toEqual(seeded ? [existing] : undefined);
+      for (const result of [cold, warm]) {
+        expect(
+          result.project.evidenceGaps
+            ?.filter((gap) => gap.source === `${RULE_ID}/cookie-flow`)
+            .flatMap((gap) => gap.files)
+            .sort(),
+        ).toEqual(files);
+      }
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+test("unproven ISR coverage accounts for uncertain cookie flow", async () => {
+  const file = "app/pages/account.vue";
+  const result = await run({
+    [file]: uncertainCookiePage,
+    ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+      "/account": { isr: 60 },
+    }),
+  });
+  expect(result.diagnostics).toEqual([]);
+  expect(result.gaps[0]?.message).toContain("ISR coverage");
+});
+
+test.each([
+  ["title", "'Hello'", "'Welcome'", "", 0],
+  ["title", "cookie.value", "'Welcome'", "", 1],
+  ["title", "'Hello'", "cookie.value", "", 1],
+  ["title", "'Hello'", "cookie.value", "label.title = 'Final'", 0],
+  ["title.text", "{ text: 'Hello', sibling: cookie.value }", "{ text: 'Welcome' }", "", 0],
+  ["title.text", "{ text: 'Hello' }", "{ text: cookie.value }", "", 1],
+])(
+  "ties uncertainty in %s (%s overwritten by %s; final write: %s) to its cookie source",
+  async (selected, initial, written, finalWrite, gaps) => {
+    const file = "app/pages/account.vue";
+    const result = await run({
+      [file]: page(
+        `const cookie = useCookie('theme')
+const label = { title: ${initial}, unused: cookie.value }
+function updateLabel() { label.title = ${written} }
+if (shouldUpdate()) updateLabel()
+${finalWrite}
+const rendered = label.${selected}`,
+        "<div>{{ rendered }}</div>",
+      ),
+      ".nuxt/doctor.manifest.json": manifest([{ path: "/account", file }], {
+        "/account": { swr: 60 },
+      }),
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.cookieFlowGaps).toHaveLength(gaps);
+  },
+);
 
 test.each([
   [

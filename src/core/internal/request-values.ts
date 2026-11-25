@@ -48,7 +48,7 @@ export interface RequestValueSources {
   maxDepth?: number;
   /** Trace the selected value, not evaluation of other fields in a local object initializer. */
   projectObjectMembers?: boolean;
-  /** Report that an intervening operation prevents proving a selected value. */
+  /** Report that an intervening operation leaves a possible, but unproven, request dependency. */
   onUncertainProjection?(): void;
   /** Whether an operation is proven not to execute in the runtime being traced. */
   isSkippedOperation?(node: AnyNode): boolean;
@@ -135,7 +135,12 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
     if (sources.projectObjectMembers && node.type === "MemberExpression") {
       const selected = projectMember(node, sources, (sources.maxDepth ?? 2) - depth);
       if (selected) {
-        found = flows(selected.value, sources, depth + selected.steps);
+        const dependsOnSource = [...selected.values].some(([value, steps]) =>
+          flows(value, sources, depth + steps),
+        );
+        if (selected.uncertain) {
+          if (dependsOnSource) sources.onUncertainProjection?.();
+        } else found = dependsOnSource;
         return;
       }
     }
@@ -154,56 +159,80 @@ function flows(value: AnyNode, sources: RequestValueSources, depth: number): boo
   return found;
 }
 
+interface MemberProjection {
+  values: Map<AnyNode, number>;
+  uncertain: boolean;
+}
+
 function projectMember(
   node: AnyNode,
   sources: RequestValueSources,
   remaining: number,
-): { value: AnyNode; steps: number } | undefined {
+): MemberProjection | undefined {
   const name = staticMemberName(node);
   if (name === undefined || name === "__proto__" || remaining <= 0) return;
-  let object = unwrapExpression(node.object);
-  let steps = 1;
-  while (object?.type !== "ObjectExpression" && steps < remaining) {
+  const select = (expression: AnyNode, steps: number): MemberProjection | undefined => {
+    const object = unwrapExpression(expression);
+    if (object?.type === "ObjectExpression") {
+      const { value, possibleWrites } = setupMemberWrites(node, object, name, sources);
+      const initial = objectMemberInitializer(object, name);
+      if (initial === UNKNOWN_VALUE && !possibleWrites.size) return;
+      const values = new Map<AnyNode, number>();
+      const previous = value ?? (initial === UNKNOWN_VALUE ? object : initial);
+      if (previous) values.set(previous, steps);
+      for (const write of possibleWrites) {
+        const candidate =
+          write.type === "CallExpression" || write.type === "NewExpression" ? write : write.right;
+        if (candidate) values.set(candidate, steps);
+      }
+      return { values, uncertain: possibleWrites.size > 0 };
+    }
+    if (steps >= remaining) return;
     if (object?.type === "Identifier") {
       const binding = constIdentifierBinding(object, sources.programBinding);
-      if (!binding || binding.end > object.start) return;
-      object = unwrapExpression(binding.init);
-      steps++;
+      if (binding && binding.end <= object.start) return select(binding.init, steps + 1);
     } else if (object?.type === "MemberExpression") {
       const inner = projectMember(object, sources, remaining - steps);
-      if (!inner || !inner.value) return inner;
-      object = unwrapExpression(inner.value);
-      steps += inner.steps;
-    } else return;
-  }
-  if (object?.type !== "ObjectExpression") return;
-  const write = setupMemberWrite(node, object, name, sources);
-  if (write === UNKNOWN_VALUE) {
-    sources.onUncertainProjection?.();
-    return { value: null, steps };
-  }
+      if (!inner) return;
+      const values = new Map<AnyNode, number>();
+      let uncertain = inner.uncertain;
+      for (const [value, innerSteps] of inner.values) {
+        const totalSteps = steps + innerSteps;
+        const projected = select(value, totalSteps);
+        uncertain ||= projected?.uncertain ?? false;
+        const candidates = projected?.values ?? new Map([[value, totalSteps]]);
+        for (const [candidate, candidateSteps] of candidates)
+          values.set(candidate, Math.min(values.get(candidate) ?? Infinity, candidateSteps));
+      }
+      return { values, uncertain };
+    }
+  };
+  return select(node.object, 1);
+}
+
+function objectMemberInitializer(object: AnyNode, name: string): AnyNode {
   for (const property of object.properties.toReversed()) {
-    if (property.type !== "Property") return;
+    if (property.type !== "Property") return UNKNOWN_VALUE;
     const key =
       !property.computed && property.key.type === "Identifier"
         ? property.key.name
         : staticRequestString(property.key);
-    if (key === undefined || key === "__proto__") return;
-    if (key === name)
-      return property.kind === "init" ? { value: write ?? property.value, steps } : undefined;
+    if (key === undefined || key === "__proto__") return UNKNOWN_VALUE;
+    if (key === name) return property.kind === "init" ? property.value : UNKNOWN_VALUE;
   }
-  return { value: write, steps };
+  return null;
 }
 
-function setupMemberWrite(
+function setupMemberWrites(
   reference: AnyNode,
   object: AnyNode,
   name: string,
   sources: RequestValueSources,
-): AnyNode {
+): { value: AnyNode; possibleWrites: Set<AnyNode> } {
+  const possibleWrites = new Set<AnyNode>();
   let program = reference;
   while (program.__doctorParent) {
-    if (FUNCTION_TYPES.has(program.type)) return null;
+    if (FUNCTION_TYPES.has(program.type)) return { value: null, possibleWrites };
     program = program.__doctorParent;
   }
   const isObject = (expression: AnyNode) => {
@@ -295,7 +324,7 @@ function setupMemberWrite(
     }
   }
 
-  const callMayWrite = (call: AnyNode, afterYield: boolean) => {
+  const collectCallWrites = (call: AnyNode, afterYield: boolean, writes: Set<AnyNode>) => {
     const pending: { invocation: AnyNode; resolvedFunction?: AnyNode }[] = [{ invocation: call }];
     const visited = new Set<AnyNode>();
     const forwardedCalls = new Map<AnyNode, Set<AnyNode>>();
@@ -343,41 +372,43 @@ function setupMemberWrite(
             (operation.end === boundary.end && operation.start < boundary.start))
         )
           continue;
-        if (mayWrite(operation)) return true;
+        if (mayWrite(operation)) writes.add(operation);
         if (isCall(operation)) pending.push({ invocation: operation });
       }
     }
-    return false;
   };
 
-  let latest: AnyNode = null;
   let value: AnyNode = null;
-  for (const operation of setupOperations) {
-    if (latest && operation.end <= latest.end) continue;
-    if (!mayWrite(operation) && !(isCall(operation) && callMayWrite(operation, false))) continue;
+  let lastDefiniteWrite = object.end;
+  for (const operation of setupOperations.sort((a, b) => a.end - b.end || b.start - a.start)) {
+    if (!mayWrite(operation)) {
+      if (isCall(operation)) collectCallWrites(operation, false, possibleWrites);
+      continue;
+    }
 
-    latest = operation;
     const statement = enclosingExpression(operation).__doctorParent;
     const target = unwrapExpression(operation.left);
-    value =
+    if (
       operation.type === "AssignmentExpression" &&
       operation.operator === "=" &&
       statement?.type === "ExpressionStatement" &&
       statement.__doctorParent === program &&
       staticMemberName(target) === name &&
       isObject(target.object)
-        ? operation.right
-        : UNKNOWN_VALUE;
+    ) {
+      value = operation.right;
+      lastDefiniteWrite = operation.end;
+      possibleWrites.clear();
+    } else {
+      possibleWrites.add(operation);
+      if (isCall(operation)) collectCallWrites(operation, false, possibleWrites);
+    }
   }
-  if (
-    lastSetupSuspension >= (latest?.end ?? object.end) &&
-    setupOperations.some(
-      (operation) =>
-        isCall(operation) && operation.end <= lastSetupSuspension && callMayWrite(operation, true),
-    )
-  )
-    return UNKNOWN_VALUE;
-  return value;
+  if (lastSetupSuspension >= lastDefiniteWrite)
+    for (const operation of setupOperations)
+      if (isCall(operation) && operation.end <= lastSetupSuspension)
+        collectCallWrites(operation, true, possibleWrites);
+  return { value, possibleWrites };
 }
 
 function straightLineAwait(operation: AnyNode, fn: AnyNode): boolean {
