@@ -1,5 +1,5 @@
 import type { DoctorExtension, ProjectInfo } from "../core/primitives.js";
-import { mcpEndpointLabel, parseMcpEndpoint } from "./endpoint.js";
+import { mcpEndpointId, mcpEndpointLabel, parseMcpEndpoint } from "./endpoint.js";
 import { fetchMcpToolList, McpFetchError } from "./fetch.js";
 import { isMcpTool } from "./input.js";
 import type { McpInitializeResult, McpTool } from "./types.js";
@@ -21,6 +21,8 @@ export interface McpServerTarget {
 export interface McpServerToolsEvidence {
   name?: string;
   url?: string;
+  /** Opaque endpoint identity when `url` is only a redacted display label. */
+  endpointId?: string;
   /** Client-configured alias, not the name announced in `initialize`. */
   clientAlias?: string;
   initialize?: McpInitializeResult;
@@ -90,6 +92,7 @@ async function readServer(
   options: { fetch?: typeof globalThis.fetch; timeout?: number },
 ): Promise<McpServerEvidence> {
   const label = mcpEndpointLabel(url);
+  const endpointId = mcpEndpointId(url);
   try {
     const list = await fetchMcpToolList(url, { headers, ...options });
     const name = serverName ?? list.initialize?.serverInfo?.name;
@@ -97,6 +100,7 @@ async function readServer(
       ...(name ? { name } : {}),
       ...(serverName ? { clientAlias: serverName } : {}),
       url: label,
+      endpointId,
       ...list,
     };
   } catch (error) {
@@ -112,6 +116,7 @@ async function readServer(
         source: MCP_EVIDENCE,
         message: `Doctor could not read the tools of the MCP server at ${label}, so its tools were not checked: ${reason}${hint}`,
         files: [],
+        instanceKey: endpointId,
       },
     ];
     return {

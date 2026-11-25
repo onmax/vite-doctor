@@ -99,6 +99,8 @@ export interface Diagnostic {
   related?: Array<{ file: string; range?: SourceRange; message: string }>;
   tags?: string[];
   fingerprint?: string;
+  /** Distinguishes findings with identical text and source locations. */
+  instanceKey?: string;
   suppressed?: boolean;
   suppressionReason?: string;
   confidence?: Confidence;
@@ -528,7 +530,7 @@ export interface ProjectInfo {
   nuxtModuleDefinitions?: NuxtModuleDefinition[];
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
-  evidenceGaps?: Array<{ source: string; message: string; files: string[] }>;
+  evidenceGaps?: Array<{ source: string; message: string; files: string[]; instanceKey?: string }>;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
 }

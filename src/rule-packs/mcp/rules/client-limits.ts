@@ -9,7 +9,7 @@ import type {
 import type { DoctorDiagnosticHandle } from "../../../core/diagnostics.js";
 import { sha256 } from "../../../core/internal/utils.js";
 import { checkMcpToolList } from "../../../mcp/check.js";
-import { mcpEndpointLabel } from "../../../mcp/endpoint.js";
+import { mcpEndpointId, mcpEndpointLabel } from "../../../mcp/endpoint.js";
 import { readMcpServers, type McpServerToolsEvidence } from "../../../mcp/evidence.js";
 import type { McpClient, McpEffect, McpFinding } from "../../../mcp/types.js";
 import { collectMcpTools, type McpToolDefinition } from "./shared.js";
@@ -116,6 +116,13 @@ function report(
   definition: McpToolDefinition | undefined,
 ): void {
   const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
+  const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
+  const fingerprint =
+    endpointId || !definition?.name?.range
+      ? sha256(
+          JSON.stringify([options.ruleId, server.name ?? null, endpointId ?? null, tool ?? null]),
+        )
+      : undefined;
   const label = server.name ?? endpoint ?? "an MCP server";
   const subject =
     tool === undefined
@@ -164,13 +171,8 @@ function report(
       file: definition && range ? definition.file : undefined,
       projectLevel: !definition || !range,
       range: definition && range ? range : undefined,
-      // Without a source location, the server and tool identify the Diagnostic across runs.
-      fingerprint:
-        definition && range
-          ? undefined
-          : sha256(
-              JSON.stringify([options.ruleId, server.name ?? null, endpoint ?? null, tool ?? null]),
-            ),
+      fingerprint,
+      instanceKey: endpointId ? fingerprint : undefined,
       confidence,
       evidence,
     },

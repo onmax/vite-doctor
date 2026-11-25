@@ -1,4 +1,5 @@
 import type { DoctorRunOptions } from "../config.js";
+import { isMcpHeaderName } from "../../mcp/endpoint.js";
 
 export function applyDoctorOptions(
   options: DoctorRunOptions,
@@ -37,19 +38,19 @@ function parseMcpFlags(urls: unknown, headers: unknown): DoctorRunOptions["mcp"]
     if (headerList.length) throw new Error("--mcp-header requires --mcp-url <url>.");
     return undefined;
   }
-  const parsed: Record<string, string> = {};
+  const parsed = new Map<string, string>();
   for (const header of headerList) {
     const colon = header.indexOf(":");
     const name = colon === -1 ? "" : header.slice(0, colon).trim();
-    if (!name)
+    if (!isMcpHeaderName(name))
       throw new Error(
         '--mcp-header must look like "Name: value", such as "Authorization: Bearer <token>".',
       );
-    parsed[name] = header.slice(colon + 1).trim();
+    parsed.set(name, header.slice(colon + 1).trim());
   }
   return urlList.map((url) => ({
     url,
-    ...(headerList.length ? { headers: { ...parsed } } : {}),
+    ...(parsed.size ? { headers: Object.fromEntries(parsed) } : {}),
   }));
 }
 

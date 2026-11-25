@@ -37,7 +37,7 @@ export function mcpStubHandler(options: StubOptions = {}): RequestListener {
       const message = JSON.parse(body || "{}") as { id?: number; method?: string };
       options.requests?.push({
         path: request.url ?? "",
-        method: message.method ?? "",
+        method: request.method === "DELETE" ? "DELETE" : (message.method ?? ""),
         headers: request.headers,
       });
       if (options.token && request.headers.authorization !== `Bearer ${options.token}`) {

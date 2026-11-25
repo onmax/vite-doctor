@@ -120,19 +120,23 @@ test("a save replaces project-wide MCP evidence gaps and findings", async () => 
     const handler = mcpStubHandler({
       tools: [{ name: "remote", inputSchema: { type: "object", properties: { "page size": {} } } }],
     });
+    const mcp = [{ url: "/live" }, { url: "/unavailable" }];
     const server = await createServer({
-      ...config(root, logger, { run: "serve", mcp: [{ url: "/live" }] }),
+      ...config(root, logger, { run: "serve", mcp }),
       plugins: [
         {
           name: "fixture/live-mcp",
           configureServer(server) {
+            server.middlewares.use("/unavailable", (_request, response) => {
+              response.writeHead(401).end();
+            });
             server.middlewares.use("/live", (request, response) => {
               if (!authorized) response.writeHead(401).end();
               else handler(request, response);
             });
           },
         },
-        doctor({ cache: false, mode: "error", run: "serve", mcp: [{ url: "/live" }] }),
+        doctor({ cache: false, mode: "error", run: "serve", mcp }),
       ],
     });
     try {
@@ -142,9 +146,11 @@ test("a save replaces project-wide MCP evidence gaps and findings", async () => 
       server.watcher.emit("change", join(root, "entry.ts"));
       await vi.waitFor(
         () => {
-          expect([...warnings, ...errors]).toContainEqual(
-            expect.stringMatching(/Evidence restored:[\s\S]*MCP0005/),
-          );
+          expect(
+            [...warnings, ...errors].some(
+              (message) => message.includes("Evidence restored:") && message.includes("MCP0005"),
+            ),
+          ).toBe(true);
         },
         { timeout: 15_000 },
       );

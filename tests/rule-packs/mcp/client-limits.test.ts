@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "pathe";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import type { Diagnostic, DoctorRunOptions } from "../../../src/core/index.ts";
+import { writeBaseline } from "../../../src/core/internal/diagnostic-policy.ts";
 import { runViteDoctor } from "../../../src/doctor.ts";
 import { mcpClientRules } from "../../../src/mcp/index.ts";
 import type { McpServerEvidence } from "../../../src/mcp/evidence.ts";
@@ -13,6 +14,7 @@ import { startMcpStub } from "../../mcp/mcp-stub.ts";
 const cleanups: Array<() => unknown> = [];
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
@@ -214,8 +216,52 @@ test("tools read from a running server through the mcp option are checked", asyn
   expect(context.why).toContain(
     'MCP server "stub" reaches the model with less context in Claude Code.',
   );
-  expect(context.evidence?.[0]?.summary).toContain(server.url);
+  expect(context.evidence?.[0]?.summary).toContain(new URL(server.url).origin);
+  expect(context.evidence?.[0]?.summary).not.toContain(server.url);
 });
+
+test.each([false, true])(
+  "same-origin MCP endpoints have separate baselines (source match: %s)",
+  async (sourceMatch) => {
+    vi.stubGlobal("fetch", async (_url: URL, request: RequestInit) => {
+      const { id, method } = JSON.parse(typeof request.body === "string" ? request.body : "{}");
+      if (method === "notifications/initialized") return new Response(null, { status: 202 });
+      const result =
+        method === "initialize" ? { serverInfo: { name: "stub" } } : { tools: [lookup] };
+      return Response.json({ jsonrpc: "2.0", id, result });
+    });
+    const root = project(
+      sourceMatch
+        ? { "server/mcp/tools/lookup.ts": searchSource.replace("name: 'search'", "name: 'lookup'") }
+        : {},
+    );
+    const first = { url: "https://example.test/private-a?token=secret-a" };
+    const second = { url: "https://example.test/private-b?token=secret-b" };
+    const exclusions = (diagnostics: Diagnostic[]) =>
+      diagnostics.filter((item) => item.code === "MCP0005");
+
+    const initial = await run(root, { mcp: [first] });
+    const [known] = exclusions(initial.diagnostics);
+    expect(known?.range !== undefined).toBe(sourceMatch);
+    writeBaseline(root, "baseline.json", initial.diagnostics);
+
+    const combined = await run(root, { mcp: [second, first] });
+    const findings = exclusions(combined.diagnostics);
+    expect(findings).toHaveLength(2);
+    expect(new Set(findings.map((item) => item.fingerprint)).size).toBe(2);
+    expect(JSON.stringify(findings)).not.toMatch(/private-[ab]|secret-[ab]/);
+
+    const filtered = await run(root, {
+      mcp: [first, second],
+      baseline: "baseline.json",
+      newOnly: true,
+    });
+    const standalone = await run(root, { mcp: [second] });
+    expect(exclusions(filtered.diagnostics).map((item) => item.fingerprint)).toEqual(
+      exclusions(standalone.diagnostics).map((item) => item.fingerprint),
+    );
+  },
+);
 
 test("the Recommended Preset reports only excluded tools and truncated text", async () => {
   const server = await startMcpStub({ tools: [search, lookup] });

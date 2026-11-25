@@ -102,9 +102,11 @@ test("malformed tool lists leave a gap without exposing the request URL", async 
   const result = await runViteDoctor({ root, cache: false, mcp: [{ url }] });
   expect(reportStatus(result)).toBe("incomplete");
   expect(result.project.evidenceGaps?.[0]?.message).toContain("tools[0]");
-  const report = createReport(result, "agent", { runOptions: { root, mcp: [{ url }] } });
+  const report = createReport(result, "agent", {
+    runOptions: { root, mcp: [{ url, headers: { "invalid fake-secret": "value" } }] },
+  });
   expect(report).toContain("<mcp-url>");
-  expect(report).not.toMatch(/path-secret|query-secret|fragment-secret|password/);
+  expect(report).not.toMatch(/path-secret|query-secret|fragment-secret|password|fake-secret/);
   expect(JSON.stringify(result.project.runtimeEvidence)).not.toMatch(
     /path-secret|query-secret|fragment-secret|password/,
   );
@@ -180,14 +182,15 @@ test("--mcp-url and --mcp-header repeat, and every header goes to every URL", as
   ]);
 
   expect(code).toBe(0);
-  expect(requests.map((request) => request.method).sort()).toEqual([
-    "initialize",
-    "initialize",
-    "notifications/initialized",
-    "notifications/initialized",
-    "tools/list",
-    "tools/list",
-  ]);
+  expect(requests).toHaveLength(8);
+  for (const url of [`${first.url}/path-secret?token=query-secret`, second.url]) {
+    const { pathname, search } = new URL(url);
+    expect(
+      requests
+        .filter((request) => request.path === pathname + search)
+        .map((request) => request.method),
+    ).toEqual(["initialize", "notifications/initialized", "tools/list", "DELETE"]);
+  }
   for (const request of requests) {
     expect(request.headers.authorization).toBe("Bearer secret");
     expect(request.headers["x-team"]).toBe("drops");
@@ -206,10 +209,15 @@ test.each([
     'must look like "Name: value"',
   ],
   [["--mcp-url", "/mcp"], "is not an absolute http(s) URL"],
+  [
+    ["--mcp-url", "http://127.0.0.1:1/mcp", "--mcp-header", "Bearer fake-secret: value"],
+    'must look like "Name: value"',
+  ],
 ])("the CLI rejects %j as an invocation error", async (args, message) => {
   const { code, output } = await cli(project(), [".", "--no-cache", "--format", "json", ...args]);
   expect(code).toBe(2);
   expect(output).not.toContain("no colon");
+  expect(output).not.toContain("fake-secret");
   expect(JSON.parse(output).error).toMatchObject({
     kind: "invocation",
     message: expect.stringContaining(message),
