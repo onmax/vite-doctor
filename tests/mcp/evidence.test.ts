@@ -215,17 +215,27 @@ test("fetched MCP evidence is not reported as used when client Rules are filtere
   expect(checked.project.evidenceUsed).toEqual([
     { source: "mcp", message: "tools/list of the MCP server at https://example.test, 1 tool" },
   ]);
-  for (const filter of [
-    { rules: "typescript/*" },
-    { rules: "mcp/tools/*" },
-    { analyses: "graph" },
-  ]) {
+  for (const filter of [{ rules: "typescript/*" }, { analyses: "graph" }]) {
     const result = await runViteDoctor({ ...options, ...filter });
     expect(readMcpServers(result.project.runtimeEvidence)).toHaveLength(1);
     expect(reportStatus(result)).toBe("clean");
     expect(result.project.evidenceUsed).toBeUndefined();
     expect(createReport(result, "text")).not.toContain("Evidence used:");
   }
+});
+
+test("MCP tool Rules that check the tools a server sends report its evidence as used", async () => {
+  mockRemoteToolWithIncompatibleSchema();
+  const result = await runViteDoctor({
+    root: project(),
+    cache: false,
+    mcp: [{ url: "https://example.test/mcp" }],
+    rules: "mcp/tools/*",
+  });
+  expect(result.diagnostics.map(({ code }) => code)).toContain("MCP0001");
+  expect(result.project.evidenceUsed).toEqual([
+    { source: "mcp", message: "tools/list of the MCP server at https://example.test, 1 tool" },
+  ]);
 });
 
 test("only project-wide client Rules cover remote-only MCP tools without the MCP Preset", async () => {
@@ -244,6 +254,14 @@ test("only project-wide client Rules cover remote-only MCP tools without the MCP
   expect(fileOnly.diagnostics.map(({ code }) => code)).not.toContain("MCP0005");
   expect(reportStatus(fileOnly)).toBe("incomplete");
   expect(fileOnly.project.evidenceUsed).toBeUndefined();
+
+  const titleOnly = await runViteDoctor({
+    ...options,
+    config: { rules: { "mcp/tools/require-annotation-title": "error" } },
+  });
+  expect(titleOnly.diagnostics.map(({ code }) => code)).toContain("MCP0001");
+  expect(reportStatus(titleOnly)).toBe("incomplete");
+  expect(titleOnly.project.evidenceUsed).toHaveLength(1);
 
   const projectWide = await runViteDoctor({ ...options, config: { rules } });
   expect(projectWide.diagnostics.map(({ code }) => code)).toContain("MCP0005");
