@@ -9,6 +9,7 @@ import type {
   SourceRange,
 } from "../../../core/index.js";
 import type { DoctorDiagnosticHandle } from "../../../core/diagnostics.js";
+import { canReportAtProjectRoot } from "../../../core/internal/rule-execution.js";
 import { sha256 } from "../../../core/internal/utils.js";
 import { checkMcpToolList } from "../../../mcp/check.js";
 import { mcpEndpointId, mcpEndpointLabel } from "../../../mcp/endpoint.js";
@@ -42,25 +43,28 @@ interface ServerFindings {
   findings: McpFinding[];
 }
 
-const checked = new WeakMap<ProjectInfo, ServerFindings[]>();
+const checked = new WeakMap<ProjectInfo, { servers: ServerFindings[]; projectWide: boolean }>();
 
 export function checkedMcpServers(project: ProjectInfo): McpServerToolsEvidence[] {
-  return checked.get(project)?.map(({ server }) => server) ?? [];
+  const result = checked.get(project);
+  return result?.projectWide ? result.servers.map(({ server }) => server) : [];
 }
 
 /** Every MCP server's findings, checked once per Doctor Run and shared by the client-limit Rules. */
 function serverFindings(ctx: RuleContext): ServerFindings[] {
   let found = checked.get(ctx.project);
   if (!found) {
-    found = readMcpServers(ctx.project.runtimeEvidence)
+    const servers = readMcpServers(ctx.project.runtimeEvidence)
       .filter((server): server is McpServerToolsEvidence => "tools" in server)
       .map((server) => ({
         server,
         findings: checkMcpToolList(server, { serverName: server.clientAlias }),
       }));
+    found = { servers, projectWide: false };
     checked.set(ctx.project, found);
   }
-  return found;
+  if (canReportAtProjectRoot(ctx)) found.projectWide = true;
+  return found.servers;
 }
 
 const SEVERITY_RANK: Record<McpFinding["severity"], number> = { info: 0, warn: 1, error: 2 };

@@ -196,7 +196,7 @@ test("an evidence-only Rule Pack requires matching Runtime Evidence", async () =
   expect(create).toHaveBeenCalledOnce();
 });
 
-test("fetched MCP evidence is not reported as used when client Rules are filtered out", async () => {
+function mockRemoteToolWithIncompatibleSchema() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
     const { method, id } = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
     if (method === "notifications/initialized") return new Response(null, { status: 202 });
@@ -205,6 +205,10 @@ test("fetched MCP evidence is not reported as used when client Rules are filtere
     ];
     return Response.json({ id, result: method === "initialize" ? {} : { tools } });
   });
+}
+
+test("fetched MCP evidence is not reported as used when client Rules are filtered out", async () => {
+  mockRemoteToolWithIncompatibleSchema();
   const options = { root: project(), cache: false, mcp: [{ url: "https://example.test/mcp" }] };
   const checked = await runViteDoctor(options);
   expect(checked.diagnostics.map(({ code }) => code)).toContain("MCP0005");
@@ -222,6 +226,31 @@ test("fetched MCP evidence is not reported as used when client Rules are filtere
     expect(result.project.evidenceUsed).toBeUndefined();
     expect(createReport(result, "text")).not.toContain("Evidence used:");
   }
+});
+
+test("only project-wide client Rules cover remote-only MCP tools without the MCP Preset", async () => {
+  mockRemoteToolWithIncompatibleSchema();
+  const options = {
+    root: project(),
+    cache: false,
+    extends: ["vite-doctor/typescript/recommended"],
+    mcp: [{ url: "https://example.test/mcp" }],
+  };
+  const rules = { "mcp/clients/no-excluded-tool": "error" } as const;
+  const fileOnly = await runViteDoctor({
+    ...options,
+    config: { overrides: [{ files: ["index.ts"], rules }] },
+  });
+  expect(fileOnly.diagnostics.map(({ code }) => code)).not.toContain("MCP0005");
+  expect(reportStatus(fileOnly)).toBe("incomplete");
+  expect(fileOnly.project.evidenceUsed).toBeUndefined();
+
+  const projectWide = await runViteDoctor({ ...options, config: { rules } });
+  expect(projectWide.diagnostics.map(({ code }) => code)).toContain("MCP0005");
+  expect(projectWide.project.evidenceGaps ?? []).toHaveLength(0);
+  expect(projectWide.project.evidenceUsed).toEqual([
+    { source: "mcp", message: "tools/list of the MCP server at https://example.test, 1 tool" },
+  ]);
 });
 
 test("an extends list that leaves out the MCP Rule Pack leaves an evidence gap", async () => {
