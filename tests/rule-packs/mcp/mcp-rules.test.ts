@@ -6,6 +6,7 @@ import { runViteDoctor } from "../../../src/doctor.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
 import {
   mcpRulePack,
+  noIndentedJsonOutput,
   requireAnnotationTitle,
   requireSafetyHint,
   validName,
@@ -13,7 +14,8 @@ import {
 
 const nitroToolkit = { "nitro-mcp-toolkit": "^0.4.0", h3: "^2.0.0" };
 const nuxtToolkit = { "@nuxtjs/mcp-toolkit": "^0.24.0", nuxt: "^4.0.0" };
-const rules = [requireAnnotationTitle, requireSafetyHint, validName];
+const viteHub = { "vite-hub": "^0.5.0", vite: "^8.0.0" };
+const rules = [requireAnnotationTitle, requireSafetyHint, validName, noIndentedJsonOutput];
 
 async function codes(
   files: Record<string, string>,
@@ -361,8 +363,262 @@ describe("MCP tool names", () => {
   });
 });
 
+describe("ViteHub MCP tools", () => {
+  test("uses the discovered name in JSX and TSX files instead of an options override", async () => {
+    const longName = "a".repeat(65);
+    const found = await messages(
+      {
+        "server/mcp/tools/rows.tsx": tool(
+          "{ name: 'not a tool name', annotations: { title: 'Rows', readOnlyHint: true }, handler: () => { const view: unknown = <div />; return JSON.stringify(view, null, 2) } }",
+          "vite-hub/mcp",
+        ),
+        [`server/mcp/tools/${longName}.jsx`]: tool(
+          "{ name: 'reports', annotations: { title: 'Reports', readOnlyHint: true }, handler: () => <div /> }",
+          "@vite-hub/mcp",
+        ),
+      },
+      viteHub,
+    );
+    expect(found.map((diagnostic) => diagnostic.code).sort()).toEqual(["MCP0003", "MCP0004"]);
+    const invalidName = found.find((diagnostic) => diagnostic.code === "MCP0003");
+    expect(invalidName?.message).toContain(longName);
+    expect(invalidName?.suggestion).toContain("Rename or move the tool file");
+    expect(invalidName?.suggestion).not.toContain("set `name`");
+    expect(found.find((diagnostic) => diagnostic.code === "MCP0004")?.message).toContain('"rows"');
+  });
+
+  test("names a tool after its path below mcp/tools and fills no title", async () => {
+    const found = await messages(
+      {
+        "server/mcp/tools/add.ts":
+          "import { defineMcpTool } from 'vite-hub/mcp'\nexport default defineMcpTool({ description: 'Add', handler: () => 1 })\n",
+        "server/mcp/tools/orders/index.ts":
+          "import { defineMcpTool } from '@vite-hub/mcp'\nexport default defineMcpTool({ title: 'Orders', annotations: { title: 'Orders', readOnlyHint: true }, handler: () => [] })\n",
+        "server/mcp/tools/list orders.ts":
+          "import { defineMcpTool } from 'vite-hub/mcp'\nexport default defineMcpTool({ annotations: { title: 'List', readOnlyHint: true }, handler: () => [] })\n",
+      },
+      viteHub,
+    );
+    expect(
+      found.map((diagnostic) => `${diagnostic.code} ${relativePath(diagnostic.file)}`).sort(),
+    ).toEqual([
+      "MCP0001 server/mcp/tools/add.ts",
+      "MCP0002 server/mcp/tools/add.ts",
+      "MCP0003 server/mcp/tools/list orders.ts",
+    ]);
+    const title = found.find((diagnostic) => diagnostic.code === "MCP0001");
+    expect(title?.message).toContain('"add"');
+    expect(title?.message).not.toContain("top-level title");
+    expect(found.find((diagnostic) => diagnostic.code === "MCP0003")?.message).toContain(
+      '"list orders"',
+    );
+  });
+});
+
+describe("MCP tool output", () => {
+  test("ignores JSON that does not reach the handler's text result", async () => {
+    const info = "name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }";
+    const pretty = "JSON.stringify({ a: 1 }, null, 2)";
+    expect(
+      await codes({
+        "src/metadata.ts": tool(`{ ${info}, description: ${pretty}, handler: () => 'ok' }`),
+        "src/metadata-text.ts": tool(`{ ${info}, text: ${pretty}, handler: () => 'ok' }`),
+        "src/callback.ts": tool(
+          `{ ${info}, handler() { console.log([1].map(() => ${pretty})); return 'ok' } }`,
+        ),
+        "src/structured.ts": tool(
+          `{ ${info}, handler: () => ({ structuredContent: { text: ${pretty} }, content: [{ type: 'text', text: '{}' }] }) }`,
+        ),
+        "src/nontext.ts": tool(
+          `{ ${info}, handler: () => ({ content: [{ type: 'image', text: ${pretty} }] }) }`,
+        ),
+        "src/overridden.ts": tool(`{ ${info}, handler: () => ${pretty}, ...otherOptions }`),
+      }),
+    ).toEqual([]);
+  });
+
+  test("does not treat shadowed JSON bindings as the built-in", async () => {
+    const info = "name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }";
+    expect(
+      await codes({
+        "src/format.ts": "export const JSON = { stringify: () => '{}' }",
+        "src/import.ts":
+          "import { JSON } from './format'\n" +
+          tool(`{ ${info}, handler: () => JSON.stringify({}, null, 2) }`),
+        "src/parameter.ts": tool(`{ ${info}, handler: (JSON) => JSON.stringify({}, null, 2) }`),
+      }),
+    ).toEqual([]);
+  });
+
+  test("preserves the replacer and points to the stringify in a same-file helper", async () => {
+    const stringify = "JSON.stringify({ id: 1, label: 'Example' }, ['id'], 2)";
+    const found = await messages({
+      "src/rows.ts":
+        `const format = () => ${stringify}\n` +
+        tool(
+          "{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, handler: () => format() }",
+        ),
+    });
+    expect(found.map((diagnostic) => diagnostic.code)).toEqual(["MCP0004"]);
+    expect(found[0]?.suggestion).toContain("keep the replacer");
+    expect(found[0]?.evidence?.[0]?.range).toMatchObject({
+      start: "const format = () => ".length,
+      end: "const format = () => ".length + stringify.length,
+    });
+  });
+
+  test("reports indented JSON that a tool returns as its text", async () => {
+    expect(
+      await codes({
+        "src/text.ts": tool(
+          "{ name: 'text', annotations: { title: 'Text', readOnlyHint: true }, handler: async () => ({ content: [{ type: 'text', text: JSON.stringify(await rows(), null, 2) }] }) }",
+        ),
+        "src/return.ts": tool(
+          "{ name: 'ret', annotations: { title: 'Return', readOnlyHint: true }, async handler() { const value = await rows()\n return JSON.stringify(value, undefined, '\\t') } }",
+        ),
+        "src/arrow.ts": tool(
+          "{ name: 'arrow', annotations: { title: 'Arrow', readOnlyHint: true }, handler: () => (JSON.stringify(rows(), null, 2) as string) }",
+        ),
+        "src/named.ts":
+          "function render() { return { content: [{ type: 'text', text: format() }] } }\n" +
+          "const format = () => JSON.stringify({}, null, 2)\n" +
+          tool(
+            "{ name: 'named', annotations: { title: 'Named', readOnlyHint: true }, handler: render }",
+          ),
+      }),
+    ).toEqual([
+      "MCP0004 src/arrow.ts",
+      "MCP0004 src/named.ts",
+      "MCP0004 src/return.ts",
+      "MCP0004 src/text.ts",
+    ]);
+  });
+
+  test("follows a helper the tool returns, like the Quiver portal before compact output", async () => {
+    const found = await messages(
+      {
+        "server/utils/mcp/structuredResult.ts":
+          "export function toMcpStructuredResult(value: unknown, legacy?: unknown) {\n  const text = legacy ?? value\n  return { content: [{ type: 'text', text: JSON.stringify(text, null, 2) ?? String(text) }], structuredContent: value }\n}\n",
+        "server/utils/mcp/format.ts":
+          "import { toMcpStructuredResult } from './structuredResult'\nexport const formatRows = (rows: unknown[]) => toMcpStructuredResult({ rows })\n",
+        "server/mcp/tools/list-alerts.ts":
+          "export default defineMcpTool({\n  name: 'list_alerts',\n  annotations: { title: 'List alerts', readOnlyHint: true },\n  handler: async () => {\n    const alerts = await loadAlerts()\n    return toMcpStructuredResult({ alerts })\n  },\n})\n",
+        "server/mcp/tools/list-rows.ts":
+          "import { formatRows } from '../../utils/mcp/format'\nexport default defineMcpTool({\n  name: 'list_rows',\n  annotations: { title: 'List rows', readOnlyHint: true },\n  handler: async () => formatRows(await loadRows()),\n})\n",
+      },
+      nuxtToolkit,
+    );
+    expect(
+      found.map((diagnostic) => `${diagnostic.code} ${relativePath(diagnostic.file)}`).sort(),
+    ).toEqual(["MCP0004 server/mcp/tools/list-alerts.ts", "MCP0004 server/mcp/tools/list-rows.ts"]);
+    expect(found[0]?.message).toContain("server/utils/mcp/structuredResult.ts");
+    expect(relativePath(found[0]?.evidence?.[0]?.file ?? "")).toBe(
+      "server/utils/mcp/structuredResult.ts",
+    );
+  });
+
+  test("reports the SDK handler argument of registerTool", async () => {
+    expect(
+      await codes(
+        {
+          "src/server.ts":
+            "import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'\nconst server = new McpServer({ name: 's', version: '1' })\nserver.registerTool('list', { annotations: { title: 'List', readOnlyHint: true } }, async () => ({ content: [{ type: 'text', text: JSON.stringify(await rows(), null, 2) }] }))\nserver.registerTool('compact', { text: JSON.stringify({}, null, 2), annotations: { title: 'Compact', readOnlyHint: true } }, () => ({ content: [{ type: 'text', text: '{}' }] }))\n",
+        },
+        { "@modelcontextprotocol/sdk": "^1.20.0" },
+      ),
+    ).toEqual(["MCP0004 src/server.ts"]);
+  });
+
+  test("does not follow reassigned handler or helper declarations", async () => {
+    const pretty = "function render() { return JSON.stringify({ n: 1 }, null, 2) }\n";
+    const reassign = "render = () => '{\"n\":1}'\n";
+    const options = (handler: string) =>
+      `{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, handler: ${handler} }`;
+    expect(
+      await codes({
+        "src/handler.ts": pretty + reassign + tool(options("render")),
+        "src/local.ts": pretty + reassign + tool(options("() => render()")),
+        "src/imported.ts": "import { render } from './render'\n" + tool(options("render")),
+        "src/render.ts": "export " + pretty + reassign,
+        "src/stable.ts": pretty + tool(options("render")),
+      }),
+    ).toEqual(["MCP0004 src/stable.ts"]);
+  });
+
+  test("follows the runtime implementation of an overloaded helper", async () => {
+    const render = [
+      "function render(n: number): string",
+      "function render(n: string): string",
+      "function render(n: number | string) { return JSON.stringify({ n }, null, 2) }",
+    ];
+    const definition = tool(
+      "{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, handler: () => render(1) }",
+    );
+    expect(
+      await codes({
+        "src/local.ts": [...render, definition].join("\n"),
+        "src/imported.ts": "import { render } from './render'\n" + definition,
+        "src/render.ts": render.map((line) => `export ${line}`).join("\n"),
+        "src/reassigned.ts": [...render, "render = () => '{}'", definition].join("\n"),
+        "src/ambient.ts": "declare function render(n: number): string\n" + definition,
+      }),
+    ).toEqual(["MCP0004 src/imported.ts", "MCP0004 src/local.ts"]);
+  });
+
+  test("traces only Nitro's imported toolResult envelope", async () => {
+    const result =
+      "{ content: [{ type: 'text', text: JSON.stringify({ n: 1 }, null, 2) }], structuredContent: { n: 1 } }";
+    const options = (handler: string) =>
+      `{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, outputSchema: { n: z.number() }, handler: ${handler} }`;
+    expect(
+      await codes({
+        "src/envelope.ts":
+          "import { toolResult as envelope } from 'nitro-mcp-toolkit'\n" +
+          tool(options(`() => envelope(${result})`)),
+        "src/unrelated.ts":
+          "import { toolResult } from 'another-package'\n" +
+          tool(options(`() => toolResult(${result})`)),
+        "src/shadowed.ts":
+          "import { toolResult } from 'nitro-mcp-toolkit'\n" +
+          tool(options(`(toolResult) => toolResult(${result})`)),
+      }),
+    ).toEqual(["MCP0004 src/envelope.ts"]);
+  });
+
+  test.each([
+    ["./render", { "src/render.js": "export const render = () => '{}'" }, []],
+    ["./render.jsx", {}, ["MCP0004 src/tool.ts"]],
+  ])("follows Vite helper resolution for %s", async (specifier, otherFiles, expected) => {
+    expect(
+      await codes(
+        {
+          ...otherFiles,
+          "src/render.tsx": "export const render = () => JSON.stringify({ n: 1 }, null, 2)",
+          "src/tool.ts":
+            `import { render } from '${specifier}'\n` +
+            tool(
+              "{ name: 'rows', annotations: { title: 'Rows', readOnlyHint: true }, handler: () => render() }",
+              "vite-hub/mcp",
+            ),
+        },
+        viteHub,
+      ),
+    ).toEqual(expected);
+  });
+
+  test("accepts compact JSON, logs, and indents Doctor can't read", async () => {
+    expect(
+      await codes({
+        "src/compact.ts": tool(
+          "{ name: 'compact', annotations: { title: 'Compact', readOnlyHint: true }, handler: async () => { const value = await rows()\n console.log(JSON.stringify(value, null, 2))\n const pretty = JSON.stringify(value, null, 2)\n void pretty\n return { content: [{ type: 'text', text: JSON.stringify(value) }, { type: 'text', text: JSON.stringify(value, null, 0) }, { type: 'text', text: JSON.stringify(value, null, indent) }] } } }",
+        ),
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe("MCP Rule Pack", () => {
-  test("activates on MCP server libraries with every Rule recommended", () => {
+  test("activates on MCP server libraries and recommends the source Rules and lost-tool client limits", () => {
     expect(mcpRulePack.name).toBe("vite-doctor/mcp");
     expect(mcpRulePack.activation).toEqual({ packages: expect.any(Array) });
     const { packages } = mcpRulePack.activation || {};
@@ -370,13 +626,20 @@ describe("MCP Rule Pack", () => {
       "@modelcontextprotocol/sdk",
       "@modelcontextprotocol/server",
       "@nuxtjs/mcp-toolkit",
+      "@vite-hub/mcp",
       "h3-mcp",
       "nitro-mcp-toolkit",
       "okmcp",
+      "vite-hub",
     ]);
     expect(mcpRulePack.presets.recommended.toSorted()).toEqual(
-      rules.map((rule) => rule.meta.id).toSorted(),
+      [
+        ...rules.map((rule) => rule.meta.id),
+        "mcp/clients/no-excluded-tool",
+        "mcp/clients/no-truncated-text",
+      ].toSorted(),
     );
+    expect(mcpRulePack.presets.strict).toHaveLength(mcpRulePack.rules.length);
   });
 
   test("runs through the Vite Doctor distribution only for MCP projects", async () => {

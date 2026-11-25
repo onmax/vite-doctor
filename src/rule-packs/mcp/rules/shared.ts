@@ -17,6 +17,7 @@ export type McpLibrary =
   | "h3-mcp"
   | "nitro-mcp-toolkit"
   | "@nuxtjs/mcp-toolkit"
+  | "@vite-hub/mcp"
   | "@modelcontextprotocol/sdk";
 
 export interface McpStaticValue {
@@ -50,6 +51,15 @@ export interface McpToolDefinition {
   name?: McpStaticValue;
   title?: McpStaticValue;
   annotations: McpToolAnnotations;
+  /** `JSON.stringify()` calls with an indent whose result the tool returns as its text. */
+  indentedJson: McpIndentedJson[];
+}
+
+export interface McpIndentedJson {
+  /** The stringify call, or the call of the helper that returns it, in the tool's file. */
+  range: SourceRange;
+  /** The stringify call inside a helper that the tool returns. */
+  helper?: { file: string; displayPath: string; range: SourceRange };
 }
 
 export const MCP_PACKAGES = [
@@ -57,11 +67,13 @@ export const MCP_PACKAGES = [
   "okmcp",
   "nitro-mcp-toolkit",
   "@nuxtjs/mcp-toolkit",
+  "@vite-hub/mcp",
+  "vite-hub",
   "@modelcontextprotocol/sdk",
   "@modelcontextprotocol/server",
 ];
 
-const SCRIPT_FILE = /\.[cm]?[jt]s$/;
+const SCRIPT_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const TOOL_CALLEES = /\b(?:defineMcpTool|defineTool|registerTool)\b/;
 const TRANSPARENT_WRAPPERS = new Set([
   "ParenthesizedExpression",
@@ -81,6 +93,8 @@ function libraryForImport(source: string, imported: string): McpLibrary | undefi
       source === "#imports"
     )
       return "@nuxtjs/mcp-toolkit";
+    // Apps install `vite-hub` and import its `vite-hub/mcp` entry, which re-exports `@vite-hub/mcp`.
+    if (source === "vite-hub/mcp" || source === "@vite-hub/mcp") return "@vite-hub/mcp";
   }
   if (imported === "defineTool" && /^(?:h3-mcp|okmcp)(?:\/|$)/.test(source)) return "h3-mcp";
   return undefined;
@@ -139,7 +153,8 @@ interface ParsedModule {
   references: Map<number, ScopeReference>;
   /** Readable `const` initializers keyed by their binding identifier offset. */
   constants: Map<number, AnyNode>;
-  /** Exported top-level `const` initializers by exported name. */
+  stableFunctions: Set<number>;
+  /** Exported top-level `const` initializers and function declarations by exported name. */
   exportedConstants: Map<string, AnyNode>;
 }
 
@@ -195,7 +210,7 @@ function loadModule(
   const references = new Map<number, ScopeReference>();
   try {
     scope = parseScriptScope(text, {
-      dialect: /\.[cm]?ts$/.test(file) ? "ts" : "jsx",
+      dialect: file.endsWith(".tsx") ? "tsx" : /\.[cm]?ts$/.test(file) ? "ts" : "jsx",
       sourceType: "module",
     });
     for (const reference of scope.references.values()) {
@@ -214,8 +229,24 @@ function loadModule(
     scope,
     references,
     constants: new Map(),
+    stableFunctions: new Set(),
     exportedConstants: new Map(),
   };
+  for (const lexicalScope of scope?.scopeManager.scopes ?? []) {
+    for (const variable of lexicalScope.variables) {
+      const runtimeDefinitions = variable.defs.filter(
+        (definition) => definition.node.type !== "TSDeclareFunction",
+      );
+      const [definition] = runtimeDefinitions;
+      if (
+        runtimeDefinitions.length === 1 &&
+        definition?.type === "FunctionName" &&
+        definition.node.type === "FunctionDeclaration" &&
+        !variable.references.some((reference) => reference.isWrite())
+      )
+        module.stableFunctions.add(definition.node.range[0]);
+    }
+  }
   walk(program, (node) => {
     if (node.type !== "VariableDeclaration" || node.kind !== "const") return;
     for (const declarator of node.declarations ?? []) {
@@ -226,6 +257,10 @@ function loadModule(
   for (const statement of (program as AnyNode).body ?? []) {
     if (statement.type !== "ExportNamedDeclaration") continue;
     const declaration = statement.declaration;
+    if (declaration?.type === "FunctionDeclaration" && declaration.id?.name) {
+      module.exportedConstants.set(declaration.id.name, declaration);
+      continue;
+    }
     if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") continue;
     for (const declarator of declaration.declarations ?? []) {
       if (declarator.id?.type !== "Identifier" || !declarator.init) continue;
@@ -351,24 +386,26 @@ function readDefinition(
     modules.ctx.helpers.rangeFromOffsets(module.file, module.text, node.start, node.end);
   const property = (key: string) => findProperty(found.options, key);
   const callee = range(unwrap(found.call.callee));
-  const fileName = basename(module.file).replace(/\.[cm]?[jt]s$/, "");
+  const fileName = basename(module.file).replace(SCRIPT_FILE, "");
+  const toolPath = /(?:^|\/)mcp\/tools\/(.+)$/.exec(
+    module.displayPath.replace(SCRIPT_FILE, ""),
+  )?.[1];
   const discovered =
     found.defaultExport &&
     found.library !== "h3-mcp" &&
     found.library !== "@modelcontextprotocol/sdk" &&
-    /(?:^|\/)mcp\/tools\//.test(module.displayPath);
+    toolPath !== undefined;
 
-  const nameNode = found.nameNode ?? property("name")?.value;
+  const nameNode =
+    discovered && found.library === "@vite-hub/mcp"
+      ? undefined
+      : (found.nameNode ?? property("name")?.value);
   const literalName = staticString(nameNode);
   const name: McpStaticValue | undefined =
     literalName !== undefined
       ? { value: literalName, source: "literal", range: range(unwrap(nameNode)) }
       : !nameNode && discovered
-        ? {
-            value: found.library === "@nuxtjs/mcp-toolkit" ? kebabCase(fileName) : fileName,
-            source: "file",
-            range: callee,
-          }
+        ? { value: fileToolName(found.library, fileName, toolPath), source: "file", range: callee }
         : undefined;
 
   const titleNode = property("title")?.value;
@@ -376,7 +413,7 @@ function readDefinition(
   const title: McpStaticValue | undefined =
     literalTitle !== undefined
       ? { value: literalTitle, source: "literal", range: range(unwrap(titleNode)) }
-      : !titleNode && discovered
+      : !titleNode && discovered && found.library !== "@vite-hub/mcp"
         ? { value: titleCase(fileName), source: "file", range: callee }
         : undefined;
 
@@ -401,6 +438,10 @@ function readDefinition(
           };
   }
 
+  const handler =
+    found.library === "@modelcontextprotocol/sdk"
+      ? found.call.arguments?.[2]
+      : outputProperty(found.options, "handler");
   return {
     file: module.file,
     displayPath: module.displayPath,
@@ -409,7 +450,199 @@ function readDefinition(
     name,
     title,
     annotations,
+    indentedJson: findIndentedJsonOutput(modules, module, handler, found.library).map((site) => ({
+      range: range(site.anchor),
+      ...(site.anchor !== site.stringify
+        ? {
+            helper: {
+              file: site.module.file,
+              displayPath: site.module.displayPath,
+              range: modules.ctx.helpers.rangeFromOffsets(
+                site.module.file,
+                site.module.text,
+                site.stringify.start,
+                site.stringify.end,
+              ),
+            },
+          }
+        : {}),
+    })),
   };
+}
+
+function fileToolName(library: McpLibrary, fileName: string, toolPath: string | undefined) {
+  if (library === "@nuxtjs/mcp-toolkit") return kebabCase(fileName);
+  // ViteHub names a tool after its path below `mcp/tools/`, without the extension or a trailing `/index`.
+  if (library === "@vite-hub/mcp" && toolPath) return toolPath.replace(/\/index$/i, "");
+  return fileName;
+}
+
+const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
+const MAX_HELPER_DEPTH = 2;
+
+interface IndentedJsonSite {
+  anchor: AnyNode;
+  module: ParsedModule;
+  stringify: AnyNode;
+}
+
+type OutputPosition = "result" | "content" | "block" | "text";
+
+function findIndentedJsonOutput(
+  modules: ProjectModules,
+  module: ParsedModule,
+  handler: AnyNode,
+  library: McpLibrary,
+): IndentedJsonSite[] {
+  const found: IndentedJsonSite[] = [];
+  const autoImports = library === "@nuxtjs/mcp-toolkit" || library === "nitro-mcp-toolkit";
+  const resolveModule = library === "@vite-hub/mcp" ? resolveViteModule : resolveRelativeModule;
+  const resolveBinding = (current: ParsedModule, identifier: AnyNode) =>
+    resolveIdentifier(modules, current, identifier, autoImports, resolveModule);
+
+  function readFunction(
+    current: ParsedModule,
+    node: AnyNode,
+    position: OutputPosition,
+    depth: number,
+    anchor?: AnyNode,
+  ) {
+    const fn = unwrap(node);
+    if (!FUNCTION_TYPES.has(fn?.type) || fn.generator || !fn.body) return;
+    if (fn.body.type !== "BlockStatement") {
+      readValue(current, fn.body, position, depth, anchor);
+    } else {
+      visitReturns(fn.body, (value) => readValue(current, value, position, depth, anchor));
+    }
+  }
+
+  function readValue(
+    current: ParsedModule,
+    expression: AnyNode,
+    position: OutputPosition,
+    depth: number,
+    anchor?: AnyNode,
+  ) {
+    const node = unwrap(expression);
+    const read = (child: AnyNode, next = position) =>
+      readValue(current, child, next, depth, anchor);
+    if (node?.type === "ConditionalExpression") {
+      read(node.consequent);
+      read(node.alternate);
+    } else if (node?.type === "LogicalExpression") {
+      if (node.operator !== "&&") read(node.left);
+      read(node.right);
+    } else if (node?.type === "AwaitExpression") {
+      read(node.argument);
+    } else if (node?.type === "ObjectExpression" && position === "result") {
+      read(outputProperty(node, "content"), "content");
+    } else if (node?.type === "ArrayExpression" && position === "content") {
+      for (const element of node.elements) read(element, "block");
+    } else if (node?.type === "ObjectExpression" && position === "block") {
+      if (staticString(outputProperty(node, "type")) === "text")
+        read(outputProperty(node, "text"), "text");
+    }
+
+    if (node?.type !== "CallExpression") return;
+    if (isJsonStringify(current, node.callee)) {
+      if ((position === "text" || position === "result") && hasLiteralIndent(node))
+        found.push({ anchor: anchor ?? node, module: current, stringify: node });
+      return;
+    }
+    const callee = unwrap(node.callee);
+    if (
+      position === "result" &&
+      library === "nitro-mcp-toolkit" &&
+      isNitroToolResult(current, callee)
+    ) {
+      const envelope = unwrap(node.arguments?.[0]);
+      if (envelope?.type === "ObjectExpression") read(envelope);
+      return;
+    }
+    if (callee?.type !== "Identifier" || depth >= MAX_HELPER_DEPTH) return;
+    const target = resolveBinding(current, callee);
+    if (!("reason" in target))
+      readFunction(target.module, target.node, position, depth + 1, anchor ?? node);
+  }
+
+  const value = unwrap(handler);
+  if (value?.type === "Identifier") {
+    const target = resolveBinding(module, value);
+    if (!("reason" in target)) readFunction(target.module, target.node, "result", 0, value);
+  } else {
+    readFunction(module, value, "result", 0);
+  }
+  return found;
+}
+
+function isNitroToolResult(module: ParsedModule, callee: AnyNode): boolean {
+  const binding = module.references.get(callee?.start)?.resolved;
+  return (
+    callee?.type === "Identifier" &&
+    !!binding?.defs.some(
+      (definition) =>
+        definition.type === "ImportBinding" &&
+        definition.parent.type === "ImportDeclaration" &&
+        definition.parent.importKind !== "type" &&
+        definition.parent.source.value === "nitro-mcp-toolkit" &&
+        definition.node.type === "ImportSpecifier" &&
+        definition.node.importKind !== "type" &&
+        specifierName(definition.node.imported) === "toolResult",
+    )
+  );
+}
+
+function hasLiteralIndent(call: AnyNode): boolean {
+  const indent = unwrap(call.arguments?.[2]);
+  return (
+    indent?.type === "Literal" &&
+    (typeof indent.value === "number" ? indent.value >= 1 : !!staticString(indent)) &&
+    !call.arguments.slice(0, 3).some((argument: AnyNode) => argument.type === "SpreadElement")
+  );
+}
+
+function isJsonStringify(module: ParsedModule, callee: AnyNode): boolean {
+  const value = unwrap(callee);
+  const receiver = unwrap(value?.object);
+  const reference = module.references.get(receiver?.start);
+  return (
+    value?.type === "MemberExpression" &&
+    !value.computed &&
+    receiver?.type === "Identifier" &&
+    receiver.name === "JSON" &&
+    value.property?.name === "stringify" &&
+    reference !== undefined &&
+    !reference.resolved
+  );
+}
+
+function visitReturns(node: AnyNode, visit: (value: AnyNode) => void) {
+  if (!node || FUNCTION_TYPES.has(node.type)) return;
+  if (node.type === "ReturnStatement") {
+    visit(node.argument);
+    return;
+  }
+  for (const key of getNodeVisitorKeys(node)) {
+    const value = node[key];
+    if (Array.isArray(value)) for (const child of value) visitReturns(child, visit);
+    else visitReturns(value, visit);
+  }
+}
+
+function outputProperty(object: AnyNode, key: string): AnyNode {
+  for (let index = object.properties.length - 1; index >= 0; index--) {
+    const item = object.properties[index];
+    if (item.type !== "Property") return undefined;
+    const name =
+      !item.computed && item.key.type === "Identifier" ? item.key.name : staticString(item.key);
+    if (name === undefined && item.computed) return undefined;
+    if (name === key) return item.kind === "init" ? item.value : undefined;
+  }
+  return undefined;
 }
 
 type ResolvedObject =
@@ -497,12 +730,19 @@ function resolveIdentifier(
   modules: ProjectModules,
   module: ParsedModule,
   identifier: AnyNode,
+  autoImports = true,
+  resolveModule = resolveRelativeModule,
 ): { module: ParsedModule; node: AnyNode } | { reason: string } {
   const name = identifier.name;
   const reference = module.references.get(identifier.start);
   if (!reference) return { reason: `Doctor can't read the binding of \`${name}\`.` };
   if (reference.resolved) {
     for (const definition of reference.resolved.defs) {
+      if (
+        definition.type === "FunctionName" &&
+        module.stableFunctions.has(definition.node.range[0])
+      )
+        return { module, node: definition.node };
       if (definition.type === "Variable" && definition.parent.kind === "const") {
         const local = module.constants.get(definition.name.range[0]);
         if (local) return { module, node: local };
@@ -515,23 +755,29 @@ function resolveIdentifier(
         definition.node.importKind !== "type"
       ) {
         const source = definition.parent.source.value;
-        const file = resolveRelativeModule(modules.ctx, module.file, source);
+        const file = resolveModule(modules.ctx, module.file, source);
         const target = file ? loadModule(modules, file) : null;
         const node = target?.exportedConstants.get(specifierName(definition.node.imported));
-        if (target && node) return { module: target, node };
+        if (target && node && isStableExport(target, node)) return { module: target, node };
         return { reason: `Doctor can't read \`${name}\` from \`${source}\`.` };
       }
     }
     return { reason: `Doctor can't read the binding of \`${name}\`.` };
   }
-  const candidates = autoImportedConstants(modules).get(name) ?? [];
-  if (candidates.length === 1) return candidates[0]!;
+  const candidates = (autoImports && autoImportedConstants(modules).get(name)) || [];
+  const [candidate] = candidates;
+  if (candidates.length === 1 && candidate && isStableExport(candidate.module, candidate.node))
+    return candidate;
   return {
     reason:
       candidates.length > 1
         ? `\`${name}\` is exported from ${candidates.length} auto-imported files.`
         : `Doctor can't find where \`${name}\` is declared.`,
   };
+}
+
+function isStableExport(module: ParsedModule, node: AnyNode): boolean {
+  return node.type !== "FunctionDeclaration" || module.stableFunctions.has(node.start);
 }
 
 /** Nitro and Nuxt auto-import exports from `utils` directories, so unbound names resolve there. */
@@ -557,10 +803,32 @@ function resolveRelativeModule(ctx: RuleContext, from: string, source: string): 
   const stem = base.replace(/\.[cm]?js$/, "");
   const candidates = [
     base,
-    ...["ts", "mts", "cts", "js", "mjs", "cjs"].map((extension) => `${stem}.${extension}`),
-    ...["ts", "js"].map((extension) => join(base, `index.${extension}`)),
+    ...["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"].map(
+      (extension) => `${stem}.${extension}`,
+    ),
+    ...["ts", "tsx", "js", "jsx"].map((extension) => join(base, `index.${extension}`)),
   ];
   return candidates.find((candidate) => SCRIPT_FILE.test(candidate) && ctx.fs.exists(candidate));
+}
+
+const VITE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
+
+function resolveViteModule(ctx: RuleContext, from: string, source: string): string | undefined {
+  if (!/^\.{1,2}\//.test(source) || /[?#]/.test(source)) return undefined;
+  const base = resolve(dirname(from), source);
+  const isFile = (path: string) => ctx.fs.stat(path)?.isFile();
+  const jsExtension = /\.(?:[cm]?js|jsx)$/.exec(base)?.[0];
+  const substitutes = jsExtension
+    ? [
+        base.slice(0, -jsExtension.length) + jsExtension.replace("js", "ts"),
+        ...(jsExtension === ".js" ? [base.slice(0, -jsExtension.length) + ".tsx"] : []),
+      ]
+    : [];
+  const file = [base, ...substitutes, ...VITE_EXTENSIONS.map((ext) => base + ext)].find(isFile);
+  if (file) return SCRIPT_FILE.test(file) ? file : undefined;
+  if (ctx.fs.exists(join(base, "package.json"))) return undefined;
+  const index = VITE_EXTENSIONS.map((ext) => join(base, `index${ext}`)).find(isFile);
+  return index && SCRIPT_FILE.test(index) ? index : undefined;
 }
 
 function findProperty(object: AnyNode, key: string): AnyNode {

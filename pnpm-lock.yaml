@@ -130,6 +130,9 @@ catalogs:
     '@jridgewell/trace-mapping':
       specifier: ^0.3.31
       version: 0.3.31
+    ajv:
+      specifier: ^8.20.0
+      version: 8.20.0
     c12:
       specifier: 4.0.0-rc.4
       version: 4.0.0-rc.4
@@ -227,6 +230,9 @@ importers:
       '@vue/compiler-sfc':
         specifier: catalog:analysis
         version: 3.5.40
+      ajv:
+        specifier: catalog:prod
+        version: 8.20.0
       c12:
         specifier: catalog:prod
         version: 4.0.0-rc.4(dotenv@17.4.2)(giget@3.3.1)(jiti@2.7.0)(magicast@0.5.4)

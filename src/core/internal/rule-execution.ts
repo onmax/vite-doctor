@@ -410,14 +410,15 @@ function createRuleRun(
     get options() {
       return currentRuleConfig.options;
     },
-    report(diagnostic, metadata = {}) {
+    report(diagnostic, { projectLevel, ...metadata } = {}) {
+      const atProjectRoot = projectLevel && phase === "workspace";
       const input = normalizeDiagnostic({
         ...metadata,
         ruleId: metadata.ruleId ?? rule.meta.id,
         severity: metadata.severity ?? currentSeverity,
         category: metadata.category ?? rule.meta.category,
         diagnostic,
-        file: metadata.file ?? file.path,
+        file: atProjectRoot ? session.root : (metadata.file ?? file.path),
       });
       if (phase === "file" && rule.meta.reportScope !== "project") {
         const outside = [input.file, ...(input.related ?? []).map((item) => item.file)]
@@ -432,7 +433,10 @@ function createRuleRun(
       }
       // Overrides apply to the file a Diagnostic is located in, which a project-scoped Rule can
       // choose, so its config is resolved per Diagnostic.
-      const diagnosticConfig = fileRuleConfig(session, input.ruleId, input.file);
+      if (atProjectRoot && session.overrideOnlyRules.has(input.ruleId)) return;
+      const diagnosticConfig = atProjectRoot
+        ? topLevelRuleConfig(session, input.ruleId)
+        : fileRuleConfig(session, input.ruleId, input.file);
       if (diagnosticConfig.enabled === false) return;
       if (input.file !== file.path) frame.log.push(`t:${resolve(session.root, input.file)}`);
       const severity =

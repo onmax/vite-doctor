@@ -8,6 +8,7 @@ import type {
   ProjectInfo,
   RuntimeTarget,
 } from "./primitives.js";
+import type { McpServerTarget } from "../mcp/evidence.js";
 export type {
   DoctorConfigOverride,
   DoctorRuleConfig,
@@ -55,6 +56,11 @@ export interface DoctorRunOptions {
    */
   hostExtensions?: boolean;
   runtimeTarget?: RuntimeTarget;
+  /**
+   * MCP servers whose `tools/list` Vite Doctor reads as `mcp` Runtime Evidence. Headers can carry
+   * tokens, so this stays out of Doctor config files.
+   */
+  mcp?: McpServerTarget[];
   /**
    * Project Inventory from `detectProject` for this root. The run reuses it instead of detecting
    * the project, so `framework` and `runtimeTarget` no longer apply. Doctor Extension inventory

@@ -1,4 +1,5 @@
 import type { DoctorRunOptions } from "../config.js";
+import { isMcpHeaderName } from "../../mcp/endpoint.js";
 
 export function applyDoctorOptions(
   options: DoctorRunOptions,
@@ -26,6 +27,39 @@ export function applyDoctorOptions(
   options.since = stringFlag(flags.since) ?? options.since;
   options.baseline = stringFlag(flags.baseline) ?? options.baseline;
   options.format = (stringFlag(flags.format) as DoctorRunOptions["format"]) ?? options.format;
+  options.mcp = parseMcpFlags(flags.mcpUrl, flags.mcpHeader) ?? options.mcp;
+}
+
+/** `--mcp-url` and `--mcp-header` are repeatable; every header applies to every URL. */
+function parseMcpFlags(urls: unknown, headers: unknown): DoctorRunOptions["mcp"] {
+  const urlList = listFlag(urls, "--mcp-url");
+  const headerList = listFlag(headers, "--mcp-header");
+  if (!urlList.length) {
+    if (headerList.length) throw new Error("--mcp-header requires --mcp-url <url>.");
+    return undefined;
+  }
+  const parsed = new Map<string, string>();
+  for (const header of headerList) {
+    const colon = header.indexOf(":");
+    const name = colon === -1 ? "" : header.slice(0, colon).trim();
+    if (!isMcpHeaderName(name))
+      throw new Error(
+        '--mcp-header must look like "Name: value", such as "Authorization: Bearer <token>".',
+      );
+    parsed.set(name, header.slice(colon + 1).trim());
+  }
+  return urlList.map((url) => ({
+    url,
+    ...(parsed.size ? { headers: Object.fromEntries(parsed) } : {}),
+  }));
+}
+
+function listFlag(value: unknown, flag: string): string[] {
+  const values = value === undefined ? [] : Array.isArray(value) ? value : [value];
+  return values.map((item) => {
+    if (typeof item !== "string" || !item) throw new Error(`${flag} requires a value.`);
+    return item;
+  });
 }
 
 function parseExtends(value: string | undefined): DoctorRunOptions["extends"] {
