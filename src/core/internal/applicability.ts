@@ -85,6 +85,7 @@ function evaluateWorkspacePackageActivation(
 ): ApplicabilityResult {
   const activation = pack.activation;
   if (!activation) return active();
+  if (activation.runtimeEvidence?.(project.runtimeEvidence ?? {})) return active();
   if (
     activation.frameworks &&
     !packageFrameworks(workspacePackage).some((framework) =>
@@ -122,6 +123,9 @@ function evaluateWorkspacePackageActivation(
         ? active()
         : inactive(`Rule Pack ${pack.name} package or module activation did not match.`),
     );
+  }
+  if (activation.runtimeEvidence && !activation.frameworks && !results.length) {
+    return inactive(`Rule Pack ${pack.name} Runtime Evidence activation did not match.`);
   }
   return combineApplicability(results);
 }

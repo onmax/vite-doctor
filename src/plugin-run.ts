@@ -16,6 +16,7 @@ import type {
 import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
 import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
 import { runViteDoctor, shouldFailDoctorRun, viteDoctorRunOptions } from "./doctor.js";
+import { readMcpServers } from "./mcp/evidence.js";
 import type { SurfaceDiagnostic, SurfaceEvidenceGap } from "./plugin-delta.js";
 import {
   BUILD_EVIDENCE_RULE,
@@ -40,6 +41,7 @@ export interface SurfaceRunOutcome {
   /** The reported Diagnostics, so a serve-mode Plugin Surface can log what changed between runs. */
   diagnostics: SurfaceDiagnostic[];
   evidenceGaps: SurfaceEvidenceGap[];
+  hasMcpEvidence: boolean;
   /** The run is `incomplete` for a reason other than its evidence gaps, such as an unresolved runtime. */
   runtimeIncomplete: boolean;
 }
@@ -48,7 +50,7 @@ export async function runSurfaceDoctor(
   input: SurfaceRunInput,
   extensions: DoctorExtensionInput[],
 ): Promise<SurfaceRunOutcome> {
-  const result = await runViteDoctor(surfaceDoctorOptions(input, extensions));
+  const result = await runViteDoctor(surfaceDoctorOptions(input, extensions), true);
   const report = createReport(result, input.options.format).trimEnd();
   const shouldFail =
     reportStatus(result) === "incomplete" || shouldFailDoctorRun(result, input.options.maxWarnings);
@@ -71,8 +73,12 @@ export async function runSurfaceDoctor(
     diagnostics: result.diagnostics.map((diagnostic) => surfaceDiagnostic(result, diagnostic)),
     evidenceGaps: (result.project.evidenceGaps ?? []).map((gap) => ({
       ...gap,
-      id: `${gap.source}\0${gap.message}\0${gap.files.join("\0")}`,
+      // A gap with an instance keeps its identity while its reason changes.
+      id: JSON.stringify(
+        gap.instanceKey ? [gap.source, gap.instanceKey] : [gap.source, gap.message, gap.files],
+      ),
     })),
+    hasMcpEvidence: readMcpServers(result.project.runtimeEvidence).length > 0,
     runtimeIncomplete:
       reportStatus({ ...result, project: { ...result.project, evidenceGaps: undefined } }) ===
       "incomplete",
@@ -93,7 +99,7 @@ export async function hasEnabledBuildEvidenceCandidate(
   if (!evidence) return false;
   const options = surfaceDoctorOptions(input, extensions);
   const session = await createScanSession(
-    await viteDoctorRunOptions({ ...options, rules: BUILD_EVIDENCE_RULE }),
+    await viteDoctorRunOptions({ ...options, rules: BUILD_EVIDENCE_RULE, mcp: undefined }),
   );
   if (!session.enabledRules.some((rule) => rule.meta.id === BUILD_EVIDENCE_RULE)) return false;
   const files = new Map(session.files.map((file) => [file.path, file]));
@@ -123,7 +129,7 @@ export async function runBuildEvidenceDoctor(
   extensions: DoctorExtensionInput[],
 ): Promise<SurfaceRunOutcome> {
   return runSurfaceDoctor(
-    { ...input, options: { ...input.options, rules: BUILD_EVIDENCE_RULE } },
+    { ...input, options: { ...input.options, rules: BUILD_EVIDENCE_RULE, mcp: undefined } },
     extensions,
   );
 }

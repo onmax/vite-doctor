@@ -7,9 +7,9 @@ catalogs:
   analysis:
     "@oxc-parser/binding-wasm32-wasi": ^0.159.0
     "@oxc-project/types": ^0.159.0
-    "@typescript-eslint/parser": ^8.66.0
-    "@typescript-eslint/scope-manager": ^8.66.0
-    "@typescript-eslint/visitor-keys": ^8.66.0
+    "@typescript-eslint/parser": ^8.74.0
+    "@typescript-eslint/scope-manager": ^8.74.0
+    "@typescript-eslint/visitor-keys": ^8.74.0
     "@types/semver": ^7.8.0
     "@vue/compiler-sfc": ^3.5.40
     eslint: ^10.8.0
@@ -57,6 +57,7 @@ catalogs:
     vue: ^3.5.40
   prod:
     "@jridgewell/trace-mapping": ^0.3.31
+    ajv: ^8.20.0
     yaml: ^2.9.0
     c12: 4.0.0-rc.4
     cac: ^7.0.0

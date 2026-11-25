@@ -99,10 +99,18 @@ export interface Diagnostic {
   related?: Array<{ file: string; range?: SourceRange; message: string }>;
   tags?: string[];
   fingerprint?: string;
+  /** Distinguishes findings with identical text and source locations. */
+  instanceKey?: string;
   suppressed?: boolean;
   suppressionReason?: string;
   confidence?: Confidence;
   evidence?: DiagnosticEvidence[];
+  /**
+   * Plain JSON the Rule attaches for agents, such as the MCP tool and the client findings behind
+   * the message. The Rule owns its shape and its Diagnostic Code docs describe it. Reports emit it
+   * as is, and the cache stores it as JSON. `ctx.report` validates and copies the payload.
+   */
+  data?: Record<string, unknown>;
   fixGroupId?: string;
   analysisPhase?: ExecutionKind;
   cacheHit?: boolean;
@@ -536,7 +544,9 @@ export interface ProjectInfo {
   nuxtModuleDefinitions?: NuxtModuleDefinition[];
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
-  evidenceGaps?: Array<{ source: string; message: string; files: string[] }>;
+  evidenceGaps?: Array<{ source: string; message: string; files: string[]; instanceKey?: string }>;
+  /** Runtime Evidence the run read, such as each MCP server's `tools/list`, so a clean report shows what it covered. */
+  evidenceUsed?: Array<{ source: string; message: string }>;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
 }
@@ -1046,10 +1056,12 @@ export type DoctorDiagnosticInput = Omit<
 
 export type DoctorDiagnosticMetadata = Omit<
   Diagnostic,
-  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range"
+  "diagnostic" | "code" | "why" | "docs" | "sources" | "message" | "file" | "range" | "data"
 > & {
   file?: string;
   range?: SourceRange;
+  /** Plain JSON; `ctx.report` rejects anything else at runtime. Interfaces need no index signature. */
+  data?: object;
 };
 
 export interface SourceFileHandle {
@@ -1075,7 +1087,10 @@ export type RuleReportMetadata = Omit<
   DoctorDiagnosticMetadata,
   "ruleId" | "severity" | "category"
 > &
-  Partial<Pick<DoctorDiagnosticMetadata, "ruleId" | "severity" | "category">>;
+  Partial<Pick<DoctorDiagnosticMetadata, "ruleId" | "severity" | "category">> & {
+    /** A workspace-rule finding with no source owner; anchored at the project root. */
+    projectLevel?: boolean;
+  };
 
 export interface RuleContext {
   project: ProjectInfo;
@@ -1302,6 +1317,12 @@ export interface RulePack {
         packages?: string[];
         modules?: string[];
         nuxt?: string;
+        /**
+         * Activates the Rule Pack for every workspace package when this returns true for the
+         * Doctor Run's Runtime Evidence, whatever the other conditions say. The MCP Rule Pack uses
+         * it so a configured MCP server is checked in a project without an MCP package.
+         */
+        runtimeEvidence?: (runtimeEvidence: Record<string, unknown>) => boolean;
       };
 }
 
