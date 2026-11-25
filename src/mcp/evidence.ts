@@ -154,7 +154,7 @@ export function uncheckedMcpEvidenceGap(
     .join(", ");
   return {
     source: MCP_EVIDENCE,
-    message: `Doctor read the tools of ${names} as Runtime Evidence but did not check them: the vite-doctor/mcp Rule Pack is not selected, because no MCP package is in the project or the selected Presets leave it out. Add "mcp/recommended" to extends to check them.`,
+    message: `Doctor read the tools of ${names} as Runtime Evidence but did not check them: the vite-doctor/mcp Rule Pack is not selected, because no MCP package is in the project or the selected Presets leave it out. Add "mcp/recommended" to extends next to "auto" to check them; on the CLI, pass --extends auto,mcp/recommended, or auto,mcp/strict for the Strict rules.`,
     files: [],
   };
 }
