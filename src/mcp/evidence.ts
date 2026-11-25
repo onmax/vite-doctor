@@ -80,9 +80,9 @@ export function mcpEvidenceExtension(
     setup(api) {
       api.registerRuntimeEvidenceContributor({
         name: MCP_EVIDENCE,
-        async contribute() {
+        async contribute(project) {
           const mcpServers = await Promise.all(
-            targets.map((target) => readServer(target, options)),
+            targets.map((target) => readServer(project, target, options)),
           );
           return { mcpServers };
         },
@@ -92,6 +92,7 @@ export function mcpEvidenceExtension(
 }
 
 async function readServer(
+  project: ProjectInfo,
   { url, headers, serverName }: McpServerTarget,
   options: { fetch?: typeof globalThis.fetch; timeout?: number },
 ): Promise<McpServerEvidence> {
@@ -110,6 +111,15 @@ async function readServer(
   } catch (error) {
     const reason = error instanceof McpFetchError ? error.message : "The request failed.";
     const status = error instanceof McpFetchError ? error.status : undefined;
+    project.evidenceGaps = [
+      ...(project.evidenceGaps ?? []),
+      {
+        source: MCP_EVIDENCE,
+        message: `Doctor could not read the tools of the MCP server at ${label}, so its tools were not checked: ${reason}${authHint(status)}`,
+        files: [],
+        instanceKey: endpointId,
+      },
+    ];
     return {
       ...(serverName ? { name: serverName } : {}),
       url: label,
@@ -136,25 +146,34 @@ export function unreadMcpServerGaps(
   project: ProjectInfo,
 ): NonNullable<ProjectInfo["evidenceGaps"]> {
   const gaps = new Map<string, NonNullable<ProjectInfo["evidenceGaps"]>[number]>();
+  const read = new Set(
+    (project.evidenceGaps ?? []).flatMap((gap) =>
+      gap.source === MCP_EVIDENCE && gap.instanceKey ? [gap.instanceKey] : [],
+    ),
+  );
   for (const [contributor, entry] of Object.entries(project.runtimeEvidence ?? {})) {
     for (const server of readMcpServers({ [contributor]: entry })) {
-      if (!("error" in server)) continue;
-      const instanceKey = server.endpointId ?? mcpEndpointId(server.url) ?? sha256(server.url);
-      if (gaps.has(instanceKey)) continue;
-      const label = mcpEndpointLabel(server.url);
-      const hint =
-        server.status === 401 || server.status === 403
-          ? ' On the CLI, pass it with --mcp-header "Authorization: Bearer <token>".'
-          : "";
-      // Only Doctor's own reasons are known to leave out the URL and its credentials.
-      const message =
-        contributor === MCP_EVIDENCE
-          ? `Doctor could not read the tools of the MCP server at ${label}, so its tools were not checked: ${server.error}${hint}`
-          : `The ${JSON.stringify(contributor)} Runtime Evidence contributor could not read the tools of the MCP server at ${label}${server.status ? ` (HTTP ${server.status})` : ""}, so its tools were not checked.${hint}`;
-      gaps.set(instanceKey, { source: MCP_EVIDENCE, message, files: [], instanceKey });
+      if (typeof (server as Partial<McpServerErrorEvidence>).error !== "string") continue;
+      const { url, endpointId, status } = server as McpServerErrorEvidence;
+      const instanceKey = endpointId ?? mcpEndpointId(url) ?? sha256(url);
+      if (read.has(instanceKey) || gaps.has(instanceKey)) continue;
+      const code = Number.isInteger(status) ? status : undefined;
+      // A contributor's error text can carry the URL and its credentials, so only the status is shown.
+      gaps.set(instanceKey, {
+        source: MCP_EVIDENCE,
+        message: `The ${JSON.stringify(contributor)} Runtime Evidence contributor could not read the tools of the MCP server at ${mcpEndpointLabel(url)}${code ? ` (HTTP ${code})` : ""}, so its tools were not checked.${authHint(code)}`,
+        files: [],
+        instanceKey,
+      });
     }
   }
   return [...gaps.values()];
+}
+
+function authHint(status: number | undefined): string {
+  return status === 401 || status === 403
+    ? ' On the CLI, pass it with --mcp-header "Authorization: Bearer <token>".'
+    : "";
 }
 
 /**

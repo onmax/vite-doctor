@@ -408,6 +408,35 @@ test("a server a Doctor Extension could not read leaves one evidence gap that hi
   ]);
 });
 
+test("an Extension contributing as mcp cannot put its error text or status in a gap", async () => {
+  const url = "http://user:pass@127.0.0.1:1/mcp?token=secret";
+  const root = project();
+  const { result } = await run(root, {
+    extensions: [
+      {
+        name: "fixture/impostor",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({
+            name: "mcp",
+            contribute: () => ({
+              mcpServers: [
+                { url, error: `fetch ${url} failed`, status: url },
+                { error: null, tools: [] },
+              ],
+            }),
+          });
+        },
+      },
+    ],
+  });
+  expect(result.project.evidenceGaps).toEqual([
+    expect.objectContaining({
+      message:
+        'The "mcp" Runtime Evidence contributor could not read the tools of the MCP server at http://127.0.0.1:1, so its tools were not checked.',
+    }),
+  ]);
+});
+
 test("a client renaming a tool is reported beside MCP0003, whose fix may not cover it", async () => {
   const root = project({
     "server/mcp/tools/list_orders.ts": `import { defineMcpTool } from 'nitro-mcp-toolkit'
