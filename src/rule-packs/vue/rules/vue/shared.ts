@@ -187,11 +187,10 @@ export function createEslintVueRule(options: {
         rules[eslintId] = eslintRuleConfig(
           options.eslintOptions ? options.eslintOptions(ctx.options, eslintId) : ctx.options,
         );
-      const batches = joinEslintBatches(ctx.file, rules, Boolean(options.templateReferences));
+      const batch = joinEslintBatch(ctx.file, rules, Boolean(options.templateReferences));
       return {
         async SFC() {
-          const messages = (await Promise.all(batches.map(runEslintBatch))).flat();
-          for (const message of messages) {
+          for (const message of await runEslintBatch(batch)) {
             if (!message.ruleId || !eslintIds.includes(message.ruleId)) continue;
             if (options.keepMessage && !options.keepMessage(message, ctx)) continue;
             reportEslintMessage(ctx, options.doctorId, options.meta, message);
@@ -217,48 +216,31 @@ interface EslintBatch {
 // joins its file's batch in `create`, and the first `SFC` visitor parses and lints once for all.
 const eslintBatches = new WeakMap<object, EslintBatch[]>();
 
-function joinEslintBatches(
+function joinEslintBatch(
   file: RuleContext["file"],
   rules: Record<string, EslintRuleConfig>,
   templateReferences: boolean,
-): EslintBatch[] {
+): EslintBatch {
   let batches = eslintBatches.get(file);
   if (!batches || batches.some((batch) => batch.messages || batch.text !== file.text)) {
     batches = [];
     eslintBatches.set(file, batches);
   }
-  // Each eslint ID is owned by one compatible batch. A multi-ID bridge can join
-  // several existing batches when those IDs were split by incompatible options.
-  const joined: EslintBatch[] = [];
-  const pending = new Set(Object.keys(rules));
-  // Prefer an existing batch that already owns each ID with this exact config.
-  // This prevents a later multi-ID bridge from being attached to a batch whose
-  // other IDs forced a different configuration.
-  for (const [id, config] of Object.entries(rules)) {
-    let batch = batches.find(
-      (candidate) =>
-        candidate.templateReferences === templateReferences &&
-        sameConfig(candidate.rules[id]!, config),
-    );
-    if (!batch)
-      batch = batches.find(
-        (candidate) =>
-          candidate.templateReferences === templateReferences && !(id in candidate.rules),
-      );
-    if (!batch) {
-      batch = {
-        text: file.text,
-        filename: file.relativePath,
-        rules: { [id]: config },
-        templateReferences,
-      };
-      batches.push(batch);
-    } else {
-      batch.rules[id] ??= config;
-    }
-    if (!joined.includes(batch)) joined.push(batch);
+  // A bridge reports every message its batch produces for its eslint IDs, so it joins only a
+  // batch that runs none of them under another bridge's options, and claims all of them there.
+  let batch = batches.find(
+    (candidate) =>
+      candidate.templateReferences === templateReferences &&
+      Object.entries(rules).every(
+        ([id, config]) => !(id in candidate.rules) || sameConfig(candidate.rules[id]!, config),
+      ),
+  );
+  if (!batch) {
+    batch = { text: file.text, filename: file.relativePath, rules: {}, templateReferences };
+    batches.push(batch);
   }
-  return joined;
+  Object.assign(batch.rules, rules);
+  return batch;
 }
 
 function sameConfig(left: EslintRuleConfig, right: EslintRuleConfig): boolean {
