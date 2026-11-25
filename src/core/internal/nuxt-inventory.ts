@@ -10,6 +10,8 @@ import type {
   NuxtDoctorManifest,
   NuxtKeyedComposable,
   NuxtModuleSource,
+  NuxtResolvedMiddleware,
+  NuxtResolvedRoute,
 } from "../primitives.js";
 
 export interface NuxtProjectInventory {
@@ -18,6 +20,7 @@ export interface NuxtProjectInventory {
   pluginFiles: string[];
   serverAppEntryFiles?: string[];
   resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
+  resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
   resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
   hasServerPageIslands?: boolean;
   componentIslands?: NuxtDoctorManifest["componentIslands"];
@@ -34,6 +37,9 @@ export interface NuxtProjectInventory {
   serverHandlers: NuxtDoctorManifest["serverHandlers"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   pages: NonNullable<NuxtDoctorManifest["pages"]>;
+  middleware?: NuxtResolvedMiddleware[];
+  routes?: NuxtResolvedRoute[];
+  routerOptionsFiles?: string[];
   prerenderRoutes: string[];
   buildManifest?: {
     hasBuildManifest: boolean;
@@ -71,6 +77,7 @@ export function createNuxtProjectInventory(
         }))
       : undefined,
     resolvedComponents: current("components") ? manifest?.resolvedComponents : undefined,
+    resolvedMiddleware: isCurrent ? manifest?.resolvedMiddleware : undefined,
     hasServerPageIslands: current("pages") ? manifest?.hasServerPageIslands : undefined,
     componentIslands: isCurrent ? manifest?.componentIslands : undefined,
     keyedComposables: keyedComposables(root, manifest?.keyedComposables),
@@ -93,6 +100,14 @@ export function createNuxtProjectInventory(
       file: resolve(root, handler.file),
     })),
     pages: manifest?.pages ?? [],
+    middleware: manifest?.middleware?.map((entry) => ({
+      ...entry,
+      path: resolve(root, entry.path),
+    })),
+    routes: manifest?.routes?.map((route) =>
+      route.file ? { ...route, file: resolve(root, route.file) } : route,
+    ),
+    routerOptionsFiles: manifest?.routerOptionsFiles?.map((file) => resolve(root, file)),
     prerenderRoutes: manifest?.prerenderRoutes ?? [],
     buildManifest: manifest?.buildManifest,
     evidence: {

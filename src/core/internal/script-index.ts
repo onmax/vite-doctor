@@ -1,4 +1,4 @@
-import { walkScriptLocal, type AnyNode } from "../../../../core/rule-authoring.js";
+import { walkScriptLocal, type AnyNode } from "../rule-authoring.js";
 
 // Execution analysis resolves the same bindings and writes for every candidate node, so each root
 // is indexed once and reused. This relies on script ASTs staying immutable after parsing.
@@ -60,7 +60,8 @@ export function findFunctionVar(node: AnyNode, name: string): AnyNode {
 
 function collectFunctionVars(node: AnyNode, vars: Map<string, AnyNode>) {
   if (!node || typeof node !== "object") return;
-  if (FUNCTION_TYPES.has(node.type)) return;
+  if (FUNCTION_TYPES.has(node.type) || node.type === "StaticBlock" || node.type === "TSModuleBlock")
+    return;
   if (node.type === "VariableDeclaration" && node.kind === "var") {
     for (const item of node.declarations)
       for (const name of patternNames(item.id)) if (!vars.has(name)) vars.set(name, item);
@@ -76,6 +77,7 @@ const STATEMENT_SCOPE_TYPES = new Set([
   "Program",
   "BlockStatement",
   "StaticBlock",
+  "TSModuleBlock",
   "ForStatement",
   "ForOfStatement",
   "ForInStatement",
@@ -92,7 +94,20 @@ export function findStatementBinding(scope: AnyNode, name: string): AnyNode {
     for (const statement of scopeStatements(scope)) {
       const declaration = statement.declaration ?? statement;
       const declared: [string, AnyNode][] = [];
-      if (["FunctionDeclaration", "ClassDeclaration"].includes(declaration.type)) {
+      if (declaration.type === "TSModuleDeclaration") {
+        if (!declaration.declare && !isErasedNamespaceBody(declaration.body)) {
+          let id = declaration.id;
+          while (id?.type === "TSQualifiedName") id = id.left;
+          if (id?.type === "Identifier") declared.push([id.name, declaration]);
+        }
+      } else if (
+        [
+          "FunctionDeclaration",
+          "ClassDeclaration",
+          "TSEnumDeclaration",
+          "TSImportEqualsDeclaration",
+        ].includes(declaration.type)
+      ) {
         if (declaration.id?.name !== undefined) declared.push([declaration.id.name, declaration]);
       } else if (declaration.type === "VariableDeclaration") {
         for (const item of declaration.declarations)
@@ -108,8 +123,22 @@ export function findStatementBinding(scope: AnyNode, name: string): AnyNode {
   return bindings.get(name) ?? null;
 }
 
+function isErasedNamespaceBody(body: AnyNode): boolean {
+  if (body?.type === "TSModuleDeclaration") return isErasedNamespaceBody(body.body);
+  if (body?.type !== "TSModuleBlock") return false;
+  return body.body.every((statement: AnyNode) => {
+    const { declaration } = statement;
+    if (!declaration && statement.type === "ExportNamedDeclaration")
+      return statement.exportKind === "type";
+    const member = declaration ?? statement;
+    if (member.type === "TSModuleDeclaration") return isErasedNamespaceBody(member.body);
+    return member.type === "TSInterfaceDeclaration" || member.type === "TSTypeAliasDeclaration";
+  });
+}
+
 function scopeStatements(scope: AnyNode): AnyNode[] {
-  if (["Program", "BlockStatement", "StaticBlock"].includes(scope.type)) return scope.body;
+  if (["Program", "BlockStatement", "StaticBlock", "TSModuleBlock"].includes(scope.type))
+    return scope.body;
   if (scope.type === "ForStatement") return [scope.init].filter(Boolean);
   if (scope.type === "ForOfStatement" || scope.type === "ForInStatement") return [scope.left];
   return scope.cases.flatMap((item: AnyNode) => item.consequent);

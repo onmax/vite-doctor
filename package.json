@@ -30,6 +30,7 @@
     "./cli": "./dist/cli.mjs",
     "./config": "./dist/config.mjs",
     "./extension": "./dist/extension.mjs",
+    "./mcp": "./dist/mcp/index.mjs",
     "./nuxt": "./dist/nuxt.mjs",
     "./plugin": "./dist/plugin.mjs",
     "./rule-packs/mcp": "./dist/rule-packs/mcp/index.mjs",
@@ -78,6 +79,7 @@
     "@typescript-eslint/scope-manager": "catalog:analysis",
     "@typescript-eslint/visitor-keys": "catalog:analysis",
     "@vue/compiler-sfc": "catalog:analysis",
+    "ajv": "catalog:prod",
     "c12": "catalog:prod",
     "cac": "catalog:prod",
     "consola": "catalog:prod",
@@ -97,6 +99,7 @@
     "std-env": "catalog:prod",
     "tinyglobby": "^0.2.17",
     "typescript": "catalog:analysis",
+    "unimport": "catalog:prod",
     "vue-eslint-parser": "catalog:analysis",
     "yaml": "catalog:prod"
   },

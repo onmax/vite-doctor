@@ -55,26 +55,51 @@ export interface LocatedStore<S extends StoreDefinition = StoreDefinition> {
   module: StoreModule;
 }
 
-/** The extension order Vite resolved for one environment, from Runtime Evidence. */
+interface ImportAlias {
+  find: string | RegExp;
+  replacement?: string;
+}
+
+/** Vite's import configuration for one environment, from Runtime Evidence. */
 export interface EnvironmentResolution {
   root: string;
   runtime: number;
   extensions: string[];
+  aliases?: ImportAlias[];
+}
+
+function readImportAliases(value: unknown): ImportAlias[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const aliases: ImportAlias[] = [];
+  for (const alias of value) {
+    const find = alias?.find;
+    const replacement = typeof alias?.replacement === "string" ? alias.replacement : undefined;
+    if (typeof find === "string") aliases.push({ find, replacement });
+    else if (typeof find?.source === "string" && typeof find.flags === "string") {
+      try {
+        aliases.push({ find: new RegExp(find.source, find.flags), replacement });
+      } catch {
+        return undefined;
+      }
+    } else return undefined;
+  }
+  return aliases;
 }
 
 export function importResolutionEvidence(runtime: unknown): EnvironmentResolution[] {
   if (!runtime || typeof runtime !== "object" || !("importResolution" in runtime)) return [];
   const evidence = runtime.importResolution;
   if (!evidence || typeof evidence !== "object") return [];
-  const { root, environments } = evidence as Record<string, unknown>;
+  const { root, environments, aliases } = evidence as Record<string, unknown>;
   if (typeof root !== "string" || !environments || typeof environments !== "object") return [];
+  const importAliases = readImportAliases(aliases);
   return Object.values(environments).flatMap((environment) => {
     if (!environment || typeof environment !== "object") return [];
     const { consumer, extensions } = environment as Record<string, unknown>;
     if (consumer !== "client" && consumer !== "server") return [];
     if (!Array.isArray(extensions) || !extensions.every((ext) => typeof ext === "string"))
       return [];
-    return [{ root, runtime: setupRuntimes[consumer], extensions }];
+    return [{ root, runtime: setupRuntimes[consumer], extensions, aliases: importAliases }];
   });
 }
 
@@ -783,11 +808,34 @@ export function storeResolver<S extends StoreDefinition>(
     const framework = frameworks.get(own) ?? ctx.project.framework;
     const defaults = framework === "nuxt" ? NUXT_EXTENSIONS : VITE_EXTENSIONS;
     const orders = ordersFor(from);
+    const bare = source.split("?")[0]!;
+    const guessedAlias = /^(?:~~?|@@?)\//.test(bare);
+    if (orders.length && orders.every(({ aliases }) => aliases !== undefined)) {
+      const files = orders.map(({ aliases, extensions }) => {
+        const alias = aliases!.find(({ find }) => {
+          if (typeof find === "string") return bare === find || bare.startsWith(`${find}/`);
+          find.lastIndex = 0;
+          return find.test(bare);
+        });
+        if (!alias) {
+          if (guessedAlias) return undefined;
+          const [base] = importBases(ctx, from, bare);
+          return base && fileForBase(base, extensions, true, own);
+        }
+        if (alias.replacement === undefined) return undefined;
+        if (typeof alias.find !== "string") alias.find.lastIndex = 0;
+        const target = bare.replace(alias.find, alias.replacement);
+        return isAbsolute(target) ? fileForBase(resolve(target), extensions, true, own) : undefined;
+      });
+      const [file] = files;
+      return file && files.every((candidate) => candidate === file) ? file : undefined;
+    }
     let match: string | undefined;
     for (const base of importBases(ctx, from, source)) {
-      const files = orders.length
-        ? orders.map(({ extensions }) => fileForBase(base, extensions, true, own))
-        : [fileForBase(base, defaults, false, own)];
+      const files =
+        orders.length && !guessedAlias
+          ? orders.map(({ extensions }) => fileForBase(base, extensions, true, own))
+          : [fileForBase(base, defaults, false, own)];
       const [file] = files;
       if (files.some((candidate) => candidate !== file)) return undefined;
       if (file === null || (file && match && file !== match)) return undefined;

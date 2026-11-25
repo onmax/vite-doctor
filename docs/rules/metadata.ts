@@ -432,6 +432,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nitro/state/no-request-data-in-module-state": {
+    description:
+      "Report module-scope variables, objects, and Maps that Nitro server code fills with request data.",
+    why: "Nitro imports each server module once per process. A lazy route handler is imported on its first request and h3 keeps the resolved handler, so every later request calls into the same module. Only the event, and the event.context object h3 creates with it, belong to one request. A module-scope let, an object written under a fixed key, or a Map set under a constant key that a handler fills from the event, its query, body, headers, cookies, or session is shared by every concurrent request, so one user's value can end up in another user's response. Doctor reports writes from h3 request utilities and from the event a handler receives. It skips stores keyed per request, such as a Map keyed by the route parameter, values whose origin the file does not show, and files outside a Nitro server directory. For Object.assign, Doctor skips slots when it cannot establish what a local source object contains at copy time; a shallow spread does not protect nested values from mutation.",
+    recommendedReplacement:
+      "Keep per-request values in local variables, or on event.context when middleware hands them to the route. A module-scope cache is fine when its key covers everything the value depends on; for upstream responses use defineCachedFunction with a getKey that includes the user or tenant.",
+    examples: [
+      {
+        title: "Keep request data on the event",
+        language: "ts",
+        invalid:
+          "let currentUser: string | undefined\n\nexport default defineEventHandler((event) => {\n  currentUser = getCookie(event, 'user-id')\n  return getOrders(currentUser)\n})",
+        valid:
+          "export default defineEventHandler((event) => {\n  const userId = getCookie(event, 'user-id')\n  event.context.userId = userId\n  return getOrders(userId)\n})",
+      },
+    ],
+  },
   "nitro/routes/no-shadowed-file-handler": {
     description:
       "Reports a route file when another file in the same api/ or routes/ directory resolves to the same route, method, and environment, and Nitro keeps the other one. A method-less handler next to a method handler is not reported, and neither are overrides across Nuxt layers. Unresolved layers, environment overrides, custom scan directories or suffixes, and ignore options are evidence gaps.",
@@ -1457,6 +1474,23 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/routing/no-global-middleware-redirect-loop": {
+    description:
+      "Flags a global route middleware that redirects to a fixed route without checking where navigation is going.",
+    why: "Nuxt runs global middleware on the route it redirects to. Doctor reports a fixed redirect that the middleware reaches again on that route, and skips conditions and arguments that depend on mutable state or other values it cannot establish.",
+    recommendedReplacement:
+      "Return early when `to.path` (or `to.meta`) already matches the target, or move the redirect into named middleware.",
+    examples: [
+      {
+        title: "Skip the redirect on its target",
+        language: "ts",
+        invalid:
+          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware(() => {\n  return navigateTo('/login')\n})",
+        valid:
+          "// app/middleware/auth.global.ts\nexport default defineNuxtRouteMiddleware((to) => {\n  if (to.path !== '/login') return navigateTo('/login')\n})",
+      },
+    ],
+  },
   "nuxt/routing/no-hash-sensitive-route-fullpath-in-ssr-markup": {
     description:
       "Flags hash sensitive route fullpath in SSR markup in Nuxt routing code before it leaks into runtime behavior.",
@@ -1746,7 +1780,7 @@ export const ruleDocumentationMetadata = {
       "Report module-scope variables, Maps, and Sets that request-time app code fills with request data.",
     why: "On the server, Nuxt imports each app module once and reuses it for every SSR request. A module-scope let, Map, or Set that a store action, composable, plugin, or component setup writes during a request is shared by all concurrent requests: one user's fetched data, store instance, or in-flight promise becomes visible to the next request. An in-flight promise that closes over `this` in a Pinia action fills the first request's store, while later requests await it and keep their own store empty.",
     recommendedReplacement:
-      "Keep per-request state in useState() or the Pinia store state. For values that cannot live in payload state, such as in-flight promises, key them by the Nuxt app with a WeakMap so each SSR request gets its own entry. Constant lookup tables and caches of pure values, such as Intl formatters, can stay at module scope.",
+      "Keep private data in request-local variables or server-only request context. Use useState() or Pinia only for serializable values safe to send to the browser in the hydration payload. For non-sensitive, non-serializable values such as in-flight promises, key them by the Nuxt app with a WeakMap so each SSR request gets its own entry. Constant lookup tables and caches of pure values, such as Intl formatters, can stay at module scope.",
     examples: [
       {
         title: "Key in-flight requests by the Nuxt app",
@@ -1755,6 +1789,23 @@ export const ruleDocumentationMetadata = {
           "let currencyPromise: Promise<void> | null = null\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      currencyPromise ??= (async () => {\n        this.currencies = await $fetch('/api/currencies')\n      })()\n      await currencyPromise\n    },\n  },\n})",
         valid:
           "const currencyPromises = new WeakMap<NuxtApp, Promise<void>>()\n\nexport const useSettings = defineStore('settings', {\n  state: () => ({ currencies: [] as string[] }),\n  actions: {\n    async loadCurrencies() {\n      const nuxtApp = useNuxtApp()\n      let promise = currencyPromises.get(nuxtApp)\n      if (!promise) {\n        promise = (async () => {\n          this.currencies = await $fetch('/api/currencies')\n        })()\n        currencyPromises.set(nuxtApp, promise)\n      }\n      await promise\n    },\n  },\n})",
+      },
+    ],
+  },
+  "nuxt/ssr/no-request-data-in-module-state": {
+    description:
+      "Report module-scope ref(), reactive(), and plain objects or arrays that server-rendered app code writes request data into.",
+    why: "On the server, Nuxt imports the app bundle once and creates a new Vue app and Nuxt app for every request, but module-scope values are not recreated. A ref, reactive object, or plain object declared at module scope, or in the plain <script> block of a component, is shared by every request. When setup, a composable, a plugin, or route middleware writes the route, request headers, cookies, or the request event into it during server rendering, concurrent requests overwrite each other and one user's data can render for another. Doctor skips state created inside setup or the composable, useState, writes in onMounted, behind import.meta.client, or in event handlers, client-only files, apps that turn SSR off, and helpers it cannot trace to Vue or Nuxt. Map, Set, and reassigned module variables are reported by nuxt/ssr/no-module-scope-request-state.",
+    recommendedReplacement:
+      "Create state per request in local variables or with setup-local ref() or reactive(). Keep credentials and request objects in server-only request context. Nuxt writes useState() to nuxtApp.payload.state, so use it only for serializable values intended for the browser and safe to send in the hydration payload.",
+    examples: [
+      {
+        title: "Create request state with useState",
+        language: "ts",
+        invalid:
+          "const activeFilter = ref<string>()\n\nexport function useFilters() {\n  activeFilter.value = useRoute().query.filter as string\n  return activeFilter\n}",
+        valid:
+          "export function useFilters() {\n  const activeFilter = useState<string | undefined>('active-filter')\n  activeFilter.value = useRoute().query.filter as string\n  return activeFilter\n}",
       },
     ],
   },
@@ -2799,6 +2850,22 @@ export const ruleDocumentationMetadata = {
           '<script setup lang="ts">\nconst count = ref(1)\nconst doubled = ref(0)\nwatch(count, (value) => {\n  doubled.value = value * 2\n})\n</script>',
         valid:
           '<script setup lang="ts">\nconst count = ref(1)\nconst doubled = computed(() => count.value * 2)\n</script>',
+      },
+    ],
+  },
+  "vue/router/no-redirect-cycle": {
+    description: "Flags static route records whose redirects lead back to themselves.",
+    why: "vue-router follows record redirects without a limit, so a cycle of static redirects never resolves and navigation to any member hangs or overflows the stack.",
+    recommendedReplacement:
+      "Point one record in the cycle at a route that renders a component, or remove the redundant redirect.",
+    examples: [
+      {
+        title: "End the redirect chain at a page",
+        language: "ts",
+        invalid:
+          "createRouter({\n  history: createWebHistory(),\n  routes: [\n    { path: '/old', redirect: '/new' },\n    { path: '/new', redirect: '/old' },\n  ],\n})",
+        valid:
+          "createRouter({\n  history: createWebHistory(),\n  routes: [\n    { path: '/old', redirect: '/new' },\n    { path: '/new', component: NewPage },\n  ],\n})",
       },
     ],
   },

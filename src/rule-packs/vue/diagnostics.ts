@@ -53,6 +53,7 @@ export const vueDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0048", ruleId: "vue/state/no-external-shared-state-mutation" },
   { code: "VUE0049", ruleId: "vue/reactivity/no-shallow-ref-deep-mutation" },
   { code: "VUE0050", ruleId: "vue/watch/no-property-read-source" },
+  { code: "VUE0053", ruleId: "vue/router/no-redirect-cycle" },
 ]);
 
 export const diagnostics = vueDiagnosticRegistry.diagnostics;

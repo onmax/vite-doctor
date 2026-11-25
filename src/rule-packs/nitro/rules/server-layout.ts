@@ -23,6 +23,7 @@ const ROUTE_DIRS = new Set(["api", "routes"]);
 const SCANNED_SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const DECLARATION_FILE = /\.d\.[cm]?ts$/;
 const TEST_FILE = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
+const TEST_DIRECTORY = /(?:^|\/)(?:tests?|__tests__)\//;
 const SCAN_IGNORE_OPTIONS = new Set(["ignore", "ignorePrefix", "ignoreOptions"]);
 const NITRO3_METHODS = new Set([
   "connect",
@@ -59,6 +60,14 @@ export function nitroServerFile(ctx: RuleContext, file: string): NitroServerFile
     match = { serverDir, path, dir: path.split("/")[0]! };
   }
   return match;
+}
+
+/** A file under a Nitro server directory that runs in the server bundle: not a test, type declaration, or config. */
+export function isNitroRuntimeFile(ctx: RuleContext) {
+  const path = ctx.file.relativePath.replace(/\\/g, "/");
+  if (TEST_DIRECTORY.test(path) || TEST_FILE.test(path) || DECLARATION_FILE.test(path))
+    return false;
+  return Boolean(nitroServerFile(ctx, ctx.file.path)) && !/\.config\.[cm]?[jt]s$/.test(path);
 }
 
 export function nitroRouteFile(ctx: RuleContext, file: string): NitroServerFile | null {

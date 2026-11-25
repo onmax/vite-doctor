@@ -147,28 +147,32 @@ export class InlineSuppressionIndex {
   }
 }
 
-export function applyDiagnosticPolicy(input: DiagnosticPolicyInput): DiagnosticPolicyResult {
+export function applyDiagnosticPolicy(
+  input: DiagnosticPolicyInput,
+  selectOverlappingDiagnostics?: (diagnostics: Diagnostic[]) => Diagnostic[],
+): DiagnosticPolicyResult {
   const suppressed: Diagnostic[] = [];
   const inline = new InlineSuppressionIndex();
   const baseline = readBaseline(input.root, input.options.baseline);
   const fingerprints = baseline?.fingerprints ?? new Set<string>();
-  const nextDiagnostics: Diagnostic[] = [];
-  for (const diagnostic of input.diagnostics) {
+  const eligible = input.diagnostics.filter((diagnostic) => {
     const suppression = findSuppression(input.root, input.config, diagnostic, inline);
-    const inBaseline = fingerprints.has(diagnostic.fingerprint ?? "");
-    if (suppression || (input.options.newOnly && inBaseline)) {
-      suppressed.push({
-        ...diagnostic,
-        suppressed: true,
-        suppressionReason: suppression ?? (inBaseline ? "baseline" : undefined),
-      });
-      continue;
-    }
-    nextDiagnostics.push(diagnostic);
-  }
+    if (!suppression) return true;
+    suppressed.push({ ...diagnostic, suppressed: true, suppressionReason: suppression });
+    return false;
+  });
+  const selected = selectOverlappingDiagnostics?.(eligible) ?? eligible;
 
   if (input.options.updateBaseline && input.options.baseline)
-    writeBaseline(input.root, input.options.baseline, [...nextDiagnostics, ...suppressed]);
+    writeBaseline(input.root, input.options.baseline, [...selected, ...suppressed]);
+
+  const nextDiagnostics = input.options.newOnly
+    ? selected.filter((diagnostic) => {
+        if (!fingerprints.has(diagnostic.fingerprint ?? "")) return true;
+        suppressed.push({ ...diagnostic, suppressed: true, suppressionReason: "baseline" });
+        return false;
+      })
+    : selected;
 
   const filtering = baseline && input.options.newOnly && !input.options.updateBaseline;
   const stale =
@@ -200,6 +204,8 @@ export function diagnosticOccurrenceKey(diagnostic: Diagnostic): string {
     diagnostic.range?.start ??
       (diagnostic.code === "DOC0040" ? (diagnostic.fingerprint ?? "") : ""),
     diagnostic.message,
+    ...(diagnostic.instanceKey !== undefined ? [diagnostic.instanceKey] : []),
+    ...(diagnostic.code === "DOC0001" ? [diagnostic.fingerprint ?? ""] : []),
   ].join("\0");
 }
 

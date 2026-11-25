@@ -1,0 +1,296 @@
+import type { AnyNode } from "../rule-authoring.js";
+import { findFunctionVar, findStatementBinding, patternNames } from "./script-index.js";
+
+// Request-value flow over a Doctor script AST (nodes carry `__doctorParent`): does an expression
+// hold a value that only exists for one request? Rule Packs supply what counts as a source, such as
+// Nuxt's `useRoute()` or h3's `getQuery(event)`; the flow follows locals, skips functions that are
+// never called, and treats `import()` as the module instance every request shares.
+
+export const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
+const SCOPE_TYPES = new Set([
+  "BlockStatement",
+  "ForStatement",
+  "ForOfStatement",
+  "ForInStatement",
+  "SwitchStatement",
+]);
+const WRAPPERS = new Set([
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "TSTypeAssertion",
+  "ParenthesizedExpression",
+]);
+const PROMISE_METHODS = new Set(["then", "catch", "finally"]);
+const UNKNOWN_VALUE = Symbol("unknown value");
+type StaticValue = string | number | boolean | bigint | null | typeof UNKNOWN_VALUE;
+
+export interface RequestValueSources {
+  /** A node that is request data by itself, such as `useRoute()` or `getQuery(event)`. */
+  isSource(node: AnyNode): boolean;
+  /** The declarator binding `name` at program scope whose initializer the flow follows. */
+  programBinding?: (program: AnyNode, name: string, reference: AnyNode) => AnyNode;
+  /**
+   * Whether `reference`, which resolves to parameter `index` of `fn`, holds request data, such as
+   * the `event` an h3 handler receives. Without it, parameters are not resolved.
+   */
+  parameter?(fn: AnyNode, index: number, reference: AnyNode): boolean;
+  /** How many local initializers the flow follows. Defaults to 2. */
+  maxDepth?: number;
+}
+
+/** Whether evaluating `value` reads a request source, directly or through local bindings. */
+export function holdsRequestValue(value: AnyNode, sources: RequestValueSources): boolean {
+  return flows(value, sources, 0);
+}
+
+function flows(value: AnyNode, sources: RequestValueSources, depth: number): boolean {
+  let found = false;
+  const visit = (node: AnyNode) => {
+    if (found || !node || typeof node !== "object") return;
+    if (isModuleImport(node)) {
+      if (node.type !== "CallExpression") return;
+      // A continuation can still perform request work even though the imported module value
+      // itself is shared and safe to cache.
+      for (const argument of node.arguments ?? []) {
+        if (typeof argument?.type === "string") visit(argument);
+      }
+      return;
+    }
+    if (node.type === "AwaitExpression" && isModuleImport(node.argument)) {
+      visit(node.argument);
+      return;
+    }
+    if (sources.isSource(node)) {
+      found = true;
+      return;
+    }
+    if (
+      node.type === "Identifier" &&
+      depth < (sources.maxDepth ?? 2) &&
+      localHoldsRequestValue(node, sources, depth) &&
+      !isPropertyKey(node)
+    ) {
+      found = true;
+      return;
+    }
+    if (FUNCTION_TYPES.has(node.type) && !isInvoked(node) && !isPromiseCallback(node)) return;
+    if (node.type === "LogicalExpression") {
+      visit(node.left);
+      if (!found && !logicalRightIsSkipped(node, sources.programBinding)) visit(node.right);
+      return;
+    }
+    for (const [key, child] of Object.entries(node) as [string, AnyNode][]) {
+      if (key === "__doctorParent" || key === "parent" || key === "typeAnnotation") continue;
+      if (Array.isArray(child)) child.forEach(visit);
+      else if (typeof child?.type === "string") visit(child);
+    }
+  };
+  visit(value);
+  return found;
+}
+
+function localHoldsRequestValue(node: AnyNode, sources: RequestValueSources, depth: number) {
+  const parent = node.__doctorParent;
+  if (parent?.type === "MemberExpression" && parent.property === node && !parent.computed)
+    return false;
+  let child = node;
+  for (let current = parent; current; current = current.__doctorParent) {
+    if (sources.parameter && FUNCTION_TYPES.has(current.type)) {
+      const index = current.params.findIndex((param: AnyNode) =>
+        patternNames(param).includes(node.name),
+      );
+      if (index >= 0) return sources.parameter(current, index, node);
+    }
+    const declarator =
+      current.type === "Program"
+        ? (sources.programBinding?.(current, node.name, node) ?? null)
+        : nearerBinding(current, child, node.name);
+    if (declarator?.type === "VariableDeclarator")
+      return Boolean(declarator.init) && flows(declarator.init, sources, depth + 1);
+    if (declarator) return false;
+    child = current;
+  }
+  return false;
+}
+
+/** Whether `node` refers to the program-scope binding `name` rather than a nearer declaration. */
+export function resolvesToModuleBinding(node: AnyNode, name: string) {
+  let child = node;
+  for (let current = node.__doctorParent; current; current = current.__doctorParent) {
+    if (current.type === "Program") return true;
+    if (nearerBinding(current, child, name)) return false;
+    child = current;
+  }
+  return false;
+}
+
+export function resolveLexicalBinding(node: AnyNode): AnyNode {
+  return resolveBinding(node, (program, name) => findStatementBinding(program, name));
+}
+
+function resolveBinding(
+  node: AnyNode,
+  programBinding: NonNullable<RequestValueSources["programBinding"]>,
+): AnyNode {
+  let child = node;
+  for (let current = node.__doctorParent; current; current = current.__doctorParent) {
+    if (current.type === "Program") return programBinding(current, node.name, node);
+    const binding = nearerBinding(current, child, node.name);
+    if (binding) return binding;
+    child = current;
+  }
+  return null;
+}
+
+export function logicalRightIsSkipped(
+  node: AnyNode,
+  programBinding?: RequestValueSources["programBinding"],
+): boolean {
+  return shortCircuits(node.operator, staticValue(node.left, programBinding, 0));
+}
+
+function shortCircuits(operator: string, left: StaticValue): boolean {
+  if (left === UNKNOWN_VALUE) return false;
+  if (operator === "&&") return !left;
+  if (operator === "||") return Boolean(left);
+  return operator === "??" && left !== null;
+}
+
+function staticValue(
+  input: AnyNode,
+  programBinding: RequestValueSources["programBinding"],
+  depth: number,
+): StaticValue {
+  const node = unwrapExpression(input);
+  if (!node || depth > 5) return UNKNOWN_VALUE;
+  if (node.type === "Literal" && !node.regex) return node.value;
+  if (node.type === "TemplateLiteral" && !node.expressions.length)
+    return node.quasis[0].value.cooked;
+  if (node.type === "LogicalExpression") {
+    const left = staticValue(node.left, programBinding, depth + 1);
+    if (left === UNKNOWN_VALUE || shortCircuits(node.operator, left)) return left;
+    return staticValue(node.right, programBinding, depth + 1);
+  }
+  const binding = provenConstBinding(node, programBinding);
+  if (binding && binding.end <= node.start)
+    return staticValue(binding.init, programBinding, depth + 1);
+  return UNKNOWN_VALUE;
+}
+
+function provenConstBinding(
+  node: AnyNode,
+  programBinding?: RequestValueSources["programBinding"],
+): AnyNode {
+  if (node.type !== "Identifier") return null;
+  const binding = programBinding
+    ? resolveBinding(node, programBinding)
+    : resolveLexicalBinding(node);
+  return binding?.type === "VariableDeclarator" &&
+    binding.id.type === "Identifier" &&
+    binding.__doctorParent?.kind === "const"
+    ? binding
+    : null;
+}
+
+function nearerBinding(scope: AnyNode, child: AnyNode, name: string): AnyNode {
+  if (FUNCTION_TYPES.has(scope.type)) {
+    if (scope.type === "FunctionExpression" && scope.id?.name === name) return scope;
+    return (
+      scope.params?.find((param: AnyNode) => patternNames(param).includes(name)) ??
+      findFunctionVar(scope.body, name)
+    );
+  }
+  if (scope.type === "ClassExpression" && scope.id?.name === name) return scope;
+  if (scope.type === "SwitchStatement" && child === scope.discriminant) return null;
+  if (scope.type === "StaticBlock" || scope.type === "TSModuleBlock")
+    return findStatementBinding(scope, name) ?? findFunctionVar(scope.body, name);
+  if (SCOPE_TYPES.has(scope.type)) return findStatementBinding(scope, name);
+  if (scope.type === "CatchClause" && patternNames(scope.param).includes(name)) return scope.param;
+  return null;
+}
+
+const moduleNamesByProgram = new WeakMap<object, Set<string>>();
+
+/** Names that imports and top-level declarations bind in the program that contains `node`. */
+export function moduleNames(node: AnyNode) {
+  let program = node;
+  while (program.__doctorParent) program = program.__doctorParent;
+  let names = moduleNamesByProgram.get(program);
+  if (names) return names;
+  names = new Set<string>();
+  for (const statement of program.body ?? []) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (statement.type === "ImportDeclaration")
+      for (const specifier of statement.specifiers ?? []) names.add(specifier.local.name);
+    else if (declaration?.type === "FunctionDeclaration" && declaration.id)
+      names.add(declaration.id.name);
+    else if (declaration?.type === "VariableDeclaration")
+      for (const declarator of declaration.declarations) {
+        for (const name of patternNames(declarator.id)) names.add(name);
+      }
+  }
+  moduleNamesByProgram.set(program, names);
+  return names;
+}
+
+// `import()` resolves to the same module instance for every request.
+export function isModuleImport(input: AnyNode): boolean {
+  const node = unwrapExpression(input);
+  if (node?.type === "ImportExpression") return true;
+  if (node?.type !== "CallExpression") return false;
+  const callee = unwrapExpression(node.callee);
+  return (
+    callee?.type === "MemberExpression" &&
+    PROMISE_METHODS.has(callee.property?.name) &&
+    isModuleImport(callee.object)
+  );
+}
+
+function isPromiseCallback(node: AnyNode) {
+  let parent = node.__doctorParent;
+  while (parent && WRAPPERS.has(parent.type)) parent = parent.__doctorParent;
+  if (parent?.type !== "CallExpression") return false;
+  if (!parent.arguments?.some((argument: AnyNode) => unwrapExpression(argument) === node))
+    return false;
+  const callee = unwrapExpression(parent.callee);
+  return (
+    callee?.type === "MemberExpression" &&
+    PROMISE_METHODS.has(callee.property?.name) &&
+    isModuleImport(callee.object)
+  );
+}
+
+export function isInvoked(node: AnyNode) {
+  let parent = node.__doctorParent;
+  while (parent && WRAPPERS.has(parent.type)) parent = parent.__doctorParent;
+  return parent?.type === "CallExpression" && unwrapExpression(parent.callee) === node;
+}
+
+function isPropertyKey(node: AnyNode) {
+  const parent = node.__doctorParent;
+  return parent?.type === "Property" && parent.key === node && !parent.computed;
+}
+
+/** `a`, `a.b`, `this.a`, `f().b`, or `.b` for a callee the name cannot spell. */
+export function calleeName(node: AnyNode): string | null {
+  if (node?.type === "Identifier") return node.name;
+  if (node?.type === "MemberExpression" && !node.computed) {
+    const object =
+      node.object?.type === "ThisExpression" ? "this" : calleeName(unwrapExpression(node.object));
+    if (node.object?.type === "CallExpression")
+      return `${calleeName(unwrapExpression(node.object.callee)) ?? ""}().${node.property?.name}`;
+    return object ? `${object}.${node.property?.name}` : `.${node.property?.name}`;
+  }
+  return null;
+}
+
+export function unwrapExpression(node: AnyNode): AnyNode {
+  while (node && WRAPPERS.has(node.type)) node = node.expression;
+  return node;
+}

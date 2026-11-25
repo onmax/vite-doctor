@@ -30,6 +30,7 @@ import { noShadowedFileHandler } from "./no-shadowed-file-handler.js";
 import { noRuntimeConfigInResponse } from "./no-runtime-config-in-response.js";
 import { requireWaitUntilForBackgroundWork } from "./require-waituntil-for-background-work.js";
 import { noUndeclaredStorageMount } from "./no-undeclared-storage-mount.js";
+import { noRequestDataInModuleState } from "./no-request-data-in-module-state.js";
 
 export {
   noUseNuxtAppInNitro,
@@ -63,6 +64,7 @@ export {
   noRuntimeConfigInResponse,
   requireWaitUntilForBackgroundWork,
   noUndeclaredStorageMount,
+  noRequestDataInModuleState,
 };
 
 const rules = [
@@ -94,6 +96,7 @@ const rules = [
   noShadowedFileHandler,
   noRuntimeConfigInResponse,
   requireWaitUntilForBackgroundWork,
+  noRequestDataInModuleState,
 ];
 
 const strictOnlyRules = [preferServerUtils, noModuleScopeResponseCache, noUndeclaredStorageMount];

@@ -1,6 +1,12 @@
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
-import { annotationsEvidence, collectMcpTools, toolLabel } from "./shared.js";
+import {
+  annotationsEvidence,
+  collectMcpTools,
+  toolLabel,
+  type McpToolDefinition,
+} from "./shared.js";
+import { reportWireTool, wireToolLabel, wireTools } from "./wire.js";
 
 export const requireAnnotationTitle = createRule({
   meta: {
@@ -30,13 +36,31 @@ export const requireAnnotationTitle = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast"],
+    consumesEvidence: ["ast", "runtime"],
     cost: "medium",
   },
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        for (const tool of await collectMcpTools(ctx)) {
+        const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
+        for (const wire of sent) {
+          const findings = wire.findings.filter(
+            (finding) => finding.rule === "claude-directory/missing-title",
+          );
+          if (!findings.length) continue;
+          const topLevel = typeof wire.tool.title === "string" && wire.tool.title.trim();
+          const suggested = topLevel ? wire.tool.title! : "<Human-readable name>";
+          reportWireTool(
+            ctx,
+            wire,
+            diagnostics.MCP0001({
+              why: `MCP tool ${wireToolLabel(wire)} has no non-empty string in \`annotations.title\` in its tools/list entry.${topLevel ? ` It has a top-level title ${JSON.stringify(wire.tool.title)}, which clients that read only \`annotations.title\` never show.` : ""} Anthropic's Connectors Directory flags tools without one, and clients on the 2025-03-26 revision show only the bare name.`,
+              fix: `Add \`title: ${JSON.stringify(suggested)}\` to the tool's annotations.`,
+            }),
+            { ruleId: "mcp/tools/require-annotation-title", range: annotationsRange, findings },
+          );
+        }
+        for (const tool of sourceOnly) {
           const { annotations } = tool;
           if (annotations.state === "partial") continue;
           const title =
@@ -68,8 +92,9 @@ export const requireAnnotationTitle = createRule({
               severity: ctx.severity,
               category: "tools",
               file: tool.file,
-              range: annotations.state === "resolved" ? annotations.range : tool.callee,
+              range: annotationsRange(tool),
               confidence: "heuristic-high",
+              data: tool.name ? { tool: tool.name.value } : undefined,
               evidence: annotationsEvidence(tool),
             },
           );
@@ -78,3 +103,7 @@ export const requireAnnotationTitle = createRule({
     };
   },
 });
+
+function annotationsRange(tool: McpToolDefinition) {
+  return tool.annotations.state === "absent" ? tool.callee : tool.annotations.range;
+}

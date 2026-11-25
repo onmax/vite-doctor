@@ -1,9 +1,9 @@
+import { scriptNodesOfType } from "../../../../core/internal/script-index.js";
 import { fileScriptScope } from "../../../../core/internal/script-scope.js";
 import { diagnostics } from "../../diagnostics.js";
 import { isRuntimeAppFile } from "./file-classification.js";
 import { isNuxtAppExport, isVueLifecycleExport } from "./nuxt-app-binding.js";
 import { excludesRuntime, isInlineCallback, scriptParents } from "./runtime-branches.js";
-import { scriptNodesOfType } from "./script-index.js";
 import { createRule, toPosixPath, type AnyNode } from "./shared.js";
 
 const RULE_ID = "nuxt/fetch/handler-must-return";

@@ -1,11 +1,11 @@
 import { resolve } from "pathe";
 import type { RuleContext } from "../../../../core/index.js";
+import { scriptNodesOfType } from "../../../../core/internal/script-index.js";
 import { fileScriptScope, type ScriptScope } from "../../../../core/internal/script-scope.js";
 import { diagnostics } from "../../diagnostics.js";
 import { isRuntimeAppFile, nuxtSourcePath, resolveSameFile } from "./file-classification.js";
 import { isNuxtAppExport, isVueLifecycleExport } from "./nuxt-app-binding.js";
 import { excludesRuntime, isInlineCallback, scriptParents } from "./runtime-branches.js";
-import { scriptNodesOfType } from "./script-index.js";
 import { createRule, toPosixPath, type AnyNode } from "./shared.js";
 
 const RULE_ID = "nuxt/runtime/no-private-runtime-config-in-client";

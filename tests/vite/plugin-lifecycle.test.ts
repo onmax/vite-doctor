@@ -39,6 +39,52 @@ test("a reused Plugin Surface diagnoses each resolved Vite build", async () => {
   });
 });
 
+test("Pinia classifies destructuring against the configured Vite alias", async () => {
+  await withProject(async (root) => {
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0", vue: "^3.5.0" } }),
+    );
+    const store = (id: string, options: string) =>
+      `import { defineStore } from 'pinia'\nexport const useCartStore = defineStore('${id}', ${options})`;
+    for (const dir of ["src", "custom"])
+      await mkdir(join(root, dir, "stores"), { recursive: true });
+    await writeFile(
+      join(root, "src/stores/cart.ts"),
+      store("ts", "{ state: () => ({ count: 0 }) }"),
+    );
+    await writeFile(
+      join(root, "src/stores/cart.js"),
+      store("js", "{ state: () => ({ count: 1 }) }"),
+    );
+    const target = join(root, "custom/stores/cart.ts");
+    await writeFile(target, store("custom", "{ actions: { count() {} } }"));
+    await writeFile(
+      join(root, "entry.ts"),
+      `import { defineComponent } from 'vue'
+import { useCartStore } from '@/stores/cart'
+export default defineComponent({ setup() { const { count } = useCartStore(); return { count } } })`,
+    );
+    const config = {
+      root,
+      configFile: false as const,
+      logLevel: "silent" as const,
+      plugins: [
+        doctor({ rules: "pinia/state/no-store-destructure", maxWarnings: 0, cache: false }),
+      ],
+      resolve: { alias: { "@": join(root, "custom") }, extensions: [".ts", ".js"] },
+      build: {
+        write: false,
+        lib: { entry: join(root, "entry.ts"), formats: ["es" as const] },
+        rolldownOptions: { external: ["pinia", "vue"] },
+      },
+    };
+    await build(config);
+    await writeFile(target, store("custom", "{ state: () => ({ count: 2 }) }"));
+    await expect(build(config)).rejects.toThrow(/PINIA0005.*custom\/stores\/cart\.ts/);
+  });
+});
+
 test("Pinia cycles use Vite's resolved extension order", async () => {
   await withProject(async (root) => {
     await writeFile(

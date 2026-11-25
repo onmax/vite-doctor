@@ -15,7 +15,7 @@ import {
 import { parseSfcFile } from "../../../../core/internal/sfc.js";
 import { workspaceViewRoot } from "../../../../core/internal/workspace-nuxt.js";
 import { diagnostics } from "../../diagnostics.js";
-import { scriptNodesOfType } from "./script-index.js";
+import { scriptNodesOfType } from "../../../../core/internal/script-index.js";
 import type { AnyNode } from "./shared.js";
 
 const RULE_ID = "nuxt/state/no-diverging-usestate-init";

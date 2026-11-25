@@ -1,6 +1,6 @@
 import { lt, major, valid } from "semver";
 import type { DiagnosticEvidence, RuleContext } from "../../../../core/index.js";
-import { findFunctionVar, findStatementBinding } from "./script-index.js";
+import { findFunctionVar, findStatementBinding } from "../../../../core/internal/script-index.js";
 import { getAsyncDataCall, getObjectPropertyValue, isFalseLiteral } from "./async-data.js";
 import { FUNCTION_TYPES, isNonReference, propertyName } from "./nuxt-config-ast.js";
 import { type AnyNode, createRule, sourceForNode, walkScriptLocal } from "./shared.js";

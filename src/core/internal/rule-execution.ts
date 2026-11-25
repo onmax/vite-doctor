@@ -26,8 +26,10 @@ import { isScriptVisitorKey, runVisitors } from "./rule-runner.js";
 import { canMatchPrefilter } from "./rule-prefilter.js";
 import { workspaceNuxtRoots, workspaceProjectView, workspaceViewRoot } from "./workspace-nuxt.js";
 import { nuxtInventoryOwner, owningWorkspacePackage } from "./workspace-packages.js";
+import { collectAutoImportEdges } from "./auto-import-edges.js";
 import {
   buildWorkspaceGraph,
+  createGraphIndex,
   importGraphInventory,
   runDuplicationRules,
   runHealthRules,
@@ -48,6 +50,44 @@ import {
 } from "./scan-session.js";
 import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
 import { selectHtmlPaths } from "./source-inventory.js";
+
+function copyDiagnosticData(data: object, ruleId: string): Record<string, unknown> {
+  const ancestors = new Set<object>();
+  function invalid(): never {
+    throw new TypeError(`Rule "${ruleId}" must report Diagnostic data as a plain JSON object.`);
+  }
+  function copyProperty(object: object, key: string): unknown {
+    const property = Object.getOwnPropertyDescriptor(object, key);
+    if (!property?.enumerable || !("value" in property)) return invalid();
+    return copyValue(property.value);
+  }
+  function copyValue(value: unknown): unknown {
+    if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "object" || value === null || ancestors.has(value)) return invalid();
+    ancestors.add(value);
+    try {
+      if (Array.isArray(value)) {
+        if (Reflect.ownKeys(value).length !== value.length + 1) return invalid();
+        return Array.from({ length: value.length }, (_, index) =>
+          copyProperty(value, String(index)),
+        );
+      }
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) return invalid();
+      return Object.fromEntries(
+        Reflect.ownKeys(value).map((key) => {
+          if (typeof key !== "string") return invalid();
+          return [key, copyProperty(value, key)];
+        }),
+      );
+    } finally {
+      ancestors.delete(value);
+    }
+  }
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return invalid();
+  return copyValue(data) as Record<string, unknown>;
+}
 
 interface RuleRun {
   context: RuleContext;
@@ -293,7 +333,8 @@ export async function buildGraphPhase(session: ScanSession): Promise<void> {
   // A scoped report describes the reported files, so it skips the project graph summary unless an
   // analysis needs the graph.
   if (session.scopedReport && !graphAnalyses) return;
-  const key = graphKey(session);
+  // Graph analyses add auto-import edges, so each mode keeps its own summary.
+  const key = graphKey(session, graphAnalyses);
   if (!graphAnalyses) {
     const cached = session.cache.graph(key);
     if (cached) {
@@ -303,7 +344,9 @@ export async function buildGraphPhase(session: ScanSession): Promise<void> {
   }
   session.facts = await sourceFacts(session);
   const frame = session.ruleInputs.frame();
-  session.graph = buildWorkspaceGraph(session, frame.fs);
+  const index = createGraphIndex(session, frame.fs);
+  const autoImports = graphAnalyses ? await collectAutoImportEdges(session, index) : [];
+  session.graph = buildWorkspaceGraph(session, frame.fs, index, autoImports);
   session.graphSummary = summarizeGraph(session.graph);
   session.cache.recordGraph(key, session.graphSummary, frame.readInputs());
 }
@@ -342,10 +385,11 @@ function projectChanged(project: ProjectInfo, before: unknown[]): boolean {
   return after.length !== before.length || after.some((value, index) => value !== before[index]);
 }
 
-function graphKey(session: ScanSession): string {
+function graphKey(session: ScanSession, autoImports: boolean): string {
   return sha256(
     JSON.stringify([
       session.contextKey,
+      autoImports,
       session.handles.map((file) => [
         file.path,
         file.hash,
@@ -376,6 +420,18 @@ function selectedAnalyses(session: ScanSession): Set<string> {
   );
 }
 
+const workspaceReportingContexts = new WeakMap<RuleContext, (file?: string) => boolean>();
+
+export function canReportFromWorkspace(context: RuleContext, file?: string): boolean {
+  return workspaceReportingContexts.get(context)?.(file) ?? false;
+}
+
+function projectDiagnosticConfig(session: ScanSession, ruleId: string): ResolvedRuleConfig {
+  return session.overrideOnlyRules.has(ruleId)
+    ? { enabled: false }
+    : topLevelRuleConfig(session, ruleId);
+}
+
 function createRuleRun(
   session: ScanSession,
   file: SourceFileHandle,
@@ -404,14 +460,16 @@ function createRuleRun(
     get options() {
       return currentRuleConfig.options;
     },
-    report(diagnostic, metadata = {}) {
+    report(diagnostic, { projectLevel, data, ...metadata } = {}) {
+      const atProjectRoot = projectLevel && phase === "workspace";
       const input = normalizeDiagnostic({
         ...metadata,
+        ...(data === undefined ? {} : { data: copyDiagnosticData(data, rule.meta.id) }),
         ruleId: metadata.ruleId ?? rule.meta.id,
         severity: metadata.severity ?? currentSeverity,
         category: metadata.category ?? rule.meta.category,
         diagnostic,
-        file: metadata.file ?? file.path,
+        file: atProjectRoot ? session.root : (metadata.file ?? file.path),
       });
       if (phase === "file" && rule.meta.reportScope !== "project") {
         const outside = [input.file, ...(input.related ?? []).map((item) => item.file)]
@@ -426,7 +484,9 @@ function createRuleRun(
       }
       // Overrides apply to the file a Diagnostic is located in, which a project-scoped Rule can
       // choose, so its config is resolved per Diagnostic.
-      const diagnosticConfig = fileRuleConfig(session, input.ruleId, input.file);
+      const diagnosticConfig = atProjectRoot
+        ? projectDiagnosticConfig(session, input.ruleId)
+        : fileRuleConfig(session, input.ruleId, input.file);
       if (diagnosticConfig.enabled === false) return;
       if (input.file !== file.path) frame.log.push(`t:${resolve(session.root, input.file)}`);
       const severity =
@@ -491,6 +551,14 @@ function createRuleRun(
         : undefined;
     },
   };
+  if (phase === "workspace") {
+    workspaceReportingContexts.set(context, (file) => {
+      const config = file
+        ? fileRuleConfig(session, rule.meta.id, file)
+        : projectDiagnosticConfig(session, rule.meta.id);
+      return config.enabled !== false;
+    });
+  }
   return {
     context,
     frame,

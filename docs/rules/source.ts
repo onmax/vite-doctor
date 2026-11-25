@@ -1009,6 +1009,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia state", "https://pinia.vuejs.org/core-concepts/state.html");
   }
 
+  if (rule.id === "nuxt/ssr/no-request-data-in-module-state") {
+    add("Nuxt useState", "https://nuxt.com/docs/4.x/api/composables/use-state");
+  }
+
+  if (rule.id === "nitro/state/no-request-data-in-module-state") {
+    add("Nitro cached functions", "https://nitro.build/docs/cache");
+  }
+
   if (rule.id === "vue/props/no-unused-props") {
     add("Vue fallthrough attributes", "https://vuejs.org/guide/components/attrs.html");
   }
@@ -1031,6 +1039,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
 
   if (rule.id === "vue/watch/no-property-read-source") {
     add("Vue watch()", "https://vuejs.org/api/reactivity-core.html#watch");
+  }
+
+  if (rule.id === "vue/router/no-redirect-cycle") {
+    add(
+      "Vue Router redirect and alias",
+      "https://router.vuejs.org/guide/essentials/redirect-and-alias.html",
+    );
+  }
+
+  if (rule.id === "nuxt/routing/no-global-middleware-redirect-loop") {
+    add("Nuxt route middleware", "https://nuxt.com/docs/4.x/directory-structure/app/middleware");
+    add("Nuxt navigateTo", "https://nuxt.com/docs/4.x/api/utils/navigate-to");
   }
 
   if (rule.id === "vue/attrs/require-explicit-emits") {
