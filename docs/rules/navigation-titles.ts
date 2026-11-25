@@ -147,6 +147,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "mcp/tools/require-annotation-title": "Annotation titles",
   "mcp/tools/require-safety-hint": "Safety hints",
   "mcp/tools/valid-name": "Tool names",
+  "mcp/tools/no-indented-json-output": "Compact JSON output",
   "pinia/state/no-action-bypass": "Action bypass",
   "pinia/stores/no-circular-setup-state-read": "Circular setup reads",
   "pinia/stores/store-name-matches-id": "Store names",

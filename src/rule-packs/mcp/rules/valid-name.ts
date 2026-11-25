@@ -54,7 +54,9 @@ export const validName = createRule({
               why: `MCP tool name ${JSON.stringify(name.value)} ${problems.join(" and ")}.${origin} Anthropic's Connectors Directory rejects names over 64 characters, and MCP allows only letters, digits, \`_\`, \`-\`, and \`.\`.`,
               fix:
                 name.source === "file"
-                  ? "Rename the file, or set `name` on the definition, to at most 64 letters, digits, `_`, `-`, or `.`."
+                  ? tool.library === "@vite-hub/mcp"
+                    ? "Rename or move the tool file so its discovered name is at most 64 letters, digits, `_`, `-`, or `.`."
+                    : "Rename the file, or set `name` on the definition, to at most 64 letters, digits, `_`, `-`, or `.`."
                   : "Rename the tool to at most 64 letters, digits, `_`, `-`, or `.`.",
             }),
             {

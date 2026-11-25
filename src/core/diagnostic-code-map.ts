@@ -13,6 +13,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "MCP0001", ruleId: "mcp/tools/require-annotation-title" },
   { code: "MCP0002", ruleId: "mcp/tools/require-safety-hint" },
   { code: "MCP0003", ruleId: "mcp/tools/valid-name" },
+  { code: "MCP0004", ruleId: "mcp/tools/no-indented-json-output" },
   { code: "PINIA0001", ruleId: "pinia/stores/unique-store-id" },
   { code: "PINIA0002", ruleId: "pinia/stores/store-name-matches-id" },
   { code: "PINIA0003", ruleId: "pinia/stores/no-circular-setup-state-read" },
