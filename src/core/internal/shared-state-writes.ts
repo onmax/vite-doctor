@@ -617,6 +617,7 @@ async function templateWrites(
     root = parseForESLint(text, {
       filePath: source.file,
       parser: { "<template>": tsParser },
+      lib: [],
       sourceType: "module",
       ecmaVersion: "latest",
     }).ast.templateBody;
