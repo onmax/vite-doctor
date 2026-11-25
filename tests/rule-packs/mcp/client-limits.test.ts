@@ -552,10 +552,19 @@ export default defineMcpTool({
   const name = asWritten.all.find((item) => item.code === "MCP0003")!;
   expect(name.why).toContain('"remote tool" of MCP server "hub"');
   expect(name.file).toBe(root);
-  // A client renaming the tool says nothing MCP0003's fix doesn't cover.
-  expect(
-    asWritten.all.some((item) => item.code === "MCP0007" && item.why.includes("remote tool")),
-  ).toBe(false);
+
+  // With no source definition to rename, the clients' own name limits stay visible.
+  const strict = await run(root, {
+    extensions: sent([{ name: "remote tool", ...annotated, inputSchema: object }]),
+  });
+  const rename = strict.all.find(
+    (item) => item.code === "MCP0007" && item.why.includes("remote tool"),
+  );
+  expect(rename?.data).toMatchObject({
+    findings: expect.arrayContaining([
+      expect.objectContaining({ client: "codex", pointer: "/name" }),
+    ]),
+  });
 });
 
 test("a wire finding from a server without a URL carries only the server name in data", async () => {

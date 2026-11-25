@@ -59,7 +59,7 @@ export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOption
       }
       for (const group of groups) {
         const definition = group.tool === undefined ? undefined : staticTool(tools, group.tool);
-        const name = group.tool;
+        const name = definition?.name?.value;
         const findings =
           name === undefined
             ? group.findings
