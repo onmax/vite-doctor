@@ -59,6 +59,7 @@ export interface RequestValueSources {
 type FlowSources = RequestValueSources & {
   spendProjectionWork?: () => void;
   tracingProjection?: boolean;
+  initializerResults?: WeakMap<object, Map<number, boolean>>;
 };
 
 /** Whether evaluating `value` reads a request source, directly or through local bindings. */
@@ -69,6 +70,7 @@ export function holdsRequestValue(value: AnyNode, sources: RequestValueSources):
     value,
     {
       ...sources,
+      initializerResults: new WeakMap(),
       spendProjectionWork: () => {
         if (remaining <= 0) throw PROJECTION_LIMIT;
         remaining--;
@@ -629,11 +631,23 @@ function localHoldsRequestValue(node: AnyNode, sources: FlowSources, depth: numb
         ? (sources.programBinding?.(current, node.name, node) ?? null)
         : nearerBinding(current, child, node.name);
     if (declarator?.type === "VariableDeclarator")
-      return Boolean(declarator.init) && flows(declarator.init, sources, depth + 1);
+      return declarator.init ? traceInitializer(declarator.init, sources, depth + 1) : false;
     if (declarator) return false;
     child = current;
   }
   return false;
+}
+
+function traceInitializer(init: AnyNode, sources: FlowSources, depth: number): boolean {
+  const memo = sources.tracingProjection ? undefined : sources.initializerResults;
+  if (!memo) return flows(init, sources, depth);
+  let results = memo.get(init);
+  if (!results) memo.set(init, (results = new Map()));
+  const previous = results.get(depth);
+  if (previous !== undefined) return previous;
+  const result = flows(init, sources, depth);
+  results.set(depth, result);
+  return result;
 }
 
 /** Whether `node` refers to the program-scope binding `name` rather than a nearer declaration. */
