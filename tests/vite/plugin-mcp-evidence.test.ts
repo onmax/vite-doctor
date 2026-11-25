@@ -92,7 +92,6 @@ test("in dev, an MCP path resolves against the dev server once it listens", asyn
       expect(result.project.evidenceGaps ?? []).toEqual([]);
       expect(errors).toEqual([]);
 
-      // The server's tools have no saved file, so a save rereads them in a full run.
       server.watcher.emit("change", join(root, "entry.ts"));
       await vi.waitFor(() => expect(doctorRuns).toHaveLength(2), { timeout: 15_000 });
       await doctorRuns[1];

@@ -40,7 +40,6 @@ test("a Doctor Run reads an MCP server's tools/list as Runtime Evidence", async 
     mcpServers: Array<{ name?: string; url: string; tools: unknown[] }>;
   };
   expect(evidence.mcpServers[0]).toMatchObject({ url: server.url, tools: stubTools });
-  // `serverInfo.name` is not the name clients prefix to tool names, so it is not copied.
   expect(evidence.mcpServers[0]).not.toHaveProperty("name");
   expect(readMcpServers(result.project.runtimeEvidence)).toEqual(evidence.mcpServers);
   expect(result.project.evidenceGaps ?? []).toEqual([]);

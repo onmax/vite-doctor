@@ -170,7 +170,6 @@ test("in a monorepo with two MCP packages, a tool with no source in them is repo
     "pnpm-workspace.yaml": 'packages:\n  - "packages/*"\n',
     "packages/a/package.json": mcpPackage("a"),
     "packages/b/package.json": mcpPackage("b"),
-    // A package without an MCP dependency is not the source of the server's `search`.
     "packages/c/package.json": JSON.stringify({ name: "c" }),
     "packages/c/server/mcp/tools/search.ts": searchSource,
   });
