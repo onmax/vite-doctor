@@ -262,6 +262,7 @@ test("only project-wide client Rules cover remote-only MCP tools without the MCP
   expect(titleOnly.diagnostics.map(({ code }) => code)).toContain("MCP0001");
   expect(reportStatus(titleOnly)).toBe("incomplete");
   expect(titleOnly.project.evidenceUsed).toHaveLength(1);
+  expect(createReport(titleOnly, "text")).toContain("no MCP client Rule checked them project-wide");
 
   const projectWide = await runViteDoctor({ ...options, config: { rules } });
   expect(projectWide.diagnostics.map(({ code }) => code)).toContain("MCP0005");
@@ -272,7 +273,13 @@ test("only project-wide client Rules cover remote-only MCP tools without the MCP
 });
 
 test("a file override reports scoped MCP evidence without clearing the project-wide gap", async () => {
-  mockRemoteToolWithIncompatibleSchema();
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const { method, id } = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+    if (method === "notifications/initialized") return new Response(null, { status: 202 });
+    const name = String(url).includes("other.test") ? "other" : "remote";
+    const tools = [{ name, inputSchema: { type: "object", properties: { "page size": {} } } }];
+    return Response.json({ id, result: method === "initialize" ? {} : { tools } });
+  });
   const root = project();
   const file = join(root, "index.ts");
   writeFileSync(
@@ -290,7 +297,7 @@ server.registerTool('remote', {}, async () => ({ content: [] }))
     config: {
       overrides: [{ files: ["index.ts"], rules: { "mcp/clients/no-excluded-tool": "error" } }],
     },
-    mcp: [{ url: "https://example.test/mcp" }],
+    mcp: [{ url: "https://example.test/mcp" }, { url: "https://other.test/mcp" }],
   });
   expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "MCP0005", file }));
   expect(reportStatus(result)).toBe("incomplete");
@@ -301,7 +308,9 @@ server.registerTool('remote', {}, async () => ({ content: [] }))
     },
   ]);
   const text = createReport(result, "text");
-  expect(text).toContain("no MCP client Rule checked them project-wide");
+  expect(text).toContain(
+    "read the tools of https://example.test, https://other.test as Runtime Evidence, but no MCP client Rule checked them project-wide",
+  );
 });
 
 test("an extends list that leaves out the MCP Rule Pack leaves an evidence gap", async () => {
