@@ -312,6 +312,7 @@ export interface NuxtProjectInfo {
     scannedComposableFiles?: string[];
     importsDirs: string[];
     pluginFiles: string[];
+    serverAppEntryFiles?: string[];
     resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
     resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
     resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
@@ -518,6 +519,8 @@ export interface NuxtDoctorManifest {
   keyedComposables?: unknown[];
   importsDirs?: string[];
   pluginFiles?: string[];
+  /** Nuxt-resolved app entries eligible for server-side rendering, relative to rootDir. */
+  serverAppEntryFiles?: string[];
   resolvedPlugins?: Array<{ file: string; mode: "client" | "server" | "all" }>;
   resolvedMiddleware?: string[];
   appScanRoots?: string[];

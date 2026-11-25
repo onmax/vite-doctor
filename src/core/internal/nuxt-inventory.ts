@@ -18,6 +18,7 @@ export interface NuxtProjectInventory {
   scannedComposableFiles?: string[];
   importsDirs: string[];
   pluginFiles: string[];
+  serverAppEntryFiles?: string[];
   resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
   resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
   resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
@@ -69,6 +70,9 @@ export function createNuxtProjectInventory(
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
+    serverAppEntryFiles: discovery
+      ? manifest?.serverAppEntryFiles?.map((file) => resolve(root, file))
+      : undefined,
     resolvedPlugins: current("plugins")
       ? manifest?.resolvedPlugins?.map((plugin) => ({
           ...plugin,
