@@ -81,7 +81,7 @@ export async function main(
   addDoctorRunCommand(cli, args, cwd, surface, (code) => (exitCode = code));
   cli
     .command("migrate [path]", "Evaluate source against a future runtime graph.")
-    .option("--to <target>", "Explicit target such as nuxt@5 or nitro@3.")
+    .option("--to <target>", "Explicit target: nuxt@5, nitro@3, or h3@2.")
     .option("--format <format>", "Output: text, json, or agent.")
     .action(async (path = ".", options) => {
       const format = await presentationFormat(options.format, metadataFormats);

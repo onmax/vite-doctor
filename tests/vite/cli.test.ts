@@ -1473,6 +1473,149 @@ test("migrate rejects Nitro targets outside Nuxt and Nitro projects", async () =
   );
 });
 
+const h3RedirectHandler = `import { send, sendRedirect } from "h3"
+export default defineEventHandler((event) => {
+  if (event.path === "/old") return sendRedirect(event, "/new")
+  return send(event, "ok")
+})
+`;
+
+test.each([
+  ["nitro@3", nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" })],
+  ["nuxt@5", nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" })],
+] as const)(
+  "migrate --to %s keeps the H3 Rule Pack's v2 migration rules",
+  async (target, files) => {
+    await withFixture({ ...files, "server/api/redirect.ts": h3RedirectHandler }, async (root) => {
+      const result = await runCli(["migrate", ".", "--to", target, "--format", "json"], root);
+      const report = JSON.parse(result.output);
+
+      expect(report.applicability.activated).toEqual(
+        expect.arrayContaining([
+          "h3/migration/no-removed-send",
+          "h3/migration/prefer-redirect-response",
+        ]),
+      );
+      expect(report.applicability.retained).toContain("h3/errors/no-http-error-masking");
+      expect(
+        report.stages[1].diagnostics
+          .filter((item: { file: string }) => item.file === "server/api/redirect.ts")
+          .map((item: { ruleId: string }) => item.ruleId),
+      ).toEqual(
+        expect.arrayContaining([
+          "h3/migration/no-removed-send",
+          "h3/migration/prefer-redirect-response",
+        ]),
+      );
+    });
+  },
+);
+
+const h3ServerFiles = (h3: string) => ({
+  "package.json": JSON.stringify({ dependencies: { h3: `^${h3}` } }),
+  "node_modules/h3/package.json": JSON.stringify({ name: "h3", version: h3 }),
+  "src/server.ts": `import { createServer } from "node:http"
+import { createApp, sendRedirect, toNodeListener } from "h3"
+const app = createApp()
+app.use("/old", defineEventHandler((event) => sendRedirect(event, "/new")))
+createServer(toNodeListener(app)).listen(3000)
+`,
+});
+
+test.each([
+  ["explicit", ["--to", "h3@2"]],
+  ["inferred", []],
+] as const)("migrate targets h3@2 for a plain h3 1.x server (%s)", async (source, to) => {
+  await withFixture(h3ServerFiles("1.15.4"), async (root) => {
+    const result = await runCli(["migrate", ".", ...to, "--format", "json"], root);
+    const report = JSON.parse(result.output);
+
+    expect(report.framework).toBe("vite");
+    expect(report.target).toEqual({ source, requested: ["h3@2"], runtime: { h3: "2.0.0-0" } });
+    expect(report.applicability.activated).toEqual(
+      expect.arrayContaining([
+        "h3/migration/no-removed-send",
+        "h3/migration/prefer-redirect-response",
+      ]),
+    );
+    expect(report.stages[1].changes).toEqual([
+      {
+        kind: "dependency",
+        package: "h3",
+        file: "package.json",
+        from: "1.15.4",
+        to: "h3@2",
+        instruction: "Update h3 from 1.15.4 to h3@2 in package.json.",
+      },
+    ]);
+    expect(report.stages[2].checks.map((check: { id: string }) => check.id)).toContain(
+      "serve-h3-app",
+    );
+  });
+});
+
+test("migrate --to h3@2 proposes the h3 bump in each workspace package that declares h3 1.x", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ private: true, workspaces: ["packages/*"] }),
+      "packages/api/package.json": JSON.stringify({
+        name: "api",
+        dependencies: { h3: "^1.15.4" },
+      }),
+      "packages/api/node_modules/h3/package.json": JSON.stringify({
+        name: "h3",
+        version: "1.15.4",
+      }),
+      "packages/edge/package.json": JSON.stringify({
+        name: "edge",
+        dependencies: { h3: "^2.0.1-rc.26" },
+      }),
+      "packages/edge/node_modules/h3/package.json": JSON.stringify({
+        name: "h3",
+        version: "2.0.1-rc.26",
+      }),
+    },
+    async (root) => {
+      const result = await runCli(["migrate", ".", "--to", "h3@2", "--format", "json"], root);
+      const report = JSON.parse(result.output);
+
+      expect(report.stages[1].changes).toEqual([
+        expect.objectContaining({
+          package: "h3",
+          file: "packages/api/package.json",
+          from: "1.15.4",
+          to: "h3@2",
+        }),
+      ]);
+    },
+  );
+});
+
+test.each([
+  [
+    "Nitro provides h3",
+    nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" }),
+    "Nitro provides h3",
+  ],
+  ["h3 is already v2", h3ServerFiles("2.0.1-rc.26"), "h3 is already 2.0.1-rc.26"],
+  [
+    "no package declares h3",
+    { "package.json": JSON.stringify({ dependencies: { vite: "7.0.0" } }) },
+    "do not declare h3",
+  ],
+] as const)("migrate rejects h3@2 when %s", async (_case, files, message) => {
+  await withFixture(files, async (root) => {
+    const result = await runCli(["migrate", ".", "--to", "h3@2", "--format", "json"], root);
+
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.output)).toMatchObject({
+      schema: "vite-doctor.report/v4",
+      status: "failed",
+      error: { message: expect.stringContaining(message) },
+    });
+  });
+});
+
 test("CLI can record and refresh a baseline while retaining new-only findings", async () => {
   await withFixture(
     {
