@@ -1,4 +1,5 @@
 import { relative } from "pathe";
+import { isMcpHeaderName } from "../mcp/endpoint.js";
 import pc from "picocolors";
 import { formatDiagnostic } from "nostics";
 import type {
@@ -586,6 +587,11 @@ function agentRunArguments(
   ] as const) {
     if (value !== undefined) args.push(flag, String(value));
   }
+  for (let index = 0; index < (options?.mcp?.length ?? 0); index++)
+    args.push("--mcp-url", "<mcp-url>");
+  // Header values carry tokens, so commands name the header and leave its value to the agent.
+  for (const name of Object.keys(options?.mcp?.[0]?.headers ?? {}))
+    if (isMcpHeaderName(name)) args.push("--mcp-header", `${name}: <value>`);
   if (options?.newOnly) args.push("--new-only");
   if (options?.profile) args.push("--profile");
   if (options?.cache !== undefined) args.push(options.cache ? "--cache" : "--no-cache");

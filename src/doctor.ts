@@ -29,6 +29,7 @@ import shadcnRulePack from "./rule-packs/shadcn/index.js";
 import { packageRulePack } from "./rule-packs/package/index.js";
 import { piniaRulePack } from "./rule-packs/pinia/index.js";
 import { mcpRulePack } from "./rule-packs/mcp/index.js";
+import { mcpEvidenceExtension, uncheckedMcpEvidenceGap } from "./mcp/evidence.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
@@ -82,6 +83,11 @@ export async function viteDoctorExtensions(
 
 export async function runViteDoctor(options: DoctorRunOptions) {
   const result = await runDoctor(await viteDoctorRunOptions(options));
+  const unchecked = uncheckedMcpEvidenceGap(
+    result.project,
+    Boolean(result.rulePacks?.some((pack) => pack.name === mcpRulePack.name && pack.selected)),
+  );
+  if (unchecked) result.project.evidenceGaps = [...(result.project.evidenceGaps ?? []), unchecked];
   return { ...result, version: viteDoctorVersion };
 }
 
@@ -91,6 +97,7 @@ export async function viteDoctorRunOptions(options: DoctorRunOptions): Promise<D
     ...options,
     extensions: [
       ...extensions,
+      ...(options.mcp?.length ? [mcpEvidenceExtension(options.mcp)] : []),
       ...(options.extensions ?? []),
       ...(await hostDoctorExtensions(options)),
     ],
