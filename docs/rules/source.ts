@@ -1037,6 +1037,17 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia", "https://pinia.vuejs.org/");
   }
 
+  if (rule.id === "vue/attrs/no-multi-root-fallthrough") {
+    add(
+      "Vue attribute inheritance on multiple root nodes",
+      "https://vuejs.org/guide/components/attrs.html#attribute-inheritance-on-multiple-root-nodes",
+    );
+    add(
+      "Vue disabling attribute inheritance",
+      "https://vuejs.org/guide/components/attrs.html#disabling-attribute-inheritance",
+    );
+  }
+
   if (rule.id === "vue/reactivity/no-shallow-ref-deep-mutation") {
     add(
       "Vue reducing reactivity overhead for large immutable structures",
@@ -1126,6 +1137,28 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
 
   if (rule.id.includes("usefetch") || rule.id.includes("use-fetch")) {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");
+  }
+
+  if (rule.id === "nuxt/routing/parent-page-requires-nuxtpage") {
+    add(
+      "Nuxt nested routes",
+      "https://nuxt.com/docs/4.x/guide/directory-structure/app/pages#nested-routes",
+    );
+    add("NuxtPage", "https://nuxt.com/docs/4.x/api/components/nuxt-page");
+  }
+
+  if (rule.id === "nuxt/layouts/app-renders-nuxtlayout") {
+    add("Nuxt layouts", "https://nuxt.com/docs/4.x/guide/directory-structure/app/layouts");
+    add("NuxtLayout", "https://nuxt.com/docs/4.x/api/components/nuxt-layout");
+  }
+
+  if (rule.id === "nuxt/pages/single-root-node") {
+    add("Nuxt transitions", "https://nuxt.com/docs/4.x/getting-started/transitions");
+    add("Vue Transition", "https://vuejs.org/guide/built-ins/transition.html");
+  }
+
+  if (rule.id === "nuxt/routing/navigate-to-external") {
+    add("Nuxt navigateTo", "https://nuxt.com/docs/4.x/api/utils/navigate-to");
   }
 
   if (rule.id === "nuxt/runtime/no-private-runtime-config-in-client") {

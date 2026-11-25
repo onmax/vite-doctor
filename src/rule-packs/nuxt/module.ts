@@ -2,8 +2,12 @@ import { getCallSites } from "node:util";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
+import { nuxtAppInputSignature } from "../../core/internal/nuxt-app-inputs.js";
+import { unwrapExpression } from "../../core/internal/nuxt-module-inventory.js";
+import { parseScriptResult, parseScriptSync } from "../../core/internal/script.js";
+import { parseSfcFile, parseVueScriptsResult } from "../../core/internal/sfc.js";
+import type { NuxtAppInventoryInputs } from "../../core/primitives.js";
 import { nuxtIgnoreFileHash } from "../../core/internal/nuxt-inventory.js";
-import { parseScriptSync } from "../../core/internal/script.js";
 import {
   autoRegisteredNuxtLayers,
   nuxtServerInventory,
@@ -24,7 +28,7 @@ import {
   resolveIgnorePatterns,
   resolvePath,
 } from "nuxt/kit";
-import type { Nuxt, NuxtModule } from "nuxt/schema";
+import type { Nuxt, NuxtApp, NuxtModule } from "nuxt/schema";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "pathe";
 import { resolveAlias as resolveNitroAlias } from "pathe/utils";
 import type {
@@ -92,6 +96,7 @@ type NuxtDoctorEvidence = {
   serverInventory?: Record<string, string[]>;
   serverHandlerMtimes?: Record<string, number>;
   pages?: NuxtDoctorManifest["pages"];
+  resolvedApp?: NuxtDoctorManifest["resolvedApp"];
   prerenderRoutes?: Set<string>;
   buildManifest?: EvidenceBuildManifest;
   componentDirs?: unknown[];
@@ -119,7 +124,8 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     resolvedServerHandlers: undefined as NuxtDoctorManifest["serverHandlers"] | undefined,
     serverInventory: undefined as Record<string, string[]> | undefined,
     serverHandlerMtimes: undefined as Record<string, number> | undefined,
-    pages: [] as NonNullable<NuxtDoctorManifest["pages"]>,
+    pages: undefined as NuxtDoctorManifest["pages"],
+    resolvedApp: undefined as NuxtDoctorManifest["resolvedApp"],
     prerenderRoutes: new Set<string>(),
     buildManifest: undefined as EvidenceBuildManifest | undefined,
     componentDirs: [] as unknown[],
@@ -340,7 +346,66 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     await writeManifest(nuxt, evidence);
   });
 
-  nuxt.hook?.("app:templatesGenerated", async () => {
+  nuxt.hook?.("app:templatesGenerated", async (app: NuxtApp) => {
+    const pagesResolved =
+      Array.isArray(app.pages) ||
+      nuxt.options.pages === false ||
+      (typeof nuxt.options.pages === "object" && nuxt.options.pages.enabled === false);
+    evidence.pages = pagesResolved ? await flattenResolvedPages(app.pages, nuxt) : undefined;
+    evidence.resolvedApp = {
+      mainComponent: app.mainComponent ?? undefined,
+      layouts: Object.fromEntries(
+        Object.entries(app.layouts).map(([name, layout]) => [name, layout.file]),
+      ),
+      pagesResolved,
+    };
+    const layers = getLayerDirectories(nuxt);
+    const root = nuxt.options.rootDir;
+    const extensionPattern = `**/*{${nuxt.options.extensions.join(",")}}`;
+    const pagePatterns = [
+      (typeof nuxt.options.pages === "object" ? nuxt.options.pages.pattern : undefined) ??
+        extensionPattern,
+    ].flat() as string[];
+    const ignore = {
+      roots: layers.map((layer) => relative(root, layer.root)),
+      patterns: resolveIgnorePatterns(),
+      options: nuxt.options.ignoreOptions,
+    };
+    const ignoreFiles = layers.map((layer) => join(layer.root, ".nuxtignore"));
+    const entryCandidates = (...names: string[]) =>
+      layers.flatMap((layer) =>
+        names.flatMap((name) =>
+          nuxt.options.extensions.map((extension: string) => join(layer.app, name + extension)),
+        ),
+      );
+    const capture = (
+      candidates: (string | undefined)[],
+      directories: NuxtAppInventoryInputs["directories"] = [],
+    ) => {
+      const files = [...new Set([...ignoreFiles, ...candidates])]
+        .filter((file): file is string => typeof file === "string" && isAbsolute(file))
+        .map((file) => relative(root, file));
+      const inputs = { directories, files, ignore };
+      const signature = nuxtAppInputSignature(root, inputs);
+      return signature ? { ...inputs, signature } : undefined;
+    };
+    evidence.resolvedApp.inputs = {
+      pages: capture(
+        [...(evidence.pages?.map((page) => page.file) ?? []), ...entryCandidates("router.options")],
+        layers.map((layer) => ({
+          directory: relative(root, layer.appPages),
+          patterns: pagePatterns,
+        })),
+      ),
+      layouts: capture(
+        Object.values(evidence.resolvedApp.layouts),
+        layers.map((layer) => ({
+          directory: relative(root, layer.appLayouts),
+          patterns: [extensionPattern],
+        })),
+      ),
+      mainComponent: capture([app.mainComponent ?? undefined, ...entryCandidates("App", "app")]),
+    };
     Object.assign(evidence, await appRegistration(nuxt, evidence.componentDirs));
     await writeManifest(nuxt, evidence);
   });
@@ -523,14 +588,16 @@ export async function writeManifest(
     resolvedServerHandlers: evidence?.resolvedServerHandlers,
     serverInventory: evidence?.serverInventory,
     serverHandlerMtimes: evidence?.serverHandlerMtimes,
-    pages: Array.isArray(app?.pages)
-      ? flattenPages(app.pages).map((page) => ({
-          path: page.path,
-          file: page.file,
-          name: page.name,
-          mode: page.mode,
-        }))
-      : (evidence?.pages ?? []),
+    pages: evidence?.resolvedApp?.pagesResolved
+      ? (evidence.pages ?? [])
+      : Array.isArray(app?.pages)
+        ? flattenPages(app.pages).map((page) => ({
+            path: page.path,
+            file: page.file,
+            name: page.name,
+            mode: page.mode,
+          }))
+        : (evidence?.pages ?? []),
     middleware: evidence?.app ? serializeMiddleware(rootDir, evidence.app.middleware) : undefined,
     routes: Object.hasOwn(nuxt.options.router?.options ?? {}, "routes")
       ? undefined
@@ -541,6 +608,7 @@ export async function writeManifest(
           .filter((path): path is string => typeof path === "string")
           .map((path) => resolve(rootDir, path))
       : undefined,
+    resolvedApp: evidence?.resolvedApp,
     prerenderRoutes: [
       ...new Set([
         ...toArray(nuxt.options.nitro?.prerender?.routes).map(String),
@@ -640,6 +708,72 @@ async function serializeKeyedComposables(nuxt: any, rootDir: string) {
     entries.push(path && isAbsolute(path) ? { name, source: relative(rootDir, path) } : { name });
   }
   return entries;
+}
+
+async function flattenResolvedPages(
+  pages: NuxtApp["pages"],
+  nuxt: Nuxt,
+  parentFile: string | null = null,
+  parentPath: string | null = "",
+): Promise<NonNullable<NuxtDoctorManifest["pages"]>> {
+  const flattened: NonNullable<NuxtDoctorManifest["pages"]> = [];
+  for (const page of toArray(pages)) {
+    const { path, file, name, mode } = page;
+    const override = file ? await runtimePathOverride(file, nuxt) : undefined;
+    const effectivePath = override === null ? null : (override ?? path);
+    const fullPath =
+      effectivePath === null || (!effectivePath.startsWith("/") && parentPath === null)
+        ? null
+        : effectivePath.startsWith("/") || !parentPath
+          ? effectivePath
+          : `${parentPath}${effectivePath && !parentPath.endsWith("/") ? "/" : ""}${effectivePath}`;
+    flattened.push({ path, fullPath: fullPath ?? undefined, file, name, mode, parentFile });
+    flattened.push(
+      ...(await flattenResolvedPages(page.children, nuxt, file ?? parentFile, fullPath)),
+    );
+  }
+  return flattened;
+}
+
+async function runtimePathOverride(file: string, nuxt: Nuxt): Promise<string | null | undefined> {
+  try {
+    const source = nuxt.vfs[file] ?? readFileSync(file, "utf8");
+    let result: ReturnType<typeof parseScriptResult>;
+    if (file.endsWith(".vue")) {
+      if (!/\bdefinePageMeta\b|<script\b[^>]*\bsrc\s*=/.test(source)) return undefined;
+      const { descriptor, errors } = await parseSfcFile(file, source);
+      if (errors.length || descriptor.script?.src || descriptor.scriptSetup?.src) return null;
+      result = parseVueScriptsResult(file, descriptor, source);
+    } else {
+      if (!/\.[cm]?[jt]sx?$/.test(file)) return null;
+      if (!/\bdefinePageMeta\b/.test(source)) return undefined;
+      result = parseScriptResult(file, source);
+    }
+    if (result.errors.length || !result.ast) return null;
+    const statements = (result.ast.body ?? []) as Array<{ type: string; expression?: unknown }>;
+    const calls = statements
+      .filter((statement) => statement.type === "ExpressionStatement")
+      .map((statement) => unwrapExpression(statement.expression))
+      .filter((call) => call?.type === "CallExpression" && call.callee?.name === "definePageMeta");
+    if (calls.length !== 1) return null;
+    const meta = unwrapExpression(calls[0]?.arguments?.[0]);
+    if (meta?.type !== "ObjectExpression") return null;
+    let override: string | null | undefined;
+    for (const property of meta.properties) {
+      if (property.type !== "Property" || property.computed) {
+        override = null;
+      } else if ((property.key.name ?? property.key.value) === "path") {
+        const value = unwrapExpression(property.value);
+        if (value?.type !== "Literal") override = null;
+        else if (value.value === null) override = undefined;
+        else if (typeof value.value !== "string") override = null;
+        else override = nuxt.options.experimental.scanPageMeta ? undefined : value.value;
+      }
+    }
+    return override;
+  } catch {
+    return null;
+  }
 }
 
 function serverAppEntryFiles(

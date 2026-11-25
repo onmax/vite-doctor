@@ -379,21 +379,21 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
     await unimport.init();
     options.afterInit?.(root);
     const hooks = new Map<string, (payload?: any) => unknown>();
+    const app = (options.appPlugins || options.appMiddleware) && {
+      layouts: {},
+      plugins: options.appPlugins?.map(({ file, mode }) => ({ src: join(root, file), mode })),
+      middleware: options.appMiddleware?.map((file) => ({ path: join(root, file) })),
+    };
     await nuxtDoctorModule({}, {
       _version: "4.4.6",
-      apps: (options.appPlugins || options.appMiddleware) && {
-        default: {
-          plugins: options.appPlugins?.map(({ file, mode }) => ({ src: join(root, file), mode })),
-          middleware: options.appMiddleware?.map((file) => ({ path: join(root, file) })),
-        },
-      },
+      apps: app && { default: app },
       options: {
         rootDir: root,
         srcDir: join(root, "app"),
         buildDir: ".nuxt",
         modules: [],
         extensions: [".ts", ".vue"],
-        ...((options.appPlugins || options.appMiddleware) && { _layers: [] }),
+        ...(app && { _layers: [] }),
         imports: { autoImport: options.appAutoImport ?? true },
       },
       hook: (name: string, callback: (payload?: any) => unknown) => hooks.set(name, callback),
@@ -434,7 +434,7 @@ export const createUnimport = (options) => ({ ...create(options), version });`,
     } finally {
       cwd?.mockRestore();
     }
-    if (options.appPlugins || options.appMiddleware) await hooks.get("app:templatesGenerated")!();
+    if (app) await hooks.get("app:templatesGenerated")!(app);
     await check(root, nitroHooks.get("compiled")!);
   } finally {
     rmSync(root, { recursive: true, force: true });
