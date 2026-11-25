@@ -1657,6 +1657,90 @@ test.each(["nitro@3", "nuxt@5"] as const)(
   },
 );
 
+test("Nuxt migration keeps layer source advice without editing the layer manifest or config", async () => {
+  const runtime = nuxtRuntimeFixture({ nuxt: "4.0.0", nitro: "2.12.0", h3: "1.15.4" });
+  await withFixture(
+    {
+      ...runtime,
+      "package.json": JSON.stringify({
+        ...JSON.parse(runtime["package.json"]),
+        workspaces: ["layers/*"],
+      }),
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "layers/shared/package.json": JSON.stringify({ name: "shared-layer" }),
+      "layers/shared/nuxt.config.ts": "export default defineNuxtConfig({})",
+      "layers/shared/server/api/redirect.ts": h3RedirectHandler,
+    },
+    async (root) => {
+      const result = await runCli(["migrate", ".", "--to", "nuxt@5", "--format", "json"], root);
+      const stage = JSON.parse(result.output).stages[1];
+      expect(stage.changes).toEqual([
+        expect.objectContaining({
+          kind: "dependency",
+          to: "nuxt@5",
+          instruction: expect.not.stringContaining("layers/shared"),
+        }),
+        expect.objectContaining({
+          kind: "config",
+          to: "future.compatibilityVersion: 5",
+          instruction: expect.not.stringContaining("layers/shared"),
+        }),
+      ]);
+      expect(stage.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "H30001", file: "layers/shared/server/api/redirect.ts" }),
+      );
+    },
+  );
+});
+
+test("an explicit Nitro run ignores a sibling's missing Nuxt but reports its own missing H3", async () => {
+  const runtime = nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" });
+  await withFixture(
+    {
+      ...runtime,
+      "package.json": JSON.stringify({
+        ...JSON.parse(runtime["package.json"]),
+        workspaces: ["packages/*"],
+      }),
+      "packages/module/package.json": JSON.stringify({
+        devDependencies: { nuxt: "4.0.0", "@nuxt/module-builder": "1.0.0" },
+      }),
+      "packages/module/src/module.ts":
+        'import { defineNuxtModule } from "@nuxt/kit"; export default defineNuxtModule({})',
+      "packages/api/package.json": JSON.stringify({ dependencies: { h3: "2.0.8" } }),
+    },
+    async (root) => {
+      const nodePath = process.env.NODE_PATH;
+      const initPaths = () => (Module as unknown as { _initPaths(): void })._initPaths();
+      delete process.env.NODE_PATH;
+      initPaths();
+      try {
+        const args = [".", "--no-cache", "--no-server", "--format", "json"];
+        const explicit = [...args, "--framework", "nitro"];
+        const missing = await runCli(explicit, root);
+        expect(missing.code, missing.output).toBe(3);
+        expect(missing.output).toContain("DOC0022");
+        expect(missing.output).toContain("packages/api/package.json");
+        expect(missing.output).not.toContain("packages/module/package.json");
+
+        const manifest = join(root, "packages/api/node_modules/h3/package.json");
+        mkdirSync(dirname(manifest), { recursive: true });
+        writeFileSync(manifest, JSON.stringify({ name: "h3", version: "2.0.8" }));
+        const complete = await runCli(explicit, root);
+        expect(complete.code, complete.output).toBe(0);
+        expect(complete.output).not.toContain("DOC0022");
+
+        const automatic = await runCli(args, root);
+        expect(automatic.code, automatic.output).toBe(3);
+        expect(automatic.output).toContain("packages/module/package.json");
+      } finally {
+        if (nodePath !== undefined) process.env.NODE_PATH = nodePath;
+        initPaths();
+      }
+    },
+  );
+});
+
 test.each(["json", "agent"])("missing nested h3 makes the %s run incomplete", async (format) => {
   await withFixture(
     {

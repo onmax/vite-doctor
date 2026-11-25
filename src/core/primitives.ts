@@ -513,6 +513,8 @@ export interface NuxtDoctorManifest {
 export interface ProjectInfo {
   root: string;
   framework: DoctorFramework;
+  /** Explicit framework selection, as distinct from the detected primary framework. */
+  requestedFramework?: DoctorFramework;
   ssr: boolean;
   vueVersion: string;
   nuxtVersion?: string;

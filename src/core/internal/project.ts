@@ -134,6 +134,7 @@ export async function detectProject(
   const project: ProjectInfo = {
     root: resolve(root),
     framework,
+    ...(requested !== "auto" ? { requestedFramework: requested } : {}),
     ssr: ssr && owner?.nuxt?.ssr !== false,
     vueVersion: runtime.graph.packages.vue?.version ?? cleanVersion(vueVersion),
     nuxtVersion: owner?.nuxtVersion,

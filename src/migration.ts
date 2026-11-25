@@ -1,4 +1,4 @@
-import { relative } from "pathe";
+import { join, relative, resolve } from "pathe";
 import type {
   Diagnostic,
   DoctorFramework,
@@ -10,6 +10,7 @@ import type {
 } from "./core/index.js";
 import { detectProject, evaluateRuleApplicability } from "./core/index.js";
 import { projectWorkspacePackages } from "./core/internal/applicability.js";
+import { autoRegisteredNuxtLayers } from "./core/internal/runtime-graph.js";
 import { owningWorkspacePackage } from "./core/internal/workspace-packages.js";
 import { workspaceProjectView } from "./core/internal/workspace-nuxt.js";
 import { runViteDoctor, viteDoctorRulePacks } from "./doctor.js";
@@ -379,18 +380,19 @@ function dependencyChanges(
   requested: string[],
 ): MigrationDependencyStage["changes"] {
   const changes: MigrationDependencyStage["changes"] = [];
+  const packages = projectWorkspacePackages(project);
   for (const target of requested) {
     if (target === "h3@2") {
       changes.push(...h3DependencyChanges(project));
       continue;
     }
     const [runtimeName, targetMajor] = target.split("@") as [RuntimePackageName, string];
-    for (const { root } of projectWorkspacePackages(project)) {
+    for (const { root, declaredRuntimes } of packages) {
+      if (!declaredRuntimes?.includes(runtimeName)) continue;
       const current = workspaceProjectView(project, root).runtimeGraph?.packages[runtimeName];
       const next = workspaceProjectView(targetProject, root).runtimeGraph?.packages[runtimeName];
       if (next?.provenance !== "target") continue;
-      if (runtimeName === "nitro" && current?.owner === "nuxt" && requested.includes("nuxt@5"))
-        continue;
+      if (current?.owner !== "project") continue;
       const file = root === "." ? undefined : `${root}/package.json`;
       changes.push({
         kind: "dependency",
@@ -402,7 +404,23 @@ function dependencyChanges(
       });
     }
   }
-  for (const { root } of projectWorkspacePackages(project)) {
+  const layers = new Set<string>();
+  if (requested.includes("nuxt@5")) {
+    for (const { root, framework } of packages) {
+      if (framework !== "nuxt") continue;
+      const appRoot = resolve(project.root, root);
+      const nuxt = workspaceProjectView(project, root).nuxt;
+      for (const layer of nuxt?.layers ?? []) {
+        const layerRoot = resolve(appRoot, layer.root);
+        if (layerRoot !== appRoot) layers.add(layerRoot);
+      }
+      for (const name of autoRegisteredNuxtLayers(appRoot)) {
+        layers.add(join(appRoot, "layers", name));
+      }
+    }
+  }
+  for (const { root } of packages) {
+    if (layers.has(resolve(project.root, root))) continue;
     const before = workspaceProjectView(project, root).nuxtCompatibility;
     const after = workspaceProjectView(targetProject, root);
     if (

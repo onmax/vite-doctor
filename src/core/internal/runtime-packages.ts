@@ -90,16 +90,32 @@ export function governingRuntimes(
 }
 
 export function unresolvedRuntimeInventory(project: ProjectInfo) {
-  const scopes = project.workspacePackages ?? [{ root: ".", framework: project.framework }];
+  const graphRoot = project.runtimeGraphRoot ?? ".";
+  const scopes = project.workspacePackages ?? [{ root: graphRoot, framework: project.framework }];
+  const selected = project.requestedFramework;
   return scopes.flatMap(({ root, framework }) => {
     const view = workspaceProjectView(project, root);
-    if (view === project && root !== (project.runtimeGraphRoot ?? ".")) return [];
+    if (view === project && root !== graphRoot) return [];
     const graph = view.runtimeGraph;
+    const localFramework = !selected || selected === framework || root === graphRoot;
+    const runtimes = governingRuntimes(framework, graph).filter((runtime) => {
+      if (localFramework) return true;
+      // H3 is selected independently. A missing unselected provider is not an H3 install gap.
+      if (runtime === "h3")
+        return (
+          graph?.packages.h3?.owner === "project" || graph?.packages.nitro?.state === "resolved"
+        );
+      return runtime === "nitro" && selected === "nuxt";
+    });
     const unresolved = [
-      ...governingRuntimes(framework, graph).map((runtime) => graph?.packages[runtime]),
+      ...runtimes.map((runtime) => graph?.packages[runtime]),
       graph?.directH3,
     ].filter((item) => item?.state === "unknown");
-    const compatibility = framework === "nuxt" ? view.nuxtCompatibility : undefined;
+    const compatibility =
+      root === graphRoot ||
+      (localFramework && project.workspaceNuxt?.some((item) => item.root === root))
+        ? view.nuxtCompatibility
+        : undefined;
     return unresolved.length || compatibility?.state === "unknown"
       ? [{ root, unresolved, compatibility, manifestPath: view.nuxt?.manifestPath }]
       : [];
