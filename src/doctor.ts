@@ -36,7 +36,7 @@ import {
   uncheckedMcpEvidenceGap,
   unreadMcpServerGaps,
 } from "./mcp/evidence.js";
-import { checkedMcpServers } from "./rule-packs/mcp/rules/client-limits.js";
+import { checkedMcpServers } from "./rule-packs/mcp/rules/wire.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
@@ -95,15 +95,13 @@ export async function runViteDoctor(options: DoctorRunOptions, fullRunForMcpEvid
       ? (project) => readMcpServers(project.runtimeEvidence).length > 0
       : undefined,
   );
-  const { projectWide, scoped } = checkedMcpServers(result.project);
+  const { projectWide, scoped, clientLimits } = checkedMcpServers(result.project);
   const used = [...mcpEvidenceUsed(projectWide), ...mcpEvidenceUsed(scoped, true)];
   const mcpPackSelected = result.rulePacks?.some(
     (pack) => pack.name === mcpRulePack.name && pack.selected,
   );
   const unchecked =
-    !projectWide.length &&
-    !mcpPackSelected &&
-    uncheckedMcpEvidenceGap(result.project, !!scoped.length);
+    !clientLimits && !mcpPackSelected && uncheckedMcpEvidenceGap(result.project, !!scoped.length);
   const gaps = [...unreadMcpServerGaps(result.project), ...(unchecked ? [unchecked] : [])];
   if (gaps.length) result.project.evidenceGaps = [...(result.project.evidenceGaps ?? []), ...gaps];
   if (used.length) result.project.evidenceUsed = [...(result.project.evidenceUsed ?? []), ...used];

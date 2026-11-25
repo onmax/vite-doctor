@@ -8,7 +8,7 @@ import { runViteDoctor } from "../../../src/doctor.ts";
 import { mcpClientRules } from "../../../src/mcp/index.ts";
 import type { McpServerEvidence } from "../../../src/mcp/evidence.ts";
 import type { McpTool } from "../../../src/mcp/types.ts";
-import { MCP_CLIENT_LABELS } from "../../../src/rule-packs/mcp/rules/client-limits.ts";
+import { MCP_CLIENT_LABELS } from "../../../src/rule-packs/mcp/rules/wire.ts";
 import { startMcpStub } from "../../mcp/mcp-stub.ts";
 
 const cleanups: Array<() => unknown> = [];
@@ -516,7 +516,7 @@ test("an Extension contributing as mcp cannot put its error text or status in a 
   ]);
 });
 
-test("a client renaming a tool is reported beside MCP0003, whose fix may not cover it", async () => {
+test("client findings that repeat MCP0001 to MCP0003 are not reported again", async () => {
   const root = project({
     "server/mcp/tools/list_orders.ts": `import { defineMcpTool } from 'nitro-mcp-toolkit'
 export default defineMcpTool({ name: 'list orders', handler: () => [] })
@@ -538,7 +538,6 @@ export default defineMcpTool({ name: 'list orders', handler: () => [] })
     "MCP0001 warn server/mcp/tools/list_orders.ts:2",
     "MCP0002 warn server/mcp/tools/list_orders.ts:2",
     "MCP0003 warn server/mcp/tools/list_orders.ts:2",
-    "MCP0007 info server/mcp/tools/list_orders.ts:2",
   ]);
 });
 
@@ -602,4 +601,91 @@ test("the MCP docs list every client the library checks", () => {
     .map((row) => row.split("|")[1]!.trim());
   const clients = [...new Set(mcpClientRules.map((rule) => MCP_CLIENT_LABELS[rule.client]))];
   expect(listed.sort()).toEqual(clients.sort());
+});
+
+test("MCP0001 to MCP0003 check the tools the server sends, at the matching source or the root", async () => {
+  const untitled = `import { defineMcpTool } from 'nitro-mcp-toolkit'
+export default defineMcpTool({
+  name: 'search',
+  title: 'Search',
+  handler: () => [],
+})
+`;
+  const root = project({ "server/mcp/tools/search.ts": untitled });
+  const sent = (tools: McpTool[]) => contributing([{ name: "hub", tools }]);
+  const object = { type: "object" };
+
+  // The server adds the annotations that source leaves out, so neither source Rule fires.
+  const fixed = await run(root, {
+    extends: "auto",
+    extensions: sent([{ ...search, ...annotated, inputSchema: object }]),
+  });
+  expect(fixed.all.filter((item) => /^MCP000[1-3]$/.test(item.code))).toEqual([]);
+
+  // The server sends the tool as written: one runtime-backed Diagnostic per Rule, at the source.
+  const asWritten = await run(root, {
+    extends: "auto",
+    extensions: sent([
+      { name: "search", title: "Search", inputSchema: object },
+      {
+        name: "remote tool",
+        annotations: { title: "Remote", readOnlyHint: true },
+        inputSchema: object,
+      },
+    ]),
+  });
+  expect(
+    summary(
+      root,
+      asWritten.all.filter((item) => /^MCP000[1-3]$/.test(item.code)),
+    ),
+  ).toEqual([
+    "MCP0001 warn server/mcp/tools/search.ts:2",
+    "MCP0002 warn server/mcp/tools/search.ts:2",
+    "MCP0003 warn .",
+  ]);
+  const title = asWritten.all.find((item) => item.code === "MCP0001")!;
+  expect(title.confidence).toBe("runtime-backed");
+  expect(title.why).toContain('top-level title "Search"');
+  expect(title.data).toMatchObject({
+    server: { name: "hub" },
+    tool: "search",
+    findings: [{ rule: "claude-directory/missing-title" }],
+  });
+  const hint = asWritten.all.find((item) => item.code === "MCP0002")!;
+  expect(hint.why).toContain(
+    "ChatGPT also treats it as a write action that needs the user's confirmation by default",
+  );
+  expect(hint.evidence?.map((item) => item.summary).join("\n")).toContain(
+    "https://developers.openai.com/api/docs/guides/developer-mode",
+  );
+  const name = asWritten.all.find((item) => item.code === "MCP0003")!;
+  expect(name.why).toContain('"remote tool" of MCP server "hub"');
+  expect(name.file).toBe(root);
+
+  // With no source definition to rename, the clients' own name limits stay visible.
+  const strict = await run(root, {
+    extensions: sent([{ name: "remote tool", ...annotated, inputSchema: object }]),
+  });
+  const rename = strict.all.find(
+    (item) => item.code === "MCP0007" && item.why.includes("remote tool"),
+  );
+  expect(rename?.data).toMatchObject({
+    findings: expect.arrayContaining([
+      expect.objectContaining({ client: "codex", pointer: "/name" }),
+    ]),
+  });
+});
+
+test("a wire finding from a server without a URL carries only the server name in data", async () => {
+  const root = project();
+  const { all } = await run(root, {
+    extensions: contributing([
+      { name: "hub", tools: [{ name: "untitled", annotations: { readOnlyHint: true } }] },
+    ]),
+  });
+  expect(all.find((item) => item.code === "MCP0001")?.data).toMatchObject({
+    server: { name: "hub" },
+    tool: "untitled",
+  });
 });

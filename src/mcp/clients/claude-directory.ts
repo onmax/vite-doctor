@@ -32,13 +32,15 @@ export const missingTitle: McpClientRule = {
   severity: "warn",
   confidence: "high",
   source: docs(`${REVIEW}#provide-tool-annotations`, ANNOTATIONS_QUOTE),
+  // The Directory's portal flags a tool whose annotations have no title even when the top-level
+  // `title` is set, so only `annotations.title` counts.
   check(tool) {
-    const title = tool.title ?? tool.annotations?.title;
+    const title = tool.annotations?.title;
     if (typeof title === "string" && title.trim()) return;
     return {
-      message: `Directory review requires a \`title\` on every tool; \`${tool.name}\` has none.`,
-      fix: "Add a human-readable `title` to the tool.",
-      pointer: "/title",
+      message: `Directory review requires a title on every tool and reads it from \`annotations.title\`; \`${tool.name}\` has none there.`,
+      fix: `Set \`annotations.title\` to a human-readable name${typeof tool.title === "string" && tool.title.trim() ? `, such as the top-level title ${JSON.stringify(tool.title)}` : ""}.`,
+      pointer: "/annotations/title",
     };
   },
 };
