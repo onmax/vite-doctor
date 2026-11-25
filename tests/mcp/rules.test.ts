@@ -295,18 +295,172 @@ describe("rule details", () => {
   });
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
-    "%s skips only boolean defaults stated correctly",
+    "%s skips only true defaults stated correctly",
     (rule) => {
-      for (const defaultValue of [true, false]) {
-        const withDescription = (description: string) =>
-          schema(object({ enabled: { type: "boolean", default: defaultValue, description } }));
-        expect(hits(rule, withDescription(`Defaults to ${defaultValue}.`))).toEqual([]);
-        for (const description of ["Enable the feature.", `Defaults to ${!defaultValue}.`]) {
-          expect(hits(rule, withDescription(description))[0]?.pointer).toBe(
-            "/inputSchema/properties/enabled/default",
-          );
-        }
+      const withDescription = (description: string) =>
+        schema(object({ enabled: { type: "boolean", default: true, description } }));
+      for (const description of [
+        "Defaults to true.",
+        "The default is true.",
+        "Return less (default: true).",
+        "default: `true`",
+        "Enabled true by default.",
+      ])
+        expect(hits(rule, withDescription(description)), description).toEqual([]);
+      for (const description of [
+        "Enable the feature.",
+        "Defaults to false.",
+        "true or false",
+        "Receipt delivery is not true by default.",
+        "Receipt delivery isn't `true` by default.",
+        "The default is not true.",
+        "Not default: true.",
+      ]) {
+        expect(hits(rule, withDescription(description))[0]?.pointer, description).toBe(
+          "/inputSchema/properties/enabled/default",
+        );
       }
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s scopes negation to the default declaration",
+    (rule) => {
+      for (const [value, description] of [
+        [true, "Include archived results, not just active ones (default: true)."],
+        [true, "Returns all results, not just active ones, when enabled (true by default)."],
+        [true, "Do not supply a value unless you want to override the default: true."],
+        ["all", 'Use a named scope, not a path: "all" (default), "docs", or "blog".'],
+      ] as const) {
+        const input = schema(
+          object({ option: { type: typeof value, default: value, description } }),
+        );
+        expect(hits(rule, input), description).toEqual([]);
+      }
+      for (const [value, description] of [
+        [true, "It doesn't actually default to true."],
+        [true, "The flag is not set to true by default."],
+        [true, "The flag is not (true by default)."],
+        ["all", 'Use a named scope, but not "all" (default).'],
+      ] as const) {
+        const input = schema(
+          object({ option: { type: typeof value, default: value, description } }),
+        );
+        expect(hits(rule, input)[0]?.pointer, description).toBe(
+          "/inputSchema/properties/option/default",
+        );
+      }
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s reports undescribed defaults and skips only vacuous size minimums",
+    (rule) => {
+      const constrained = object({
+        a: { type: ["string", "null"], default: null },
+        b: { type: "boolean", default: false },
+        c: { type: "string", default: "", minLength: 1 },
+        d: { type: "array", items: { type: "string" }, default: [], minItems: 1 },
+        e: { type: "object", default: {}, minProperties: 0 },
+        f: { type: "object", minProperties: 1 },
+        g: { type: "string", minLength: 0 },
+        h: { type: "array", items: { type: "string" }, minItems: 0 },
+      });
+      expect(hits(rule, schema(constrained))[0]?.affectedPointers).toEqual([
+        "/inputSchema/properties/a/default",
+        "/inputSchema/properties/b/default",
+        "/inputSchema/properties/c/default",
+        "/inputSchema/properties/c/minLength",
+        "/inputSchema/properties/d/default",
+        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/d/minItems"] : []),
+        "/inputSchema/properties/e/default",
+        "/inputSchema/properties/f/minProperties",
+      ]);
+      const described = object({
+        a: { type: ["string", "null"], default: null, description: "Defaults to null." },
+        b: { type: "boolean", default: false, description: "Default is false." },
+        c: { type: "string", default: "", description: 'Default: "".' },
+        d: { type: "array", items: { type: "string" }, default: [], description: "Default: []." },
+        e: { type: "object", default: {}, description: "Default: {}." },
+        f: { type: "integer", default: 0, description: "Defaults to 0." },
+      });
+      expect(hits(rule, schema(described))).toEqual([]);
+      expect(
+        hits(rule, schema(object({ c: { type: "string", default: "", description: "A label." } }))),
+      ).toHaveLength(1);
+      const strict = object({
+        a: { type: "integer", default: 0 },
+        b: { type: "string", minLength: 2 },
+        c: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 1 },
+      });
+      expect(hits(rule, schema(strict))[0]?.affectedPointers).toEqual([
+        "/inputSchema/properties/a/default",
+        "/inputSchema/properties/b/minLength",
+        // Codex keeps `minItems`.
+        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/c/minItems"] : []),
+        "/inputSchema/properties/c/maxItems",
+      ]);
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s matches array and object defaults ignoring spaces and quote style",
+    (rule) => {
+      const withDescription = (value: unknown, description: string) =>
+        schema(
+          object({
+            v: {
+              type: typeof value === "object" && !Array.isArray(value) ? "object" : "array",
+              default: value,
+              description,
+            },
+          }),
+        );
+      expect(
+        hits(rule, withDescription(["model", "dataset"], 'Defaults to ["model", "dataset"].')),
+      ).toEqual([]);
+      expect(hits(rule, withDescription(["a", "b"], "Defaults to [ 'a', 'b' ]."))).toEqual([]);
+      expect(hits(rule, withDescription({ sort: "asc" }, "Defaults to {'sort': 'asc'}."))).toEqual(
+        [],
+      );
+      expect(hits(rule, withDescription(["a", "b"], "Defaults to ['b', 'a']."))).toHaveLength(1);
+      expect(hits(rule, withDescription(["New York"], 'Defaults to ["NewYork"].'))).toHaveLength(1);
+      expect(
+        hits(rule, withDescription(["Bob's project"], `Defaults to ['Bob"s project'].`)),
+      ).toHaveLength(1);
+      expect(
+        hits(rule, withDescription(["Bob's project"], String.raw`Defaults to ['Bob\'s project'].`)),
+      ).toEqual([]);
+      expect(
+        hits(
+          rule,
+          withDescription(
+            { city: "New York", tags: ["]"] },
+            `Default: {"tags": [']'], 'city': "New York"}.`,
+          ),
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s counts a strict date pattern described as YYYY-MM-DD",
+    (rule) => {
+      const withPattern = (pattern: string, description = "First date, formatted YYYY-MM-DD.") =>
+        schema(object({ from: { type: "string", pattern, description } }));
+      const date =
+        "^(?:\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|02-(?:0[1-9]|1\\d|2[0-9])))$";
+      expect(hits(rule, withPattern(date))).toEqual([]);
+      expect(hits(rule, withPattern(date, "First date."))).toHaveLength(1);
+      for (const other of [
+        "^\\d{4}-\\d{2}-\\d{2}$",
+        "^\\d{4}-\\d{1,2}-\\d{1,2}$",
+        "\\d{4}-\\d{2}-\\d{2}",
+        "[",
+        String.raw`^(?:19\d{2}|20[0-2]\d)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$`,
+        String.raw`^\d{4}-(?:0[1-24-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$`,
+      ])
+        expect(hits(rule, withPattern(other)), other).toHaveLength(1);
     },
   );
 

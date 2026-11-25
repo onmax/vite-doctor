@@ -128,6 +128,7 @@ export function undescribedConstraints(
       if (!dropped.has(keyword)) continue;
       if (node.schema.type === "integer" && isSafeIntegerBound(keyword, node.schema[keyword]))
         continue;
+      if (isVacuousSizeMinimum(keyword, node.schema[keyword])) continue;
       if (mentions(prose, keyword, node.schema[keyword])) continue;
       found.push({ pointer: inputPointer(`${node.pointer}/${keyword}`), keyword });
     }
@@ -143,18 +144,81 @@ function isSafeIntegerBound(keyword: string, value: unknown): boolean {
   );
 }
 
+function isVacuousSizeMinimum(keyword: string, value: unknown): boolean {
+  return (
+    (keyword === "minLength" || keyword === "minItems" || keyword === "minProperties") &&
+    value === 0
+  );
+}
+
+const calendarDatePattern = String.raw`^(?:\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9])))$`;
+
 function mentions(prose: string, keyword: string, value: unknown): boolean {
   if (!prose) return false;
+  if (keyword === "default") return mentionsDefault(prose, value);
   if (typeof value === "number")
     return new RegExp(`(?<![\\d.])${escapeRegExp(String(value))}(?![\\d])`).test(prose);
-  if (typeof value === "boolean") {
-    if (keyword === "uniqueItems") return /unique|duplicate/i.test(prose);
-    return (
-      keyword === "default" && new RegExp(`\\bdefaults?\\s+to\\s+\`?${value}\\b`, "i").test(prose)
-    );
+  if (typeof value === "boolean")
+    return keyword === "uniqueItems" && /unique|duplicate/i.test(prose);
+  if (typeof value === "string") {
+    if (keyword === "pattern")
+      return (
+        prose.includes(value) || (value === calendarDatePattern && /\bYYYY-MM-DD\b/.test(prose))
+      );
+    return prose.toLowerCase().includes(value.toLowerCase());
   }
-  if (typeof value === "string") return prose.toLowerCase().includes(value.toLowerCase());
   return prose.includes(JSON.stringify(value));
+}
+
+function isLocallyNegated(prose: string, start: number): boolean {
+  const prefix = prose.slice(prose.lastIndexOf("\n", start - 1) + 1, start);
+  return /(?:\b(?:not|never|no|neither|nor)|n['’]t)\s+(?:(?:actually|always|necessarily|the|set\s+to)\s+)*(?:\(\s*)?`?$/i.test(
+    prefix,
+  );
+}
+
+function mentionsDefault(prose: string, value: unknown): boolean {
+  for (const declaration of prose.matchAll(
+    /\bdefault(?:s?\s+to\b|\s+is\b|\s*:|\s+(?=-?\d))\s*`?/gi,
+  )) {
+    if (isLocallyNegated(prose, declaration.index)) continue;
+    const literal = prose.slice(declaration.index + declaration[0].length);
+    if (typeof value === "boolean" && new RegExp(`^${value}\\b`, "i").test(literal)) return true;
+    if (jsonEqual(readDefaultLiteral(literal), value)) return true;
+    if (
+      typeof value === "string" &&
+      value !== "" &&
+      new RegExp(`^${escapeRegExp(value)}(?=$|[\\s\x60.,;!?)])`).test(literal)
+    )
+      return true;
+  }
+  if (typeof value === "string") {
+    for (const match of prose.matchAll(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\(default\)/gi)) {
+      if (!isLocallyNegated(prose, match.index) && readDefaultLiteral(match[0]) === value)
+        return true;
+    }
+  }
+  if (typeof value !== "boolean") return false;
+  const reverse = new RegExp(`\\b${value}\`?\\s+by\\s+default\\b`, "gi");
+  return Array.from(prose.matchAll(reverse)).some((match) => !isLocallyNegated(prose, match.index));
+}
+
+function readDefaultLiteral(text: string): unknown {
+  const tokens =
+    /\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[[\]{}:,]|(?:true|false|null)\b|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?(?!\w|\.\d))/gy;
+  let depth = 0;
+  const json = [];
+  for (const [, token] of text.matchAll(tokens)) {
+    if (token === "[" || token === "{") depth++;
+    if (token === "]" || token === "}") depth--;
+    json.push(
+      token.startsWith("'")
+        ? `"${token.slice(1, -1).replace(/\\.|"/g, (part) => (part === "\\'" ? "'" : part === '"' ? '\\"' : part))}"`
+        : token,
+    );
+    if (depth === 0) return parseJson(json.join(""));
+  }
+  return undefined;
 }
 
 function escapeRegExp(text: string): string {

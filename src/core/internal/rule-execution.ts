@@ -51,6 +51,20 @@ import {
 import { nativeMatch, nodeOffsets, sha256 } from "./utils.js";
 import { selectHtmlPaths } from "./source-inventory.js";
 
+const objectConstructorSource = Function.prototype.toString.call(Object);
+
+function hasPlainJsonPrototype(value: object): boolean {
+  const prototype: object | null = Object.getPrototypeOf(value);
+  if (prototype === null || prototype === Object.prototype) return true;
+  if (Object.getPrototypeOf(prototype) !== null) return false;
+  const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value;
+  return (
+    typeof constructor === "function" &&
+    constructor.prototype === prototype &&
+    Function.prototype.toString.call(constructor) === objectConstructorSource
+  );
+}
+
 function copyDiagnosticData(data: object, ruleId: string): Record<string, unknown> {
   const ancestors = new Set<object>();
   function invalid(): never {
@@ -73,8 +87,7 @@ function copyDiagnosticData(data: object, ruleId: string): Record<string, unknow
           copyProperty(value, String(index)),
         );
       }
-      const prototype = Object.getPrototypeOf(value);
-      if (prototype !== Object.prototype && prototype !== null) return invalid();
+      if (!hasPlainJsonPrototype(value)) return invalid();
       return Object.fromEntries(
         Reflect.ownKeys(value).map((key) => {
           if (typeof key !== "string") return invalid();
