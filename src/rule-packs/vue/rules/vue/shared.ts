@@ -324,12 +324,23 @@ function vueTemplateParser(
     if (scope) {
       scope.through = scope.through.filter((reference) => {
         if (!reference.isValueReference) return false;
+        let child: import("typescript").Node | undefined;
         for (
           let node: import("typescript").Node | undefined =
             result.services.esTreeNodeToTSNodeMap.get(reference.identifier);
           node;
-          node = node.parent
+          child = node, node = node.parent
         ) {
+          if (typescript.isExpressionWithTypeArguments(node) && node.expression === child) {
+            const parent = node.parent;
+            if (
+              !typescript.isHeritageClause(parent) ||
+              (parent.token === typescript.SyntaxKind.ExtendsKeyword &&
+                typescript.isClassLike(parent.parent))
+            ) {
+              continue;
+            }
+          }
           if (typescript.isTypeNode(node)) return false;
         }
         return true;

@@ -152,6 +152,23 @@ defineProps<{ Map: string }>()
   },
 );
 
+test.each([
+  ["formatter: <T>(value: T) => T", '<Child :format="formatter<string>" />'],
+  ["formatter: <T>(value: T) => T", '<Child :format="formatter<typeof Map>" />'],
+  ["Base: new () => object", "<p>{{ new (class extends Base {})() }}</p>"],
+])("no-unused-props keeps runtime reads of %s in %s", async (prop, template) => {
+  const result = await runVueSfcRuleFixture(
+    noUnusedProps,
+    `<script setup lang="ts">
+defineOptions({ inheritAttrs: false })
+defineProps<{ ${prop}; Map: string }>()
+</script>
+<template>${template}</template>`,
+  );
+  expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["VUE0037"]);
+  expect(result.diagnostics[0]!.why).toContain('prop "Map"');
+});
+
 test("no-unused-props sees template, script, style and whole-props reads", async () => {
   const result = await runProjectFixture({
     framework: "vue",
