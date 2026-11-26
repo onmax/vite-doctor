@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { relative } from "pathe";
-import { detectProvider } from "std-env";
 import type { Diagnostic, DoctorReportFormat, DoctorRunResult } from "../primitives.js";
 import type { ReportReader } from "./agent-runtime.js";
 import { lineColumnAt } from "./line-index.js";
@@ -22,20 +21,16 @@ export function githubAnnotations(
   cwd: string,
 ): string {
   // The Doctor process swaps the environment per run, so read it at call time.
-  if (reader !== "ci" || format !== "text" || detectProvider().name !== "github_actions") return "";
+  if (reader !== "ci" || format !== "text" || !process.env.GITHUB_ACTIONS) return "";
   const workspace = process.env.GITHUB_WORKSPACE || cwd;
   const counts = { error: 0, warning: 0 };
   const lines: string[] = [];
   for (const diagnostic of reportOrder(result.diagnostics).flat()) {
-    if (diagnostic.severity === "info") continue;
+    if (diagnostic.severity === "info" || !relative(result.root, diagnostic.file)) continue;
     const command = COMMANDS[diagnostic.severity];
     if (counts[command] === ANNOTATIONS_PER_KIND) continue;
-    const located = Boolean(diagnostic.range) || relative(result.root, diagnostic.file) !== "";
-    if (!located && diagnostic.subject) continue;
     counts[command]++;
-    lines.push(
-      annotation(command, diagnostic, located ? relative(workspace, diagnostic.file) : ""),
-    );
+    lines.push(annotation(command, diagnostic, relative(workspace, diagnostic.file)));
   }
   return lines.map((line) => `${line}\n`).join("");
 }

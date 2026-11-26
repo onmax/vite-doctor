@@ -72,7 +72,7 @@ test.each([
   }
 });
 
-test("GitHub Actions annotates the run after the text report", async () => {
+test("CodeBuild-hosted GitHub Actions annotates the run after the text report", async () => {
   const app = mkdtempSync(join(tmpdir(), "doctor-annotations-"));
   try {
     writeFileSync(
@@ -80,7 +80,8 @@ test("GitHub Actions annotates the run after the text report", async () => {
       JSON.stringify({ name: "app", type: "module", dependencies: { vue: "^3.5.0" } }),
     );
     writeFileSync(join(app, "App.vue"), "<template>\n  <button>Save</button>\n</template>\n");
-    stubReaderEnv({ CI: "true", GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: app });
+    const ciEnv = { CODEBUILD_BUILD_ARN: "codebuild-test", GITHUB_WORKSPACE: app };
+    stubReaderEnv({ ...ciEnv, GITHUB_ACTIONS: "true" });
     const run = await capture(() =>
       main([".", "--no-cache", "--rules", "vue/template/html-button-has-type"], app),
     );
@@ -93,7 +94,7 @@ test("GitHub Actions annotates the run after the text report", async () => {
     );
 
     vi.unstubAllEnvs();
-    stubReaderEnv({ CI: "true", GITHUB_ACTIONS: undefined });
+    stubReaderEnv({ ...ciEnv, GITHUB_ACTIONS: undefined });
     const plain = await capture(() =>
       main([".", "--no-cache", "--rules", "vue/template/html-button-has-type"], app),
     );

@@ -112,9 +112,16 @@ test("caps each kind at 10 in report order and skips info", () => {
   expect(lines[10]).toMatch(/^::warning .*line=1,/);
 });
 
-test("skips Diagnostics located only by subject", () => {
+test("project-level Diagnostics do not consume slots for source files", () => {
   inGitHubActions();
-  expect(annotate([finding("error", { file: root, subject: "MCP tool search" })])).toBe("");
+  const diagnostics = [
+    finding("warn", { file: root, subject: "MCP tool search" }),
+    ...Array.from({ length: 10 }, () => finding("warn", { file: root })),
+    finding("warn"),
+  ];
+  expect(annotate(diagnostics).trimEnd().split("\n")).toEqual([
+    expect.stringMatching(/^::warning title=DOC9999,file=app\/src\/app\.ts::/),
+  ]);
 });
 
 test("prints nothing outside GitHub Actions, for other formats, or for other readers", () => {
