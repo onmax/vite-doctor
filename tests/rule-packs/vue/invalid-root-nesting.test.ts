@@ -14,7 +14,7 @@ import { promisify } from "node:util";
 import { buildNuxt, loadNuxt } from "nuxt/kit";
 import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
-import { defineDoctorExtension, runDoctor } from "../../../src/core/index.ts";
+import { createAgentReport, defineDoctorExtension, runDoctor } from "../../../src/core/index.ts";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
 import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import { vueRulePack } from "../../../src/rule-packs/vue/index.ts";
@@ -245,11 +245,32 @@ test.each([
         : pageHook
           ? diagnostic
           : [];
-    expect(located(await scan())).toEqual(initialDiagnostics);
-    writeFileSync(pagePath, initialPage.replace("<template>", "<template><!-- template edit -->"));
-    expect(located(await scan())).toEqual([]);
+    const initialResult = await scan();
+    expect(located(initialResult)).toEqual(initialDiagnostics);
+    const editedPage = initialPage.replace("<template>", "<template><!-- template edit -->");
+    writeFileSync(pagePath, editedPage);
+    const staleResult = await scan();
+    expect(located(staleResult)).toEqual([]);
+    if (source === "overwritten Nitro hook") {
+      expect(JSON.parse(createAgentReport(initialResult)).status).toBe("findings");
+      expect(JSON.parse(createAgentReport(staleResult))).toMatchObject({
+        status: "incomplete",
+        evidenceGaps: [{ files: ["app/pages/index.vue"] }],
+        next: {
+          action: "restore-evidence",
+          instruction: expect.stringContaining("Run Nuxt prepare with the Doctor module"),
+        },
+      });
+      writeFileSync(pagePath, editedPage.replace("<p><Card /></p>", "<div><Card /></div>"));
+      expect(JSON.parse(createAgentReport(await scan())).status).toBe("clean");
+      writeFileSync(pagePath, editedPage);
+    }
     await prepare();
-    expect(located(await scan())).toEqual(pageHook ? [] : initialDiagnostics);
+    const refreshedResult = await scan();
+    expect(located(refreshedResult)).toEqual(pageHook ? [] : initialDiagnostics);
+    if (source === "overwritten Nitro hook") {
+      expect(JSON.parse(createAgentReport(refreshedResult)).status).toBe("findings");
+    }
     writeFileSync(pagePath, page);
     expect(located(await scan())).toEqual([]);
     await prepare();

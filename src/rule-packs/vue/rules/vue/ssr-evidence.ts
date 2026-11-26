@@ -36,7 +36,8 @@ export function vueSsrEvidence(
  * Nuxt app or in other Vue code, or `undefined` without that evidence. A Nuxt app hydrates unless
  * `ssr` is false, but a route rule can turn SSR off for routes Doctor cannot map to components, so
  * an app with unreadable or stale page-derived rules, or a rule that sets `ssr: false`, has no
- * evidence.
+ * evidence. Only call this for a hydration candidate: stale page-derived rules record a gap for
+ * its file.
  */
 export function hydrationEvidence(
   ctx: RuleContext,
@@ -49,16 +50,24 @@ export function hydrationEvidence(
   if (
     nuxt.hydrationSsr !== true ||
     appsWithPossibleInlineSsrOptOut.has(nuxt) ||
-    !routeRulesKeepSsr(nuxt.routeRules) ||
-    (manifest?.isCurrent && !nitroRulesSupportSsr(manifest))
+    !routeRulesKeepSsr(nuxt.routeRules)
   )
     return undefined;
+  if (manifest?.isCurrent) {
+    if (manifest.inlineRouteRules !== false && manifest.routeRulePagesCurrent === false) {
+      ctx.project.evidenceGaps = [
+        ...(ctx.project.evidenceGaps ?? []),
+        {
+          source: "vite-doctor/nuxt-hydration-route-rules",
+          files: [relativePath],
+          message: `Doctor cannot verify SSR for a potential component nesting mismatch in ${relativePath} because Nuxt's page-derived route rules are stale. Run Nuxt prepare with the Doctor module enabled, then rerun Doctor.`,
+        },
+      ];
+      return undefined;
+    }
+    if (!routeRulesKeepSsr(manifest.resolvedRouteRules)) return undefined;
+  }
   return "the Nuxt app enables SSR and has no known route-level SSR opt-out";
-}
-
-function nitroRulesSupportSsr(manifest: NonNullable<NuxtProjectInfo["manifest"]>): boolean {
-  if (manifest.inlineRouteRules !== false && manifest.routeRulePagesCurrent === false) return false;
-  return routeRulesKeepSsr(manifest.resolvedRouteRules);
 }
 
 export function hydrationNuxtApp(
