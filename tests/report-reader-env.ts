@@ -31,3 +31,23 @@ export function stubReaderEnv(env: Record<string, string>): void {
   for (const name of markers) vi.stubEnv(name, undefined);
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
 }
+
+export const reportReaderMcpUrl = "https://example.test/mcp";
+
+export function mockReportReaderMcp() {
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/mcp/nuxt.json", import.meta.url), "utf8"),
+  );
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (url, request) => {
+    if (!(url instanceof URL) || url.href !== reportReaderMcpUrl)
+      throw new Error("Unexpected MCP endpoint");
+    if (typeof request?.body !== "string") throw new Error("Expected a JSON request body");
+    const { id, method } = JSON.parse(request.body);
+    if (method === "notifications/initialized") return new Response(null, { status: 202 });
+    const result =
+      method === "initialize"
+        ? { protocolVersion: "2025-11-25", capabilities: { tools: {} } }
+        : { tools: fixture.tools };
+    return Response.json({ jsonrpc: "2.0", id, result });
+  });
+}

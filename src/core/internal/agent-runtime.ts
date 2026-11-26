@@ -1,4 +1,4 @@
-import { determineAgent, type AgentResult } from "detect-agent";
+import { determineAgent, KNOWN_AGENTS, type AgentResult, type KnownAgentNames } from "detect-agent";
 import { detectProvider } from "std-env";
 import type { DoctorReportFormat } from "../primitives.js";
 import { DEFAULT_REPORT_BUDGET } from "./report-budget.js";
@@ -25,24 +25,47 @@ export interface AgentRuntime {
 // Agents that only run commands for a model, so their marker holds in a terminal and in CI. Other
 // catalog markers can linger in a human's shell (Cursor's integrated terminal sets
 // CURSOR_TRACE_ID), so they count only when output goes to a pipe outside CI.
-const COMMAND_RUNNING_AGENTS = new Set([
-  "claude_code",
-  "cowork",
-  "codex_cli",
-  "cursor-cli",
-  "gemini_cli",
-  "open_code",
-  "augment-cli",
-]);
+const commandRunningAgents: ReadonlyArray<[KnownAgentNames, (env: NodeJS.ProcessEnv) => boolean]> =
+  [
+    [
+      KNOWN_AGENTS.CURSOR_CLI,
+      (env) => Boolean(env.CURSOR_AGENT) || env.CURSOR_EXTENSION_HOST_ROLE === "agent-exec",
+    ],
+    [KNOWN_AGENTS.GEMINI, (env) => Boolean(env.GEMINI_CLI)],
+    [
+      KNOWN_AGENTS.CODEX,
+      (env) =>
+        Boolean(
+          env.CODEX_SANDBOX ||
+          env.CODEX_CI ||
+          env.CODEX_THREAD_ID ||
+          env.CODEX_SANDBOX_NETWORK_DISABLED,
+        ),
+    ],
+    [KNOWN_AGENTS.AUGMENT_CLI, (env) => Boolean(env.AUGMENT_AGENT)],
+    [KNOWN_AGENTS.OPENCODE, (env) => Boolean(env.OPENCODE_CLIENT || env.OPENCODE)],
+    [
+      KNOWN_AGENTS.COWORK,
+      (env) => Boolean(env.CLAUDE_CODE_IS_COWORK && (env.CLAUDECODE || env.CLAUDE_CODE)),
+    ],
+    [KNOWN_AGENTS.CLAUDE, (env) => Boolean(env.CLAUDECODE || env.CLAUDE_CODE)],
+  ];
+const commandRunningAgentNames = new Set<string>(commandRunningAgents.map(([name]) => name));
 
 // The Doctor process swaps the environment per run, so read it at call time.
 function currentRuntime(): AgentRuntime {
+  const env = process.env;
+  const declared = () => Boolean(env.AI_AGENT?.trim());
   return {
     // std-env's isCI is fixed at import; this is the same test on the current environment.
     ci: Boolean(process.env.CI) || detectProvider().ci !== false,
     tty: process.stdout?.isTTY === true,
-    declared: () => Boolean(process.env.AI_AGENT?.trim()),
-    determineAgent,
+    declared,
+    async determineAgent() {
+      if (declared()) return determineAgent();
+      const strong = commandRunningAgents.find(([, matches]) => matches(env));
+      return strong ? { isAgent: true, agent: { name: strong[0] } } : determineAgent();
+    },
   };
 }
 
@@ -56,7 +79,7 @@ export async function selectDoctorPresentation(
     if (result.isAgent) agent = result.agent.name;
   } catch {}
 
-  const strong = agent !== undefined && (runtime.declared() || COMMAND_RUNNING_AGENTS.has(agent));
+  const strong = agent !== undefined && (runtime.declared() || commandRunningAgentNames.has(agent));
   const reader: ReportReader = strong
     ? "agent"
     : runtime.ci

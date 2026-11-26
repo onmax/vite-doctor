@@ -78,8 +78,8 @@ export async function runSurfaceDoctor(
     surfaceDoctorOptions({ ...input, vite: { ...input.vite, evidence } }, extensions),
     true,
   );
-  const { reader } = await selectDoctorPresentation(input.options.format);
-  const report = createReport(result, input.options.format, {
+  const { format, reader } = await selectDoctorPresentation(input.options.format);
+  const report = createReport(result, format, {
     surface: "plugin",
     runOptions: input.options,
     reader,

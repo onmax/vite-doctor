@@ -353,7 +353,13 @@ function addDoctorRunCommand(
         reportFormats,
       );
       const root = resolve(cwd, path);
-      if (!isDirectory(root)) {
+      const readable = isDirectory(root);
+      if ((!options.watch || !readable) && automatic && process.stderr.isTTY) {
+        process.stderr.write(
+          `vite-doctor: agent report for ${detectedAgent}; --format text prints the text report\n`,
+        );
+      }
+      if (!readable) {
         await writeCliError(`No readable directory found at ${root}`, format);
         setExitCode(2);
         return;
@@ -380,11 +386,6 @@ function addDoctorRunCommand(
       if (options.watch) {
         setExitCode(await watchDoctorCommand(args, cwd, surface, root, runOptions));
         return;
-      }
-      if (automatic && process.stderr.isTTY) {
-        process.stderr.write(
-          `vite-doctor: agent report for ${detectedAgent}; --format text prints the text report\n`,
-        );
       }
       try {
         setExitCode(await runDoctorCommand(runOptions, format, explicitConfig, report));
