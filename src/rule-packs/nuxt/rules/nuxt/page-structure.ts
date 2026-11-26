@@ -525,7 +525,7 @@ export interface PageRoute {
   fullPath?: string;
 }
 
-function staticallyDisablesPages(ctx: RuleContext, layer: NuxtAppSource): boolean {
+function staticPagesDisable(ctx: RuleContext, layer: NuxtAppSource): boolean | "unknown" {
   const config = configFile(ctx, layer.root);
   if (!config || /pages:(?:extend|resolved)/.test(config.text)) return false;
   const program = parseScript(config.file, config.text) as AnyNode;
@@ -549,19 +549,26 @@ function staticallyDisablesPages(ctx: RuleContext, layer: NuxtAppSource): boolea
   const pages = unwrap(
     properties.findLast((property: AnyNode) => propertyName(property) === "pages")?.value,
   );
-  if (pages?.type === "Literal") return pages.value === false;
-  if (pages?.type !== "ObjectExpression") return false;
-  if (
-    pages.properties.some(
-      (property: AnyNode) =>
-        property.type !== "Property" || property.kind !== "init" || !propertyName(property),
+  let enabled = pages;
+  if (pages?.type === "ObjectExpression") {
+    if (
+      pages.properties.some(
+        (property: AnyNode) =>
+          property.type !== "Property" || property.kind !== "init" || !propertyName(property),
+      )
     )
-  )
-    return false;
-  const enabled = unwrap(
-    pages.properties.findLast((property: AnyNode) => propertyName(property) === "enabled")?.value,
-  );
-  return enabled?.type === "Literal" && enabled.value === false;
+      return false;
+    enabled = unwrap(
+      pages.properties.findLast((property: AnyNode) => propertyName(property) === "enabled")?.value,
+    );
+  }
+  if (enabled?.type !== "Literal" || enabled.value !== false) return false;
+  const hooks = properties.findLast((property: AnyNode) => propertyName(property) === "hooks");
+  if (hooks) {
+    const value = unwrap(hooks.value);
+    if (value?.type !== "ObjectExpression" || value.properties.length) return "unknown";
+  }
+  return true;
 }
 
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
@@ -588,7 +595,9 @@ export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: r
   }
   if (pages.length || layers.length !== 1 || unreadLayers(ctx, layers)) return undefined;
   const layer = layers[0]!;
-  if (staticallyDisablesPages(ctx, layer)) return [];
+  const disabled = staticPagesDisable(ctx, layer);
+  if (disabled === true) return [];
+  if (disabled === "unknown") return undefined;
   if (!scanIsReliable(ctx, layer, "pages")) return undefined;
   const dir = prepared ? conventionalDir : join(layer.srcDir, "pages");
   if (!dir) return undefined;

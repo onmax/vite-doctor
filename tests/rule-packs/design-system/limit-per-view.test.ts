@@ -776,6 +776,54 @@ test.each(["false", "{ enabled: false }"])(
   },
 );
 
+test.each(["false", "{ enabled: false }"])(
+  "requires prepared routes when a Nuxt hook may override pages: %s",
+  async (pages) => {
+    await withFixture(
+      {
+        "app/app.vue": app,
+        "app/components/AppButton.vue": appButton,
+        "app/pages/index.vue": page(primary + primary),
+        "nuxt.config.ts": `import { useNuxt } from 'nuxt/kit';
+export default defineNuxtConfig({
+  pages: ${pages},
+  hooks: { 'modules:before': () => { useNuxt().options.pages = true; } },
+});`,
+      },
+      NUXT_UI,
+      async (root) => {
+        const options = { root, framework: "nuxt", cache: false } as const;
+        const unprepared = await runViteDoctor(options);
+        expect(unprepared.project.evidenceGaps).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              source: "vite-doctor/design-system",
+              message: expect.stringMatching(/cannot list the routes.*nuxt prepare/),
+            }),
+          ]),
+        );
+
+        const inputs = {
+          directories: [{ directory: "app/pages", patterns: ["**/*.vue"] }],
+          files: [],
+          ignore: { patterns: [], roots: ["."] },
+        };
+        await writeFileManifest(root, [], {
+          generatedAt: new Date(Date.now() + 10_000).toISOString(),
+          pages: [{ path: "/", fullPath: "/", file: "app/pages/index.vue", parentFile: null }],
+          resolvedApp: {
+            pagesResolved: true,
+            inputs: { pages: { ...inputs, signature: nuxtAppInputSignature(root, inputs) } },
+          },
+        });
+        const prepared = await runViteDoctor(options);
+        expect(prepared.project.evidenceGaps ?? []).toEqual([]);
+        expect(prepared.diagnostics.filter(({ code }) => code === "DS0008")).toHaveLength(1);
+      },
+    );
+  },
+);
+
 test.each([
   'pages: { pattern: "**/*.vue" }',
   "pages: false, ...overrides",

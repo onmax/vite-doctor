@@ -208,7 +208,7 @@ export async function projectViews(
       const reason =
         unreadLayers(ctx, layers)?.replace(/\.$/, "") ??
         (layers.length === 1
-          ? `${displayPath(ctx, config)} or .nuxtignore changes which files Nuxt scans as pages`
+          ? `${displayPath(ctx, config)} or .nuxtignore may change which routes Nuxt registers`
           : `no current Doctor manifest lists the pages of its ${layers.length} layers`);
       gap(
         `routes${appRoot}`,
