@@ -60,6 +60,9 @@ export const validAnnotations = createRule({
               range: (tool) =>
                 tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
               findings: [],
+              brief: problem.schema
+                ? "annotations hold a serialized schema"
+                : "annotations aren't valid ToolAnnotations",
             },
           );
         }

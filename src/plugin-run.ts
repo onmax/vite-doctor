@@ -13,6 +13,7 @@ import type {
   DoctorRunResult,
   RuntimeFrameworkDiagnostic,
 } from "./core/index.js";
+import type { DoctorPresentation } from "./core/internal/agent-runtime.js";
 import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
 import { hostImportResolvers, type HostImportResolver } from "./core/internal/host-imports.js";
 import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
@@ -32,6 +33,10 @@ export interface SurfaceRunInput {
   vite: { inventory: Record<string, unknown>; evidence: Record<string, unknown> };
   /** Framework diagnostics the dev server's browser clients reported, contributed as Runtime Evidence. */
   frameworkDiagnostics?: RuntimeFrameworkDiagnostic[];
+}
+
+export interface SurfaceReportInput extends SurfaceRunInput {
+  presentation: Pick<DoctorPresentation, "format" | "reader">;
 }
 
 export interface SurfaceRunOutcome {
@@ -59,7 +64,7 @@ export type SurfaceWorkerResolution = { request: number } & (
 );
 
 export async function runSurfaceDoctor(
-  input: SurfaceRunInput,
+  input: SurfaceReportInput,
   extensions: DoctorExtensionInput[],
   resolveImport?: HostImportResolver,
 ): Promise<SurfaceRunOutcome> {
@@ -77,7 +82,12 @@ export async function runSurfaceDoctor(
     surfaceDoctorOptions({ ...input, vite: { ...input.vite, evidence } }, extensions),
     true,
   );
-  const report = createReport(result, input.options.format).trimEnd();
+  const { format, reader } = input.presentation;
+  const report = createReport(result, format, {
+    surface: "plugin",
+    runOptions: input.options,
+    reader,
+  }).trimEnd();
   const shouldFail =
     reportStatus(result) === "incomplete" || shouldFailDoctorRun(result, input.options.maxWarnings);
   const hasFindings =
@@ -152,7 +162,7 @@ export async function hasEnabledBuildEvidenceCandidate(
  * reported everything else. Config and presets still decide whether the Rule is on.
  */
 export async function runBuildEvidenceDoctor(
-  input: SurfaceRunInput,
+  input: SurfaceReportInput,
   extensions: DoctorExtensionInput[],
 ): Promise<SurfaceRunOutcome> {
   return runSurfaceDoctor(

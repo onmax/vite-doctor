@@ -64,6 +64,7 @@ export const validName = createRule({
               ruleId: "mcp/tools/valid-name",
               range: (tool) => tool.name?.range ?? tool.callee,
               findings: wire.findings.filter((finding) => finding.pointer === "/name"),
+              brief: `name ${problems.join(" and ")}`,
             },
           );
         }
@@ -90,6 +91,7 @@ export const validName = createRule({
               file: tool.file,
               range: name.range,
               confidence: name.source === "file" ? "heuristic-medium" : "heuristic-high",
+              brief: `name ${problems.join(" and ")}`,
               data: { tool: name.value },
               evidence: [
                 {

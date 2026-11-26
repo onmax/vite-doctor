@@ -41,6 +41,7 @@ export const noTruncatedText = createRule({
       diagnostic: diagnostics.MCP0006,
       effect: "truncated",
       outcome: "has text cut",
+      brief: "cut",
     });
   },
 });

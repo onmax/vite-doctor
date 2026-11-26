@@ -1,4 +1,4 @@
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import {
   type ProjectInfo,
   allDiagnostics,
@@ -117,14 +117,98 @@ const docsDiagnostics = [
 
 const docsResult = createResult(docsProject, docsProject.root, docsDiagnostics, [], {});
 
+test.each(["text", "agent"] as const)(
+  "%s includes all detail when the full rendering fits exactly",
+  (format) => {
+    const result = createResult(
+      docsProject,
+      docsProject.root,
+      [...docsDiagnostics, { ...docsDiagnostics[0]!, data: { text: '🎉 "\n' } }],
+      [],
+      {},
+    );
+    const full = createReport(result, format, { runOptions: { maxChars: Infinity } });
+    expect(createReport(result, format, { runOptions: { maxChars: full.length } })).toBe(full);
+  },
+);
+
+test("budgeted agent reports never serialize oversized hidden detail as a report", () => {
+  const result = createResult(
+    docsProject,
+    docsProject.root,
+    Array.from({ length: 12 }, () => ({
+      ...docsDiagnostics[0]!,
+      data: { text: "d".repeat(2000) },
+    })),
+    [],
+    {},
+  );
+  const stringify = JSON.stringify;
+  const spy = vi.spyOn(JSON, "stringify").mockImplementation((value) => {
+    const output = stringify(value);
+    if (value?.schema === "vite-doctor.agent/v3" && output.length > 8000) {
+      throw new RangeError("Invalid string length");
+    }
+    return output;
+  });
+  let output: string;
+  try {
+    output = createAgentReport(result);
+  } finally {
+    spy.mockRestore();
+  }
+  expect(output.length).toBeLessThanOrEqual(8000);
+  const report = JSON.parse(output);
+  expect(report.budget.hidden).toEqual({ groups: 0, rows: 0, detail: 12 });
+  expect(report.groups[0].diagnostics).toHaveLength(12);
+  expect(report.groups[0].diagnostics[0]).not.toHaveProperty("data");
+  expect(report.commandArgs.full).toContain("--full");
+});
+
+test("agent group evidence does not conflate ranges or related IDs", () => {
+  const original = docsDiagnostics[0]!;
+  const shared = { kind: "ast" as const, file: original.file, summary: "Shared evidence" };
+  const result = createResult(
+    docsProject,
+    docsProject.root,
+    [1, 2, 3].map((line) => ({
+      ...original,
+      evidence: [
+        shared,
+        {
+          ...shared,
+          summary: "Registration",
+          range: { start: line, end: line + 1, column: 1, line },
+        },
+        { ...shared, summary: "Tool", relatedId: `tool-${line}` },
+      ],
+    })),
+    [],
+    {},
+  );
+  const report = JSON.parse(createAgentReport(result, { runOptions: { maxChars: Infinity } }));
+  expect(report.groups[0].evidence).toEqual([
+    { kind: "ast", path: "override.ts", summary: "Shared evidence" },
+  ]);
+  expect(report.groups[0].diagnostics[1].evidence).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        summary: "Registration",
+        range: expect.objectContaining({ line: 2 }),
+      }),
+      expect.objectContaining({ summary: "Tool", relatedId: "tool-2" }),
+    ]),
+  );
+});
+
 test("JSON and agent reports preserve diagnostic docs metadata", () => {
   const json = JSON.parse(createJsonReport(docsResult));
   const agent = JSON.parse(createAgentReport(docsResult));
 
   expect(json.diagnostics[0].docs).toBe("https://example.test/override");
   expect(json.diagnostics[1]).not.toHaveProperty("docs");
-  expect(agent.diagnostics[0].docs).toBe("https://example.test/override");
-  expect(agent.diagnostics[1]).not.toHaveProperty("docs");
+  expect(agent.groups[0].docs).toBe("https://example.test/override");
+  expect(agent.groups[1]).not.toHaveProperty("docs");
 });
 
 test("SARIF reports preserve diagnostic docs metadata", () => {
@@ -141,12 +225,12 @@ test("SARIF reports preserve diagnostic docs metadata", () => {
 test("every report format renders a Diagnostic without confidence or evidence as having none", () => {
   const text = createReport(docsResult, "text");
   const json = JSON.parse(createJsonReport(docsResult)).diagnostics[0];
-  const agent = JSON.parse(createAgentReport(docsResult)).diagnostics[0];
+  const agent = JSON.parse(createAgentReport(docsResult)).groups[0];
   const sarif = JSON.parse(createSarifReport(docsResult)).runs[0];
 
   expect(text).not.toContain("confidence:");
   expect(text).toContain("Confidence mix: 0 proven, 0 probable, 0 source-only, 2 undeclared");
-  for (const diagnostic of [json, agent]) {
+  for (const diagnostic of [json, agent, agent.diagnostics[0]]) {
     expect(diagnostic).not.toHaveProperty("confidence");
     expect(diagnostic).not.toHaveProperty("evidence");
   }
@@ -172,7 +256,7 @@ test("every report format keeps the confidence and evidence a Rule gave", () => 
   );
   const text = createReport(result, "text");
   const json = JSON.parse(createJsonReport(result)).diagnostics[0];
-  const agent = JSON.parse(createAgentReport(result)).diagnostics[0];
+  const agent = JSON.parse(createAgentReport(result)).groups[0];
   const sarif = JSON.parse(createSarifReport(result)).runs[0].results[0];
 
   expect(text).toContain("confidence: manifest-backed");
@@ -183,6 +267,7 @@ test("every report format keeps the confidence and evidence a Rule gave", () => 
       { kind: "manifest", summary: "package.json lists nuxt 4.1.0" },
     ]);
   }
+  expect(agent.diagnostics[0].evidence).toEqual(agent.evidence);
   expect(sarif.properties).toMatchObject({
     confidence: "manifest-backed",
     evidenceKinds: ["manifest"],

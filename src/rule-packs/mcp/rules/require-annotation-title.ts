@@ -57,7 +57,12 @@ export const requireAnnotationTitle = createRule({
               why: `MCP tool ${wireToolLabel(wire)} has no non-empty string in \`annotations.title\` in its tools/list entry.${topLevel ? ` It has a top-level title ${JSON.stringify(wire.tool.title)}, which clients that read only \`annotations.title\` never show.` : ""} Anthropic's Connectors Directory flags tools without one, and clients on the 2025-03-26 revision show only the bare name.`,
               fix: `Add \`title: ${JSON.stringify(suggested)}\` to the tool's annotations.`,
             }),
-            { ruleId: "mcp/tools/require-annotation-title", range: annotationsRange, findings },
+            {
+              ruleId: "mcp/tools/require-annotation-title",
+              range: annotationsRange,
+              findings,
+              brief: `no annotations.title; add title: ${JSON.stringify(suggested)}`,
+            },
           );
         }
         for (const tool of sourceOnly) {
@@ -94,6 +99,7 @@ export const requireAnnotationTitle = createRule({
               file: tool.file,
               range: annotationsRange(tool),
               confidence: "heuristic-high",
+              brief: `no annotations.title; add title: ${JSON.stringify(suggested)}`,
               data: tool.name ? { tool: tool.name.value } : undefined,
               evidence: annotationsEvidence(tool),
             },

@@ -223,6 +223,8 @@ export function reportWireTool(
     ruleId: string;
     range: (definition: McpToolDefinition) => SourceRange;
     findings: McpFinding[];
+    /** The Rule's one-line row for this tool, such as `no annotations.title`. */
+    brief: string;
   },
 ): void {
   const { server, tool, definition } = wire;
@@ -239,10 +241,7 @@ export function reportWireTool(
       kind: "runtime",
       summary: `Read from the tools/list of MCP server ${JSON.stringify(label)}${endpoint ? ` at ${endpoint}` : ""} during this Doctor Run.`,
     },
-    ...options.findings.map((finding) => ({
-      kind: "runtime" as const,
-      summary: `${MCP_CLIENT_LABELS[finding.client]} (${finding.rule}): ${finding.source.url}, ${finding.source.kind} checked ${finding.source.checked}: "${finding.source.quote}"`,
-    })),
+    ...citations(options.findings),
     ...(definition && range
       ? [
           {
@@ -265,6 +264,8 @@ export function reportWireTool(
     instanceKey: endpointId ? fingerprint : undefined,
     confidence: "runtime-backed",
     evidence,
+    subject: toolSubject(ctx, server, tool.name),
+    brief: options.brief,
     data: {
       server: {
         ...(server.name === undefined ? {} : { name: server.name }),
@@ -281,4 +282,32 @@ export function wireToolLabel(wire: WireTool): string {
   const { server } = wire;
   const label = server.name ?? (server.url ? mcpEndpointLabel(server.url) : "an MCP server");
   return `${JSON.stringify(wire.tool.name)} of MCP server ${JSON.stringify(label)}`;
+}
+
+/**
+ * Names a tool the server sent, qualified by its server when the Doctor Run read more than one.
+ * Reports show it in place of a source location.
+ */
+export function toolSubject(
+  ctx: RuleContext,
+  server: McpServerToolsEvidence,
+  tool: string | undefined,
+): string {
+  const label = server.name ?? (server.url ? mcpEndpointLabel(server.url) : "an MCP server");
+  if (tool === undefined) return `MCP server ${JSON.stringify(label)}`;
+  return serverFindings(ctx).servers.length > 1 ? `${tool} (${label})` : tool;
+}
+
+/**
+ * Evidence that cites the client source behind each finding once. The verbatim quote stays in
+ * the Diagnostic's `data.findings[].source.quote`.
+ */
+export function citations(findings: readonly McpFinding[]): DiagnosticEvidence[] {
+  const summaries = new Set(
+    findings.map(
+      (finding) =>
+        `${MCP_CLIENT_LABELS[finding.client]} (${finding.rule}): ${finding.source.url}, ${finding.source.kind} checked ${finding.source.checked}`,
+    ),
+  );
+  return [...summaries].map((summary) => ({ kind: "runtime", summary }));
 }

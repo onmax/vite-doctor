@@ -709,6 +709,8 @@ test("changed scope reports overlapping ranges and findings without source range
       explain: "vite-doctor explain '<code>' --framework vue --format agent",
       verify: `vite-doctor . --framework vue --since ${result.scope.base} --rules '<rule>' --format agent`,
       rerun: `vite-doctor . --framework vue --since ${result.scope.base} --format agent`,
+      more: `vite-doctor . --framework vue --since ${result.scope.base} --format agent`,
+      full: `vite-doctor . --framework vue --since ${result.scope.base} --full --format agent`,
     });
   });
 });
@@ -1731,9 +1733,12 @@ test("agent reporter is compact and includes a complete remediation path", async
     const report = createAgentReport(result);
     const agent = JSON.parse(report);
 
-    expect(agent.schema).toBe("vite-doctor.agent/v2");
-    expect(agent.diagnostics[0]).toMatchObject({
+    expect(agent.schema).toBe("vite-doctor.agent/v3");
+    expect(agent.groups[0]).toMatchObject({
       rule: "test/report-program",
+      remediation: "Inspect the test program diagnostic.",
+    });
+    expect(agent.groups[0].diagnostics[0]).toMatchObject({
       location: { path: "src/app.ts" },
       remediation: "Inspect the test program diagnostic.",
       related: [
@@ -1749,6 +1754,8 @@ test("agent reporter is compact and includes a complete remediation path", async
       explain: "vite-doctor explain '<code>' --framework vue --format agent",
       verify: "vite-doctor . --framework vue --rules '<rule>' --format agent",
       rerun: "vite-doctor . --framework vue --format agent",
+      more: "vite-doctor . --framework vue --format agent",
+      full: "vite-doctor . --framework vue --full --format agent",
     });
     expect(report).not.toContain(join(root, "src/app.ts"));
   });

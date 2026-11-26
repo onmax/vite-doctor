@@ -146,7 +146,7 @@ test("third-party Diagnostic Codes keep their own docs in agent reports", async 
       extensions: [vitehubExtension],
     });
     const agent = JSON.parse(createAgentReport(result));
-    expect(agent.diagnostics).toEqual([
+    expect(agent.groups).toEqual([
       expect.objectContaining({
         code: "VHUB0001",
         rule: "vitehub/no-legacy-kv-import",

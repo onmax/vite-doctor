@@ -16,7 +16,14 @@ import type { McpServerToolsEvidence } from "../../../mcp/evidence.js";
 import type { McpEffect, McpFinding } from "../../../mcp/types.js";
 import { collectMcpTools, MCP_PACKAGES, type McpToolDefinition } from "./shared.js";
 import { nameProblems } from "./valid-name.js";
-import { MCP_CLIENT_LABELS, markChecked, serverFindings, staticTool } from "./wire.js";
+import {
+  citations,
+  MCP_CLIENT_LABELS,
+  markChecked,
+  serverFindings,
+  staticTool,
+  toolSubject,
+} from "./wire.js";
 
 export interface ClientLimitOptions {
   ruleId: string;
@@ -24,6 +31,8 @@ export interface ClientLimitOptions {
   effect: McpEffect;
   /** Completes "Tool `x` of MCP server "y" …" and "MCP server "y" …", such as "is left out". */
   outcome: string;
+  /** Completes "`limit.minimum` … in Codex" on the Diagnostic's row, such as "dropped". */
+  brief: string;
 }
 
 const SEVERITY_RANK: Record<McpFinding["severity"], number> = { info: 0, warn: 1, error: 2 };
@@ -136,10 +145,7 @@ function report(
       kind: "runtime",
       summary: `Read from the tools/list of MCP server ${JSON.stringify(label)}${endpoint ? ` at ${endpoint}` : ""} during this Doctor Run.`,
     },
-    ...findings.map((finding) => ({
-      kind: "runtime" as const,
-      summary: `${MCP_CLIENT_LABELS[finding.client]} (${finding.rule}${finding.pointer ? ` at ${finding.pointer}` : ""}): ${finding.source.url}, ${finding.source.kind} checked ${finding.source.checked}: "${finding.source.quote}"`,
-    })),
+    ...citations(findings),
     ...(definition && range
       ? [
           {
@@ -167,6 +173,8 @@ function report(
       instanceKey: endpointId ? fingerprint : undefined,
       confidence,
       evidence,
+      subject: toolSubject(ctx, server, tool),
+      brief: briefRow(options.brief, findings),
       data: {
         server: {
           ...(name === undefined ? {} : { name }),
@@ -177,6 +185,44 @@ function report(
       },
     },
   );
+}
+
+/** Such as "limit.minimum, offset.default dropped in Codex and VS Code". */
+function briefRow(participle: string, findings: McpFinding[]): string {
+  const clientsByPointer = new Map<string, Set<string>>();
+  for (const { client, pointer, affectedPointers } of findings) {
+    const pointers = affectedPointers?.length ? affectedPointers : [pointer ?? ""];
+    for (const target of pointers) {
+      let clients = clientsByPointer.get(target);
+      if (!clients) clientsByPointer.set(target, (clients = new Set()));
+      clients.add(MCP_CLIENT_LABELS[client]);
+    }
+  }
+  const fieldsByClients = new Map<string, string[]>();
+  for (const [pointer, clients] of clientsByPointer) {
+    const label = list([...clients].sort());
+    let fields = fieldsByClients.get(label);
+    if (!fields) fieldsByClients.set(label, (fields = []));
+    if (pointer) fields.push(pointerField(pointer));
+  }
+  const clauses = [...fieldsByClients].map(([clients, fields]) => {
+    const shown = fields.length > 4 ? [...fields.slice(0, 3), `${fields.length - 3} more`] : fields;
+    return `${shown.length ? `${shown.join(", ")} ` : ""}${participle} in ${clients}`;
+  });
+  const value = findings.length === 1 ? findings[0]!.measured : undefined;
+  return `${clauses.join("; ")}${value ? ` (${value.value} ${value.unit}, limit ${value.limit})` : ""}`;
+}
+
+/** `/inputSchema/properties/limit/minimum` as `limit.minimum`. */
+function pointerField(pointer: string): string {
+  return pointer
+    .replace(/^\/inputSchema\/properties\//, "/")
+    .replace(/^\/initialize\//, "/")
+    .replaceAll("/properties/", "/")
+    .slice(1)
+    .split("/")
+    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))
+    .join(".");
 }
 
 function measured(finding: McpFinding): string {
