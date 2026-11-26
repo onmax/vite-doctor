@@ -1,7 +1,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 import {
   runSurfaceDoctor,
-  type SurfaceRunInput,
+  type SurfaceReportInput,
   type SurfaceWorkerMessage,
   type SurfaceWorkerResolution,
 } from "./plugin-run.js";
@@ -18,13 +18,17 @@ port.on("message", (reply: SurfaceWorkerResolution) => {
 });
 
 try {
-  const outcome = await runSurfaceDoctor(workerData as SurfaceRunInput, [], (source, importer) => {
-    const request = nextRequest++;
-    const waiting = Promise.withResolvers<string | undefined>();
-    pending.set(request, waiting);
-    send({ request, source, importer });
-    return waiting.promise;
-  });
+  const outcome = await runSurfaceDoctor(
+    workerData as SurfaceReportInput,
+    [],
+    (source, importer) => {
+      const request = nextRequest++;
+      const waiting = Promise.withResolvers<string | undefined>();
+      pending.set(request, waiting);
+      send({ request, source, importer });
+      return waiting.promise;
+    },
+  );
   send({ outcome });
 } catch (error) {
   send({ error: error instanceof Error ? error.message : String(error) });
