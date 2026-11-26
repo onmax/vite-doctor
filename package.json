@@ -79,7 +79,7 @@
   },
   "dependencies": {
     "@jridgewell/trace-mapping": "catalog:prod",
-    "@loadsheet/mcp": "^0.1.2",
+    "@loadsheet/mcp": "^0.1.3",
     "@shadcn/lint": "catalog:analysis",
     "@typescript-eslint/parser": "catalog:analysis",
     "@typescript-eslint/scope-manager": "catalog:analysis",
