@@ -408,11 +408,19 @@ function verifyServeRunWorker() {
   mkdirSync(join(project, "src"), { recursive: true });
   writeFileSync(
     join(project, "package.json"),
-    JSON.stringify({ type: "module", dependencies: { vue: "^3.5.0" } }),
+    JSON.stringify({ type: "module", dependencies: { pinia: "^3.0.0", vue: "^3.5.0" } }),
   );
   writeFileSync(
     join(project, "src/App.vue"),
     '<script setup lang="ts">\nconst count: number = 0;\n</script>\n<template><button>{{ count }}</button></template>\n',
+  );
+  writeFileSync(
+    join(project, "src/cart.ts"),
+    "import { defineStore } from 'pinia'; export const useCartStore = defineStore('cart', { state: () => ({ count: 0 }) });\n",
+  );
+  writeFileSync(
+    join(project, "src/entry.ts"),
+    "import { useCartStore } from './cart'; export const cart = useCartStore();\n",
   );
   const hooks = join(temporary, "record-main-thread-analyzers.mjs");
   writeFileSync(
@@ -471,6 +479,7 @@ await server.close();
     if (result.error) throw result.error;
     assert.equal(result.status, 0, `serve ${mode}: ${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /VUE0022/, `serve ${mode} did not log the Doctor report.`);
+    assert.match(result.stdout, /PINIA0006/, `serve ${mode} did not resolve the store import.`);
     const analyzers = JSON.parse(readFileSync(record, "utf8"));
     if (mode === "worker") {
       assert.deepEqual(

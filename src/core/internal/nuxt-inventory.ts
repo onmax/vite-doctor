@@ -3,8 +3,10 @@ import ignore from "ignore";
 import { join, relative, resolve } from "pathe";
 import { globSync } from "tinyglobby";
 import { isNuxtManifestCurrent, nuxtServerInventory } from "./runtime-graph.js";
+import { nuxtAppInputSignature } from "./nuxt-app-inputs.js";
 import { sha256 } from "./utils.js";
 import type {
+  NuxtAppInventoryKind,
   NuxtAppRegistrationIgnore,
   NuxtAppRegistrationSnapshot,
   NuxtDoctorManifest,
@@ -18,6 +20,7 @@ export interface NuxtProjectInventory {
   scannedComposableFiles?: string[];
   importsDirs: string[];
   pluginFiles: string[];
+  serverAppEntryFiles?: string[];
   resolvedPlugins?: NuxtDoctorManifest["resolvedPlugins"];
   resolvedMiddleware?: NuxtDoctorManifest["resolvedMiddleware"];
   resolvedComponents?: NuxtDoctorManifest["resolvedComponents"];
@@ -42,6 +45,8 @@ export interface NuxtProjectInventory {
   middleware?: NuxtResolvedMiddleware[];
   routes?: NuxtResolvedRoute[];
   routerOptionsFiles?: string[];
+  resolvedApp?: NuxtDoctorManifest["resolvedApp"];
+  resolvedAppCurrent: Record<NuxtAppInventoryKind, boolean>;
   prerenderRoutes: string[];
   buildManifest?: {
     hasBuildManifest: boolean;
@@ -62,6 +67,13 @@ export function createNuxtProjectInventory(
   fallbackImportsDirs: string[] = [],
   isCurrent = isNuxtManifestCurrent(root, manifest),
 ): NuxtProjectInventory {
+  const inputs = manifest?.resolvedApp?.inputs;
+  const appInventoryCurrent = (kind: NuxtAppInventoryKind) => {
+    const input = inputs?.[kind];
+    return Boolean(
+      isCurrent && input?.signature && input.signature === nuxtAppInputSignature(root, input),
+    );
+  };
   const discovery = isCurrent && registrationFilter(root, manifest?.appRegistrationIgnore);
   const current = (kind: "components" | "pages" | "plugins") =>
     discovery && registrationIsCurrent(root, discovery, manifest?.appRegistration?.[kind]);
@@ -69,6 +81,9 @@ export function createNuxtProjectInventory(
     scannedComposableFiles: manifest?.scannedComposableFiles?.map((file) => resolve(root, file)),
     importsDirs: (manifest?.importsDirs ?? fallbackImportsDirs).map((dir) => resolve(root, dir)),
     pluginFiles: (manifest?.pluginFiles ?? []).map((file) => resolve(root, file)),
+    serverAppEntryFiles: discovery
+      ? manifest?.serverAppEntryFiles?.map((file) => resolve(root, file))
+      : undefined,
     resolvedPlugins: current("plugins")
       ? manifest?.resolvedPlugins?.map((plugin) => ({
           ...plugin,
@@ -104,6 +119,12 @@ export function createNuxtProjectInventory(
       : undefined,
     nitroPreset: manifest?.nitroPreset,
     pages: manifest?.pages ?? [],
+    resolvedApp: manifest?.resolvedApp,
+    resolvedAppCurrent: {
+      pages: appInventoryCurrent("pages"),
+      layouts: appInventoryCurrent("layouts"),
+      mainComponent: appInventoryCurrent("mainComponent"),
+    },
     middleware: manifest?.middleware?.map((entry) => ({
       ...entry,
       path: resolve(root, entry.path),

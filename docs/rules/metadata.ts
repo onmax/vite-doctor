@@ -8,7 +8,7 @@ export interface RuleDocumentationMetadata {
 }
 
 export const ruleDocumentationMetadata = {
-  "shadcn/no-restyle": {
+  "design-system/no-restyle": {
     description: "Keep component-owned visual styles inside the component contract.",
     why: "Appearance classes at a component call site can override the variants and sizes owned by the design system. The Rule checks recognized components against the configured class policy.",
     recommendedReplacement:
@@ -24,7 +24,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-raw-colors": {
+  "design-system/no-raw-colors": {
     description: "Prefer theme colors over raw color values.",
     why: "Raw palette colors and literal SVG colors bypass the project's theme. Checking undeclared color tokens and suggesting theme replacements requires a readable theme; without one, those checks are unavailable.",
     recommendedReplacement:
@@ -38,7 +38,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-arbitrary-values": {
+  "design-system/no-arbitrary-values": {
     description: "Use the design system's existing values instead of arbitrary utilities.",
     why: "Arbitrary utility values bypass theme tokens and scale values, making appearance harder to change consistently. Exceptions follow the configured class policy.",
     recommendedReplacement:
@@ -52,7 +52,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-inline-styles": {
+  "design-system/no-inline-styles": {
     description: "Keep styling in the design system rather than component call sites.",
     why: "Ordinary inline properties bypass class-based styling. The Rule checks JSX elements, unreadable style objects, hardcoded colors in custom properties, and style elements.",
     recommendedReplacement:
@@ -66,7 +66,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/require-static-classes": {
+  "design-system/require-static-classes": {
     description: "Use class values that the design-system analyzer can resolve.",
     why: "Unreadable class values on recognized components prevent other design-system Rules from checking those classes. Complete static strings and conditional choices between them remain analyzable.",
     recommendedReplacement:
@@ -82,7 +82,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-unknown-classes": {
+  "design-system/no-unknown-classes": {
     description: "Avoid classes that are not declared by the project's Tailwind theme.",
     why: "Misspelled or unsupported class names generate no CSS. Without a resolvable Tailwind theme, the Rule uses a reduced fallback that includes bundled utility names plus discovered @utility names and CSS class selectors, as in the example below. That fallback cannot validate theme tokens or provide spelling suggestions.",
     recommendedReplacement:
@@ -1441,6 +1441,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/layouts/app-renders-nuxtlayout": {
+    description:
+      "Finds a custom app component that never renders `<NuxtLayout>` while the app has registered layouts. Doctor follows components and pages reachable from the app, not unused components. It uses the prepared layout inventory when available and stays quiet when it cannot establish which layouts Nuxt registers or follow a render target. Nuxt's built-in app already renders the layout.",
+    why: "Nuxt renders layouts only through `<NuxtLayout>`. Without it, layouts/default.vue and every layout a page selects with `definePageMeta({ layout })` are ignored, so pages render without their header, navigation, or wrapper. Nuxt reports this in development as NUXT_E4007: its check-if-layout-used plugin warns when layouts exist but no `<NuxtLayout>` was rendered.",
+    recommendedReplacement:
+      "Wrap `<NuxtPage />` in `<NuxtLayout>` in app.vue, or remove the unused layouts.",
+    examples: [
+      {
+        title: "Render layouts from app.vue",
+        language: "vue",
+        invalid: "<!-- app/layouts/default.vue exists -->\n<template>\n  <NuxtPage />\n</template>",
+        valid: "<template>\n  <NuxtLayout>\n    <NuxtPage />\n  </NuxtLayout>\n</template>",
+      },
+    ],
+  },
   "nuxt/middleware/no-route-middleware-api-security": {
     description:
       'Reports auth-sensitive server handlers, such as server/api/admin/** or server/api/me.get.ts, in projects whose auth route middleware suggests the API is protected, when the handler has no visible server guard. A handler counts as guarded when its defineEventHandler, eventHandler, defineHandler, defineValidatedHandler (including the handler method of its options object), or cached handler awaits a guard with the event before any control flow, either as a statement or as const user = await guard(event). Built-in guard names are requireUserSession, requireAuth, requireMcpAdminToken, authGuard, and protectRoute. Doctor also follows imported and auto-imported app guards into server/utils and accepts a function that throws a 401 or 403 HTTPError or createError on a failing branch, or that first awaits another guard, and never returns nothing, null, or false. Name guards Doctor cannot follow, such as ones from a package, in the guards option under rules in doctor.config.json or the doctor key of nuxt.config: "nuxt/middleware/no-route-middleware-api-security": ["warn", { "guards": ["requireAdmin"] }]. Named guards still have to be awaited with the event before any control flow. An auth catch-all route that only re-exports a default handler from an installed auth package that depends on Better Auth, such as export { default } from "vite-hub/auth/server", counts as the provider mount. A handler that is public on purpose, such as a public count or a list of tools that check access on their own routes, says so with a comment line that starts with nuxt-doctor: public-route, followed by -- and the reason. The marker must start its own comment line, so a string or an inline comment does not count.',
@@ -1564,6 +1579,22 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/pages/single-root-node": {
+    description:
+      "Finds pages and layouts with multiple roots, or a text or comment root, when a transition applies on a known route. Doctor checks the reachable `<NuxtPage>` outlet, matched route metadata, and app defaults in Nuxt's precedence order. It checks only registered layouts it can associate with a `<NuxtLayout>` outlet and a transition. A `v-if`/`v-else-if`/`v-else` chain counts as one root; runtime-dependent transitions and lone `<slot>` roots are not reported.",
+    why: "Nuxt wraps pages in a `<Transition>` when a page transition is on, and layouts when a layout transition is on. A `<Transition>` can only animate a single element, so a page with several root nodes, or a text root, does not animate when you navigate to or from it. Vue keeps template comments in development, so a comment next to the root element also turns the page into a fragment there. Nuxt reports this in development as NUXT_E4004 for pages and NUXT_E4002 for layouts. Both are off by default (`app.pageTransition` and `app.layoutTransition` default to false), so pages without a transition are not reported.",
+    recommendedReplacement:
+      "Wrap the template in a single root element, such as a `<div>`, and move comments inside it.",
+    examples: [
+      {
+        title: "Give a transitioned page one root element",
+        language: "vue",
+        invalid:
+          "<!-- nuxt.config.ts sets app: { pageTransition: { name: 'page' } } -->\n<template>\n  <h1>Users</h1>\n  <UserList />\n</template>",
+        valid: "<template>\n  <div>\n    <h1>Users</h1>\n    <UserList />\n  </div>\n</template>",
+      },
+    ],
+  },
   "nuxt/plugins/no-island-disabled-dependency": {
     description:
       "Finds a plugin whose dependsOn names a plugin that sets env: { islands: false }, in an app that renders server component islands.",
@@ -1658,6 +1689,21 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "nuxt/routing/navigate-to-external": {
+    description:
+      "Finds `navigateTo()` calls whose target is a string literal with a protocol, such as `https://` or `mailto:`, or a protocol-relative `//` URL, and no `{ external: true }`. Template literals and `+` concatenations count when their leading literal text already makes the URL external. Calls with `open`, spread options, or a computed `external` value are not reported, nor are `navigateTo` bindings that do not come from Nuxt.",
+    why: '`navigateTo` treats a target as external when ufo\'s `hasProtocol(toPath, { acceptRelative: true })` matches it, and throws instead of navigating unless the options set `external: true`. The call fails at runtime with NUXT_E2001, "Navigating to external URL is not allowed by default", on the server and in the browser.',
+    recommendedReplacement:
+      "Pass `{ external: true }` as the second argument. To open the URL in a new tab, pass `{ open: { target: '_blank' } }` instead.",
+    examples: [
+      {
+        title: "Allow the external navigation",
+        language: "ts",
+        invalid: "await navigateTo('https://example.com/login')",
+        valid: "await navigateTo('https://example.com/login', { external: true })",
+      },
+    ],
+  },
   "nuxt/routing/no-global-middleware-redirect-loop": {
     description:
       "Flags a global route middleware that redirects to a fixed route without checking where navigation is going.",
@@ -1739,6 +1785,23 @@ export const ruleDocumentationMetadata = {
           "export default defineNuxtRouteMiddleware(() => {\n  const route = useRoute()\n  if (!route.meta.auth) return\n})",
         valid:
           "export default defineNuxtRouteMiddleware((to) => {\n  if (!to.meta.auth) return\n})",
+      },
+    ],
+  },
+  "nuxt/routing/parent-page-requires-nuxtpage": {
+    description:
+      "Finds a parent route component that never renders `<NuxtPage>` or `<RouterView>` directly or through another component. Doctor uses Nuxt's prepared parent-child relationships when available, including across layers. Without those relationships, it uses standard directory conventions only when configuration and layer evidence allow it. Unresolved render targets are treated as possibly rendering the outlet.",
+    why: 'Nuxt turns pages/users.vue next to pages/users/[id].vue into a parent route with a child route. The child renders inside the parent\'s `<NuxtPage>`, so without one, navigating to /users/1 shows only the parent page. Nuxt reports this in development as NUXT_E4016, "the parent page does not render `<NuxtPage />`, so the nested page cannot be displayed", or as NUXT_E4011 when no page renders `<NuxtPage>` at all.',
+    recommendedReplacement:
+      "Render `<NuxtPage />` in the parent page where the child should appear. If the pages are not meant to nest, move pages/users.vue to pages/users/index.vue.",
+    examples: [
+      {
+        title: "Render the child route in the parent page",
+        language: "vue",
+        invalid:
+          "<!-- app/pages/users.vue, next to app/pages/users/[id].vue -->\n<template>\n  <h1>Users</h1>\n</template>",
+        valid:
+          "<!-- app/pages/users.vue -->\n<template>\n  <div>\n    <h1>Users</h1>\n    <NuxtPage />\n  </div>\n</template>",
       },
     ],
   },
@@ -2718,6 +2781,23 @@ export const ruleDocumentationMetadata = {
           '<template>\n  <button type="button" @click="$emit(\'click\', id)">Open</button>\n</template>',
         valid:
           '<script setup lang="ts">\ndefineEmits([\'click\'])\n</script>\n\n<template>\n  <button type="button" @click="$emit(\'click\', id)">Open</button>\n</template>',
+      },
+    ],
+  },
+  "vue/attrs/no-multi-root-fallthrough": {
+    description:
+      'Finds a component usage that passes attributes or listeners, such as `class`, `id` or `@click`, to a component whose template has more than one root node, when the component declares none of them as props, `defineModel()` props or emits, keeps `inheritAttrs` on, and never reads `$attrs`, `useAttrs()` or `getCurrentInstance()`. A `v-if`/`v-else-if`/`v-else` chain counts as one root and comments are not roots, as in Vue\'s compiler. Doctor reports at the usage, only for usages it resolved to the component, and skips spreads such as `v-bind="obj"`, `key` and `ref`, and `update:*` model listeners. Components whose props it cannot read, such as `defineProps<ImportedProps>()` or an Options API `props` option, are skipped; listeners are skipped when the emits are unreadable. Strict Preset only.',
+    why: "Vue normally forwards undeclared attributes and listeners to a single root element or component. With several roots, Vue does not automatically attach them and warns in development. A component can still emit an undeclared event and invoke the caller's listener; missing DOM inheritance does not mean the listener is unused.",
+    recommendedReplacement:
+      'Bind `$attrs` on the intended root with `v-bind="$attrs"` or wrap the template in one root element. Declare inputs the component consumes as props. If the component emits the event, declare it in `emits` or `defineEmits()` and keep the caller’s listener.',
+    examples: [
+      {
+        title: "Bind $attrs on the root that should receive them",
+        language: "vue",
+        invalid:
+          '<!-- PageLayout.vue -->\n<template>\n  <header>Title</header>\n  <main><slot /></main>\n</template>\n\n<!-- Page.vue -->\n<template>\n  <PageLayout class="page" />\n</template>',
+        valid:
+          '<!-- PageLayout.vue -->\n<template>\n  <header>Title</header>\n  <main v-bind="$attrs"><slot /></main>\n</template>\n\n<!-- Page.vue -->\n<template>\n  <PageLayout class="page" />\n</template>',
       },
     ],
   },

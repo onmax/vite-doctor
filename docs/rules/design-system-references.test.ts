@@ -1,7 +1,10 @@
 import { runProjectFixture } from "../../src/core/testkit.js";
 import { expect, test } from "vite-plus/test";
-import { shadcnRulePack } from "../../src/rule-packs/shadcn/index.js";
-import { diagnostics, diagnosticCodesByRuleId } from "../../src/rule-packs/shadcn/diagnostics.js";
+import { designSystemRulePack } from "../../src/rule-packs/design-system/index.js";
+import {
+  diagnostics,
+  diagnosticCodesByRuleId,
+} from "../../src/rule-packs/design-system/diagnostics.js";
 import {
   getDiagnosticDocuments,
   getRuleDocuments,
@@ -9,7 +12,7 @@ import {
   rulesCollectionSource,
 } from "./source.js";
 
-test.each(shadcnRulePack.rules)("documents helper-authored $meta.id", async (rule) => {
+test.each(designSystemRulePack.rules)("documents helper-authored $meta.id", async (rule) => {
   const code = diagnosticCodesByRuleId[rule.meta.id as keyof typeof diagnosticCodesByRuleId];
   const document = getRuleDocuments().find((entry) => entry.id === rule.meta.id);
   expect(document).toMatchObject({
@@ -23,7 +26,9 @@ test.each(shadcnRulePack.rules)("documents helper-authored $meta.id", async (rul
   });
   const ruleMarkdown = await rulesCollectionSource.getItem(document!.key);
   expect(ruleMarkdown).toContain(rule.meta.docsUrl);
-  expect(ruleMarkdown).toContain(`vite-doctor . --extends shadcn/strict --rules ${rule.meta.id}`);
+  expect(ruleMarkdown).toContain(
+    `vite-doctor . --extends design-system/strict --rules ${rule.meta.id}`,
+  );
 
   const emitted = diagnostics[code]({ why: "Source finding", fix: "Apply the Rule remediation" });
   const reference = getDiagnosticDocuments().find(
@@ -34,16 +39,19 @@ test.each(shadcnRulePack.rules)("documents helper-authored $meta.id", async (rul
   const markdown = await diagnosticsCollectionSource.getItem(reference!.key);
   expect(markdown).toContain(rule.meta.title);
   expect(markdown).toContain(rule.meta.docsUrl);
-  expect(markdown).toContain(`vite-doctor . --extends shadcn/strict --rules ${rule.meta.id}`);
+  expect(markdown).toContain(
+    `vite-doctor . --extends design-system/strict --rules ${rule.meta.id}`,
+  );
 });
 
-test.each(shadcnRulePack.rules)(
+test.each(designSystemRulePack.rules)(
   "the documented replacement clears $meta.id without a theme",
   async (rule) => {
     const document = getRuleDocuments().find((entry) => entry.id === rule.meta.id)!;
-    const componentRule = ["shadcn/no-restyle", "shadcn/require-static-classes"].includes(
-      rule.meta.id,
-    );
+    const componentRule = [
+      "design-system/no-restyle",
+      "design-system/require-static-classes",
+    ].includes(rule.meta.id);
     const options = componentRule ? { componentImports: ["^@/components/ui/"] } : {};
     for (const example of document.examples) {
       const diagnose = (source: string) =>

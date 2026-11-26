@@ -48,6 +48,10 @@ export { noGlobalMiddlewareRedirectLoop } from "./no-global-middleware-redirect-
 export { requireStableAsyncDataKey } from "./require-stable-async-data-key.js";
 export { preferExplicitUseStateKeyInExportedComposables } from "./prefer-explicit-use-state-key-in-exported-composables.js";
 export { noComposableAfterAwait } from "./no-composable-after-await.js";
+export { parentPageRequiresNuxtPage } from "./parent-page-requires-nuxt-page.js";
+export { appRendersNuxtLayout } from "./app-renders-nuxt-layout.js";
+export { singleRootNode } from "./single-root-node.js";
+export { navigateToExternal } from "./navigate-to-external.js";
 export { forwardAuthHeadersSsr } from "./forward-auth-headers-ssr.js";
 export { noPlainEnvInAppCode } from "./no-plain-env-in-app-code.js";
 export { preferCreateUseFetch } from "./prefer-create-use-fetch.js";
@@ -118,6 +122,10 @@ import { noGlobalMiddlewareRedirectLoop } from "./no-global-middleware-redirect-
 import { requireStableAsyncDataKey } from "./require-stable-async-data-key.js";
 import { preferExplicitUseStateKeyInExportedComposables } from "./prefer-explicit-use-state-key-in-exported-composables.js";
 import { noComposableAfterAwait } from "./no-composable-after-await.js";
+import { parentPageRequiresNuxtPage } from "./parent-page-requires-nuxt-page.js";
+import { appRendersNuxtLayout } from "./app-renders-nuxt-layout.js";
+import { singleRootNode } from "./single-root-node.js";
+import { navigateToExternal } from "./navigate-to-external.js";
 import { forwardAuthHeadersSsr } from "./forward-auth-headers-ssr.js";
 import { noPlainEnvInAppCode } from "./no-plain-env-in-app-code.js";
 import { preferCreateUseFetch } from "./prefer-create-use-fetch.js";
@@ -204,6 +212,10 @@ const rules = [
   moduleRequireMeta,
   moduleResolveRuntimePaths,
   moduleExplicitRuntimeImports,
+  parentPageRequiresNuxtPage,
+  appRendersNuxtLayout,
+  singleRootNode,
+  navigateToExternal,
   noRequestDataInModuleState,
   noRequestStateInCachedPage,
 ];

@@ -295,18 +295,222 @@ describe("rule details", () => {
   });
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
-    "%s skips only boolean defaults stated correctly",
+    "%s skips only true defaults stated correctly",
     (rule) => {
-      for (const defaultValue of [true, false]) {
-        const withDescription = (description: string) =>
-          schema(object({ enabled: { type: "boolean", default: defaultValue, description } }));
-        expect(hits(rule, withDescription(`Defaults to ${defaultValue}.`))).toEqual([]);
-        for (const description of ["Enable the feature.", `Defaults to ${!defaultValue}.`]) {
-          expect(hits(rule, withDescription(description))[0]?.pointer).toBe(
-            "/inputSchema/properties/enabled/default",
-          );
-        }
+      const withDescription = (description: string) =>
+        schema(object({ enabled: { type: "boolean", default: true, description } }));
+      for (const description of [
+        "Defaults to true.",
+        "The default is true.",
+        "Return less (default: true).",
+        "default: `true`",
+        "Enabled true by default.",
+      ])
+        expect(hits(rule, withDescription(description)), description).toEqual([]);
+      for (const description of ["Enable the feature.", "Defaults to false.", "true or false"]) {
+        expect(hits(rule, withDescription(description))[0]?.pointer, description).toBe(
+          "/inputSchema/properties/enabled/default",
+        );
       }
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s counts a string default only where the prose declares it",
+    (rule) => {
+      const withDescription = (description: string) =>
+        schema(object({ order: { type: "string", default: "desc", description } }));
+      for (const description of [
+        "Sort order. Defaults to desc.",
+        "Sort order (default: `desc`).",
+        "Sort order, asc or desc (default desc).",
+        'Sort order: "asc" or "desc" (default).',
+        "Newest first or not (default: desc).",
+      ])
+        expect(hits(rule, withDescription(description)), description).toEqual([]);
+      for (const description of [
+        "Sort order (ascending or descending).",
+        "Sort order: asc or desc.",
+      ])
+        expect(hits(rule, withDescription(description)), description).toHaveLength(1);
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s reports undescribed defaults and skips only vacuous size minimums",
+    (rule) => {
+      const constrained = object({
+        a: { type: ["string", "null"], default: null },
+        b: { type: "boolean", default: false, description: "Exclude expired rules." },
+        c: { type: "string", default: "", minLength: 1 },
+        d: { type: "array", items: { type: "string" }, default: [], minItems: 1 },
+        e: { type: "object", default: {}, minProperties: 0 },
+        changes: { type: "object", minProperties: 1, description: "Fields to update." },
+        g: { type: "string", minLength: 0 },
+        h: { type: "array", items: { type: "string" }, minItems: 0 },
+      });
+      expect(
+        hits(rule, schema({ ...constrained, required: ["changes"] }))[0]?.affectedPointers,
+      ).toEqual([
+        "/inputSchema/properties/a/default",
+        "/inputSchema/properties/b/default",
+        "/inputSchema/properties/c/default",
+        "/inputSchema/properties/c/minLength",
+        "/inputSchema/properties/d/default",
+        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/d/minItems"] : []),
+        "/inputSchema/properties/e/default",
+        "/inputSchema/properties/changes/minProperties",
+      ]);
+      const described = object({
+        a: { type: ["string", "null"], default: null, description: "Defaults to null." },
+        b: { type: "boolean", default: false, description: "Default is false." },
+        c: { type: "string", default: "", description: 'Default: "".' },
+        d: { type: "array", items: { type: "string" }, default: [], description: "Default: []." },
+        e: { type: "object", default: {}, description: "Default: {}." },
+        f: { type: "integer", default: 0, description: "Defaults to 0." },
+      });
+      expect(hits(rule, schema(described))).toEqual([]);
+      const strict = object({
+        a: { type: "integer", default: 0 },
+        b: { type: "string", minLength: 2 },
+        c: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 1 },
+      });
+      expect(hits(rule, schema(strict))[0]?.affectedPointers).toEqual([
+        "/inputSchema/properties/a/default",
+        "/inputSchema/properties/b/minLength",
+        // Codex keeps `minItems`.
+        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/c/minItems"] : []),
+        "/inputSchema/properties/c/maxItems",
+      ]);
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s compares declared numeric defaults by value, not unrelated limits",
+    (rule) => {
+      const withDescription = (value: number, description: string) =>
+        schema(object({ limit: { type: "integer", default: value, maximum: 10, description } }));
+      expect(hits(rule, withDescription(10, "Maximum: 10."))[0]?.affectedPointers).toEqual([
+        "/inputSchema/properties/limit/default",
+      ]);
+      expect(hits(rule, withDescription(10, "Maximum: 10 (default 10)."))).toEqual([]);
+      expect(hits(rule, withDescription(1000, "Maximum: 10. Defaults to 1e3."))).toEqual([]);
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s recognizes numeric default shorthand without treating it as a string declaration",
+    (rule) => {
+      const withDescription = (value: number | string, description: string) =>
+        schema(object({ limit: { type: typeof value, default: value, description } }));
+      expect(hits(rule, withDescription(10, "Default 10."))).toEqual([]);
+      expect(hits(rule, withDescription(10, "Page size (default 10, max 50)."))).toEqual([]);
+      expect(hits(rule, withDescription(-100, "Default `-1e2`."))).toEqual([]);
+      for (const [value, description] of [
+        [50, "Page size (default 10, max 50)."],
+        [10, "Not default 10."],
+        ["10", "Default 10."],
+      ] as const)
+        expect(hits(rule, withDescription(value, description))[0]?.pointer, description).toBe(
+          "/inputSchema/properties/limit/default",
+        );
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s ignores incidental and negated mentions of defaults",
+    (rule) => {
+      const withDescription = (value: string | boolean, description: string) =>
+        schema(object({ option: { type: typeof value, default: value, description } }));
+      for (const [value, description] of [
+        [true, "Include archived results, not just active ones (default: true)."],
+        [true, "Returns all results, not just active ones, when enabled (true by default)."],
+        [true, "Do not supply a value unless you want to override the default: true."],
+        [true, "Include forks or not (default: true)."],
+        ["all", 'Use a named scope, not a path: "all" (default), "docs", or "blog".'],
+      ] as const)
+        expect(hits(rule, withDescription(value, description)), description).toEqual([]);
+      for (const [value, description] of [
+        ["value", "The default value depends on the record type."],
+        ["value", "The option (default value depends on the record type)."],
+        [true, "It does not actually default to true."],
+        [true, "It doesn't actually default to true."],
+        [true, "Receipt delivery is not true by default."],
+        [true, "Receipt delivery isn't `true` by default."],
+        [true, "The default is not true."],
+        [true, "Not default: true."],
+        [true, "The flag is not set to true by default."],
+        [true, "The flag is not (true by default)."],
+        ["all", 'Use a named scope, but not "all" (default).'],
+      ] as const)
+        expect(hits(rule, withDescription(value, description))[0]?.pointer, description).toBe(
+          "/inputSchema/properties/option/default",
+        );
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s matches array and object defaults ignoring spaces and quote style",
+    (rule) => {
+      const withDescription = (value: unknown, description: string) =>
+        schema(
+          object({
+            v: {
+              type: typeof value === "object" && !Array.isArray(value) ? "object" : "array",
+              default: value,
+              description,
+            },
+          }),
+        );
+      expect(
+        hits(rule, withDescription(["model", "dataset"], 'Defaults to ["model", "dataset"].')),
+      ).toEqual([]);
+      expect(hits(rule, withDescription(["a", "b"], "Defaults to [ 'a', 'b' ]."))).toEqual([]);
+      expect(hits(rule, withDescription({ sort: "asc" }, "Defaults to {'sort': 'asc'}."))).toEqual(
+        [],
+      );
+      expect(hits(rule, withDescription(["a", "b"], "Defaults to ['b', 'a']."))).toHaveLength(1);
+      expect(hits(rule, withDescription(["New York"], 'Defaults to ["NewYork"].'))).toHaveLength(1);
+      expect(
+        hits(rule, withDescription(["Bob's project"], `Defaults to ['Bob"s project'].`)),
+      ).toHaveLength(1);
+      expect(
+        hits(rule, withDescription(["Bob's project"], String.raw`Defaults to ['Bob\'s project'].`)),
+      ).toEqual([]);
+      expect(
+        hits(
+          rule,
+          withDescription(
+            { city: "New York", tags: ["]"] },
+            `Default: {"tags": [']'], 'city': "New York"}.`,
+          ),
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s counts a strict date pattern described as YYYY-MM-DD",
+    (rule) => {
+      const withPattern = (pattern: string, description = "First date, formatted YYYY-MM-DD.") =>
+        schema(object({ from: { type: "string", pattern, description } }));
+      for (const date of [
+        // Zod 4's `z.iso.date()`.
+        String.raw`^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))$`,
+        String.raw`^\d{4}-\d{2}-\d{2}$`,
+        String.raw`^(?:\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9])))$`,
+      ]) {
+        expect(hits(rule, withPattern(date)), date).toEqual([]);
+        expect(hits(rule, withPattern(date, "First date.")), date).toHaveLength(1);
+      }
+      for (const other of [
+        "^\\d{4}-\\d{1,2}-\\d{1,2}$",
+        "\\d{4}-\\d{2}-\\d{2}",
+        "[",
+        String.raw`^(?:19\d{2}|20[0-2]\d)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$`,
+        String.raw`^\d{4}-(?:0[1-24-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$`,
+      ])
+        expect(hits(rule, withPattern(other)), other).toHaveLength(1);
     },
   );
 
@@ -400,4 +604,17 @@ test("ChatGPT's readOnlyHint check skips a tool that declares itself destructive
     "chatgpt/missing-read-only-hint",
   );
   expect(rules({ annotations: {} })).toContain("chatgpt/missing-read-only-hint");
+});
+
+test("the Directory hint fix follows the hints a tool declares", () => {
+  const fix = (annotations: McpTool["annotations"]) =>
+    checkMcpToolList({ tools: [tool({ annotations })] }).find(
+      (finding) => finding.rule === "claude-directory/missing-hint",
+    )?.fix;
+  expect(fix({ readOnlyHint: false })).toContain("Add `destructiveHint: true`");
+  expect(fix({ readOnlyHint: false })).not.toContain("readOnlyHint: true");
+  const both = fix({ readOnlyHint: false, destructiveHint: false });
+  expect(both).toContain("which MCP uses for tools that only add data");
+  expect(both).not.toContain("readOnlyHint: true");
+  expect(fix({})).toContain("`annotations.readOnlyHint: true` on read-only tools");
 });

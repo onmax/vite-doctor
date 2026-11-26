@@ -1,6 +1,7 @@
 import type {
   ComponentFacts,
   ComponentPropFact,
+  ComponentRootBranch,
   ComponentUsageFact,
   SourceRange,
   TemplateChildNode,
@@ -9,7 +10,13 @@ import type {
   TemplateRootNode,
 } from "../primitives.js";
 
-import { TemplateNodeType, templateDirectiveBindings } from "./template.js";
+import { analyzeScriptProgram } from "./script-scope.js";
+import {
+  findTemplateDirective,
+  TemplateNodeType,
+  templateDirectiveBindings,
+  templateRoots,
+} from "./template.js";
 
 type AnyNode = any;
 type RangeOf = (start: number, end: number) => SourceRange;
@@ -31,6 +38,7 @@ const DECLARATION_MACROS = new Set([
   "withDefaults",
 ]);
 const OPTION_KEYS_WITHOUT_LOGIC = new Set(["name", "inheritAttrs"]);
+const VUE_ATTRS_READERS = new Set(["useAttrs", "getCurrentInstance"]);
 const MEMBER_PATH = String.raw`[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*`;
 const COMPARISON = new RegExp(
   String.raw`(?<![\w$.])(${MEMBER_PATH})\s*(?:===|!==|==|!=)\s*(${MEMBER_PATH})(?![\w$(\[])`,
@@ -60,11 +68,16 @@ export function createComponentFactsCollector(
     ownLogic: false,
     ownMarkup: false,
     rootNodes: 0,
+    roots: [],
+    inheritAttrs: true,
+    readsAttrs: false,
+    nuxtAttrsReferences: [],
     comparisons: [],
     usages: [],
     bindingReferences: [],
   };
   const references = new Set<string>();
+  const namespaceAttrsReaders = new Set<AnyNode>();
   let importEnd = -1;
   readScriptDeclarations(facts, descriptor, scriptAst, rangeOf);
   return {
@@ -77,6 +90,12 @@ export function createComponentFactsCollector(
         if (node.start >= importEnd) references.add(node.name);
         return;
       }
+      if (
+        node.type === "MemberExpression" &&
+        node.object.type === "Identifier" &&
+        VUE_ATTRS_READERS.has(node.computed ? node.property.value : node.property.name)
+      )
+        namespaceAttrsReaders.add(node.object);
       if (node.type === "BinaryExpression" && isEquality(node.operator)) {
         const left = memberPath(node.left);
         const right = memberPath(node.right);
@@ -85,11 +104,73 @@ export function createComponentFactsCollector(
     },
     finish(template, visitAttribute) {
       if (template) walkComponentTemplate(facts, template, references, rangeOf, visitAttribute);
+      facts.readsAttrs = references.has("$attrs");
+      if (!facts.readsAttrs)
+        readAttrsReferences(facts, scriptAst, references, namespaceAttrsReaders);
       const imported = new Set(facts.imports.map((item) => item.local));
       facts.bindingReferences = [...references].filter((name) => imported.has(name)).sort();
       return facts;
     },
   };
+}
+
+function readAttrsReferences(
+  facts: ComponentFacts,
+  program: AnyNode,
+  names: Set<string>,
+  namespaceReaders: Set<AnyNode>,
+): void {
+  if (!program) return;
+  const vueImports = new Set<AnyNode>();
+  const nuxtImports = new Map<AnyNode, string>();
+  for (const statement of program.body) {
+    if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
+    for (const specifier of statement.specifiers) {
+      if (specifier.importKind === "type" || !names.has(specifier.local.name)) continue;
+      if (statement.source.value === "vue" && specifier.type === "ImportNamespaceSpecifier") {
+        if (namespaceReaders.size) vueImports.add(specifier);
+      } else if (specifier.type === "ImportSpecifier") {
+        const imported = specifier.imported.name ?? specifier.imported.value;
+        if (statement.source.value === "vue" && VUE_ATTRS_READERS.has(imported))
+          vueImports.add(specifier);
+        if (statement.source.value === "#imports") nuxtImports.set(specifier, imported);
+      }
+    }
+  }
+  if (
+    !vueImports.size &&
+    !nuxtImports.size &&
+    ![...VUE_ATTRS_READERS].some((name) => names.has(name))
+  )
+    return;
+  const { scopes } = analyzeScriptProgram(program, "module");
+  const explicit = new Set<string>();
+  const implicit = new Set<string>();
+  for (const scope of scopes) {
+    for (const reference of scope.references) {
+      if (!reference.isValueReference || !reference.isRead()) continue;
+      const { identifier, resolved } = reference;
+      if (!resolved?.isValueVariable) {
+        if (VUE_ATTRS_READERS.has(identifier.name)) implicit.add(identifier.name);
+        continue;
+      }
+      for (const { node } of resolved.defs) {
+        if (
+          vueImports.has(node) &&
+          (node.type === "ImportSpecifier" || namespaceReaders.has(identifier))
+        ) {
+          facts.readsAttrs = true;
+          return;
+        }
+        const name = nuxtImports.get(node);
+        if (name) explicit.add(name);
+      }
+    }
+  }
+  facts.nuxtAttrsReferences = [
+    ...[...explicit].map((name) => ({ name, explicit: true })),
+    ...[...implicit].map((name) => ({ name, explicit: false })),
+  ];
 }
 
 function readScriptDeclarations(
@@ -109,10 +190,14 @@ function readScriptDeclarations(
       (declaration.type === "TSInterfaceDeclaration" ||
         declaration.type === "TSTypeAliasDeclaration")
     )
-      types.set(declaration.id.name, declaration);
+      types.set(declaration.id.name, types.has(declaration.id.name) ? undefined : declaration);
   }
   let declaresProps = false;
+  let declaresEmits = false;
   let plainScriptCode = false;
+  let normalOptions: AnyNode =
+    descriptor?.script?.src || (descriptor?.script && !program) ? null : undefined;
+  let setupOptions: AnyNode = descriptor?.scriptSetup && !program ? null : undefined;
   for (const statement of body) {
     const inSetup = setup !== undefined && statement.start >= setup[0] && statement.end <= setup[1];
     if (isTypeOnlyStatement(statement)) continue;
@@ -121,14 +206,69 @@ function readScriptDeclarations(
       continue;
     }
     if (!inSetup) {
+      if (statement.type === "ExportDefaultDeclaration")
+        normalOptions = componentOptions(statement.declaration);
       if (!isOptionsWithoutLogic(statement)) facts.ownLogic = plainScriptCode = true;
       continue;
     }
     if (isMacroCall(statement, "defineProps")) declaresProps = true;
+    if (isMacroCall(statement, "defineEmits")) declaresEmits = true;
+    if (
+      statement.type === "ExpressionStatement" &&
+      isMacroCall(statement, "defineOptions") &&
+      statement.expression.arguments?.length
+    )
+      setupOptions = statement.expression.arguments[0];
     if (!readMacroStatement(facts, statement, types, rangeOf)) facts.ownLogic = true;
   }
-  // Without defineProps, a component declares no props unless a plain <script> may declare them.
-  if (!declaresProps && !plainScriptCode) facts.props = [];
+  const option = (name: string) => {
+    const fromSetup = setupOptions === undefined ? "absent" : readOption(setupOptions, name);
+    return fromSetup === "absent" && normalOptions !== undefined
+      ? readOption(normalOptions, name)
+      : fromSetup;
+  };
+  const inherit = option("inheritAttrs");
+  facts.inheritAttrs =
+    inherit === "absent"
+      ? true
+      : inherit !== "unknown" &&
+          inherit.value?.type === "Literal" &&
+          typeof inherit.value.value === "boolean"
+        ? inherit.value.value
+        : undefined;
+  const delegated = option("mixins") !== "absent" || option("extends") !== "absent";
+  if (delegated) {
+    facts.props = undefined;
+    facts.emits = undefined;
+  } else {
+    if (!declaresProps && !plainScriptCode && option("props") === "absent") facts.props = [];
+    if (!declaresEmits && !plainScriptCode && option("emits") === "absent") facts.emits = [];
+  }
+}
+
+function componentOptions(declaration: AnyNode): AnyNode {
+  return declaration?.type === "CallExpression" && declaration.callee?.name === "defineComponent"
+    ? declaration.arguments?.[0]
+    : declaration;
+}
+
+function readOption(options: AnyNode, name: string): "absent" | "unknown" | { value: AnyNode } {
+  if (options?.type !== "ObjectExpression") return "unknown";
+  for (let index = options.properties.length - 1; index >= 0; index--) {
+    const property = options.properties[index];
+    if (property.type === "SpreadElement") {
+      const spread = readOption(property.argument, name);
+      if (spread !== "absent") return spread;
+      continue;
+    }
+    const key =
+      property.computed && property.key?.type === "Literal"
+        ? String(property.key.value)
+        : propertyKey(property);
+    if (key === name) return { value: property.value };
+    if (property.computed && key === undefined) return "unknown";
+  }
+  return "absent";
 }
 
 function isMacroCall(statement: AnyNode, name: string): boolean {
@@ -166,9 +306,7 @@ function isTypeOnlyStatement(statement: AnyNode): boolean {
 
 function isOptionsWithoutLogic(statement: AnyNode): boolean {
   if (statement.type !== "ExportDefaultDeclaration") return false;
-  let options = statement.declaration;
-  if (options?.type === "CallExpression" && options.callee?.name === "defineComponent")
-    options = options.arguments?.[0];
+  const options = componentOptions(statement.declaration);
   return (
     options?.type === "ObjectExpression" &&
     (options.properties ?? []).every(
@@ -251,14 +389,13 @@ function readMacroCall(
     return true;
   }
   if (name === "defineModel") {
-    if (id && id.type !== "Identifier") return false;
     const first = call.arguments?.[0];
     const modelName =
       first?.type === "Literal" && typeof first.value === "string" ? first.value : "modelValue";
     const options = first?.type === "ObjectExpression" ? first : call.arguments?.[1];
     facts.models.push({
       name: modelName,
-      binding: id?.name,
+      binding: id?.type === "Identifier" ? id.name : undefined,
       default: hasProperty(options, "default"),
       range: rangeOf(call.start, call.end),
     });
@@ -501,10 +638,28 @@ function walkComponentTemplate(
   visitAttribute: TemplateWalk["visitAttribute"],
 ): void {
   const walk: TemplateWalk = { facts, references, rangeOf, visitAttribute };
-  for (const child of root.children) {
-    if (child.type !== TemplateNodeType.COMMENT && !isBlankText(child)) facts.rootNodes++;
-    walkChild(walk, child, [], false);
+  for (const node of templateRoots(root)) {
+    if (node.type === "comment") continue;
+    const branches =
+      node.type === "text"
+        ? [{ kind: "text" as const, range: locRange(rangeOf, node.node) }]
+        : node.branches.map((branch) => rootBranch(branch, rangeOf));
+    facts.roots.push({ branches });
   }
+  facts.rootNodes = facts.roots.length;
+  for (const child of root.children) walkChild(walk, child, [], false, undefined);
+}
+
+function rootBranch(element: TemplateElementNode, rangeOf: RangeOf): ComponentRootBranch {
+  const range = locRange(rangeOf, element);
+  if (findTemplateDirective(element, "for")) return { kind: "fragment", range };
+  if (element.tagType === 0) return { kind: "element", tag: element.tag, range };
+  if (element.tagType === 1) return { kind: "component", tag: element.tag, range };
+  return { kind: element.tagType === 2 ? "slot" : "fragment", range };
+}
+
+function locRange(rangeOf: RangeOf, node: TemplateChildNode): SourceRange {
+  return rangeOf(node.loc.start.offset, node.loc.end.offset);
 }
 
 function walkChild(
@@ -512,6 +667,7 @@ function walkChild(
   node: TemplateChildNode,
   scope: string[],
   inFor: boolean,
+  parent: ComponentUsageFact["parent"],
 ): void {
   if (node.type === TemplateNodeType.TEXT) {
     if (node.content.trim()) walk.facts.ownMarkup = true;
@@ -523,7 +679,7 @@ function walkChild(
     return;
   }
   if (node.type !== TemplateNodeType.ELEMENT) return;
-  walkElement(walk, node, scope, inFor);
+  walkElement(walk, node, scope, inFor, parent);
 }
 
 function walkElement(
@@ -531,6 +687,7 @@ function walkElement(
   element: TemplateElementNode,
   scope: string[],
   inFor: boolean,
+  parent: ComponentUsageFact["parent"],
 ): void {
   let elementScope = scope;
   let childScope = scope;
@@ -552,7 +709,9 @@ function walkElement(
   const kind = elementKind(element);
   if (kind === "markup") walk.facts.ownMarkup = true;
   const usage =
-    kind === "component" ? createUsage(walk, element, elementScope, elementInFor) : undefined;
+    kind === "component"
+      ? createUsage(walk, element, elementScope, elementInFor, parent)
+      : undefined;
   for (const prop of element.props) {
     if (prop.type === TemplateNodeType.ATTRIBUTE) {
       walk.visitAttribute(
@@ -581,7 +740,10 @@ function walkElement(
     if (usage) readUsageDirective(walk, usage, prop);
   }
   if (usage) walk.facts.usages.push(usage);
-  for (const child of element.children) walkChild(walk, child, childScope, elementInFor);
+  const childParent =
+    element.tagType === 3 ? parent : { tag: element.tag, element: element.tagType === 0 };
+  for (const child of element.children)
+    walkChild(walk, child, childScope, elementInFor, childParent);
 }
 
 function elementKind(element: TemplateElementNode): "component" | "markup" | "slot" | "template" {
@@ -598,9 +760,11 @@ function createUsage(
   element: TemplateElementNode,
   scope: string[],
   inFor: boolean,
+  parent: ComponentUsageFact["parent"],
 ): ComponentUsageFact {
   const start = element.loc.start.offset + 1;
   return {
+    ...(parent && { parent }),
     tag: element.tag,
     range: walk.rangeOf(start, start + element.tag.length),
     attributes: [],
@@ -630,11 +794,21 @@ function readUsageDirective(
       usage.spreads.push({ directive: prop.name, expression, range });
       return;
     }
+    const modifiers = prop.modifiers.map((modifier) => modifier.content);
     if (prop.name === "bind") {
-      usage.bindings.push({ name: argument, expression: expression || argument, range });
+      let vnodeKey = modifiers.includes("camel") ? camelize(argument) : argument;
+      if (modifiers.includes("prop")) vnodeKey = `.${vnodeKey}`;
+      if (modifiers.includes("attr")) vnodeKey = `^${vnodeKey}`;
+      usage.bindings.push({ name: argument, vnodeKey, expression: expression || argument, range });
       return;
     }
-    usage.listeners.push({ event: argument, expression: expression || undefined, range });
+    usage.listeners.push({
+      event: argument,
+      modifiers,
+      vnodeKey: listenerKey(argument, modifiers),
+      expression: expression || undefined,
+      range,
+    });
     return;
   }
   if (prop.name === "model") {
@@ -644,14 +818,40 @@ function readUsageDirective(
     }
     usage.bindings.push({
       name: argument ?? "modelValue",
+      vnodeKey: argument ?? "modelValue",
       expression,
       model: true,
       modifiers: prop.modifiers.length > 0,
+      modifiersKey: prop.modifiers.length
+        ? argument
+          ? `${argument}Modifiers`
+          : "modelModifiers"
+        : undefined,
       range,
     });
     return;
   }
   usage.directives.push(prop.name);
+}
+
+function listenerKey(event: string, modifiers: string[]): string {
+  const name = event.startsWith("vue:") ? `vnode-${event.slice(4)}` : event;
+  let key = name ? `on${capitalize(camelize(name))}` : "";
+  if (key.toLowerCase() === "onclick") {
+    if (modifiers.includes("right")) key = "onContextmenu";
+    else if (modifiers.includes("middle")) key = "onMouseup";
+  }
+  return (
+    key +
+    modifiers
+      .filter((modifier) => ["once", "capture", "passive"].includes(modifier))
+      .map(capitalize)
+      .join("")
+  );
+}
+
+function capitalize(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 function readExpression(walk: TemplateWalk, content: string | undefined): void {
@@ -669,10 +869,6 @@ function readExpression(walk: TemplateWalk, content: string | undefined): void {
 function identifiers(content: string | undefined): string[] {
   if (!content) return [];
   return [...new Set(content.match(IDENTIFIER) ?? [])];
-}
-
-function isBlankText(node: TemplateChildNode): boolean {
-  return node.type === TemplateNodeType.TEXT && !node.content.trim();
 }
 
 /** Vue's prop name normalization: `active-id` and `activeId` name the same prop. */

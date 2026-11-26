@@ -22,7 +22,7 @@ export type RuleFramework =
   | "nitro"
   | "h3"
   | "typescript"
-  | "shadcn"
+  | "design-system"
   | "package"
   | "pinia"
   | "mcp";
@@ -129,7 +129,7 @@ export function getRuleReports() {
     nuxt: rules.filter((rule) => ["vue", "nitro", "h3", "nuxt"].includes(rule.framework)),
     typescript: rules.filter((rule) => rule.framework === "typescript"),
     package: rules.filter((rule) => rule.framework === "package"),
-    shadcn: rules.filter((rule) => rule.framework === "shadcn"),
+    "design-system": rules.filter((rule) => rule.framework === "design-system"),
     pinia: rules.filter((rule) => rule.framework === "pinia"),
     mcp: rules.filter((rule) => rule.framework === "mcp"),
     all: rules,
@@ -150,7 +150,7 @@ export function getRuleReports() {
     | "h3"
     | "nuxt"
     | "typescript"
-    | "shadcn"
+    | "design-system"
     | "package"
     | "pinia"
     | "mcp"
@@ -414,7 +414,7 @@ function readDiagnosticCodeMaps() {
     "src/rule-packs/h3/diagnostics.ts",
     "src/rule-packs/nuxt/diagnostics.ts",
     "src/rule-packs/typescript/diagnostics.ts",
-    "src/rule-packs/shadcn/diagnostics.ts",
+    "src/rule-packs/design-system/diagnostics.ts",
     "src/rule-packs/pinia/diagnostics.ts",
     "src/rule-packs/mcp/diagnostics.ts",
   ];
@@ -526,7 +526,7 @@ function collectRuleDocuments() {
     .sort()
     .map((file) => join(viteRulesDir, file));
   const typescriptRulesDir = join(root, "src/rule-packs/typescript/rules");
-  const shadcnRulesDir = join(root, "src/rule-packs/shadcn/rules");
+  const designSystemRulesDir = join(root, "src/rule-packs/design-system/rules");
   const typescriptSources = readdirSync(typescriptRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
@@ -560,10 +560,10 @@ function collectRuleDocuments() {
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
     .map((file) => join(mcpRulesDir, file));
-  const shadcnSources = readdirSync(shadcnRulesDir)
-    .filter((file) => file.endsWith(".ts") && file !== "shared.ts")
+  const designSystemSources = readdirSync(designSystemRulesDir)
+    .filter((file) => file.endsWith(".ts") && !["copy.ts", "shared.ts"].includes(file))
     .sort()
-    .map((file) => join(shadcnRulesDir, file));
+    .map((file) => join(designSystemRulesDir, file));
   const codesByRuleId = readDiagnosticCodeMaps();
 
   return withNavigationTitles(
@@ -581,7 +581,10 @@ function collectRuleDocuments() {
       ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
       ...withRulePath(collectRules(h3Sources, "vite-doctor/h3", "h3"), "/h3/rules"),
       ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
-      ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
+      ...withRulePath(
+        collectRules(designSystemSources, "vite-doctor/design-system", "design-system"),
+        "/design-system/rules",
+      ),
       ...withRulePath(collectRules(piniaSources, "vite-doctor/pinia", "pinia"), "/pinia/rules"),
       ...withRulePath(collectRules(mcpSources, "vite-doctor/mcp", "mcp"), "/mcp/rules"),
     ]),
@@ -652,7 +655,11 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         sourceUrl: githubSourceUrl(source),
       }),
     );
-    const shadcnRules = findRuleFactoryOptions(ast, visitorKeys, "createShadcnRule").map((opts) =>
+    const designSystemRules = findRuleFactoryOptions(
+      ast,
+      visitorKeys,
+      "createDesignSystemRule",
+    ).map((opts) =>
       applyDocumentationMetadata({
         pack,
         source,
@@ -670,7 +677,7 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         sourceUrl: githubSourceUrl(source),
       }),
     );
-    return [...metaRules, ...helperRules, ...shadcnRules].filter((rule) => rule.id);
+    return [...metaRules, ...helperRules, ...designSystemRules].filter((rule) => rule.id);
   });
 }
 
@@ -1008,6 +1015,18 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia actions", "https://pinia.vuejs.org/core-concepts/actions.html");
   }
 
+  if (rule.id === "pinia/state/no-store-destructure") {
+    add("Pinia storeToRefs()", "https://pinia.vuejs.org/api/pinia/functions/storeToRefs.html");
+  }
+
+  if (rule.id === "pinia/stores/no-module-scope-store") {
+    add("Pinia SSR", "https://pinia.vuejs.org/ssr/");
+  }
+
+  if (rule.id === "pinia/stores/no-unreturned-setup-state") {
+    add("Pinia state", "https://pinia.vuejs.org/core-concepts/state.html");
+  }
+
   if (rule.id === "nuxt/ssr/no-request-data-in-module-state") {
     add("Nuxt useState", "https://nuxt.com/docs/4.x/api/composables/use-state");
   }
@@ -1034,6 +1053,17 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
       "https://vuejs.org/guide/scaling-up/state-management.html#simple-state-management-with-reactivity-api",
     );
     add("Pinia", "https://pinia.vuejs.org/");
+  }
+
+  if (rule.id === "vue/attrs/no-multi-root-fallthrough") {
+    add(
+      "Vue attribute inheritance on multiple root nodes",
+      "https://vuejs.org/guide/components/attrs.html#attribute-inheritance-on-multiple-root-nodes",
+    );
+    add(
+      "Vue disabling attribute inheritance",
+      "https://vuejs.org/guide/components/attrs.html#disabling-attribute-inheritance",
+    );
   }
 
   if (rule.id === "vue/reactivity/no-shallow-ref-deep-mutation") {
@@ -1125,6 +1155,28 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
 
   if (rule.id.includes("usefetch") || rule.id.includes("use-fetch")) {
     add("Nuxt useFetch", "https://nuxt.com/docs/4.x/api/composables/use-fetch");
+  }
+
+  if (rule.id === "nuxt/routing/parent-page-requires-nuxtpage") {
+    add(
+      "Nuxt nested routes",
+      "https://nuxt.com/docs/4.x/guide/directory-structure/app/pages#nested-routes",
+    );
+    add("NuxtPage", "https://nuxt.com/docs/4.x/api/components/nuxt-page");
+  }
+
+  if (rule.id === "nuxt/layouts/app-renders-nuxtlayout") {
+    add("Nuxt layouts", "https://nuxt.com/docs/4.x/guide/directory-structure/app/layouts");
+    add("NuxtLayout", "https://nuxt.com/docs/4.x/api/components/nuxt-layout");
+  }
+
+  if (rule.id === "nuxt/pages/single-root-node") {
+    add("Nuxt transitions", "https://nuxt.com/docs/4.x/getting-started/transitions");
+    add("Vue Transition", "https://vuejs.org/guide/built-ins/transition.html");
+  }
+
+  if (rule.id === "nuxt/routing/navigate-to-external") {
+    add("Nuxt navigateTo", "https://nuxt.com/docs/4.x/api/utils/navigate-to");
   }
 
   if (rule.id === "nuxt/runtime/no-private-runtime-config-in-client") {
@@ -1422,8 +1474,8 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules ${rule.id}`;
   if (rule.framework === "package")
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
-  if (rule.framework === "shadcn")
-    return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
+  if (rule.framework === "design-system")
+    return `pnpm vite-doctor . --extends design-system/strict --rules ${rule.id}`;
   if (rule.framework === "h3")
     return h3RecommendedRuleIds.includes(rule.id)
       ? `pnpm vite-doctor . --rules ${rule.id}`

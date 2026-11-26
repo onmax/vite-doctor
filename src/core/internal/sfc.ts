@@ -96,7 +96,10 @@ export function parseVueScriptsResult(
   for (const block of blocks) {
     const script = createVueScriptForParsing({ script: block }, source);
     if (!script.text.trim()) continue;
-    const parsed = parseScriptResult(file, script.text.slice(0, block.loc.end.offset), lang);
+    const parsed = parseScriptResult(file, script.text.slice(0, block.loc.end.offset), lang, {
+      astType: "ts",
+      range: true,
+    });
     errors.push(...parsed.errors);
     incomplete ||= parsed.incomplete;
     const ast = parsed.ast;

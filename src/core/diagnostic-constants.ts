@@ -3,17 +3,17 @@ export const DOCTOR_DIAGNOSTICS_DOCS_BASE = "https://vite-doctor.onmax.me/diagno
 // Bump whenever fingerprint inputs or occurrence numbering change, so baselines written with the
 // previous scheme are reported instead of silently turning recorded findings into new ones.
 // Baselines without a scheme predate occurrence-numbered duplicate fingerprints.
-export const FINGERPRINT_SCHEME = 3;
+export const FINGERPRINT_SCHEME = 4;
 
 export const RESERVED_DIAGNOSTIC_CODE_PREFIXES: readonly string[] = [
   "DOC",
+  "DS",
   "H3",
   "MCP",
   "NITRO",
   "NUXT",
   "PINIA",
   "PKG",
-  "SHAD",
   "TS",
   "VITE",
   "VUE",
