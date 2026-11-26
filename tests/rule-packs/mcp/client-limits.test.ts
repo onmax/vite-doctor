@@ -214,7 +214,7 @@ test("compact schema briefs preserve which client drops each constraint", async 
       type: "object",
       properties: {
         score: { type: "integer", exclusiveMinimum: 0 },
-        tags: { type: "array", items: { type: "string" }, minItems: 2 },
+        tags: { type: "array", items: { type: "string" }, minItems: 1 },
       },
     },
   };
