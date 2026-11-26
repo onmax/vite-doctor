@@ -41,6 +41,7 @@ export const preferNitroH3Import = createRule({
     },
   },
   create(ctx) {
+    if (ctx.project.runtimeGraph?.nuxtH3MayBeShimmed) return;
     const scope = nitroCodeScope(ctx);
     if (!scope) return;
     const visit = (node: AnyNode) => {

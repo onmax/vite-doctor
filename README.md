@@ -4,7 +4,7 @@
 
 <h1 align="center"><img src="https://vite-doctor.onmax.me/doctor-icon.png" alt="" width="32" height="32" style="vertical-align: middle;"> Vite Doctor</h1>
 
-<p align="center">Catch framework bugs AI agents miss. Diagnostics for Nuxt, Vue, Nitro and Vite.</p>
+<p align="center">Catch framework bugs AI agents miss. Diagnostics for Nuxt, Vue, Nitro, H3 and Vite.</p>
 
 <p align="center">
   <code>pnpm dlx vite-doctor .</code>
@@ -82,6 +82,7 @@ Check a migration before changing dependencies:
 pnpm dlx vite-doctor migrate .
 pnpm dlx vite-doctor migrate . --to nuxt@5 --format json
 pnpm dlx vite-doctor migrate . --to nitro@3
+pnpm dlx vite-doctor migrate . --to h3@2
 ```
 
 The migration report stages source changes that are safe on the installed runtime, then dependency, configuration, and source changes that must land together, followed by checks that require the target runtime. It does not rewrite the project.

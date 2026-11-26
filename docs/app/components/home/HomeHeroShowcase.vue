@@ -316,7 +316,7 @@ const severityClass = {
                 → import defineConfig from "nitro"
               </p>
             </div>
-            <span class="font-medium text-amber-600 dark:text-amber-400">NITRO0016</span>
+            <span class="font-medium text-amber-600 dark:text-amber-400">H30002</span>
             <div>
               <p class="text-neutral-950 dark:text-neutral-50">
                 sendRedirect(event, ...) is an H3 v2 compatibility API.

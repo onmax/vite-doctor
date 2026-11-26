@@ -3,6 +3,7 @@ export type Framework =
   | "vite"
   | "nuxt"
   | "nitro"
+  | "h3"
   | "typescript"
   | "design-system"
   | "package"
@@ -34,6 +35,7 @@ export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; ic
     pack: "vite-doctor/nitro",
     icon: "i-unjs-nitro",
   },
+  h3: { label: "H3", pack: "vite-doctor/h3", icon: "i-unjs-h3" },
   "design-system": {
     label: "Design system",
     pack: "vite-doctor/design-system",
@@ -56,6 +58,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   assets: "Assets",
   attrs: "Attributes",
   auth: "Authentication",
+  body: "Request body",
   boundaries: "Boundaries",
   "browser-api": "Browser APIs",
   cache: "Caching",
@@ -63,6 +66,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   computed: "Computed",
   content: "Content",
   context: "Context",
+  errors: "Errors",
   configuration: "Configuration",
   fetch: "Data fetching",
   fetching: "Data fetching",
@@ -82,6 +86,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   project: "Project",
   reactivity: "Reactivity",
   request: "Request",
+  response: "Responses",
   routing: "Routing",
   runtime: "Runtime config",
   "runtime-config": "Runtime config",
@@ -118,6 +123,7 @@ export function frameworkOfPack(pack: string): Framework {
   if (pack === "vite-doctor/pinia") return "pinia";
   if (pack === "vite-doctor/mcp") return "mcp";
   if (pack === "vite-doctor/nitro") return "nitro";
+  if (pack === "vite-doctor/h3") return "h3";
   if (pack === "vite-doctor/vue") return "vue";
   if (pack === "vite-doctor/vite") return "vite";
   return "nuxt";

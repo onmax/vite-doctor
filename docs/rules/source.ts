@@ -9,6 +9,7 @@ import {
   runtimeFrameworkDiagnosticMetadata,
   workspaceDiagnosticMetadata,
 } from "../../src/core/diagnostic-metadata.js";
+import { h3RecommendedRuleIds } from "../../src/rule-packs/h3/presets.js";
 import { mcpRecommendedRuleIds } from "../../src/rule-packs/mcp/presets.js";
 import { piniaRecommendedRuleIds } from "../../src/rule-packs/pinia/presets.js";
 
@@ -19,6 +20,7 @@ export type RuleFramework =
   | "vite"
   | "nuxt"
   | "nitro"
+  | "h3"
   | "typescript"
   | "design-system"
   | "package"
@@ -123,7 +125,8 @@ export function getRuleReports() {
     vue: rules.filter((rule) => rule.framework === "vue"),
     vite: rules.filter((rule) => rule.framework === "vite"),
     nitro: rules.filter((rule) => rule.framework === "nitro"),
-    nuxt: rules.filter((rule) => ["vue", "nitro", "nuxt"].includes(rule.framework)),
+    h3: rules.filter((rule) => rule.framework === "h3"),
+    nuxt: rules.filter((rule) => ["vue", "nitro", "h3", "nuxt"].includes(rule.framework)),
     typescript: rules.filter((rule) => rule.framework === "typescript"),
     package: rules.filter((rule) => rule.framework === "package"),
     "design-system": rules.filter((rule) => rule.framework === "design-system"),
@@ -144,6 +147,7 @@ export function getRuleReports() {
     | "vue"
     | "vite"
     | "nitro"
+    | "h3"
     | "nuxt"
     | "typescript"
     | "design-system"
@@ -407,6 +411,7 @@ function readDiagnosticCodeMaps() {
     "src/rule-packs/package/diagnostics.ts",
     "src/diagnostics.ts",
     "src/rule-packs/nitro/diagnostics.ts",
+    "src/rule-packs/h3/diagnostics.ts",
     "src/rule-packs/nuxt/diagnostics.ts",
     "src/rule-packs/typescript/diagnostics.ts",
     "src/rule-packs/design-system/diagnostics.ts",
@@ -532,6 +537,11 @@ function collectRuleDocuments() {
     .filter((file) => file.endsWith(".ts") && !["ast.ts", "index.ts", "shared.ts"].includes(file))
     .sort()
     .map((file) => join(nitroRulesDir, file));
+  const h3RulesDir = join(root, "src/rule-packs/h3/rules");
+  const h3Sources = readdirSync(h3RulesDir)
+    .filter((file) => file.endsWith(".ts") && !["index.ts", "shared.ts"].includes(file))
+    .sort()
+    .map((file) => join(h3RulesDir, file));
   const nuxtSources = [
     ...ruleSourcesFromIndex(join(nuxtRulesDir, "nuxt/index.ts")),
     join(root, "src/rule-packs/nuxt/review/authorization.ts"),
@@ -569,6 +579,7 @@ function collectRuleDocuments() {
         "/typescript/rules",
       ),
       ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
+      ...withRulePath(collectRules(h3Sources, "vite-doctor/h3", "h3"), "/h3/rules"),
       ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
       ...withRulePath(
         collectRules(designSystemSources, "vite-doctor/design-system", "design-system"),
@@ -1465,6 +1476,10 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
   if (rule.framework === "design-system")
     return `pnpm vite-doctor . --extends design-system/strict --rules ${rule.id}`;
+  if (rule.framework === "h3")
+    return h3RecommendedRuleIds.includes(rule.id)
+      ? `pnpm vite-doctor . --rules ${rule.id}`
+      : `pnpm vite-doctor . --extends auto,h3/strict --rules ${rule.id}`;
   if (rule.framework === "mcp")
     return mcpRecommendedRuleIds.includes(rule.id)
       ? `pnpm vite-doctor . --rules ${rule.id}`

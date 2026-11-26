@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "vite-plus/test";
 import { createProjectFixture, runRuleFixture } from "../../../src/core/testkit.ts";
-import { noHttpErrorMasking } from "../../../src/rule-packs/nitro/rules/no-http-error-masking.ts";
+import { noHttpErrorMasking } from "../../../src/rule-packs/h3/rules/no-http-error-masking.ts";
 
 const nitroProject = createProjectFixture({ framework: "nitro" });
 afterAll(() => nitroProject.dispose());
@@ -15,7 +15,7 @@ test.each([
       "server/api/account.ts": `const options = { statusCode: 404 }; ${mutation}; export default defineEventHandler(() => { try { throw createError(options) } catch { throw new Error() } })`,
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 for (const [name, body, expected] of [
@@ -127,7 +127,7 @@ for (const [name, body, expected] of [
         "server/api/account.ts": `export default defineEventHandler(async () => { ${body} })`,
       },
     });
-    expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(expected);
+    expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(expected);
   });
 }
 
@@ -144,7 +144,7 @@ test("reports when a Nitro catch masks an intentional HTTP error", async () => {
       })`,
     },
   });
-  expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
+  expect(result.diagnostics.map((item) => item.code)).toContain("H30004");
 });
 
 test("keeps binding stability per scope across many try statements in one file", async () => {
@@ -172,7 +172,7 @@ test("keeps binding stability per scope across many try statements in one file",
     files: { "server/api/account.ts": source },
   });
   const reported = result.diagnostics
-    .filter((item) => item.code === "NITRO0018")
+    .filter((item) => item.code === "H30004")
     .map((item) => /\/\* (\w+) \*\//.exec(source.slice(item.range!.start))?.[1]);
   expect(reported).toEqual(["stable", "inner", "literal"]);
 });
@@ -185,7 +185,7 @@ test("resolves a module-scoped status constant in a handler", async () => {
         "const NOT_FOUND = 404; export default defineEventHandler(() => { try { throw createError({ statusCode: NOT_FOUND }) } catch { throw new Error() } })",
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(1);
 });
 
 test("resolves an exported module-scoped status constant", async () => {
@@ -196,7 +196,7 @@ test("resolves an exported module-scoped status constant", async () => {
         "export const NOT_FOUND = 404; export default defineEventHandler(() => { try { throw createError({ statusCode: NOT_FOUND }) } catch { throw new Error() } })",
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(1);
 });
 
 test("follows a stored promise rejection into a later catch", async () => {
@@ -207,7 +207,7 @@ test("follows a stored promise rejection into a later catch", async () => {
         "export default defineEventHandler(async () => { async function missing() { throw createError({ statusCode: 404 }) }; const pending = missing(); try { await pending } catch { throw new Error() } })",
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(1);
 });
 
 test("follows a stored promise through a local helper parameter", async () => {
@@ -218,7 +218,7 @@ test("follows a stored promise through a local helper parameter", async () => {
         "export default defineEventHandler(async () => { async function missing() { throw createError({ statusCode: 404 }) }; async function forward(value) { await value }; const pending = missing(); try { await forward(pending) } catch { throw new Error() } })",
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(1);
 });
 
 test("keeps a catch that preserves intentional HTTP errors", async () => {
@@ -1384,7 +1384,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(expected);
 });
 
 test.each(["api/account.ts", "routes/account.ts", "server/api/account.ts", "middleware/auth.ts"])(
@@ -1399,7 +1399,7 @@ test.each(["api/account.ts", "routes/account.ts", "server/api/account.ts", "midd
     })`,
       },
     });
-    expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
+    expect(result.diagnostics.map((item) => item.code)).toContain("H30004");
   },
 );
 
@@ -1607,7 +1607,7 @@ test.each([
       "server/api/account.ts": `export default defineEventHandler(async () => { ${body} })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(expected);
 });
 
 test("bounds correlated path exploration without affecting the next try", async () => {
@@ -1628,8 +1628,8 @@ test("bounds correlated path exploration without affecting the next try", async 
       }`,
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
-  expect(result.diagnostics.find((item) => item.code === "NITRO0018")?.message).toContain("401");
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(1);
+  expect(result.diagnostics.find((item) => item.code === "H30004")?.message).toContain("401");
 }, 5000);
 
 test.each([false, true])("respects enclosing for initializer %s", async (enter) => {
@@ -1645,7 +1645,7 @@ test.each([false, true])("respects enclosing for initializer %s", async (enter) 
     })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(enter);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(enter);
 });
 
 test.each([
@@ -1740,7 +1740,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(expected);
 });
 
 test.each([
@@ -1758,7 +1758,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(false);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(false);
 });
 
 test.each([
@@ -1789,7 +1789,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(expected);
 });
 
 test("keeps the unmatched path for a possibly NaN switch identifier", async () => {
@@ -1804,7 +1804,7 @@ test("keeps the unmatched path for a possibly NaN switch identifier", async () =
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(true);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(true);
 });
 
 test.each([
@@ -1847,7 +1847,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(expected);
 });
 
 test.each([
@@ -1868,7 +1868,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(expected);
 });
 
 test.each([
@@ -1891,7 +1891,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(expected);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(expected);
 });
 
 test("preserves a returned HTTP error through a normal finalizer", async () => {
@@ -1904,7 +1904,7 @@ test("preserves a returned HTTP error through a normal finalizer", async () => {
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(true);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(true);
 });
 
 test.each([
@@ -1952,7 +1952,7 @@ test.each([
         })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(reports);
 });
 
 test.each([
@@ -1991,7 +1991,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(reports);
 });
 
 test.each([
@@ -2033,7 +2033,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(reports);
 });
 
 test.each(["in", "of"])(
@@ -2145,7 +2145,7 @@ test.each([
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each([
@@ -2209,7 +2209,7 @@ test.each([
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${source} })` },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(reports);
 });
 
 test.each([
@@ -2237,7 +2237,7 @@ test("evaluates computed destructuring keys", async () => {
         try { const { [missing()]: value } = {} } catch { throw new Error() }`,
     },
   });
-  expect(result.diagnostics.map((item) => item.code)).toContain("NITRO0018");
+  expect(result.diagnostics.map((item) => item.code)).toContain("H30004");
 });
 
 test.each([
@@ -2311,7 +2311,7 @@ test.each([
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(reports);
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(reports);
 });
 
 test.each([
@@ -2420,7 +2420,7 @@ test.each([
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each([
@@ -2491,7 +2491,7 @@ test.each([
       "server/api/account.ts": `export default defineEventHandler(async () => { ${body} })`,
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each([
@@ -2521,7 +2521,7 @@ test.each([
       "server/api/account.ts": `export default defineEventHandler(() => { try { throw createError({ statusCode: 499 }) } catch (error) { ${body} } })`,
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each([
@@ -2570,7 +2570,7 @@ test.each([
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each([
@@ -2639,7 +2639,7 @@ test.each([
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each([
@@ -2824,7 +2824,7 @@ test.each([
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test("enclosing async handler adopts rejected return", async () => {
@@ -2835,7 +2835,7 @@ test("enclosing async handler adopts rejected return", async () => {
         "export default defineEventHandler(async () => { try { throw createError({ statusCode: 404 }) } catch { return Promise.reject(new Error()) } })",
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(1);
 });
 
 test("enclosing synchronous handler adopts rejected return", async () => {
@@ -2846,7 +2846,7 @@ test("enclosing synchronous handler adopts rejected return", async () => {
         "export default defineEventHandler(() => { try { throw createError({ statusCode: 404 }) } catch { return Promise.reject(new Error()) } })",
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(1);
 });
 
 test.each([
@@ -2875,7 +2875,7 @@ test.each([
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": `export default defineEventHandler(() => { ${body} })` },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each([
@@ -2896,7 +2896,7 @@ test.each([
     rule: noHttpErrorMasking,
     files: { "server/api/account.ts": source },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each([
@@ -2913,7 +2913,7 @@ test.each([
       "server/api/account.ts": `export default defineEventHandler(async () => { try { ${expression} } catch { throw new Error() } })`,
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(1);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(1);
 });
 
 test.each([
@@ -2939,7 +2939,7 @@ test.each([
       "server/api/account.ts": `export default defineEventHandler(() => { try { ${statement} } catch { throw new Error() } })`,
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each([
@@ -3007,7 +3007,7 @@ test.each([
       "server/api/account.ts": `export default defineEventHandler(() => { ${statement} })`,
     },
   });
-  expect(result.diagnostics.filter((item) => item.code === "NITRO0018")).toHaveLength(count);
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
 });
 
 test.each(["nitro", "nuxt"] as const)("scopes Nuxt route layout to %s", async (framework) => {
@@ -3021,5 +3021,167 @@ test.each(["nitro", "nuxt"] as const)("scopes Nuxt route layout to %s", async (f
       })`,
     },
   });
-  expect(result.diagnostics.some((item) => item.code === "NITRO0018")).toBe(framework === "nuxt");
+  expect(result.diagnostics.some((item) => item.code === "H30004")).toBe(framework === "nuxt");
+});
+
+const h3V2Project = createProjectFixture({
+  framework: "nitro",
+  dependencies: { nitro: "3.0.0-beta.1", h3: "2.0.8" },
+});
+afterAll(() => h3V2Project.dispose());
+
+test.each([
+  [
+    "new HTTPError details",
+    'import { HTTPError } from "h3";',
+    "try { throw new HTTPError({ status: 404 }) } catch { throw new HTTPError({ status: 500 }) }",
+    1,
+  ],
+  [
+    "new HTTPError message and details",
+    'import { HTTPError } from "h3";',
+    'try { throw new HTTPError("Missing", { status: 404 }) } catch { throw new Error() }',
+    1,
+  ],
+  [
+    "new HTTPError with an unknown message",
+    'import { HTTPError } from "h3";',
+    "const fail = (message) => { throw new HTTPError(message, { status: 404 }) }; try { fail(text) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "deprecated statusCode alias",
+    'import { HTTPError } from "h3";',
+    "try { throw new HTTPError({ statusCode: 401 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "HTTPError.status factory",
+    'import { HTTPError } from "h3";',
+    "try { throw HTTPError.status(404) } catch { throw HTTPError.status(500) }",
+    1,
+  ],
+  [
+    "HTTPError.status with details",
+    'import { HTTPError } from "h3";',
+    'try { throw HTTPError.status(403, "Forbidden", { message: "No" }) } catch { throw new Error() }',
+    1,
+  ],
+  [
+    "nitro/h3 import",
+    'import { HTTPError } from "nitro/h3";',
+    "try { throw new HTTPError({ status: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "namespace import",
+    'import * as h3 from "h3";',
+    "try { throw new h3.HTTPError({ status: 404 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "Nitro auto-import",
+    "",
+    "try { throw new HTTPError({ status: 401 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "createError prefers status over statusCode",
+    "",
+    "try { throw createError({ status: 404, statusCode: 500 }) } catch { throw new Error() }",
+    1,
+  ],
+  [
+    "local class shadowing HTTPError in the guard",
+    "",
+    "try { throw new HTTPError({ status: 404 }) } catch (error) { class HTTPError {}; if (error instanceof HTTPError) throw error; throw new Error() }",
+    1,
+  ],
+  [
+    "HTTPError.isError guard",
+    "",
+    "try { throw new HTTPError({ status: 404 }) } catch (error) { if (HTTPError.isError(error)) throw error; throw new HTTPError({ status: 500 }) }",
+    0,
+  ],
+  [
+    "instanceof HTTPError guard",
+    'import { HTTPError } from "h3";',
+    "try { throw HTTPError.status(404) } catch (error) { if (error instanceof HTTPError) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "deprecated isError guard",
+    "",
+    "try { throw new HTTPError({ status: 404 }) } catch (error) { if (isError(error)) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "instanceof Error guard",
+    "",
+    "try { throw new HTTPError({ status: 404 }) } catch (error) { if (error instanceof Error) throw error; throw new Error() }",
+    0,
+  ],
+  [
+    "user-defined HTTPError class",
+    "",
+    "class HTTPError extends Error { constructor(options) { super(); this.status = options.status } }; try { throw new HTTPError({ status: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "HTTPError from another package",
+    'import { HTTPError } from "ky";',
+    "try { throw new HTTPError({ status: 404 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "status outside the HTTP range becomes 500",
+    "",
+    "try { throw new HTTPError({ status: 99 }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "status read from an unknown cause",
+    "",
+    "try { throw new HTTPError({ cause: reason }) } catch { throw new Error() }",
+    0,
+  ],
+  [
+    "message-only HTTPError",
+    "",
+    'try { throw new HTTPError("failed") } catch { throw new Error() }',
+    0,
+  ],
+])("recognises h3 v2 HTTPError: %s", async (_name, imports, body, count) => {
+  const result = await h3V2Project.run({
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts": `${imports} export default defineEventHandler(() => { ${body} })`,
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(count);
+});
+
+test("does not treat HTTPError as an h3 error on h3 v1", async () => {
+  const result = await nitroProject.run({
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "export default defineEventHandler(() => { try { throw new HTTPError({ status: 404 }) } catch { throw new Error() } })",
+    },
+  });
+  expect(result.diagnostics.filter((item) => item.code === "H30004")).toHaveLength(0);
+});
+
+test.each([
+  ["h3 v2", h3V2Project, "Rethrow errors that pass HTTPError.isError(error)"],
+  ["h3 v1", nitroProject, "Rethrow errors that pass isError(error)"],
+] as const)("suggests the installed guard on %s", async (_name, project, guard) => {
+  const result = await project.run({
+    rule: noHttpErrorMasking,
+    files: {
+      "server/api/account.ts":
+        "export default defineEventHandler(() => { try { throw createError({ statusCode: 401 }) } catch { throw new Error() } })",
+    },
+  });
+  expect(result.diagnostics.find((item) => item.code === "H30004")?.suggestion).toContain(guard);
 });

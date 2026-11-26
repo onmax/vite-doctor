@@ -1,13 +1,18 @@
-import { relative } from "pathe";
+import { join, relative, resolve } from "pathe";
 import type {
   Diagnostic,
   DoctorFramework,
   DoctorReportFormat,
   ProjectInfo,
+  RuntimePackageInstance,
   RuntimePackageName,
   RuntimeTarget,
 } from "./core/index.js";
 import { detectProject, evaluateRuleApplicability } from "./core/index.js";
+import { projectWorkspacePackages } from "./core/internal/applicability.js";
+import { autoRegisteredNuxtLayers } from "./core/internal/runtime-graph.js";
+import { owningWorkspacePackage } from "./core/internal/workspace-packages.js";
+import { workspaceProjectView } from "./core/internal/workspace-nuxt.js";
 import { runViteDoctor, viteDoctorRulePacks } from "./doctor.js";
 import { viteDoctorVersion } from "./version.js";
 
@@ -21,6 +26,7 @@ export interface MigrationReport {
     source: "inferred" | "explicit";
     requested: string[];
     runtime: RuntimeTarget;
+    blockedScopes?: Array<{ root: string; instruction: string }>;
   };
   applicability: {
     activated: string[];
@@ -48,6 +54,8 @@ interface MigrationDependencyStage {
   changes: Array<{
     kind: "dependency" | "config";
     package?: string;
+    /** The package.json to change, relative to the workspace root. */
+    file?: string;
     from?: string;
     to: string;
     instruction: string;
@@ -78,42 +86,125 @@ export async function createMigrationReport(
   const targetSpec = requestedTargets.length
     ? parseExplicitTargets(requestedTargets)
     : inferTarget(current);
-  validateTargetFramework(current.framework, targetSpec.requested);
-  const targetProject = await detectProject(root, current.framework, targetSpec.runtime);
+  validateTargets(current, targetSpec.requested);
+  const directH3 = targetSpec.requested.includes("h3@2");
+  const providerH3 = targetSpec.runtime.nitro !== undefined;
+  const runtimeTarget: RuntimeTarget = {
+    ...targetSpec.runtime,
+    h3Owner: directH3 ? (providerH3 ? "both" : "project") : "nitro",
+    standaloneNitro: targetSpec.requested.includes("nitro@3"),
+  };
+  const targetProject = await detectProject(root, "auto", runtimeTarget);
   const packs = await viteDoctorRulePacks({ root, framework: current.framework });
   const activated: string[] = [];
   const retained: string[] = [];
-  const migrationRuleIds: string[] = [];
+  const migrationScopes = new Map<string, Map<string, "source" | "dependencies">>();
+  const packages = projectWorkspacePackages(current);
+  const unshimmedScopes = new Set(
+    packages
+      .filter(({ root }) => {
+        const before = workspaceProjectView(current, root).runtimeGraph;
+        const after = workspaceProjectView(targetProject, root).runtimeGraph;
+        return before?.nuxtH3MayBeShimmed && !after?.nuxtH3MayBeShimmed;
+      })
+      .map(({ root }) => root),
+  );
+  const explicitNitroOnly = runtimeTarget.standaloneNitro && !targetSpec.runtime.nuxt;
+  if (explicitNitroOnly) {
+    const blockedScopes = packages.flatMap(({ root }) => {
+      const graph = workspaceProjectView(current, root).runtimeGraph;
+      if (graph?.nuxtServerBuilder === "vite")
+        return [
+          {
+            root,
+            instruction:
+              "Nuxt selects the Vite server builder in this package, not Nitro. Switch the effective server builder to Nitro before applying Nitro 3 or H3 v2 source changes.",
+          },
+        ];
+      const nitro = graph?.packages.nitro;
+      if (nitro?.owner !== "nuxt" || isInstalledNitro3(nitro)) return [];
+      return [
+        {
+          root,
+          instruction:
+            "Nuxt manages Nitro in this package. Check the effective server builder and Nitro version before applying Nitro 3 or H3 v2 source changes. If your Nuxt version supports opting into Nitro 3, select that builder and declare and install nitro; otherwise plan the Nuxt upgrade with --to nuxt@5.",
+        },
+      ];
+    });
+    if (blockedScopes.length) targetSpec.blockedScopes = blockedScopes;
+  }
 
   for (const rule of packs.flatMap((pack) => pack.rules)) {
-    const currentState = evaluateRuleApplicability(rule, current).state;
-    const targetState = evaluateRuleApplicability(rule, targetProject).state;
-    if (targetState !== "active") continue;
-    if (currentState === "active") retained.push(rule.meta.id);
-    else activated.push(rule.meta.id);
-    if (
-      currentState !== "active" ||
-      rule.meta.category === "migration" ||
-      rule.meta.applicability
-    ) {
-      migrationRuleIds.push(rule.meta.id);
+    let becameActive = false;
+    let stayedActive = false;
+    const scopes = new Map<string, "source" | "dependencies">();
+    for (const { root: packageRoot } of packages) {
+      const before = workspaceProjectView(current, packageRoot);
+      const after = workspaceProjectView(targetProject, packageRoot);
+      if (rule.meta.id.startsWith("h3/")) {
+        const graph = after.runtimeGraph;
+        const ownsH3 = graph?.directH3 || graph?.packages.h3?.owner === "project";
+        const targetsProvider =
+          providerH3 &&
+          graph?.packages.h3?.owner === "nitro" &&
+          (graph.packages.h3.provenance === "target" ||
+            (explicitNitroOnly &&
+              graph.packages.nitro?.owner === "nuxt" &&
+              isInstalledNitro3(graph.packages.nitro)));
+        if (!(directH3 && ownsH3) && !targetsProvider) continue;
+      }
+      if (evaluateRuleApplicability(rule, after).state !== "active") continue;
+      const wasActive = evaluateRuleApplicability(rule, before).state === "active";
+      stayedActive ||= wasActive;
+      becameActive ||= !wasActive;
+      if (!wasActive || rule.meta.category === "migration" || rule.meta.applicability) {
+        scopes.set(packageRoot, wasActive ? "source" : "dependencies");
+      }
     }
+    if (stayedActive) retained.push(rule.meta.id);
+    if (becameActive) activated.push(rule.meta.id);
+    if (scopes.size) migrationScopes.set(rule.meta.id, scopes);
   }
 
   const result = await runViteDoctor({
     root,
-    framework: current.framework,
-    runtimeTarget: targetSpec.runtime,
-    rules: migrationRuleIds.length ? migrationRuleIds.join(",") : "__doctor_no_rules__",
+    runtimeTarget,
+    rules: migrationScopes.size ? [...migrationScopes.keys()].join(",") : "__doctor_no_rules__",
     cache: false,
   });
-  const diagnostics = result.diagnostics
-    .filter((item) => item.ruleId !== "doctor/inventory/unresolved-runtime")
-    .map((item) => migrationDiagnostic(root, item));
-  const activatedRules = new Set(activated);
-  const sourceDiagnostics = diagnostics.filter((item) => !activatedRules.has(item.ruleId));
-  const targetDiagnostics = diagnostics.filter((item) => activatedRules.has(item.ruleId));
-  const changes = dependencyChanges(current, targetSpec.requested, targetSpec.runtime);
+  const shimSensitiveRules = [...migrationScopes]
+    .filter(
+      ([id, scopes]) =>
+        (id.startsWith("h3/") || id === "nitro/h3/prefer-nitro-h3") &&
+        [...unshimmedScopes].some((scope) => scopes.get(scope) === "source"),
+    )
+    .map(([id]) => id);
+  const shimSensitive = new Set(shimSensitiveRules);
+  const diagnosticKey = (item: Diagnostic) => JSON.stringify([item.ruleId, item.file, item.range]);
+  const installedDiagnostics = new Set(
+    shimSensitiveRules.length
+      ? (
+          await runViteDoctor({ root, rules: shimSensitiveRules.join(","), cache: false })
+        ).diagnostics.map(diagnosticKey)
+      : [],
+  );
+  const sourceDiagnostics: MigrationDiagnostic[] = [];
+  const targetDiagnostics: MigrationDiagnostic[] = [];
+  for (const item of result.diagnostics) {
+    const owner = owningWorkspacePackage(packages, relative(root, item.file));
+    let stage = migrationScopes.get(item.ruleId)?.get(owner);
+    if (
+      stage === "source" &&
+      unshimmedScopes.has(owner) &&
+      shimSensitive.has(item.ruleId) &&
+      !installedDiagnostics.has(diagnosticKey(item))
+    )
+      stage = "dependencies";
+    if (stage === "source") sourceDiagnostics.push(migrationDiagnostic(root, item));
+    if (stage === "dependencies") targetDiagnostics.push(migrationDiagnostic(root, item));
+  }
+  const diagnostics = [...sourceDiagnostics, ...targetDiagnostics];
+  const changes = dependencyChanges(current, targetProject, targetSpec.requested);
   return {
     version: viteDoctorVersion,
     reportVersion: 1,
@@ -141,10 +232,24 @@ export async function createMigrationReport(
         id: "deferred",
         title: "Checks after the target runtime is installed",
         checks: [
-          {
-            id: "install-target",
-            instruction: "Install the target dependency graph with the project package manager.",
-          },
+          ...(changes.length || (!explicitNitroOnly && !targetSpec.blockedScopes)
+            ? [
+                {
+                  id: "install-target",
+                  instruction:
+                    "Install the target dependency graph with the project package manager.",
+                },
+              ]
+            : []),
+          ...(targetSpec.requested.includes("h3@2")
+            ? [
+                {
+                  id: "serve-h3-app",
+                  instruction:
+                    "Where the app is served with createServer(toNodeListener(app)), serve it with serve(app) from h3, which runs on srvx, or replace toNodeListener with toNodeHandler.",
+                },
+              ]
+            : []),
           {
             id: "rerun-doctor",
             instruction:
@@ -176,7 +281,11 @@ export function formatMigrationReport(
   if (format === "agent") {
     return `${JSON.stringify({
       schema: "vite-doctor.migration/v1",
-      status: report.summary.diagnostics || report.summary.dependencyChanges ? "findings" : "clean",
+      status: report.target.blockedScopes?.length
+        ? "incomplete"
+        : report.summary.diagnostics || report.summary.dependencyChanges
+          ? "findings"
+          : "clean",
       ...report,
     })}\n`;
   }
@@ -185,6 +294,9 @@ export function formatMigrationReport(
     `Workspace: ${report.root}`,
     "",
   ];
+  for (const { root, instruction } of report.target.blockedScopes ?? []) {
+    lines.push(`Migration blocked in ${root}: ${instruction}`, "");
+  }
   for (const stage of report.stages) {
     lines.push(stage.title);
     if (stage.id === "source") {
@@ -234,8 +346,13 @@ function inferTarget(project: ProjectInfo): MigrationReport["target"] {
   ) {
     return targetFromRequested(["nitro@3"], "inferred");
   }
+  if (
+    projectH3Packages(project).some(({ h3 }) => h3.state === "resolved" && major(h3.version) < 2)
+  ) {
+    return targetFromRequested(["h3@2"], "inferred");
+  }
   throw new Error(
-    "Doctor cannot infer one supported next runtime target from the installed graph. Pass --to nuxt@5 or --to nitro@3.",
+    "Doctor cannot infer one supported next runtime target from the installed graph. Pass --to nuxt@5, --to nitro@3, or --to h3@2.",
   );
 }
 
@@ -249,8 +366,13 @@ function parseExplicitTargets(targets: string[]): MigrationReport["target"] {
   );
 }
 
-function validateTargetFramework(framework: DoctorFramework, targets: string[]): void {
+function validateTargets(project: ProjectInfo, targets: string[]): void {
+  const framework = project.framework;
   for (const target of targets) {
+    if (target === "h3@2") {
+      validateH3Target(project);
+      continue;
+    }
     const supported =
       target === "nuxt@5"
         ? framework === "nuxt"
@@ -259,6 +381,41 @@ function validateTargetFramework(framework: DoctorFramework, targets: string[]):
       throw new Error(`Migration target ${target} is not supported for ${framework} projects.`);
     }
   }
+}
+
+function validateH3Target(project: ProjectInfo): void {
+  const packages = projectH3Packages(project);
+  if (!packages.length) {
+    if (project.runtimeGraph?.packages.h3?.owner === "nitro") {
+      throw new Error(
+        `Migration target h3@2 is not supported for ${project.framework} projects: Nitro provides h3. Use --to nitro@3, which moves Nitro to h3 v2.`,
+      );
+    }
+    throw new Error(
+      `Migration target h3@2 is not supported for ${project.framework} projects that do not declare h3.`,
+    );
+  }
+  if (!packages.some(({ h3 }) => needsH3Upgrade(h3))) {
+    throw new Error(
+      `Migration target h3@2 is not supported: h3 is already ${packages.map(({ h3 }) => h3.version).join(", ")}.`,
+    );
+  }
+}
+
+/** Workspace packages that declare their own h3. */
+function projectH3Packages(
+  project: ProjectInfo,
+): Array<{ root: string; h3: RuntimePackageInstance }> {
+  return (project.workspacePackages ?? []).flatMap((item) => {
+    if (!item.declaredRuntimes?.includes("h3")) return [];
+    const graph = workspaceProjectView(project, item.root).runtimeGraph;
+    const h3 = graph?.directH3 ?? graph?.packages.h3;
+    return h3?.owner === "project" ? [{ root: item.root, h3 }] : [];
+  });
+}
+
+function needsH3Upgrade(h3: RuntimePackageInstance): boolean {
+  return h3.state !== "resolved" || !(major(h3.version) >= 2);
 }
 
 function targetFromRequested(
@@ -279,7 +436,11 @@ function targetFromRequested(
       runtime.h3 = "2.0.0-0";
       continue;
     }
-    throw new Error(`Unsupported migration target "${target}". Use nuxt@5 or nitro@3.`);
+    if (target === "h3@2") {
+      runtime.h3 = "2.0.0-0";
+      continue;
+    }
+    throw new Error(`Unsupported migration target "${target}". Use nuxt@5, nitro@3, or h3@2.`);
   }
   if (!requested.length) throw new Error("Migration requires at least one target.");
   return { source, requested, runtime };
@@ -287,34 +448,98 @@ function targetFromRequested(
 
 function dependencyChanges(
   project: ProjectInfo,
+  targetProject: ProjectInfo,
   requested: string[],
-  runtime: RuntimeTarget,
 ): MigrationDependencyStage["changes"] {
   const changes: MigrationDependencyStage["changes"] = [];
+  const packages = projectWorkspacePackages(project);
   for (const target of requested) {
+    if (target === "h3@2") {
+      changes.push(...h3DependencyChanges(project));
+      continue;
+    }
     const [runtimeName, targetMajor] = target.split("@") as [RuntimePackageName, string];
-    const current = project.runtimeGraph?.packages[runtimeName];
-    const packageName =
-      runtimeName === "nitro" && current?.name === "nitropack" ? "nitro" : runtimeName;
-    changes.push({
-      kind: "dependency",
-      package: packageName,
-      from: current?.version,
-      to: `${packageName}@${targetMajor}`,
-      instruction: `Update ${current?.name ?? packageName}${current?.version ? ` from ${current.version}` : ""} to ${packageName}@${targetMajor}.`,
-    });
+    for (const { root, declaredRuntimes } of packages) {
+      if (!declaredRuntimes?.includes(runtimeName)) continue;
+      const current = workspaceProjectView(project, root).runtimeGraph?.packages[runtimeName];
+      const next = workspaceProjectView(targetProject, root).runtimeGraph?.packages[runtimeName];
+      if (next?.provenance !== "target") continue;
+      if (current?.owner !== "project") continue;
+      if (runtimeName === "nitro" && isInstalledNitro3(current)) continue;
+      const file = root === "." ? undefined : `${root}/package.json`;
+      changes.push({
+        kind: "dependency",
+        package: runtimeName,
+        ...(file ? { file } : {}),
+        from: current?.version,
+        to: `${runtimeName}@${targetMajor}`,
+        instruction: `Update ${current?.name ?? runtimeName}${current?.version ? ` from ${current.version}` : ""} to ${runtimeName}@${targetMajor}${file ? ` in ${file}` : ""}.`,
+      });
+    }
   }
-  if (runtime.nuxtCompatibility === 5 && project.nuxtCompatibility?.version !== 5) {
-    const unknownCompatibility = project.nuxtCompatibility?.state === "unknown";
+  const layers = new Set<string>();
+  if (requested.includes("nuxt@5")) {
+    for (const { root, framework } of packages) {
+      if (framework !== "nuxt") continue;
+      const appRoot = resolve(project.root, root);
+      const nuxt = workspaceProjectView(project, root).nuxt;
+      for (const layer of nuxt?.layers ?? []) {
+        const layerRoot = resolve(appRoot, layer.root);
+        if (layerRoot !== appRoot) layers.add(layerRoot);
+      }
+      for (const name of autoRegisteredNuxtLayers(appRoot)) {
+        layers.add(join(appRoot, "layers", name));
+      }
+    }
+  }
+  for (const { root } of packages) {
+    if (layers.has(resolve(project.root, root))) continue;
+    const installed = workspaceProjectView(project, root);
+    const before = installed.nuxtCompatibility;
+    const after = workspaceProjectView(targetProject, root);
+    if (
+      after.runtimeGraph?.packages.nuxt?.provenance !== "target" ||
+      after.nuxtCompatibility?.version !== 5 ||
+      before?.version === 5
+    )
+      continue;
+    const location = root === "." ? "" : ` in ${root}`;
+    const compatibilityInstruction =
+      before?.state === "unknown"
+        ? `Verify that the effective future.compatibilityVersion resolves to 5${location}; Doctor could not prove it from the composed Nuxt config.`
+        : `Set future.compatibilityVersion to 5${location} while preparing the Nuxt upgrade, then resolve the reported compatibility diagnostics.`;
+    const importsPrerequisite =
+      after.runtimeGraph.nuxtServerBuilder !== "vite" &&
+      installed.runtimeGraph?.nuxtServerAutoImports !== "disabled" &&
+      after.runtimeGraph.nuxtServerAutoImports !== "enabled"
+        ? `Before applying this setting${location}, make server auto-imports explicit (including those used by layers), or explicitly enable experimental.nitroAutoImports until those imports are migrated.`
+        : "";
     changes.push({
       kind: "config",
       to: "future.compatibilityVersion: 5",
-      instruction: unknownCompatibility
-        ? "Verify that the effective future.compatibilityVersion resolves to 5; Doctor could not prove it from the composed Nuxt config."
-        : "Set future.compatibilityVersion to 5 while preparing the Nuxt upgrade, then resolve the reported compatibility diagnostics.",
+      instruction: importsPrerequisite
+        ? `${importsPrerequisite} ${compatibilityInstruction}`
+        : compatibilityInstruction,
     });
   }
   return changes;
+}
+
+function h3DependencyChanges(project: ProjectInfo): MigrationDependencyStage["changes"] {
+  return projectH3Packages(project)
+    .filter(({ h3 }) => needsH3Upgrade(h3))
+    .map(({ root, h3 }) => {
+      const file = root === "." ? "package.json" : `${root}/package.json`;
+      const from = h3.state === "resolved" ? h3.version : h3.declaration;
+      return {
+        kind: "dependency",
+        package: "h3",
+        file,
+        from,
+        to: "h3@2",
+        instruction: `Update ${h3.name ?? "h3"}${from ? ` from ${from}` : ""} to h3@2 in ${file}.`,
+      };
+    });
 }
 
 function migrationDiagnostic(root: string, diagnostic: Diagnostic): MigrationDiagnostic {
@@ -327,6 +552,10 @@ function migrationDiagnostic(root: string, diagnostic: Diagnostic): MigrationDia
     why: diagnostic.why,
     fix: diagnostic.suggestion ?? diagnostic.diagnostic.fix ?? "Review this migration diagnostic.",
   };
+}
+
+function isInstalledNitro3(nitro: RuntimePackageInstance): boolean {
+  return nitro.state === "resolved" && major(nitro.version) >= 3;
 }
 
 function major(version: string | undefined): number {

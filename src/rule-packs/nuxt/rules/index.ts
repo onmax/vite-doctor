@@ -1,4 +1,5 @@
 import { defineDoctorExtension, type DoctorExtension, type RulePack } from "../../../core/index.js";
+import { h3RulePack } from "../../h3/index.js";
 import { nitroRulePack } from "../../nitro/index.js";
 import { vueRulePack } from "../../vue/rules.js";
 import nuxtRulePack from "./nuxt.js";
@@ -12,6 +13,7 @@ import nuxtHubRulePack from "./nuxthub.js";
 import docusRulePack from "./docus.js";
 
 export {
+  h3RulePack,
   nitroRulePack,
   nuxtRulePack,
   nuxtContentRulePack,
@@ -27,6 +29,7 @@ export {
 export function nuxtRulePacks(extraRulePacks: RulePack[] = []): RulePack[] {
   return [
     appSourceRulePack(nitroRulePack),
+    appSourceRulePack(h3RulePack),
     appSourceRulePack(nuxtRulePack),
     appSourceRulePack(nuxtContentRulePack),
     appSourceRulePack(nuxtUiRulePack),

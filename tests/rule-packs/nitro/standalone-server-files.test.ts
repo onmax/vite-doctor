@@ -6,14 +6,16 @@ import {
   noEventRuntimeConfigInServer,
   noNavigateToInNitro,
   noUseNuxtAppInNitro,
+  preferRouteMethodSuffix,
+  requireEventRuntimeConfigInServer,
+} from "../../../src/rule-packs/nitro/rules/index.ts";
+import {
   preferAssertMethod,
   preferGetRequestIp,
-  preferRouteMethodSuffix,
   preferValidatedBody,
   preferValidatedQuery,
   preferValidatedRouterParams,
-  requireEventRuntimeConfigInServer,
-} from "../../../src/rule-packs/nitro/rules/index.ts";
+} from "../../../src/rule-packs/h3/index.ts";
 
 const serverRules = [
   [noBrowserApiInServer, "document.title"],
