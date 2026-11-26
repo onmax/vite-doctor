@@ -6,9 +6,14 @@ import type {
   ComponentUsageFact,
   ComponentUsageGraph,
   RuleContext,
+  SourceRange,
 } from "../../core/index.js";
+import { bindingMaySet, camelize } from "../../core/internal/component-facts.js";
+import { parseScript } from "../../core/internal/script.js";
+import { TemplateNodeType, walkTemplate } from "../../core/internal/template.js";
+import { walkScriptLocal } from "../../core/rule-authoring.js";
 import type { NuxtAppSource } from "../nuxt/rules/nuxt/file-classification.js";
-import { unwrap } from "../nuxt/rules/nuxt/nuxt-config-ast.js";
+import { propertyName, unwrap } from "../nuxt/rules/nuxt/nuxt-config-ast.js";
 import {
   mainApp,
   nuxtLayerSources,
@@ -30,29 +35,36 @@ export interface View {
   route: string;
   /** The page file the route renders. */
   page: string;
+  layout?: string;
   /** The files that make up the view, in document order: app, layout, parent pages, page. */
   roots: ViewRoot[];
 }
 
-export interface ViewRoot {
+export interface ViewRoot extends RenderPath {
   file: string;
   kind: "app" | "layout" | "page";
-  /** `heuristic` when Doctor assumed a package component renders its default slot to reach it. */
+}
+
+interface RenderStep {
+  file: string;
+  range: SourceRange;
+  tag: string;
+}
+
+interface RenderPath {
+  via: RenderStep[];
   certainty: Certainty;
 }
 
 /** A component usage that renders every time its view does. */
-export interface RenderedUsage {
+export interface RenderedUsage extends RenderPath {
   file: string;
   /** Index into the file's `usages`. */
   index: number;
   usage: ComponentUsageFact;
   edge: ComponentUsageEdge;
   /** The SFC the usage renders, when Doctor resolved it or Nuxt names it. */
-  target?: string;
-  /** The component usages that render `file` inside the view, outermost first. */
-  via: ComponentUsageEdge[];
-  certainty: Certainty;
+  target?: string | null;
 }
 
 export type Certainty = "proven" | "heuristic";
@@ -63,7 +75,7 @@ const DETACHED = new Set(["teleport", "component"]);
 // Components that keep their content closed until the user opens them.
 const OVERLAY = /Dialog|Modal|Drawer|Sheet|Slideover|Popover|Tooltip|Menu/;
 
-type Placement = Certainty | undefined;
+const DIRECT: RenderPath = { via: [], certainty: "proven" };
 
 /**
  * The component usage graph with each usage's SFC: the graph's edge target, else the SFC Nuxt
@@ -72,6 +84,7 @@ type Placement = Certainty | undefined;
 export interface ViewGraph {
   graph: ComponentUsageGraph;
   target(edge: ComponentUsageEdge): string | null | undefined;
+  outlet(edge: ComponentUsageEdge): string | undefined;
   /** Rendered usages per root file, shared by the Views that render it. */
   rendered: Map<string, RenderedUsage[]>;
 }
@@ -88,6 +101,9 @@ export function viewGraph(ctx: RuleContext, graph: ComponentUsageGraph): ViewGra
     graph,
     rendered: new Map(),
     target(edge) {
+      if (edge.resolvedBy === "import") return edge.target;
+      const node = graph.components.get(edge.from);
+      if (node && (tagBinding(node, edge.usage) || edge.usage.tag.includes("."))) return null;
       if (edge.target) return edge.target;
       const tag = pascalTag(edge.usage.tag);
       const named = registered(names, tag);
@@ -99,7 +115,38 @@ export function viewGraph(ctx: RuleContext, graph: ComponentUsageGraph): ViewGra
         if ((!index || /[A-Z]/.test(tag[index]!)) && guessable.has(tag.slice(index))) return null;
       return undefined;
     },
+    outlet(edge) {
+      const node = graph.components.get(edge.from);
+      const binding = node && tagBinding(node, edge.usage);
+      if (binding) {
+        if (typeof binding === "string") return undefined;
+        if (binding.source === "vue-router" && binding.imported === "RouterView")
+          return "RouterView";
+        if (
+          binding.source === "#components" &&
+          ["NuxtPage", "NuxtLayout"].includes(binding.imported) &&
+          !edge.target
+        )
+          return binding.imported;
+        return undefined;
+      }
+      const tag = pascalTag(edge.usage.tag);
+      return (tag === "NuxtLayout" || PAGE_OUTLETS.has(tag)) && this.target(edge) === undefined
+        ? tag
+        : undefined;
+    },
   };
+}
+
+function tagBinding(node: ComponentNode, usage: ComponentUsageFact) {
+  const tag = usage.tag.split(".")[0]!;
+  const camel = camelize(tag);
+  for (const name of new Set([tag, camel, pascalCase(tag)])) {
+    if (usage.scope.includes(name) || node.facts.setupBindings.includes(name)) return name;
+    const imported = node.facts.imports.find(({ local }) => local === name);
+    if (imported) return imported;
+  }
+  return node.facts.registeredComponentNames.find((name) => pascalCase(name) === pascalCase(tag));
 }
 
 function registered(names: ComponentNames, tag: string): string | undefined {
@@ -121,7 +168,7 @@ export async function projectViews(ctx: RuleContext, resolved: ViewGraph): Promi
     const app = mainApp(ctx, layers);
     if (!routes || app === null || (app && !graph.components.has(app))) continue;
     const main = index === 0 && !!ctx.project.nuxt.layers?.length;
-    const runtime = runtimeLayouts(ctx, layers, main, sources, routes);
+    const runtime = await runtimeLayouts(ctx, layers, main, sources, routes);
     if (runtime === "everywhere") continue;
     const layouts = registeredLayouts(ctx, layers, sources);
     const byFile = new Map<string, PageRoute | null>();
@@ -133,16 +180,31 @@ export async function projectViews(ctx: RuleContext, resolved: ViewGraph): Promi
       if (defaultParents.has(route.file)) continue;
       const chain = routeChain(route, byFile);
       if (!chain?.every(({ file }) => graph.components.has(file))) continue;
-      const path = route.fullPath ?? routeName(ctx, layers, route.file);
       if (chain.some(({ file }) => runtime.pages.has(file))) continue;
-      if (runtime.patterns.some((pattern) => mayMatch(pattern, path))) continue;
       let layout: LayoutChoice | "unknown" | undefined;
-      for (const { file } of chain) {
+      let path: string | undefined = "";
+      for (const { file, parent, path: preparedPath } of chain) {
         const sfc = await readSfc(ctx, file);
-        if (!sfc) layout = "unknown";
-        else layout = pageMetaValue(sfc.script, "layout", staticLayout) ?? layout;
+        if (!sfc) {
+          layout = "unknown";
+          path = undefined;
+        } else {
+          layout = pageMetaValue(sfc.script, "layout", staticLayout) ?? layout;
+          const override = pageMetaValue(sfc.script, "path", staticPath);
+          const local =
+            override === "unknown"
+              ? undefined
+              : (override?.path ?? preparedPath ?? routeSegment(layers, file, parent));
+          path = local?.startsWith("/")
+            ? local
+            : local !== undefined && path !== undefined
+              ? `${path.replace(/\/$/, "")}/${local}`.replace(/(.)\/$/, "$1")
+              : undefined;
+        }
       }
       if (layout === "unknown") continue;
+      const label = route.fullPath ?? path ?? relative(ctx.project.root, route.file);
+      if (runtime.patterns.some((pattern) => mayMatch(pattern, label))) continue;
       const name = layout?.name ?? "default";
       const layoutFile =
         name === false ? undefined : layouts?.find((entry) => entry.name === name)?.file;
@@ -151,8 +213,9 @@ export async function projectViews(ctx: RuleContext, resolved: ViewGraph): Promi
       const roots = viewRoots(resolved, app, layoutFile, chain);
       if (roots)
         views.push({
-          route: path,
+          route: label,
           page: route.file,
+          layout: layoutFile,
           roots,
         });
     }
@@ -169,7 +232,7 @@ interface RuntimeLayouts {
 }
 
 const SET_PAGE_LAYOUT = /\bsetPageLayout\b/;
-const APP_LAYOUT = /\bappLayout\b/;
+const DEFINE_ROUTE_RULES = /\bdefineRouteRules\b/;
 const NUXT_CONFIGS = ["ts", "mts", "js", "mjs", "cjs", "cts"].map((ext) => `nuxt.config.${ext}`);
 
 /**
@@ -177,13 +240,13 @@ const NUXT_CONFIGS = ["ts", "mts", "js", "mjs", "cjs", "cts"].map((ext) => `nuxt
  * app owns, leaves the app without Views. An `appLayout` route rule removes the routes it may match
  * when Nuxt's manifest records the rules, and the whole app when only the config text shows it.
  */
-function runtimeLayouts(
+async function runtimeLayouts(
   ctx: RuleContext,
   layers: NuxtAppSource[],
   main: boolean,
   sources: readonly string[],
   routes: PageRoute[],
-): RuntimeLayouts | "everywhere" {
+): Promise<RuntimeLayouts | "everywhere"> {
   const owners = nuxtLayerSources(ctx).flat();
   const owns = (file: string) => layers.some(({ root }) => file.startsWith(`${root}/`));
   const pages = new Set(routes.map(({ file }) => file));
@@ -193,8 +256,28 @@ function runtimeLayouts(
     if (/\.d\.[cm]?ts$/.test(file)) continue;
     const text = ctx.fs.readText(file);
     if (!text) continue;
-    if (SET_PAGE_LAYOUT.test(text)) return "everywhere";
-    if (!APP_LAYOUT.test(text) || NUXT_CONFIGS.includes(basename(file))) continue;
+    if (!SET_PAGE_LAYOUT.test(text) && !DEFINE_ROUTE_RULES.test(text)) continue;
+    const sfc = file.endsWith(".vue") ? await readSfc(ctx, file) : undefined;
+    const script = file.endsWith(".vue") ? sfc?.script : parseScript(file, text);
+    let switches = callsApi(script, "setPageLayout");
+    if (sfc?.template && !switches)
+      walkTemplate(sfc.template, (node) => {
+        if (switches) return;
+        const expression =
+          node.type === TemplateNodeType.DIRECTIVE
+            ? node.exp?.content
+            : node.type === TemplateNodeType.INTERPOLATION
+              ? node.content.content
+              : undefined;
+        if (expression && SET_PAGE_LAYOUT.test(expression))
+          switches = callsApi(parseScript("template.ts", expression), "setPageLayout");
+      });
+    if (switches) return "everywhere";
+    if (
+      NUXT_CONFIGS.includes(basename(file)) ||
+      !callsApi(script, "defineRouteRules", maySetRouteLayout)
+    )
+      continue;
     if (!owns(file) || !pages.has(file)) return "everywhere";
     found.pages.add(file);
   }
@@ -202,12 +285,57 @@ function runtimeLayouts(
   const recorded = manifest?.hasManifest && manifest.isCurrent;
   for (const { root } of layers)
     for (const name of NUXT_CONFIGS)
-      if (APP_LAYOUT.test(ctx.fs.readText(join(root, name)) ?? "") && !recorded)
-        return "everywhere";
+      if (!recorded) {
+        const file = join(root, name);
+        const text = ctx.fs.readText(file);
+        if (!text || !/\bappLayout\b/.test(text)) continue;
+        const ast = parseScript(file, text);
+        if (hasProperty(ast, "routeRules") && hasProperty(ast, "appLayout")) return "everywhere";
+      }
   if (recorded)
     for (const rules of [ctx.project.nuxt?.routeRules, manifest.resolvedRouteRules])
       for (const [pattern, rule] of Object.entries(rules ?? {}))
         if (rule && typeof rule === "object" && "appLayout" in rule) found.patterns.push(pattern);
+  return found;
+}
+
+function hasProperty(ast: unknown, name: string): boolean {
+  let found = false;
+  walkScriptLocal(ast, (node) => {
+    if (node.type === "Property" && propertyName(node) === name) found = true;
+  });
+  return found;
+}
+
+function maySetRouteLayout(argument: unknown): boolean {
+  const value = unwrap(argument);
+  return (
+    value?.type !== "ObjectExpression" ||
+    value.properties.some((property: { type: string }) => {
+      if (property.type !== "Property") return true;
+      const key = propertyName(property);
+      return key === null || key === "appLayout";
+    })
+  );
+}
+
+function callsApi(ast: unknown, name: string, matches?: (argument: unknown) => boolean): boolean {
+  let found = false;
+  const names = new Set([name]);
+  walkScriptLocal(ast, (node) => {
+    if (node.type === "ImportSpecifier" && node.imported?.name === name) names.add(node.local.name);
+  });
+  walkScriptLocal(ast, (node) => {
+    if (found || node.type !== "CallExpression") return;
+    const callee = unwrap(node.callee);
+    const invoked =
+      callee?.type === "Identifier"
+        ? names.has(callee.name)
+        : callee?.type === "MemberExpression" &&
+          (callee.computed ? callee.property?.value === name : callee.property?.name === name);
+    if (!invoked) return;
+    found = matches?.(node.arguments?.[0]) ?? true;
+  });
   return found;
 }
 
@@ -236,6 +364,13 @@ function staticLayout(value: unknown): LayoutChoice | "unknown" | undefined {
   return typeof node.value === "string" || node.value === false ? { name: node.value } : "unknown";
 }
 
+function staticPath(value: unknown): { path: string } | "unknown" {
+  const node = unwrap(value) as { type?: string; value?: unknown } | undefined;
+  return node?.type === "Literal" && typeof node.value === "string"
+    ? { path: node.value }
+    : "unknown";
+}
+
 function routeChain(route: PageRoute, byFile: Map<string, PageRoute | null>) {
   const chain = [route];
   const seen = new Set([route.file]);
@@ -249,17 +384,18 @@ function routeChain(route: PageRoute, byFile: Map<string, PageRoute | null>) {
   return chain;
 }
 
-function routeName(ctx: RuleContext, layers: NuxtAppSource[], page: string): string {
+function routeSegment(layers: NuxtAppSource[], page: string, parent: string | null | undefined) {
   for (const layer of layers) {
-    const dir = join(layer.srcDir, "pages");
+    const dir = parent?.replace(/\.[^./]+$/, "") ?? join(layer.srcDir, "pages");
     if (!page.startsWith(`${dir}/`)) continue;
     const segments = relative(dir, page)
       .replace(/\.[^./]+$/, "")
-      .split("/")
-      .filter((segment) => segment !== "index");
-    return `/${segments.join("/")}`;
+      .split("/");
+    if (segments.at(-1) === "index") segments.pop();
+    if (segments.some((segment) => segment === "index" || /[[\]]/.test(segment))) return undefined;
+    return segments.join("/");
   }
-  return relative(ctx.project.root, page);
+  return undefined;
 }
 
 /**
@@ -273,53 +409,64 @@ function viewRoots(
   chain: PageRoute[],
 ): ViewRoot[] | undefined {
   const roots: ViewRoot[] = [];
-  let pageCertainty: Placement = "proven";
-  let layoutCertainty: Placement = layout ? "proven" : undefined;
+  let pages = layout ? slotPlacement(graph, layout, "default", layout, new Set()) : [DIRECT];
   if (app) {
-    roots.push({ file: app, kind: "app", certainty: "proven" });
-    const rendered = renderedUsages(graph, app, "proven", layout);
-    const layouts = rendered.filter(({ usage }) => pascalTag(usage.tag) === "NuxtLayout");
+    roots.push({ file: app, kind: "app", ...DIRECT });
+    const rendered = renderedUsages(graph, app, layout);
+    const layouts = rendered.filter(({ edge }) => graph.outlet(edge) === "NuxtLayout");
     if (layouts.some(({ usage }) => choosesLayout(usage))) return undefined;
-    layoutCertainty = layout ? strongest(layouts.map(({ certainty }) => certainty)) : undefined;
-    pageCertainty = strongest(
-      rendered
-        .filter(({ usage }) => PAGE_OUTLETS.has(pascalTag(usage.tag)))
-        .map((r) => r.certainty),
-    );
+    if (layout)
+      for (const mount of layouts)
+        roots.push({ file: layout, kind: "layout", ...throughUsage(mount) });
+    pages = pageOutlets(graph, rendered);
+  } else if (layout) {
+    roots.push({ file: layout, kind: "layout", ...DIRECT });
   }
-  if (layout && layoutCertainty)
-    roots.push({ file: layout, kind: "layout", certainty: layoutCertainty });
   for (const [index, route] of chain.entries()) {
-    if (!pageCertainty) break;
-    roots.push({ file: route.file, kind: "page", certainty: pageCertainty });
+    if (!pages.length) break;
+    for (const path of pages) roots.push({ file: route.file, kind: "page", ...path });
     if (index === chain.length - 1) break;
-    const outlets = renderedUsages(graph, route.file, pageCertainty, layout).filter(({ usage }) =>
-      PAGE_OUTLETS.has(pascalTag(usage.tag)),
-    );
-    pageCertainty = strongest(outlets.map(({ certainty }) => certainty));
+    const outlets = pageOutlets(graph, renderedUsages(graph, route.file, layout));
+    pages = pages.flatMap((parent) => outlets.map((outlet) => joinPaths(parent, outlet)));
   }
   return roots;
 }
 
+function pageOutlets(graph: ViewGraph, rendered: RenderedUsage[]): RenderPath[] {
+  return rendered
+    .filter(
+      ({ edge, usage }) =>
+        PAGE_OUTLETS.has(graph.outlet(edge) ?? "") &&
+        !usage.hasSlotContent &&
+        !usage.directives.includes("slot") &&
+        !mayPass(usage, ["name", "route"]),
+    )
+    .map(throughUsage);
+}
+
+function mayPass(usage: ComponentUsageFact, names: readonly string[]): boolean {
+  return (
+    usage.spreads.some(
+      ({ directive, expression }) => directive === "bind" && bindingMaySet(expression, names),
+    ) ||
+    usage.attributes.some(({ name }) => names.includes(name)) ||
+    usage.bindings.some(({ vnodeKey }) => names.includes(vnodeKey))
+  );
+}
+
 // `<NuxtLayout name>` or `fallback` overrides the layout the page asks for.
 function choosesLayout(usage: ComponentUsageFact): boolean {
-  return (
-    usage.spreads.some((spread) => spread.directive === "bind") ||
-    [...usage.attributes, ...usage.bindings].some(
-      ({ name }) => name === "name" || name === "fallback",
-    )
-  );
+  return mayPass(usage, ["name", "fallback"]);
 }
 
 /** Every component usage that renders whenever the view does, in document order. */
 export function viewUsages(graph: ViewGraph, view: View): RenderedUsage[] {
-  const layout = view.roots.find((root) => root.kind === "layout")?.file;
+  const { layout } = view;
   return view.roots.flatMap((root) => {
-    const key = `${root.file}\0${root.certainty}\0${layout ?? ""}`;
+    const key = `${root.file}\0${layout ?? ""}`;
     let usages = graph.rendered.get(key);
-    if (!usages)
-      graph.rendered.set(key, (usages = renderedUsages(graph, root.file, root.certainty, layout)));
-    return usages;
+    if (!usages) graph.rendered.set(key, (usages = renderedUsages(graph, root.file, layout)));
+    return usages.map((usage) => ({ ...usage, ...joinPaths(root, usage) }));
   });
 }
 
@@ -330,33 +477,36 @@ export function viewUsages(graph: ViewGraph, view: View): RenderedUsage[] {
 function renderedUsages(
   views: ViewGraph,
   file: string,
-  certainty: Certainty,
   layout: string | undefined,
 ): RenderedUsage[] {
   const out: RenderedUsage[] = [];
-  const expand = (node: ComponentNode, via: ComponentUsageEdge[], inherited: Certainty) => {
+  const expand = (node: ComponentNode, path: RenderPath, ancestors: Set<string>) => {
     for (const [index, usage] of node.facts.usages.entries()) {
-      const placed = placement(views, node, usage, layout, new Set());
-      if (!placed) continue;
       const edge = node.renders[index]!;
-      const combined = weaker(inherited, placed);
-      const target = views.target(edge) ?? undefined;
-      out.push({
-        file: node.file,
-        index,
-        usage,
-        edge,
-        ...(target && { target }),
-        via,
-        certainty: combined,
-      });
-      const child = target && views.graph.components.get(target);
-      if (child && child.file !== file && !via.some((step) => step.from === child.file))
-        expand(child, [...via, edge], combined);
+      const target = views.target(edge);
+      for (const placed of placement(views, node, usage, layout, new Set())) {
+        const rendered = {
+          file: node.file,
+          index,
+          usage,
+          edge,
+          target,
+          ...joinPaths(path, placed),
+        };
+        out.push(rendered);
+        const child = target && views.graph.components.get(target);
+        if (
+          child &&
+          !OVERLAY.test(pascalTag(usage.tag)) &&
+          !OVERLAY.test(basename(child.file, ".vue")) &&
+          !ancestors.has(child.file)
+        )
+          expand(child, throughUsage(rendered), new Set(ancestors).add(child.file));
+      }
     }
   };
   const node = views.graph.components.get(file);
-  if (node) expand(node, [], certainty);
+  if (node) expand(node, DIRECT, new Set([file]));
   return out;
 }
 
@@ -371,27 +521,37 @@ function placement(
   item: ComponentUsageFact | ComponentSlotOutletFact,
   layout: string | undefined,
   visiting: Set<string>,
-): Placement {
-  if (item.conditional || item.inFor) return undefined;
+): RenderPath[] {
+  if (item.conditional || item.inFor) return [];
   if (item.builtInHosts.some((tag) => DETACHED.has(tag.replaceAll("-", "").toLowerCase())))
-    return undefined;
-  if (!item.host) return "proven";
+    return [];
+  if (!item.host) return [DIRECT];
   const { slot } = item.host;
   const host = node.facts.usages[item.host.usage];
   const edge = node.renders[item.host.usage];
-  if (!host || !edge || slot === null) return undefined;
+  if (!host || !edge || slot === null) return [];
   const tag = pascalTag(host.tag);
-  if (OVERLAY.test(tag)) return undefined;
-  const outer = placement(views, node, host, layout, visiting);
-  if (!outer) return undefined;
-  if (tag === "NuxtLayout") {
-    if (slot !== "default") return undefined;
-    return layout ? weaker(outer, slotPlacement(views, layout, slot, layout, visiting)) : outer;
-  }
   const target = views.target(edge);
-  if (target === null) return undefined;
-  if (target) return weaker(outer, slotPlacement(views, target, slot, layout, visiting));
-  return slot === "default" ? weaker(outer, "heuristic") : undefined;
+  if (OVERLAY.test(tag) || (target && OVERLAY.test(basename(target, ".vue")))) return [];
+  const outer = placement(views, node, host, layout, visiting);
+  if (!outer.length) return [];
+  const outlet = views.outlet(edge);
+  if (outlet && PAGE_OUTLETS.has(outlet)) return [];
+  let inner: RenderPath[];
+  if (outlet === "NuxtLayout") {
+    if (slot !== "default" || choosesLayout(host)) return [];
+    inner = layout ? slotPlacement(views, layout, slot, layout, visiting) : [DIRECT];
+  } else if (target === null) return [];
+  else if (target) inner = slotPlacement(views, target, slot, layout, visiting);
+  else inner = slot === "default" ? [{ via: [], certainty: "heuristic" }] : [];
+  return outer.flatMap((path) =>
+    inner.map((outletPath) =>
+      joinPaths(path, {
+        ...outletPath,
+        via: [{ file: node.file, range: host.range, tag: host.tag }, ...outletPath.via],
+      }),
+    ),
+  );
 }
 
 function slotPlacement(
@@ -400,26 +560,29 @@ function slotPlacement(
   slot: string,
   layout: string | undefined,
   visiting: Set<string>,
-): Placement {
+): RenderPath[] {
   const key = `${file}#${slot}`;
   const node = views.graph.components.get(file);
-  if (!node || visiting.has(key)) return undefined;
+  if (!node || visiting.has(key)) return [];
   const next = new Set(visiting).add(key);
-  return strongest(
-    node.facts.slotOutlets
-      .filter((outlet) => outlet.name === slot)
-      .map((outlet) => placement(views, node, outlet, layout, next)),
-  );
+  return node.facts.slotOutlets
+    .filter((outlet) => outlet.name === slot)
+    .flatMap((outlet) =>
+      placement(views, node, outlet, layout, next).map((path) => ({
+        ...path,
+        via: [...path.via, { file, range: outlet.range, tag: "slot" }],
+      })),
+    );
 }
 
-function weaker(left: Certainty, right: Certainty): Certainty;
-function weaker(left: Certainty, right: Placement): Placement;
-function weaker(left: Certainty, right: Placement): Placement {
-  if (!right) return undefined;
-  return left === "heuristic" || right === "heuristic" ? "heuristic" : "proven";
+function joinPaths(outer: RenderPath, inner: RenderPath): RenderPath {
+  return {
+    via: [...outer.via, ...inner.via],
+    certainty:
+      outer.certainty === "heuristic" || inner.certainty === "heuristic" ? "heuristic" : "proven",
+  };
 }
 
-function strongest(placements: Placement[]): Placement {
-  if (placements.includes("proven")) return "proven";
-  return placements.includes("heuristic") ? "heuristic" : undefined;
+function throughUsage({ via, file, usage, certainty }: RenderedUsage): RenderPath {
+  return { certainty, via: [...via, { file, range: usage.range, tag: usage.tag }] };
 }

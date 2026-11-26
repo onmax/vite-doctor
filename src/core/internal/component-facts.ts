@@ -12,6 +12,8 @@ import type {
   TemplateRootNode,
 } from "../primitives.js";
 
+import { parseScript } from "./script.js";
+import { patternNames } from "./script-index.js";
 import { analyzeScriptProgram } from "./script-scope.js";
 import {
   findTemplateDirective,
@@ -68,6 +70,7 @@ export function createComponentFactsCollector(
   const facts: ComponentFacts = {
     models: [],
     imports: [],
+    setupBindings: [],
     registeredComponentNames: [],
     ownLogic: false,
     ownMarkup: false,
@@ -216,6 +219,10 @@ function readScriptDeclarations(
       if (!isOptionsWithoutLogic(statement)) facts.ownLogic = plainScriptCode = true;
       continue;
     }
+    if (statement.type === "VariableDeclaration")
+      for (const declaration of statement.declarations)
+        patternNames(declaration.id, facts.setupBindings);
+    else if (statement.id?.name) facts.setupBindings.push(statement.id.name);
     if (isMacroCall(statement, "defineProps")) declaresProps = true;
     if (isMacroCall(statement, "defineEmits")) declaresEmits = true;
     if (
@@ -471,15 +478,14 @@ function readMacroCall(
     if (inner?.callee?.name !== "defineProps") return false;
     readProps(facts, inner, id, types, rangeOf);
     const defaults = call.arguments?.[1];
-    const defaulted = new Map<string, string | undefined>();
-    if (defaults?.type === "ObjectExpression")
-      for (const property of defaults.properties ?? []) {
-        const key = propertyKey(property);
-        if (key) defaulted.set(camelize(key), stringLiteral(property.value));
+    if (defaults?.type === "ObjectExpression") {
+      for (const prop of facts.props ?? []) {
+        const fallback = findOption(defaults, prop.name);
+        if (fallback.value)
+          setDefault(prop, "unknown" in fallback ? undefined : stringLiteral(fallback.value));
+        else if ("unknown" in fallback) delete prop.defaultValue;
       }
-    else if (defaults) facts.props = undefined;
-    for (const prop of facts.props ?? [])
-      if (defaulted.has(prop.name)) setDefault(prop, defaulted.get(prop.name));
+    } else if (defaults) facts.props = undefined;
     return true;
   }
   if (name === "defineProps") {
@@ -571,8 +577,9 @@ function propsFromRuntime(argument: AnyNode, rangeOf: RangeOf): ComponentPropFac
       default: false,
       range: rangeOf(property.start, property.end),
     };
-    const fallback = propertyValue(property.value, "default");
-    if (fallback) setDefault(prop, stringLiteral(fallback));
+    const fallback = findOption(property.value, "default");
+    if (fallback.value)
+      setDefault(prop, "unknown" in fallback ? undefined : stringLiteral(fallback.value));
     props.push(prop);
   }
   return props;
@@ -708,11 +715,6 @@ function propertyKey(property: AnyNode): string | undefined {
   if (key?.type === "Identifier") return key.name;
   if (key?.type === "Literal" && typeof key.value === "string") return key.value;
   return undefined;
-}
-
-function propertyValue(node: AnyNode, name: string): AnyNode {
-  if (node?.type !== "ObjectExpression") return undefined;
-  return (node.properties ?? []).find((property: AnyNode) => propertyKey(property) === name)?.value;
 }
 
 function setDefault(prop: ComponentPropFact, value: string | undefined): void {
@@ -928,15 +930,60 @@ function mayHide(element: TemplateElementNode): boolean {
   return element.props.some((prop) => {
     if (prop.type === TemplateNodeType.ATTRIBUTE) {
       if (prop.name === "hidden" || prop.name === "popover") return true;
-      return (
-        prop.name === "class" &&
-        !!prop.value?.content.split(/\s+/).some((token) => HIDING_CLASS.test(token))
-      );
+      return prop.name === "class" && hidingClass(prop.value?.content ?? "");
     }
     if (prop.name !== "bind") return false;
-    if (!prop.arg || !prop.arg.isStatic) return true;
-    return ["class", "hidden", "popover"].includes(prop.arg.content);
+    if (!prop.arg) return objectMayBind(bindingExpression(prop.exp?.content), bindingMayHide);
+    if (!prop.arg.isStatic) return true;
+    const name = prop.arg.content;
+    return (
+      ["class", "hidden", "popover"].includes(name) &&
+      bindingMayHide(name, bindingExpression(prop.exp?.content))
+    );
   });
+}
+
+function bindingExpression(expression: string | undefined): AnyNode {
+  const program = parseScript("binding.ts", `(${expression ?? ""})`) as AnyNode;
+  const statement = program?.body?.length === 1 ? program.body[0] : undefined;
+  return unwrapOptions(
+    statement?.type === "ExpressionStatement" ? statement.expression : undefined,
+  );
+}
+
+function objectMayBind(node: AnyNode, test: (key: string, value: AnyNode) => boolean): boolean {
+  node = unwrapOptions(node);
+  if (node?.type !== "ObjectExpression") return true;
+  return node.properties.some((property: AnyNode) => {
+    if (property.type === "SpreadElement") return objectMayBind(property.argument, test);
+    const key = optionKey(property);
+    return key === undefined || test(key, unwrapOptions(property.value));
+  });
+}
+
+export function bindingMaySet(expression: string, names: readonly string[]): boolean {
+  return objectMayBind(bindingExpression(expression), (key) => names.includes(key));
+}
+
+function hidingClass(value: string): boolean {
+  return value.split(/\s+/).some((token) => HIDING_CLASS.test(token));
+}
+
+function knownFalsy(node: AnyNode): boolean {
+  return node?.type === "Literal" && !node.regex && !node.value;
+}
+
+function bindingMayHide(name: string, value: AnyNode): boolean {
+  if (name === "hidden") return !knownFalsy(value) || value.value === "";
+  if (name === "popover") return value?.type !== "Literal" || value.value !== null;
+  if (name !== "class") return false;
+  value = unwrapOptions(value);
+  if (value?.type === "ArrayExpression")
+    return value.elements.some((item: AnyNode) => item && bindingMayHide("class", item));
+  if (value?.type === "ObjectExpression")
+    return objectMayBind(value, (key, item) => hidingClass(key) && !knownFalsy(item));
+  const literal = stringLiteral(value);
+  return literal === undefined ? !knownFalsy(value) : hidingClass(literal);
 }
 
 /** The slot a `<template v-slot>` fills: its static name, null when dynamic, undefined if none. */
@@ -952,18 +999,20 @@ function slotName(slot: TemplateDirectiveNode | undefined): string | null | unde
 }
 
 function slotOutletName(element: TemplateElementNode): string | null {
+  let name = "default";
   for (const prop of element.props) {
     if (prop.type === TemplateNodeType.ATTRIBUTE && prop.name === "name")
-      return prop.value?.content ?? "default";
+      name = prop.value?.content || "default";
     if (
       prop.type === TemplateNodeType.DIRECTIVE &&
       prop.name === "bind" &&
-      prop.arg?.isStatic &&
-      prop.arg.content === "name"
+      (prop.arg
+        ? !prop.arg.isStatic || prop.arg.content === "name"
+        : bindingMaySet(prop.exp?.content ?? "", ["name"]))
     )
       return null;
   }
-  return "default";
+  return name;
 }
 
 function elementKind(element: TemplateElementNode): "component" | "markup" | "slot" | "template" {
@@ -992,6 +1041,11 @@ function createUsage(
     spreads: [],
     listeners: [],
     directives: [],
+    hasSlotContent: element.children.some(
+      (child) =>
+        child.type !== TemplateNodeType.COMMENT &&
+        (child.type !== TemplateNodeType.TEXT || child.content.trim() !== ""),
+    ),
     scope,
     ...place,
   };

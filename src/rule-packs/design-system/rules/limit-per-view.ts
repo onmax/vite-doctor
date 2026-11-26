@@ -111,18 +111,26 @@ function readOptions(options: unknown): Options {
   const extra = Object.keys(unknown);
   if (extra.length) throw invalid(`unknown option ${extra.map((key) => `\`${key}\``).join(", ")}`);
   try {
-    return { contracts: parseContractOptions(contracts) };
+    return {
+      contracts: Object.fromEntries(
+        Object.entries(parseContractOptions(contracts)).map(([name, contract]) => [
+          pascalTag(name),
+          contract,
+        ]),
+      ),
+    };
   } catch (error) {
     throw invalid((error as Error).message);
   }
 }
 
 function rendersContract(
-  target: string | undefined,
+  target: string | null | undefined,
   usage: ComponentUsageFact,
   declared: DeclaredContract,
 ): boolean {
-  if (target && declared.file) return target === declared.file;
+  if (declared.file) return target === declared.file;
+  if (target === null) return false;
   return pascalTag(usage.tag) === declared.component;
 }
 
@@ -152,11 +160,12 @@ function matchesWhen(
 
 /** The value a usage passes for `prop`: undefined when it omits it, null when Doctor cannot read it. */
 function passedValue(usage: ComponentUsageFact, prop: string): string | null | undefined {
-  const binding = usage.bindings.find(
-    (item) => camelize(item.name) === prop && !item.vnodeKey.startsWith("^"),
-  );
+  const bindings = usage.bindings.filter((item) => camelize(item.vnodeKey) === prop);
+  const attributes = usage.attributes.filter((item) => camelize(item.name) === prop);
+  if (bindings.length + attributes.length > 1) return null;
+  const binding = bindings[0];
   if (binding) return binding.model ? null : (stringLiteral(binding.expression) ?? null);
-  const attribute = usage.attributes.find((item) => camelize(item.name) === prop);
+  const attribute = attributes[0];
   if (attribute) return attribute.value ?? "";
   return undefined;
 }
@@ -176,7 +185,7 @@ function stringLiteral(expression: string): string | undefined {
 }
 
 function usageKey(rendered: RenderedUsage): string {
-  return [...rendered.via.map((edge) => `${edge.from}@${edge.usage.range.start}`), rendered.file]
+  return [...rendered.via.map((step) => `${step.file}@${step.range.start}`), rendered.file]
     .concat(String(rendered.usage.range.start))
     .join(">");
 }
@@ -212,7 +221,12 @@ function report(ctx: RuleContext, finding: Finding) {
       range: rendered.usage.range,
       summary: `<${rendered.usage.tag}> renders every time ${routes[0]} renders${
         rendered.via.length
-          ? `, through ${rendered.via.map((edge) => `<${edge.usage.tag}>`).join(" > ")}`
+          ? `, through ${rendered.via
+              .map(
+                ({ file, range, tag }) =>
+                  `<${tag}> at ${relative(ctx.project.root, file)}:${range.line}:${range.column}`,
+              )
+              .join(" > ")}`
           : ""
       }${rendered.certainty === "heuristic" ? ", assuming a package component renders its default slot" : ""}.`,
     })),

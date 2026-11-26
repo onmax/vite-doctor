@@ -51,6 +51,184 @@ const diagnose = (
 const limitDiagnostics = async (...args: Parameters<typeof diagnose>) =>
   (await diagnose(...args)).diagnostics.filter((item) => item.code === "DS0008");
 
+test.each([
+  'class="flex"',
+  `:class="'flex'"`,
+  `:class="['flex', { hidden: false }]"`,
+  ':hidden="false"',
+  `v-bind="{ id: 'actions' }"`,
+])("counts through a visibly mounted layout with %s", async (attrs) => {
+  expect(
+    await limitDiagnostics({
+      "app/app.vue": `<template><NuxtLayout ${attrs}><NuxtPage /></NuxtLayout></template>`,
+      "app/layouts/default.vue": layout(primary),
+      "app/pages/index.vue": page(primary),
+    }),
+  ).toHaveLength(1);
+});
+
+test("layout API mentions in text, comments and strings do not disable views", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/pages/index.vue": page(primary + primary),
+      "app/pages/docs.vue": page(
+        "<p>Call setPageLayout() or use appLayout.</p>",
+        `const docs = "setPageLayout()"; // defineRouteRules({ appLayout: false })`,
+      ),
+      "nuxt.config.ts": `// Set appLayout in routeRules.\nexport default defineNuxtConfig({})`,
+    }),
+  ).toHaveLength(1);
+});
+
+test("a layout switch in a template handler disables views", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/pages/index.vue": page(primary + primary),
+      "app/pages/settings.vue": page(
+        `<button @click="setPageLayout('plain')">Change layout</button>`,
+      ),
+    }),
+  ).toEqual([]);
+});
+
+test.each([
+  `<AppButton variant="secondary" :variant="'primary'" />`,
+  `<AppButton :variant.prop="'primary'" />`,
+  `<AppButton :variant.attr="'primary'" />`,
+])("does not match a prop that Vue may not deliver: %s", async (button) => {
+  expect(await limitDiagnostics({ "app/pages/index.vue": page(primary + button) })).toEqual([]);
+});
+
+test.each([
+  `withDefaults(defineProps<{ variant?: string }>(), { variant: 'primary', ...{ variant: 'secondary' } })`,
+  `defineProps({ variant: { type: String, default: 'primary', ...{ default: 'secondary' } } })`,
+])("does not count an overridden default", async (props) => {
+  expect(
+    await limitDiagnostics({
+      "app/components/AppButton.vue": appButton.replace(/^withDefaults.*;$/m, `${props};`),
+      "app/pages/index.vue": page(primary + `<AppButton />`),
+    }),
+  ).toEqual([]);
+});
+
+test("does not count a statically named slot when its name is also bound", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/components/Toolbar.vue": `<template><div><slot name="default" :name="name" /></div></template>`,
+      "app/pages/index.vue": page(primary + `<Toolbar>${primary}</Toolbar>`),
+    }),
+  ).toEqual([]);
+});
+
+test.each([
+  `<NuxtPage name="sidebar" />`,
+  `<NuxtPage :route="other" />`,
+  `<NuxtPage>Replacement</NuxtPage>`,
+  `<NuxtPage v-slot="{ Component }"><p>Replacement</p></NuxtPage>`,
+])("does not include a page through an overridden router outlet", async (outlet) => {
+  expect(
+    await limitDiagnostics({
+      "app/app.vue": page(primary + outlet),
+      "app/pages/index.vue": page(primary),
+    }),
+  ).toEqual([]);
+});
+
+test("the implicit app cannot render a page through a layout without a slot", async () => {
+  const result = await runProjectFixture({
+    rules: [limitPerView],
+    framework: "nuxt",
+    files: {
+      "app/components/AppButton.vue": appButton,
+      "app/layouts/default.vue": page(primary),
+      "app/pages/index.vue": page(primary),
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("a local component does not act as NuxtPage", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/app.vue": page(
+        primary + `<NuxtPage />`,
+        `import NuxtPage from './components/FakePage.vue'`,
+      ),
+      "app/components/FakePage.vue": page(""),
+      "app/pages/index.vue": page(primary),
+    }),
+  ).toEqual([]);
+});
+
+test("a page-local layout override does not borrow the route layout's slot", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/layouts/default.vue": layout(),
+      "app/layouts/plain.vue": page(""),
+      "app/pages/index.vue": page(primary + `<NuxtLayout name="plain">${primary}</NuxtLayout>`),
+    }),
+  ).toEqual([]);
+});
+
+test("an overlay component's own content does not count", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/components/ActionsDialog.vue": page(primary),
+      "app/pages/index.vue": page(primary + `<ActionsDialog />`),
+    }),
+  ).toEqual([]);
+});
+
+test("uses a literal route override and keeps the page identity", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/pages/index.vue": page(primary + primary, `definePageMeta({ path: '/checkout' })`),
+    }),
+  ).toMatchObject([{ data: { routes: ["/checkout"], pages: ["app/pages/index.vue"] } }]);
+});
+
+test("an explicit local binding does not inherit the registered SFC contract", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/custom-button.ts": `export default { render: () => null }`,
+      "app/pages/index.vue": page(primary + primary, `import AppButton from '../custom-button'`),
+    }),
+  ).toEqual([]);
+});
+
+test("counts configured kebab-case names", async () => {
+  expect(
+    await limitDiagnostics(
+      {
+        "app/pages/index.vue": page(`<u-button /><u-button />`),
+      },
+      { contracts: { "u-button": { limits: [{ max: 1, why: WHY, fix: FIX }] } } },
+      NUXT_UI,
+    ),
+  ).toHaveLength(1);
+});
+
+test("two unconditional slot outlets produce two inspectable instances", async () => {
+  const result = await limitDiagnostics({
+    "app/components/Twice.vue": `<template><div><slot />\n<slot /></div></template>`,
+    "app/pages/index.vue": page(`<Twice>${primary}</Twice>`),
+  });
+  expect(result).toHaveLength(1);
+  expect(result[0]?.evidence?.map(({ summary }) => summary).join("\n")).toMatch(
+    /Twice\.vue:1:.*Twice\.vue:2:/s,
+  );
+});
+
+test("two reachable NuxtLayout mounts count the layout twice", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/app.vue": page(`<NuxtLayout><NuxtPage /></NuxtLayout><NuxtLayout />`),
+      "app/layouts/default.vue": layout(primary),
+      "app/pages/index.vue": page(""),
+    }),
+  ).toHaveLength(1);
+});
+
 test("a page and its layout with one primary each report once, at the page's button", async () => {
   const result = await diagnose({
     "app/layouts/default.vue": layout(primary),

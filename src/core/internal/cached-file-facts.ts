@@ -68,6 +68,7 @@ function componentFacts(value: unknown): boolean {
         typeof item.source === "string",
     ) &&
     strings(value.registeredComponentNames) &&
+    strings(value.setupBindings) &&
     typeof value.ownLogic === "boolean" &&
     typeof value.ownMarkup === "boolean" &&
     integer(value.rootNodes) &&
@@ -104,6 +105,7 @@ function componentFacts(value: unknown): boolean {
           (listener) => typeof listener.vnodeKey === "string" && strings(listener.modifiers),
         ) &&
         strings(item.directives) &&
+        typeof item.hasSlotContent === "boolean" &&
         strings(item.scope) &&
         placement(item) &&
         (item.parent === undefined ||

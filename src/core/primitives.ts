@@ -827,6 +827,8 @@ export interface ComponentUsageFact {
   }>;
   /** Other directives on the element, such as `if`, `show`, `slot`, `for`, or a custom directive. */
   directives: string[];
+  /** Whether the component is passed non-whitespace template children. */
+  hasSlotContent: boolean;
   /**
    * The nearest enclosing element in the same template, skipping `<template>` wrappers such as
    * `v-if`, `v-for`, and slot templates. `element` is false for a component, a built-in such as
@@ -924,6 +926,8 @@ export interface ComponentFacts {
   models: Array<{ name: string; binding?: string; default: boolean; range?: SourceRange }>;
   /** Value imports in `<script setup>`, which its template can render as tags. */
   imports: Array<{ local: string; imported: string; source: string }>;
+  /** Other top-level value bindings declared in `<script setup>`. */
+  setupBindings: string[];
   /** Names explicitly registered in the Options API `components` object. */
   registeredComponentNames: string[];
   /**
