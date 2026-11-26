@@ -99,7 +99,7 @@ export const ruleDocumentationMetadata = {
   "design-system/prefer-project-component": {
     description:
       "Finds raw elements such as <button> where the project has a component that replaces them.",
-    why: "A raw element skips the component the project built or installed for it, so it can look and behave differently from every other instance: focus rings, sizes, disabled and loading states, and form field wiring drift. The Rule learns which component replaces which element from Component Contracts, the Nuxt UI component table, or a project SFC named after the element, and reports nothing when two components claim the same element.",
+    why: "A raw element skips the component the project built or installed for it, so it can look and behave differently from every other instance: focus rings, sizes, disabled and loading states, and form field wiring drift. The Rule learns which component replaces which element from Component Contracts, the Nuxt UI component table, or a project SFC named after the element, and reports nothing when two components claim the same element. It replaces nuxt-ui/prefer-u-button (NUXT0013) and nuxt-ui/prefer-u-form-controls (NUXT0014); rename those Rule IDs in config and suppressions and regenerate the baseline.",
     recommendedReplacement:
       "Render the replacing component instead of the raw element, keep its attributes, v-model, listeners, and content, and move styling classes to the component's props.",
     examples: [

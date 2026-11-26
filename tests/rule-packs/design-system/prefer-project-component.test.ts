@@ -97,6 +97,22 @@ test("Nuxt UI ignores UButton, explicit doctor ignores, and apps without Nuxt UI
   expect(plain.diagnostics).toEqual([]);
 });
 
+test("an empty <button> used as a hit area reports nothing", async () => {
+  const result = await diagnose(
+    {
+      "app/pages/index.vue": `<template>
+<UTooltip v-for="bar in bars" :key="bar.id" :text="bar.label">
+  <button class="h-full w-full" :aria-label="bar.label" />
+</UTooltip>
+<button type="button" :aria-label="label"><!-- icon --> </button>
+<button type="button" v-text="label" />
+</template>`,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(result.diagnostics.map((d) => d.range?.line)).toEqual([6]);
+});
+
 test("ambiguous native inputs and non-text inputs report nothing", async () => {
   const result = await diagnose(
     {
@@ -322,7 +338,7 @@ test("uses a call-site import alias but neither leaks it nor recommends a shadow
     "src/BrandButton.vue": brandButton,
     "src/Other.vue": `<template><span /></template>`,
     "src/Alias.vue": `<script setup>import Action from './BrandButton.vue'</script>
-<template><div><Action /><button /></div></template>`,
+<template><div><Action /><button>Go</button></div></template>`,
     "src/Lowercase.vue": `<script setup>import action from './BrandButton.vue'; import Action from './Other.vue'</script>${rawButton}`,
     "src/Unrelated.vue": `<script setup>import Action from './Other.vue'</script>${rawButton}`,
     "src/Shadowed.vue": `<script setup>import BrandButton from './Other.vue'</script>${rawButton}`,
@@ -395,7 +411,7 @@ test("uses Nuxt UI registration provenance, not the UButton spelling", async () 
   const result = await diagnose(
     {
       "app/pages/index.vue": rawButton,
-      "app/components/UButton.vue": `<template><div><button /></div></template>`,
+      "app/components/UButton.vue": `<template><div><button>Go</button></div></template>`,
       ".nuxt/doctor.manifest.json": JSON.stringify({
         components: [
           { name: "UButton", file: "app/components/UButton.vue" },
@@ -447,7 +463,7 @@ test("a Vue wrapper in a nested pages directory keeps its native root", async ()
     "src/BrandButton.vue": brandButton,
     "src/components/pages/LikeButton.vue": rawButton,
     "src/App.vue": `<script setup>import LikeButton from './components/pages/LikeButton.vue'</script>
-<template><div><LikeButton /><button /></div></template>`,
+<template><div><LikeButton /><button>Go</button></div></template>`,
   });
   expect(result.diagnostics.map(({ file }) => file.split("/").pop())).toEqual(["App.vue"]);
 });

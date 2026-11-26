@@ -223,10 +223,24 @@ function exempt(ctx: RuleContext, element: TemplateElementNode): boolean {
     ctx.helpers.getStaticVueAttributeValue(element, "is")?.startsWith("vue:")
   )
     return true;
+  // A button with no content is a hit area, such as a chart bar, not an action a styled button renders.
+  if (element.tag.toLowerCase() === "button") return !hasContent(ctx, element);
   if (element.tag.toLowerCase() !== "input") return false;
   if (ctx.helpers.hasVueDirective(element, "bind", "type") || spreadAfterType(element)) return true;
   const type = ctx.helpers.getStaticVueAttributeValue(element, "type")?.toLowerCase() ?? "text";
   return !TEXT_INPUT_TYPES.has(type);
+}
+
+function hasContent(ctx: RuleContext, element: TemplateElementNode): boolean {
+  return (
+    ctx.helpers.hasVueDirective(element, "text") ||
+    ctx.helpers.hasVueDirective(element, "html") ||
+    element.children.some(
+      (child) =>
+        child.type !== TemplateNodeType.COMMENT &&
+        !(child.type === TemplateNodeType.TEXT && !child.content.trim()),
+    )
+  );
 }
 
 // An object v-bind can set or override type, so the rendered control is unknown statically.
