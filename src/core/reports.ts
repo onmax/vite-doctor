@@ -80,6 +80,8 @@ function cliHint(hint: Exclude<GroupHint, "full">) {
 interface ProgressiveLayout {
   /** Head, tail and the longest footer, which a plan can never cut. */
   fixed: number;
+  /** Exact complete rendering size, or Infinity once it cannot fit. */
+  completeSize: number;
   groups: BudgetGroup[];
   render(shown: GroupShown[], hints: Array<GroupHint | undefined>): string;
 }
@@ -221,13 +223,14 @@ function progressiveReport(
     format === "agent"
       ? agentLayout(result, context, groups, maxChars)
       : textLayout(result, context, groups, maxChars, textEnding);
-  const complete = layout.groups.map((group) => ({
-    header: true,
-    rows: group.rows.length,
-    detail: true,
-  }));
-  const fullReport = layout.render(complete, []);
-  if (fullReport.length <= maxChars) return { report: fullReport, groups, shown: complete };
+  if (layout.completeSize <= maxChars) {
+    const complete = layout.groups.map((group) => ({
+      header: true,
+      rows: group.rows.length,
+      detail: true,
+    }));
+    return { report: layout.render(complete, []), groups, shown: complete };
+  }
 
   let units = planReportBudget(layout.fixed, layout.groups, maxChars);
   const reruns = new Map<string, ProgressiveOutcome>();
@@ -381,7 +384,9 @@ function textLayout(
     const details = group.diagnostics.map((diagnostic, row) =>
       textDiagnosticBlock(labels[row]!, diagnostic),
     );
-    const worstTrailer = trailer(count, { rules: group.ruleId, full: true });
+    const headingSize = cost(heading) + cost(title);
+    const trailerSize = cost(trailer(count, { rules: group.ruleId, full: true }));
+    const detailSize = cost(details);
     const rowCosts = rows.map((row) => row.length + 1);
     return {
       heading,
@@ -389,17 +394,20 @@ function textLayout(
       rows,
       details,
       trailer,
+      completeSize: headingSize + detailSize,
       budget: {
         tier: SEVERITIES.indexOf(group.severity),
-        header: cost([...heading, ...title, ...worstTrailer]),
+        header: headingSize + trailerSize,
         rows: rowCosts,
-        detail: cost(details) - rowCosts.reduce((sum, row) => sum + row, 0) - cost(worstTrailer),
+        detail: detailSize - rowCosts.reduce((sum, row) => sum + row, 0) - trailerSize,
       },
     };
   });
   const budgetGroups = parts.map((part) => part.budget);
+  const baseSize = cost(head) + cost(tail) + ending.length - 1;
   return {
-    fixed: cost(head) + cost(tail) + worstFooter + ending.length - 1,
+    fixed: baseSize + worstFooter,
+    completeSize: parts.reduce((sum, part) => sum + part.completeSize, baseSize),
     groups: budgetGroups,
     render(shown, hints) {
       const body = parts.flatMap((part, index) => {
@@ -645,6 +653,7 @@ function agentLayout(
               },
     })}\n`;
   const budgetField = (hidden: BudgetHidden) => ({ maxChars, hidden });
+  const jsonItemSize = (value: unknown) => JSON.stringify(value).length + 1;
   const parts = groups.map((group) => {
     const count = group.diagnostics.length;
     const head = (hint: GroupHint | undefined, rowsHidden: number) => ({
@@ -667,25 +676,32 @@ function agentLayout(
     });
     const rows = group.diagnostics.map((diagnostic) => agentRow(result, diagnostic));
     const details = group.diagnostics.map((diagnostic) => agentDetail(result, diagnostic));
-    const json = (value: unknown) => JSON.stringify(value).length + 1;
-    const rowCosts = rows.map(json);
+    const rowCosts = rows.map(jsonItemSize);
+    const detailSize = agentDetailSize(details, maxChars);
+    const completeHeader = JSON.stringify({ ...head(undefined, 0), diagnostics: [] });
     return {
       head,
       rows,
       details,
+      completeSize: completeHeader.length + detailSize,
       budget: {
         tier: SEVERITIES.indexOf(group.severity),
-        header: json({ ...head({ rules: group.ruleId, full: true }, count), diagnostics: [] }),
+        header: jsonItemSize({
+          ...head({ rules: group.ruleId, full: true }, count),
+          diagnostics: [],
+        }),
         rows: rowCosts,
-        detail:
-          details.reduce((sum: number, detail) => sum + json(detail), 0) -
-          rowCosts.reduce((sum, row) => sum + row, 0),
+        detail: detailSize + 1 - rowCosts.reduce((sum, row) => sum + row, 0),
       },
     };
   });
   const budgetGroups = parts.map((part) => part.budget);
   return {
     fixed: serialize(budgetField({ groups: groups.length, rows: total, detail: total }), []).length,
+    completeSize: parts.reduce(
+      (sum, part) => sum + part.completeSize,
+      serialize(undefined, []).length + Math.max(0, parts.length - 1),
+    ),
     groups: budgetGroups,
     render(shown, hints) {
       const items = parts.flatMap((part, index) => {
@@ -702,6 +718,15 @@ function agentLayout(
       return serialize(hasHidden(hidden) ? budgetField(hidden) : undefined, items);
     },
   };
+}
+
+function agentDetailSize(details: object[], maxChars: number): number {
+  let size = 0;
+  for (const [index, detail] of details.entries()) {
+    size += JSON.stringify(detail).length + (index === 0 ? 0 : 1);
+    if (size > maxChars) return Infinity;
+  }
+  return size;
 }
 
 function agentLocation(result: DoctorRunResult, diagnostic: Diagnostic) {

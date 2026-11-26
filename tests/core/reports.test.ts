@@ -1,4 +1,4 @@
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import {
   type ProjectInfo,
   allDiagnostics,
@@ -120,10 +120,50 @@ const docsResult = createResult(docsProject, docsProject.root, docsDiagnostics, 
 test.each(["text", "agent"] as const)(
   "%s includes all detail when the full rendering fits exactly",
   (format) => {
-    const full = createReport(docsResult, format, { runOptions: { maxChars: Infinity } });
-    expect(createReport(docsResult, format, { runOptions: { maxChars: full.length } })).toBe(full);
+    const result = createResult(
+      docsProject,
+      docsProject.root,
+      [...docsDiagnostics, { ...docsDiagnostics[0]!, data: { text: '🎉 "\n' } }],
+      [],
+      {},
+    );
+    const full = createReport(result, format, { runOptions: { maxChars: Infinity } });
+    expect(createReport(result, format, { runOptions: { maxChars: full.length } })).toBe(full);
   },
 );
+
+test("budgeted agent reports never serialize oversized hidden detail as a report", () => {
+  const result = createResult(
+    docsProject,
+    docsProject.root,
+    Array.from({ length: 12 }, () => ({
+      ...docsDiagnostics[0]!,
+      data: { text: "d".repeat(2000) },
+    })),
+    [],
+    {},
+  );
+  const stringify = JSON.stringify;
+  const spy = vi.spyOn(JSON, "stringify").mockImplementation((value) => {
+    const output = stringify(value);
+    if (value?.schema === "vite-doctor.agent/v3" && output.length > 8000) {
+      throw new RangeError("Invalid string length");
+    }
+    return output;
+  });
+  let output: string;
+  try {
+    output = createAgentReport(result);
+  } finally {
+    spy.mockRestore();
+  }
+  expect(output.length).toBeLessThanOrEqual(8000);
+  const report = JSON.parse(output);
+  expect(report.budget.hidden).toEqual({ groups: 0, rows: 0, detail: 12 });
+  expect(report.groups[0].diagnostics).toHaveLength(12);
+  expect(report.groups[0].diagnostics[0]).not.toHaveProperty("data");
+  expect(report.commandArgs.full).toContain("--full");
+});
 
 test("agent group evidence does not conflate ranges or related IDs", () => {
   const original = docsDiagnostics[0]!;
