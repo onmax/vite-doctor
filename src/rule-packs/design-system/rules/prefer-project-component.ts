@@ -12,6 +12,7 @@ import {
 } from "../../../core/index.js";
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
 import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
+import { camelize } from "../../../core/internal/component-facts.js";
 import { loadVueCompilerSfc } from "../../../core/internal/lazy-parsers.js";
 import { readExportedNuxtOption } from "../../../core/internal/runtime-graph.js";
 import {
@@ -102,7 +103,7 @@ export const preferProjectComponent = createRule({
           const bindings = localBindings(node);
           const replacements = new Map<string, Candidate | undefined>();
           const wrapper =
-            !/(?:^|\/)pages\//.test(node.relativePath) &&
+            !scope.isNuxtPage(node.file) &&
             (node.callers.length > 0 ||
               node.indirectImporters.length > 0 ||
               scope.registrations.has(node.file) ||
@@ -263,6 +264,7 @@ interface ComponentScope {
   files: ReadonlyMap<string, ComponentNode>;
   registrations: ReadonlySet<string>;
   nuxtUi: Map<string, Candidate[]>;
+  isNuxtPage: (file: string) => boolean;
 }
 
 function componentScopes(ctx: RuleContext, graph: ComponentUsageGraph) {
@@ -296,6 +298,7 @@ function componentScopes(ctx: RuleContext, graph: ComponentUsageGraph) {
       names,
       files,
       registrations: new Set([...names.registered.values(), ...names.nuxtDefault.values()]),
+      isNuxtPage: nuxtPageMatcher(ctx, appRoot, nuxt),
       nuxtUi:
         (pkg && "@nuxt/ui" in pkg.packages) ||
         nuxt?.modules?.some((entry) => entry.name === "@nuxt/ui")
@@ -308,13 +311,36 @@ function componentScopes(ctx: RuleContext, graph: ComponentUsageGraph) {
 }
 
 function localBindings(node: ComponentNode): Map<string, string | undefined> {
-  const bindings = new Map(
-    node.facts.registeredComponentNames.map((name) => [pascalCase(name), undefined]),
-  );
   return new Map<string, string | undefined>([
-    ...bindings,
-    ...[...node.importedComponents].map(([name, file]) => [pascalCase(name), file] as const),
+    ...node.facts.registeredComponentNames.map((name) => [name, undefined] as const),
+    ...node.importedComponents,
   ]);
+}
+
+function localBindingName(tag: string, bindings: ReadonlyMap<string, string | undefined>) {
+  return [tag, camelize(tag), pascalCase(tag)].find((name) => bindings.has(name));
+}
+
+function nuxtPageMatcher(ctx: RuleContext, appRoot: string, nuxt: NuxtProjectInfo | undefined) {
+  if (!nuxt) return () => false;
+  const pages = new Set(
+    (nuxt.manifest?.pages ?? []).flatMap(({ file }) => (file ? [resolve(appRoot, file)] : [])),
+  );
+  const directories = nuxt.manifest?.resolvedAppCurrent?.pages
+    ? (nuxt.manifest.resolvedApp?.inputs?.pages?.directories ?? []).map(({ directory }) =>
+        resolve(appRoot, directory),
+      )
+    : [
+        resolve(
+          appRoot,
+          readLiteralNuxtOption(ctx, appRoot, "srcDir") ?? nuxt.appDir,
+          readLiteralNuxtOption(ctx, appRoot, "dir", "pages") ?? "pages",
+        ),
+        ...nuxt.layers.flatMap(({ root, srcDir }) =>
+          srcDir ? [resolve(appRoot, root, srcDir, "pages")] : [],
+        ),
+      ];
+  return (file: string) => pages.has(file) || directories.some((dir) => file.startsWith(`${dir}/`));
 }
 
 function selectCandidate(
@@ -331,12 +357,10 @@ function selectCandidate(
     for (const original of source ?? []) {
       let { file, component } = original;
       if (original.source === "config") {
-        file =
-          bindings.get(component) ??
-          componentFile(component, scope.names, {
-            components: scope.files,
-            unresolved: [],
-          });
+        const binding = localBindingName(component, bindings);
+        file = binding
+          ? bindings.get(binding)
+          : componentFile(component, scope.names, { components: scope.files, unresolved: [] });
       } else if (file && original.source !== "nuxt-ui") {
         if (!visible(file)) continue;
         const target = graph.components.get(file)!;
@@ -351,10 +375,12 @@ function selectCandidate(
     if (choices.size !== 1) return undefined;
     const candidate = choices.values().next().value!;
     if (candidate.file === node.file) return undefined;
-    const name = pascalCase(candidate.component);
-    if (bindings.has(name)) {
-      if (!candidate.file || bindings.get(name) !== candidate.file) return undefined;
+    const binding = localBindingName(candidate.component, bindings);
+    if (binding) {
+      if (bindings.get(binding) !== candidate.file) return undefined;
+      if (!candidate.file && candidate.source !== "config") return undefined;
     } else {
+      const name = pascalCase(candidate.component);
       const registered = scope.names.registered.get(name) ?? scope.names.nuxtDefault.get(name);
       if (registered && registered !== candidate.file) return undefined;
     }
@@ -403,22 +429,26 @@ function nuxtUiCandidates(
 
 function nuxtUiPrefix(ctx: RuleContext, nuxt: NuxtProjectInfo | undefined, appRoot: string) {
   if (!nuxt) return "U";
-  for (const root of new Set([appRoot, ...nuxt.appRoots])) {
-    for (const ext of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
-      const file = join(root, `nuxt.config.${ext}`);
-      const text = ctx.fs.readText(file);
-      if (text === undefined) {
-        if (ctx.fs.exists(file)) return undefined;
-        continue;
-      }
-      const prefix = readExportedNuxtOption(file, text, "ui", "prefix");
-      if (prefix === undefined) break;
-      return prefix?.type === "Literal" && typeof prefix.value === "string"
-        ? prefix.value
-        : undefined;
-    }
+  const layers = [...nuxt.layers].sort((a, b) => a.priority - b.priority);
+  for (const root of new Set([appRoot, ...layers.map(({ root }) => resolve(appRoot, root))])) {
+    const prefix = readLiteralNuxtOption(ctx, root, "ui", "prefix");
+    if (prefix !== undefined) return prefix ?? undefined;
   }
   return "U";
+}
+
+function readLiteralNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
+  for (const ext of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
+    const file = join(root, `nuxt.config.${ext}`);
+    const text = ctx.fs.readText(file);
+    if (text === undefined) {
+      if (ctx.fs.exists(file)) return null;
+      continue;
+    }
+    const option = readExportedNuxtOption(file, text, key, nested);
+    if (option === undefined) return undefined;
+    return option?.type === "Literal" && typeof option.value === "string" ? option.value : null;
+  }
 }
 
 /**

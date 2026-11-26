@@ -453,6 +453,7 @@ test.each([
 
 test("Nuxt manifest Rules review each Nuxt app's inventory", async () => {
   const root = multiNuxtMonorepo({
+    "packages/app/node_modules/vue/package.json": JSON.stringify({ name: "vue", version: "3.5.0" }),
     "node_modules/nitro/package.json": JSON.stringify({ name: "nitro", version: "3.0.0" }),
     "node_modules/nitro/node_modules/h3/package.json": JSON.stringify({
       name: "h3",

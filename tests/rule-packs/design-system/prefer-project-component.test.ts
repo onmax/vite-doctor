@@ -195,6 +195,19 @@ test("rule options declare contracts for components the project does not own", a
   expect(result.diagnostics[0]?.suggestion).toContain("Replace <a> with <ULink>");
 });
 
+test.each([
+  `<script setup>import { RouterLink } from 'vue-router'</script>`,
+  `<script>import { RouterLink } from 'vue-router'; export default { components: { RouterLink } }</script>`,
+])("configured contracts work with locally bound external components (%s)", async (script) => {
+  const result = await diagnose(
+    { "src/App.vue": `${script}<template><a href="/docs">Docs</a></template>` },
+    { config: { contracts: { RouterLink: { replaces: "a" } } } },
+  );
+  expect(result.diagnostics.map(({ suggestion }) => suggestion)).toEqual([
+    expect.stringContaining("Replace <a> with <RouterLink>"),
+  ]);
+});
+
 test("malformed contracts options fail with DOC0020", async () => {
   await expect(
     diagnose(
@@ -308,11 +321,13 @@ test("uses a call-site import alias but neither leaks it nor recommends a shadow
     "src/Other.vue": `<template><span /></template>`,
     "src/Alias.vue": `<script setup>import Action from './BrandButton.vue'</script>
 <template><div><Action /><button /></div></template>`,
+    "src/Lowercase.vue": `<script setup>import action from './BrandButton.vue'; import Action from './Other.vue'</script>${rawButton}`,
     "src/Unrelated.vue": `<script setup>import Action from './Other.vue'</script>${rawButton}`,
     "src/Shadowed.vue": `<script setup>import BrandButton from './Other.vue'</script>${rawButton}`,
   });
   expect(result.diagnostics.map((item) => [item.file.split("/").pop(), item.suggestion])).toEqual([
     ["Alias.vue", expect.stringContaining("<Action>")],
+    ["Lowercase.vue", expect.stringContaining("<action>")],
     ["Unrelated.vue", expect.stringContaining("<BrandButton>")],
   ]);
 });
@@ -355,6 +370,25 @@ test("Nuxt UI module evidence does not cross into another workspace app", async 
   ]);
 });
 
+test("a Nuxt app does not take its Nuxt UI prefix from another workspace app", async () => {
+  const result = await diagnose(
+    {
+      "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+      "nuxt.config.ts": "export default defineNuxtConfig({ modules: ['@nuxt/ui'] })",
+      "app/pages/index.vue": rawButton,
+      "apps/other/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0", ...NUXT_UI } }),
+      "apps/other/nuxt.config.ts":
+        "export default defineNuxtConfig({ modules: ['@nuxt/ui'], ui: { prefix: 'Other' } })",
+      "apps/other/app/pages/about.vue": rawButton,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(result.diagnostics.map(({ suggestion }) => suggestion)).toEqual([
+    expect.stringContaining("<UButton>"),
+    expect.stringContaining("<OtherButton>"),
+  ]);
+});
+
 test("uses Nuxt UI registration provenance, not the UButton spelling", async () => {
   const result = await diagnose(
     {
@@ -375,21 +409,69 @@ test("uses Nuxt UI registration provenance, not the UButton spelling", async () 
   ]);
 });
 
-test("Options API wrapper roots are exempt but Nuxt page roots still report", async () => {
-  const register = (name: string, file: string) =>
-    `<script>import ${name} from '${file}'; export default { components: { ${name} } }</script>`;
+test("ignores Nuxt component directory configuration when resolved registrations go stale", async () => {
   const result = await diagnose(
     {
-      "app/App.vue": `${register("LikeButton", "./LikeButton.vue")}
-<template><LikeButton /></template>`,
-      "app/Preview.vue": `${register("Home", "./pages/index.vue")}<template><Home /></template>`,
-      "app/LikeButton.vue": rawButton,
       "app/pages/index.vue": rawButton,
+      "app/components/New.vue": `<template><span /></template>`,
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        generatedAt: new Date(Date.now() + 10_000).toISOString(),
+        components: [{ path: "app/components", pattern: "**/*.vue", prefix: "" }],
+        appRegistrationIgnore: { patterns: [], layerRoots: [], fileHash: null },
+        appRegistration: {
+          components: {
+            files: [],
+            directories: [{ path: "app/components", patterns: ["**/*.vue"], entries: [] }],
+          },
+        },
+        resolvedComponents: [
+          { name: "OldButton", file: "node_modules/@nuxt/ui/dist/runtime/components/Button.vue" },
+        ],
+      }),
     },
     { framework: "nuxt", dependencies: NUXT_UI },
   );
-  expect(result.diagnostics.map((item) => item.file.split("/").pop())).toEqual(["index.vue"]);
+  expect(result.diagnostics).toMatchObject([
+    {
+      code: "DS0007",
+      suggestion: expect.stringContaining("<UButton>"),
+      confidence: "heuristic-high",
+    },
+  ]);
 });
+
+test("a Vue wrapper in a nested pages directory keeps its native root", async () => {
+  const result = await diagnose({
+    "src/BrandButton.vue": brandButton,
+    "src/components/pages/LikeButton.vue": rawButton,
+    "src/App.vue": `<script setup>import LikeButton from './components/pages/LikeButton.vue'</script>
+<template><div><LikeButton /><button /></div></template>`,
+  });
+  expect(result.diagnostics.map(({ file }) => file.split("/").pop())).toEqual(["App.vue"]);
+});
+
+test.each([
+  { base: "app", pages: "pages", config: "{}" },
+  { base: "web", pages: "routes", config: "{ srcDir: 'web', dir: { pages: 'routes' } }" },
+])(
+  "Options API wrapper roots are exempt but Nuxt page roots in $base/$pages report",
+  async ({ base, pages, config }) => {
+    const register = (name: string, file: string) =>
+      `<script>import ${name} from '${file}'; export default { components: { ${name} } }</script>`;
+    const result = await diagnose(
+      {
+        "nuxt.config.ts": `export default defineNuxtConfig(${config})`,
+        [`${base}/App.vue`]: `${register("LikeButton", "./LikeButton.vue")}
+<template><LikeButton /></template>`,
+        [`${base}/Preview.vue`]: `${register("Home", `./${pages}/index.vue`)}<template><Home /></template>`,
+        [`${base}/LikeButton.vue`]: rawButton,
+        [`${base}/${pages}/index.vue`]: rawButton,
+      },
+      { framework: "nuxt", dependencies: NUXT_UI },
+    );
+    expect(result.diagnostics.map((item) => item.file.split("/").pop())).toEqual(["index.vue"]);
+  },
+);
 
 test.each(["as const", "satisfies Record<string, unknown>"])(
   "reads options wrapped in %s",

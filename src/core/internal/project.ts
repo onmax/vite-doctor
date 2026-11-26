@@ -431,7 +431,11 @@ async function detectNuxt(
         }
       : undefined,
     components: new Map(
-      (manifest?.components ?? []).map((component: any) => [component.name, component]),
+      (manifest?.components ?? []).flatMap((component: any) =>
+        typeof component?.name === "string" && typeof component.file === "string"
+          ? [[component.name, component]]
+          : [],
+      ),
     ),
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
