@@ -84,10 +84,12 @@ test("GitHub Actions annotates the run after the text report", async () => {
     const run = await capture(() =>
       main([".", "--no-cache", "--rules", "vue/template/html-button-has-type"], app),
     );
-    const [report, annotations] = run.stdout.split(/^(?=::)/m);
+    const [report, ...annotations] = run.stdout.split(/^(?=::)/m);
     expect(report).toContain("VUE0022");
-    expect(annotations).toMatch(
-      /^::warning title=VUE0022,file=App\.vue,line=2,col=3,endLine=2,endColumn=\d+::.+%0Ahttps:\/\/\S+\/VUE0022\n/,
+    expect(annotations).toContainEqual(
+      expect.stringMatching(
+        /^::warning title=VUE0022,file=App\.vue,line=2,col=3,endLine=2,endColumn=\d+::.+%0Ahttps:\/\/\S+\/VUE0022\n$/,
+      ),
     );
 
     vi.unstubAllEnvs();
