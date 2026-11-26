@@ -9,7 +9,7 @@ function reportingRule(id: string) {
     create(ctx) {
       return {
         VariableDeclarator(node: any) {
-          ctx.report(allDiagnostics.DOC9999({ why: "Fixture.", fix: "Fixture." }), {
+          ctx.report(allDiagnostics.DOC9999({ why: "Fixture.", fix: "Fixture fix." }), {
             ruleId: id,
             severity: "warn",
             category: "correctness",

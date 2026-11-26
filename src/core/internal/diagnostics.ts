@@ -1008,6 +1008,7 @@ export function normalizeDiagnostic(input: DoctorDiagnosticNormalizationInput): 
   const code = diagnostic.name;
   if (!code) throw doctorInternalDiagnostics.DOC0014({ ruleId: input.ruleId });
   if (!diagnostic.fix) throw doctorInternalDiagnostics.DOC0021({ ruleId: input.ruleId, code });
+  assertFixAddsRemedy(input.ruleId, code, diagnostic.why, diagnostic.fix);
   return {
     ...input,
     diagnostic,
@@ -1018,6 +1019,12 @@ export function normalizeDiagnostic(input: DoctorDiagnosticNormalizationInput): 
     message: diagnostic.why,
     suggestion: diagnostic.fix,
   } as Diagnostic;
+}
+
+function assertFixAddsRemedy(ruleId: string, code: string, why: string, fix: string | undefined) {
+  const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+  if (fix !== undefined && normalize(fix) === normalize(why))
+    throw doctorInternalDiagnostics.DOC0041({ ruleId, code });
 }
 
 type DoctorDiagnosticNormalizationInput = Partial<Diagnostic> & {
@@ -1048,6 +1055,7 @@ export function normalizeDiagnosticFromRuleCode(
   if (!diagnostic) {
     throw doctorInternalDiagnostics.DOC0013({ ruleId: input.ruleId, code });
   }
+  assertFixAddsRemedy(input.ruleId, diagnostic.name, diagnostic.why, diagnostic.fix);
   return {
     ...input,
     diagnostic,

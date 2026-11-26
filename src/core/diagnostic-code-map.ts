@@ -55,6 +55,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DOC0019", ruleId: "doctor/config/invalid-rule-severity", docs: false },
   { code: "DOC0020", ruleId: "doctor/config/invalid-rule-config", docs: false },
   { code: "DOC0021", ruleId: "doctor/internal/missing-diagnostic-fix", docs: false },
+  { code: "DOC0041", ruleId: "doctor/internal/fix-repeats-why", docs: false },
   { code: "DOC0022", ruleId: "doctor/inventory/unresolved-runtime" },
   { code: "DOC0023", ruleId: "doctor/rule-pack/duplicate-name", docs: false },
   { code: "DOC0024", ruleId: "doctor/config/ambiguous-rule-pack-alias", docs: false },
