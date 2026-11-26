@@ -23,6 +23,7 @@ import { walkScriptLocal } from "../../core/rule-authoring.js";
 import type { NuxtAppSource } from "../nuxt/rules/nuxt/file-classification.js";
 import { propertyName, unwrap } from "../nuxt/rules/nuxt/nuxt-config-ast.js";
 import {
+  displayPath,
   mainApp,
   nuxtLayerSources,
   type PageRoute,
@@ -31,6 +32,7 @@ import {
   pascalTag,
   readSfc,
   registeredLayouts,
+  unreadLayers,
 } from "../nuxt/rules/nuxt/page-structure.js";
 import { type ComponentNames, componentNames, pascalCase } from "./contracts.js";
 
@@ -161,43 +163,138 @@ function registered(names: ComponentNames, tag: string): string | undefined {
   return names.registered.get(tag) ?? names.nuxtDefault.get(tag);
 }
 
+/** Why some routes have no View, or a partial one, once per cause. */
+export interface ViewGap {
+  message: string;
+  /** The files that cause it, relative to the project root. */
+  files: string[];
+}
+
+const PREPARE =
+  "Run nuxt prepare with vite-doctor/nuxt to write .nuxt/doctor.manifest.json, then rerun Doctor.";
+const LITERAL_LAYOUT =
+  "Pick each page's layout with a literal definePageMeta({ layout }) so Doctor can count its view.";
+
 /**
  * Every View of the Doctor Run's Nuxt apps that Doctor can establish. A route whose view depends
- * on something Doctor cannot read statically, such as a computed layout, has no View. Projects
- * without Nuxt have no Views: Doctor cannot tell which components render together without routes.
+ * on something Doctor cannot read statically, such as a computed layout, has no View, and `gaps`
+ * names why. Projects without Nuxt have no Views: Doctor cannot tell which components render
+ * together without routes.
  */
-export async function projectViews(ctx: RuleContext, resolved: ViewGraph): Promise<View[]> {
+export async function projectViews(
+  ctx: RuleContext,
+  resolved: ViewGraph,
+): Promise<{ views: View[]; gaps: ViewGap[] }> {
   const { graph } = resolved;
-  if (!ctx.project.nuxt) return [];
-  const sources = await ctx.inventory.sourcePaths();
+  type Message = (files: string, count: number) => string;
+  const causes = new Map<string, { files: Set<string>; message: Message }>();
+  const gap = (cause: string, files: string[], message: Message) => {
+    const entry = causes.get(cause) ?? { files: new Set<string>(), message };
+    entry.message = message;
+    for (const file of files) entry.files.add(displayPath(ctx, file));
+    causes.set(cause, entry);
+  };
   const views: View[] = [];
+  if (!ctx.project.nuxt) return { views, gaps: [] };
+  const sources = await ctx.inventory.sourcePaths();
   for (const [index, layers] of nuxtLayerSources(ctx).entries()) {
+    const appRoot = layers[0]!.root;
+    const at = appRoot === ctx.project.root ? "" : ` at ${displayPath(ctx, appRoot)}`;
+    const everyRoute = `DS0008 did not count component limits on any route of the Nuxt app${at}`;
+    const config = configPath(ctx, appRoot);
     const routes = pageRoutes(ctx, layers, sources);
+    if (!routes) {
+      const reason =
+        unreadLayers(ctx, layers)?.replace(/\.$/, "") ??
+        (layers.length === 1
+          ? `${displayPath(ctx, config)} or .nuxtignore changes which files Nuxt scans as pages`
+          : `no current Doctor manifest lists the pages of its ${layers.length} layers`);
+      gap(
+        `routes${appRoot}`,
+        [config],
+        () =>
+          `Doctor cannot list the routes of the Nuxt app${at}: ${reason}. ${everyRoute}. ${PREPARE}`,
+      );
+      continue;
+    }
     const app = mainApp(ctx, layers);
-    if (!routes || app === null || (app && !graph.components.has(app))) continue;
+    if (app === null) {
+      gap(
+        `app${appRoot}`,
+        [config],
+        () =>
+          `Doctor cannot tell which app component the Nuxt app${at} renders: an app:resolve or app:templates hook, several app files, or a layer it cannot read picks it. ${everyRoute}. ${PREPARE}`,
+      );
+      continue;
+    }
+    if (app && !graph.components.has(app)) {
+      gap("unread", [app], unreadMessage);
+      continue;
+    }
     const main = index === 0 && !!ctx.project.nuxt.layers?.length;
     const runtime = await runtimeLayouts(ctx, layers, main, sources, routes);
-    if (runtime === "everywhere") continue;
+    if ("everywhere" in runtime) {
+      const { everywhere, file } = runtime;
+      gap(`${everywhere}${appRoot}`, [file], (files) =>
+        everywhere === "api"
+          ? `${files} references setPageLayout(), which can switch any route's layout at runtime, so ${everyRoute}. ${LITERAL_LAYOUT}`
+          : everywhere === "rules"
+            ? `${files} calls defineRouteRules() outside a page, where it may set appLayout for any route, so ${everyRoute}. ${LITERAL_LAYOUT}`
+            : `${files} sets appLayout in routeRules, and without a current Doctor manifest Doctor cannot tell which routes it matches, so ${everyRoute}. ${PREPARE}`,
+      );
+      continue;
+    }
     const layouts = registeredLayouts(ctx, layers, sources);
     const byFile = new Map<string, PageRoute | null>();
     for (const route of routes) byFile.set(route.file, byFile.has(route.file) ? null : route);
     const defaultParents = new Set(
       routes.filter((route) => route.path === "").map((route) => route.parent),
     );
+    const patterns = new Set<string>();
     for (const route of routes) {
       if (defaultParents.has(route.file)) continue;
       const chain = routeChain(route, byFile);
-      if (!chain?.every(({ file }) => graph.components.has(file))) continue;
-      if (chain.some(({ file }) => runtime.pages.has(file))) continue;
+      if (!chain) {
+        gap(
+          "parent",
+          [route.file],
+          (files) =>
+            `Doctor cannot tell which parent route renders ${files}, so DS0008 did not count component limits on their routes. ${PREPARE}`,
+        );
+        continue;
+      }
+      const unread = chain.filter(({ file }) => !graph.components.has(file));
+      if (unread.length) {
+        gap(
+          "unread",
+          unread.map(({ file }) => file),
+          unreadMessage,
+        );
+        continue;
+      }
+      const rules = chain.filter(({ file }) => runtime.pages.has(file));
+      if (rules.length) {
+        gap(
+          "page-rules",
+          rules.map(({ file }) => file),
+          (files) =>
+            `${files} call defineRouteRules(), which may set appLayout, so DS0008 did not count component limits on their routes. ${LITERAL_LAYOUT}`,
+        );
+        continue;
+      }
       let layout: LayoutChoice | "unknown" | undefined;
       let path: string | undefined = "";
+      const computed: string[] = [];
       for (const { file, parent, path: preparedPath } of chain) {
         const sfc = await readSfc(ctx, file);
         if (!sfc) {
           layout = "unknown";
           path = undefined;
+          computed.push(file);
         } else {
-          layout = pageMetaValue(sfc.script, "layout", staticLayout) ?? layout;
+          const own = pageMetaValue(sfc.script, "layout", staticLayout);
+          if (own === "unknown") computed.push(file);
+          layout = own ?? layout;
           const override = pageMetaValue(sfc.script, "path", staticPath);
           const local =
             override === "unknown"
@@ -210,25 +307,76 @@ export async function projectViews(ctx: RuleContext, resolved: ViewGraph): Promi
               : undefined;
         }
       }
-      if (layout === "unknown") continue;
+      if (layout === "unknown") {
+        gap(
+          "layout",
+          computed,
+          (files) =>
+            `${files} set a layout Doctor cannot read statically in definePageMeta({ layout }), so DS0008 did not count component limits on their routes. Pass a string literal or false instead.`,
+        );
+        continue;
+      }
       const label = route.fullPath ?? path ?? relative(ctx.project.root, route.file);
-      if (runtime.patterns.some((pattern) => mayMatch(pattern, label))) continue;
+      const matched = runtime.patterns.filter((pattern) => mayMatch(pattern, label));
+      if (matched.length) {
+        for (const pattern of matched) patterns.add(pattern);
+        gap(`patterns${appRoot}`, [route.file], (files, count) => {
+          return `appLayout route rules ${[...patterns].join(", ")} may pick the layout of ${count} route${count === 1 ? "" : "s"}, which DS0008 does not follow, so it did not count component limits on ${files}. ${LITERAL_LAYOUT}`;
+        });
+        continue;
+      }
       const name = layout?.name ?? "default";
       const layoutFile =
         name === false ? undefined : layouts?.find((entry) => entry.name === name)?.file;
-      if (layoutFile === undefined && name !== false && !layouts) continue;
-      if (layoutFile && !graph.components.has(layoutFile)) continue;
-      const roots = viewRoots(resolved, app, layoutFile, chain);
-      if (roots)
-        views.push({
-          route: label,
-          page: route.file,
-          layout: layoutFile,
-          roots,
-        });
+      if (layoutFile === undefined && name !== false && !layouts) {
+        gap(
+          `layouts${appRoot}`,
+          [config],
+          () =>
+            `Doctor cannot list the layouts of the Nuxt app${at}, so ${everyRoute} that uses one. ${PREPARE}`,
+        );
+        continue;
+      }
+      if (layoutFile && !graph.components.has(layoutFile)) {
+        gap("unread", [layoutFile], unreadMessage);
+        continue;
+      }
+      const placed = viewRoots(resolved, app, layoutFile, chain);
+      if (!placed) {
+        gap(
+          "layout-name",
+          [app!],
+          (files) =>
+            `${files} passes name or fallback to <NuxtLayout>, which can override every page's layout, so ${everyRoute}. Pick layouts with definePageMeta({ layout }) and render <NuxtLayout> without name or fallback.`,
+        );
+        continue;
+      }
+      if (placed.unplacedFrom)
+        gap(
+          "outlet",
+          [placed.unplacedFrom],
+          (files) =>
+            `Doctor cannot verify that ${files} renders the route's page: its <NuxtPage> or <RouterView> is missing, conditional, named, given a route or slot content, or sits in a slot Doctor cannot follow. DS0008 counted those routes without their pages. Render an unconditional <NuxtPage /> where Doctor can see it.`,
+        );
+      views.push({ route: label, page: route.file, layout: layoutFile, roots: placed.roots });
     }
   }
-  return views;
+  const gaps = [...causes.values()].map(({ files, message }) => {
+    const sorted = [...files].sort();
+    return { message: message(sorted.join(", "), sorted.length), files: sorted };
+  });
+  return { views, gaps };
+}
+
+function unreadMessage(files: string): string {
+  return `Doctor has no component facts for ${files}, so DS0008 did not count component limits on the routes that render them. Make each one a .vue SFC Doctor can parse.`;
+}
+
+function configPath(ctx: RuleContext, root: string): string {
+  return (
+    NUXT_CONFIGS.map((name) => join(root, name)).find((file) => ctx.fs.exists(file)) ??
+    join(root, "nuxt.config.ts")
+  );
 }
 
 /** Where the app may pick a layout at runtime, outside `definePageMeta`. */
@@ -256,7 +404,7 @@ async function runtimeLayouts(
   main: boolean,
   sources: readonly string[],
   routes: PageRoute[],
-): Promise<RuntimeLayouts | "everywhere"> {
+): Promise<RuntimeLayouts | { everywhere: "api" | "rules" | "config"; file: string }> {
   const owners = nuxtLayerSources(ctx).flat();
   const owns = (file: string) => layers.some(({ root }) => file.startsWith(`${root}/`));
   const pages = new Set(routes.map(({ file }) => file));
@@ -273,13 +421,13 @@ async function runtimeLayouts(
     const script = file.endsWith(".vue")
       ? sfc?.script
       : parseScriptResult(file, text, undefined, { astType: "ts", range: true }).ast;
-    if (mayUseLayoutApi && usesLayoutApi(script, sfc?.template)) return "everywhere";
+    if (mayUseLayoutApi && usesLayoutApi(script, sfc?.template)) return { everywhere: "api", file };
     if (
       NUXT_CONFIGS.includes(basename(file)) ||
       !callsApi(script, "defineRouteRules", maySetRouteLayout)
     )
       continue;
-    if (!owns(file) || !pages.has(file)) return "everywhere";
+    if (!owns(file) || !pages.has(file)) return { everywhere: "rules", file };
     found.pages.add(file);
   }
   const manifest = main ? ctx.project.nuxt?.manifest : undefined;
@@ -291,7 +439,8 @@ async function runtimeLayouts(
         const text = ctx.fs.readText(file);
         if (!text || !/\bappLayout\b/.test(text)) continue;
         const ast = parseScript(file, text);
-        if (hasProperty(ast, "routeRules") && hasProperty(ast, "appLayout")) return "everywhere";
+        if (hasProperty(ast, "routeRules") && hasProperty(ast, "appLayout"))
+          return { everywhere: "config", file };
       }
   if (recorded)
     for (const rules of [ctx.project.nuxt?.routeRules, manifest.resolvedRouteRules])
@@ -541,15 +690,17 @@ function routeSegment(layers: NuxtAppSource[], page: string, parent: string | nu
 
 /**
  * The files a route renders and how certain Doctor is that each renders, or undefined when the
- * app picks its layout in a way Doctor cannot read.
+ * app picks its layout in a way Doctor cannot read. `unplacedFrom` is the file whose router outlet
+ * Doctor could not follow, when the View stops before the route's page.
  */
 function viewRoots(
   graph: ViewGraph,
   app: string | undefined,
   layout: string | undefined,
   chain: PageRoute[],
-): ViewRoot[] | undefined {
+): { roots: ViewRoot[]; unplacedFrom?: string } | undefined {
   const roots: ViewRoot[] = [];
+  let from = app ?? layout;
   let pages = layout ? slotPlacement(graph, layout, "default", layout, new Set()) : [DIRECT];
   if (app) {
     roots.push({ file: app, kind: "app", ...DIRECT });
@@ -564,13 +715,14 @@ function viewRoots(
     roots.push({ file: layout, kind: "layout", ...DIRECT });
   }
   for (const [index, route] of chain.entries()) {
-    if (!pages.length) break;
+    if (!pages.length) return { roots, unplacedFrom: from };
     for (const path of pages) roots.push({ file: route.file, kind: "page", ...path });
     if (index === chain.length - 1) break;
     const outlets = pageOutlets(graph, renderedUsages(graph, route.file, layout));
     pages = pages.flatMap((parent) => outlets.map((outlet) => joinPaths(parent, outlet)));
+    from = route.file;
   }
-  return roots;
+  return { roots };
 }
 
 function pageOutlets(graph: ViewGraph, rendered: RenderedUsage[]): RenderPath[] {

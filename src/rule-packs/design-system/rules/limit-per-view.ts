@@ -67,7 +67,14 @@ export const limitPerView = createRule({
         const limited = contracts.filter(({ contract }) => contract.limits.length);
         if (!limited.length) return;
         const resolved = viewGraph(ctx, graph);
-        const views = await projectViews(ctx, resolved);
+        const { views, gaps } = await projectViews(ctx, resolved);
+        const known = new Set(ctx.project.evidenceGaps?.map(({ message }) => message));
+        const added = gaps.filter(({ message }) => !known.has(message));
+        if (added.length)
+          ctx.project.evidenceGaps = [
+            ...(ctx.project.evidenceGaps ?? []),
+            ...added.map((gap) => ({ source: "vite-doctor/design-system", ...gap })),
+          ];
         const findings = new Map<string, Finding>();
         for (const view of views) {
           const usages = viewUsages(resolved, view);

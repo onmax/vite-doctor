@@ -752,3 +752,142 @@ test("a Nuxt UI app wrapped in UApp still counts, as heuristic-high", async () =
   expect(result).toHaveLength(1);
   expect(result[0]?.confidence).toBe("heuristic-high");
 });
+
+const limitGaps = async (...args: Parameters<typeof diagnose>) =>
+  ((await diagnose(...args)).project.evidenceGaps ?? []).filter(
+    ({ source }) => source === "vite-doctor/design-system",
+  );
+
+test("adds no evidence gap when every route has a View", async () => {
+  expect(
+    await limitGaps({
+      "app/layouts/default.vue": layout(primary),
+      "app/pages/index.vue": page(primary),
+    }),
+  ).toEqual([]);
+});
+
+test("adds no evidence gap when no contract declares limits", async () => {
+  expect(
+    await limitGaps({
+      "app/components/AppButton.vue": `<template><button><slot /></button></template>`,
+      "app/middleware/admin.global.ts": `export default defineNuxtRouteMiddleware(() => setPageLayout("admin"))`,
+      "app/pages/index.vue": page(primary, "definePageMeta({ layout: name })"),
+    }),
+  ).toEqual([]);
+});
+
+test.each<[string, Record<string, string>, string[], RegExp]>([
+  [
+    "a setPageLayout reference",
+    {
+      "app/middleware/admin.global.ts": `export default defineNuxtRouteMiddleware(() => setPageLayout("admin"))`,
+      "app/pages/index.vue": page(primary),
+    },
+    ["app/middleware/admin.global.ts"],
+    /setPageLayout\(\).*did not count component limits on any route.*definePageMeta\(\{ layout \}\)/,
+  ],
+  [
+    "an appLayout route rule Doctor only sees in nuxt.config",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ routeRules: { "/**": { appLayout: "admin" } } })\n`,
+      "app/pages/index.vue": page(primary),
+    },
+    ["nuxt.config.ts"],
+    /appLayout.*did not count component limits on any route.*nuxt prepare.*vite-doctor\/nuxt/,
+  ],
+  [
+    "a page whose own route rules may set appLayout",
+    { "app/pages/index.vue": page(primary, `defineRouteRules({ appLayout: "plain" })`) },
+    ["app/pages/index.vue"],
+    /defineRouteRules.*appLayout.*definePageMeta\(\{ layout \}\)/,
+  ],
+  [
+    "computed layouts, once for every page",
+    {
+      "app/pages/index.vue": page(primary, "definePageMeta({ layout: name })"),
+      "app/pages/about.vue": page(primary, "definePageMeta({ layout: name })"),
+    },
+    ["app/pages/about.vue", "app/pages/index.vue"],
+    /layout Doctor cannot read.*string literal or false/,
+  ],
+  [
+    "a layout app.vue picks with name",
+    {
+      "app/app.vue": `<template><NuxtLayout :name="layout"><NuxtPage /></NuxtLayout></template>`,
+      "app/pages/index.vue": page(primary),
+    },
+    ["app/app.vue"],
+    /name.*fallback.*<NuxtLayout>.*did not count component limits on any route/,
+  ],
+  [
+    "layers Doctor cannot read without a manifest",
+    { "nuxt.config.ts": `export default defineNuxtConfig({ extends: ["docus"] })\n` },
+    ["nuxt.config.ts"],
+    /extends layers.*did not count component limits on any route.*nuxt prepare.*vite-doctor\/nuxt/,
+  ],
+  [
+    "custom pages configuration",
+    { "nuxt.config.ts": `export default defineNuxtConfig({ dir: { pages: "routes" } })\n` },
+    ["nuxt.config.ts"],
+    /cannot list the routes.*nuxt prepare.*vite-doctor\/nuxt/,
+  ],
+  [
+    "an app component chosen by a hook",
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ hooks: { "app:resolve"(app) {} } })\n`,
+    },
+    ["nuxt.config.ts"],
+    /which app component.*nuxt prepare.*vite-doctor\/nuxt/,
+  ],
+  [
+    "a router outlet Doctor cannot verify",
+    {
+      "app/app.vue": page(`<NuxtPage name="sidebar" />`),
+      "app/pages/index.vue": page(primary + primary),
+    },
+    ["app/app.vue"],
+    /cannot verify that app\/app.vue renders.*<NuxtPage \/>/,
+  ],
+])("names the cause when %s leaves routes without a View", async (_, files, gapFiles, message) => {
+  const gaps = await limitGaps({ "app/layouts/default.vue": layout(), ...files });
+  expect(gaps).toEqual([
+    {
+      source: "vite-doctor/design-system",
+      message: expect.stringMatching(message),
+      files: gapFiles,
+    },
+  ]);
+  expect(gaps[0]!.message).toMatch(/^.*DS0008/);
+});
+
+test("an appLayout route rule in the manifest names the routes it left out", async () => {
+  await withFixture(
+    {
+      "app/app.vue": app,
+      "app/components/AppButton.vue": appButton,
+      "app/layouts/default.vue": layout(primary),
+      "app/pages/index.vue": page(primary),
+      "app/pages/admin/index.vue": page(primary),
+      "app/pages/admin/[id].vue": page(primary),
+      "nuxt.config.ts": `export default defineNuxtConfig({ routeRules: { "/admin/**": { appLayout: "admin" } } });\n`,
+    },
+    NUXT_UI,
+    async (root) => {
+      await writeFileManifest(root, [], {
+        generatedAt: new Date(Date.now() + 10_000).toISOString(),
+        routeRules: { "/admin/**": { appLayout: "admin" } },
+      });
+      const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+      expect(
+        result.project.evidenceGaps?.filter(({ source }) => source === "vite-doctor/design-system"),
+      ).toEqual([
+        {
+          source: "vite-doctor/design-system",
+          message: expect.stringMatching(/appLayout route rules \/admin\/\*\*.*2 routes/),
+          files: ["app/pages/admin/[id].vue", "app/pages/admin/index.vue"],
+        },
+      ]);
+    },
+  );
+});
