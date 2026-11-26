@@ -1,5 +1,5 @@
 import { isAbsolute, relative } from "pathe";
-import { isMcpHeaderName } from "../mcp/endpoint.js";
+import { isMcpHeaderName } from "@loadsheet/mcp";
 import pc from "picocolors";
 import { formatDiagnostic } from "nostics";
 import type {

@@ -38,10 +38,8 @@ export const noExcludedTool = createRule({
   create(ctx) {
     return clientLimitsVisitor(ctx, {
       ruleId: "mcp/clients/no-excluded-tool",
+      code: "MCP0005",
       diagnostic: diagnostics.MCP0005,
-      effect: "excluded",
-      outcome: "is left out, or makes requests fail,",
-      brief: "left out or failing",
     });
   },
 });

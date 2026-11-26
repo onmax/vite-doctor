@@ -7,6 +7,7 @@ import { createReport, reportStatus, runDoctor } from "../../src/core/index.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import { createRule, defineRulePack } from "../../src/extension.ts";
 import { readMcpServers } from "../../src/mcp/evidence.ts";
+import { viteDoctorVersion } from "../../src/version.ts";
 import { startMcpStub, stubTools, type StubRequest } from "./mcp-stub.ts";
 
 const cleanups: Array<() => unknown> = [];
@@ -407,6 +408,29 @@ test("--mcp-url and --mcp-header repeat, and every header goes to every URL", as
   expect(report.commandArgs.rerun).toEqual(expect.arrayContaining(["--mcp-url", "<mcp-url>"]));
   expect(report.commandArgs.rerun.filter((arg) => arg === "<mcp-url>")).toHaveLength(2);
   expect(report.commandArgs.rerun).toContain("Authorization: <value>");
+});
+
+test("--mcp-url checks a server from an empty directory, naming Doctor as the client", async () => {
+  const requests: StubRequest[] = [];
+  const server = await stub({ requests, tools: [{ name: "search" }] });
+  const root = mkdtempSync(join(tmpdir(), "doctor-mcp-empty-"));
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  const { code, output } = await cli(root, [
+    "--no-cache",
+    "--format",
+    "json",
+    "--mcp-url",
+    server.url,
+  ]);
+
+  expect(code).toBe(0);
+  expect(requests.find((request) => request.method === "initialize")?.clientInfo).toEqual({
+    name: "vite-doctor",
+    version: viteDoctorVersion,
+  });
+  const report = JSON.parse(output) as { status: string; diagnostics: Array<{ code: string }> };
+  expect(report.status).toBe("findings");
+  expect(report.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["MCP0001", "MCP0002"]);
 });
 
 test.each([

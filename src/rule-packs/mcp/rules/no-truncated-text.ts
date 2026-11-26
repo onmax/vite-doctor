@@ -38,10 +38,8 @@ export const noTruncatedText = createRule({
   create(ctx) {
     return clientLimitsVisitor(ctx, {
       ruleId: "mcp/clients/no-truncated-text",
+      code: "MCP0006",
       diagnostic: diagnostics.MCP0006,
-      effect: "truncated",
-      outcome: "has text cut",
-      brief: "cut",
     });
   },
 });

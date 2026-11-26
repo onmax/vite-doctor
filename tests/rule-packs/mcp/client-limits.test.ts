@@ -5,10 +5,9 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { createReport, type Diagnostic, type DoctorRunOptions } from "../../../src/core/index.ts";
 import { writeBaseline } from "../../../src/core/internal/diagnostic-policy.ts";
 import { runViteDoctor } from "../../../src/doctor.ts";
-import { mcpClientRules } from "../../../src/mcp/index.ts";
+import { MCP_CLIENT_LABELS, mcpClientRules } from "../../../src/mcp/index.ts";
 import type { McpServerEvidence } from "../../../src/mcp/evidence.ts";
-import type { McpTool } from "../../../src/mcp/types.ts";
-import { MCP_CLIENT_LABELS } from "../../../src/rule-packs/mcp/rules/wire.ts";
+import type { McpTool } from "@loadsheet/mcp";
 import { startMcpStub } from "../../mcp/mcp-stub.ts";
 
 const cleanups: Array<() => unknown> = [];

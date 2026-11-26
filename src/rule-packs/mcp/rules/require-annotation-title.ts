@@ -6,7 +6,7 @@ import {
   toolLabel,
   type McpToolDefinition,
 } from "./shared.js";
-import { reportWireTool, wireToolLabel, wireTools } from "./wire.js";
+import { reportWireTool, wireTools } from "./wire.js";
 
 export const requireAnnotationTitle = createRule({
   meta: {
@@ -43,28 +43,12 @@ export const requireAnnotationTitle = createRule({
     return {
       async onWorkspaceEnd() {
         const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent) {
-          const findings = wire.findings.filter(
-            (finding) => finding.rule === "claude-directory/missing-title",
-          );
-          if (!findings.length) continue;
-          const topLevel = typeof wire.tool.title === "string" && wire.tool.title.trim();
-          const suggested = topLevel ? wire.tool.title! : "<Human-readable name>";
-          reportWireTool(
-            ctx,
-            wire,
-            diagnostics.MCP0001({
-              why: `MCP tool ${wireToolLabel(wire)} has no non-empty string in \`annotations.title\` in its tools/list entry.${topLevel ? ` It has a top-level title ${JSON.stringify(wire.tool.title)}, which clients that read only \`annotations.title\` never show.` : ""} Anthropic's Connectors Directory flags tools without one, and clients on the 2025-03-26 revision show only the bare name.`,
-              fix: `Add \`title: ${JSON.stringify(suggested)}\` to the tool's annotations.`,
-            }),
-            {
-              ruleId: "mcp/tools/require-annotation-title",
-              range: annotationsRange,
-              findings,
-              brief: `no annotations.title; add title: ${JSON.stringify(suggested)}`,
-            },
-          );
-        }
+        for (const wire of sent)
+          reportWireTool(ctx, wire, "MCP0001", {
+            ruleId: "mcp/tools/require-annotation-title",
+            diagnostic: diagnostics.MCP0001,
+            range: annotationsRange,
+          });
         for (const tool of sourceOnly) {
           const { annotations } = tool;
           if (annotations.state === "partial") continue;

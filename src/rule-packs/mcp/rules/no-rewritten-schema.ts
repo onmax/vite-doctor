@@ -38,10 +38,8 @@ export const noRewrittenSchema = createRule({
   create(ctx) {
     return clientLimitsVisitor(ctx, {
       ruleId: "mcp/clients/no-rewritten-schema",
+      code: "MCP0007",
       diagnostic: diagnostics.MCP0007,
-      effect: "rewritten",
-      outcome: "is rewritten",
-      brief: "rewritten",
     });
   },
 });

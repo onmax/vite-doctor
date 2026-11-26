@@ -1,9 +1,15 @@
+import {
+  fetchMcpToolList,
+  McpFetchError,
+  mcpEndpointLabel,
+  parseMcpEndpoint,
+  type McpInitializeResult,
+  type McpTool,
+} from "@loadsheet/mcp";
 import type { DoctorExtension, ProjectInfo } from "../core/primitives.js";
 import { sha256 } from "../core/internal/utils.js";
-import { mcpEndpointId, mcpEndpointLabel, parseMcpEndpoint } from "./endpoint.js";
-import { fetchMcpToolList, McpFetchError } from "./fetch.js";
-import { isMcpTool } from "./input.js";
-import type { McpInitializeResult, McpTool } from "./types.js";
+import { viteDoctorVersion } from "../version.js";
+import { mcpEndpointId } from "./endpoint.js";
 
 /** The name of Doctor's own Runtime Evidence contributor for MCP servers. */
 export const MCP_EVIDENCE = "mcp";
@@ -76,6 +82,10 @@ function isMcpServerEvidence(value: unknown): value is McpServerEvidence {
   return Array.isArray(server.tools) && server.tools.every(isMcpTool);
 }
 
+function isMcpTool(tool: unknown): tool is McpTool {
+  return !!tool && typeof tool === "object" && typeof (tool as McpTool).name === "string";
+}
+
 /**
  * Doctor Extension that reads `tools/list` from each configured server as `mcp` Runtime Evidence.
  * A server Doctor cannot read is contributed as `{ url, error }`.
@@ -121,7 +131,11 @@ async function readServer(
   const label = mcpEndpointLabel(url);
   const endpointId = mcpEndpointId(url);
   try {
-    const list = await fetchMcpToolList(url, { headers, ...options });
+    const list = await fetchMcpToolList(url, {
+      headers,
+      clientInfo: { name: "vite-doctor", version: viteDoctorVersion },
+      ...options,
+    });
     const name = serverName ?? list.initialize?.serverInfo?.name;
     return {
       ...(name ? { name } : {}),

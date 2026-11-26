@@ -1,20 +1,8 @@
+import { nameProblems } from "@loadsheet/mcp";
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { collectMcpTools } from "./shared.js";
-import { reportWireTool, wireToolLabel, wireTools } from "./wire.js";
-
-const NAME_CHARACTERS = /^[A-Za-z0-9_.-]+$/;
-const MAX_NAME_LENGTH = 64;
-
-/** What makes a tool name break MCP's character set or the Connectors Directory's length limit. */
-export function nameProblems(name: string): string[] {
-  const problems: string[] = [];
-  if (name.length === 0) problems.push("is empty");
-  if (name.length > MAX_NAME_LENGTH) problems.push(`is ${name.length} characters long`);
-  if (name.length > 0 && !NAME_CHARACTERS.test(name))
-    problems.push("uses characters other than letters, digits, `_`, `-`, and `.`");
-  return problems;
-}
+import { reportWireTool, wireTools } from "./wire.js";
 
 export const validName = createRule({
   meta: {
@@ -50,24 +38,12 @@ export const validName = createRule({
     return {
       async onWorkspaceEnd() {
         const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent) {
-          const problems = nameProblems(wire.tool.name);
-          if (!problems.length) continue;
-          reportWireTool(
-            ctx,
-            wire,
-            diagnostics.MCP0003({
-              why: `MCP tool ${wireToolLabel(wire)} has a name that ${problems.join(" and ")} in its tools/list entry. Anthropic's Connectors Directory rejects names over 64 characters, and MCP allows only letters, digits, \`_\`, \`-\`, and \`.\`.`,
-              fix: "Rename the tool to at most 64 letters, digits, `_`, `-`, or `.`.",
-            }),
-            {
-              ruleId: "mcp/tools/valid-name",
-              range: (tool) => tool.name?.range ?? tool.callee,
-              findings: wire.findings.filter((finding) => finding.pointer === "/name"),
-              brief: `name ${problems.join(" and ")}`,
-            },
-          );
-        }
+        for (const wire of sent)
+          reportWireTool(ctx, wire, "MCP0003", {
+            ruleId: "mcp/tools/valid-name",
+            diagnostic: diagnostics.MCP0003,
+            range: (tool) => tool.name?.range ?? tool.callee,
+          });
         for (const tool of sourceOnly) {
           const name = tool.name;
           if (!name) continue;
