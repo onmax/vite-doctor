@@ -149,11 +149,14 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     evidence.extensions = await collectExtensionEntries(nuxt);
   });
 
+  nuxt.hooks?.afterEach?.(({ name }: { name: string }) => {
+    if (name !== "nitro:init" || !nuxt.options.experimental?.inlineRouteRules) return;
+    const rules = evidence.nitroOptions?.routeRules;
+    if (rules) evidence.prePageRouteRules = JSON.parse(JSON.stringify(rules));
+  });
+
   nuxt.hook?.("nitro:init", async (nitro: any) => {
     evidence.nitroOptions = nitro.options;
-    if (nuxt.options.experimental?.inlineRouteRules && nitro.options.routeRules) {
-      evidence.prePageRouteRules = JSON.parse(JSON.stringify(nitro.options.routeRules));
-    }
     if (!evidence.routeRulePageMtimes) capturePageInputs(nuxt, evidence);
     evidence.nitroAutoImports = await captureNitroAutoImports(nitro, nuxt.options.rootDir);
     const captureHandlers = async () => {

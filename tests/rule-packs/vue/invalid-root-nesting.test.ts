@@ -147,9 +147,9 @@ test.each<Record<string, string>>([
   expect(result.diagnostics).toEqual([]);
 });
 
-test.each([false, true])(
-  "VUE0052 ignores stale inline route rules without losing Nitro opt-outs (Nitro opt-out: %s)",
-  async (nitroOptOut) => {
+test.each(["inline page", "Nitro config", "late Nitro hook"] as const)(
+  "VUE0052 handles stale page inputs with an SSR opt-out from %s",
+  async (source) => {
     const root = mkdtempSync(join(tmpdir(), "doctor-hydration-routes-"));
     const page = caller(["Card"], "<p><Card /></p>", "../components");
     const pagePath = join(root, "app/pages/index.vue");
@@ -168,17 +168,36 @@ test.each([false, true])(
       writeFileSync(
         join(root, "nuxt.config.ts"),
         `export default defineNuxtConfig({ experimental: { inlineRouteRules: true },
-          ${nitroOptOut ? "nitro: { routeRules: { '/': { ssr: false } } }" : ""}
+          ${source === "Nitro config" ? "nitro: { routeRules: { '/': { ssr: false } } }" : ""}
         })`,
       );
       writeFileSync(join(root, "app/components/Card.vue"), component("<div />"));
+      if (source === "late Nitro hook") {
+        writeFileSync(
+          join(root, "late-route-rules.ts"),
+          `export default (_options, nuxt) => {
+            nuxt.hook('nitro:init', (nitro) => {
+              nitro.options.routeRules['/'] = { ssr: false }
+            })
+          }`,
+        );
+      }
       writeFileSync(
         pagePath,
-        page.replace("</script>", "defineRouteRules({ ssr: false })\n</script>"),
+        source === "late Nitro hook"
+          ? page.replace("<template>", "<template><!-- initial page -->")
+          : page.replace("</script>", "defineRouteRules({ ssr: false })\n</script>"),
       );
       const nuxt = await loadNuxt({
         cwd: root,
-        overrides: { _prepare: true, modules: [nuxtDoctorModule], telemetry: false },
+        overrides: {
+          _prepare: true,
+          modules: [
+            nuxtDoctorModule,
+            ...(source === "late Nitro hook" ? ["./late-route-rules.ts"] : []),
+          ],
+          telemetry: false,
+        },
       });
       try {
         await buildNuxt(nuxt);
@@ -196,7 +215,7 @@ test.each([false, true])(
       expect(located(await scan())).toEqual([]);
       writeFileSync(pagePath, page);
       expect(located(await scan())).toEqual(
-        nitroOptOut ? [] : [["VUE0052", "app/pages/index.vue", 5]],
+        source === "inline page" ? [["VUE0052", "app/pages/index.vue", 5]] : [],
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
