@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "pathe";
 import { valid } from "semver";
 import { parseScript } from "./script.js";
 import { RuleInputs } from "./rule-inputs.js";
+import { declaredRuntimes, runtimePackageNames } from "./runtime-packages.js";
 import type {
   DoctorFramework,
   NuxtCompatibilityInfo,
@@ -24,12 +25,7 @@ import type {
   RuleFileSystem,
 } from "../primitives.js";
 
-const packageCandidates: Record<RuntimePackageName, string[]> = {
-  nuxt: ["nuxt"],
-  nitro: ["nitro", "nitropack"],
-  h3: ["h3"],
-  vue: ["vue"],
-};
+const packageCandidates = runtimePackageNames;
 
 const acceptedIdentities: Record<RuntimePackageName, Set<string>> = {
   nuxt: new Set(["nuxt", "nuxt-nightly"]),
@@ -45,21 +41,31 @@ export function resolveRuntimeGraph(
 ): RuntimeGraph {
   const packages: RuntimeGraph["packages"] = {};
   const edges: RuntimeGraph["edges"] = [];
+  let nuxtH3MayBeShimmed: true | undefined;
+  let nuxtServerBuilder: "vite" | undefined;
 
   if (framework === "nuxt") {
     packages.nuxt = resolveRuntimePackage("nuxt", rootManifest, "project");
     edges.push(edge("project", packages.nuxt));
     const nuxtManifest =
       packages.nuxt.state === "resolved" ? packages.nuxt.packageJsonPath : undefined;
-    packages.nitro = nuxtManifest
-      ? resolveNuxtNitro(nuxtManifest)
-      : blockedRuntime("nitro", "nuxt", packages.nuxt);
-    edges.push(edge("nuxt", packages.nitro));
-    packages.h3 =
-      packages.nitro.state === "resolved" && packages.nitro.packageJsonPath
-        ? resolveRuntimePackage("h3", packages.nitro.packageJsonPath, "nitro")
-        : blockedRuntime("h3", "nitro", packages.nitro);
-    edges.push(edge("nitro", packages.h3));
+    if (nuxtManifest) {
+      const workspaceManifest = join(root, "package.json");
+      const selection = selectNuxtNitro(nuxtManifest, rootManifest, workspaceManifest);
+      if (selection === "vite") nuxtServerBuilder = selection;
+      else packages.nitro = resolveNuxtNitro(nuxtManifest, selection);
+      if (selection === 3) nuxtH3MayBeShimmed = true;
+    } else {
+      packages.nitro = blockedRuntime("nitro", "nuxt", packages.nuxt);
+    }
+    if (packages.nitro) {
+      edges.push(edge("nuxt", packages.nitro));
+      packages.h3 =
+        packages.nitro.state === "resolved" && packages.nitro.packageJsonPath
+          ? resolveRuntimePackage("h3", packages.nitro.packageJsonPath, "nitro")
+          : blockedRuntime("h3", "nitro", packages.nitro);
+      edges.push(edge("nitro", packages.h3));
+    }
     // Under a strict pnpm layout a Nuxt app that does not declare vue can only reach Nuxt's own.
     packages.vue =
       nuxtManifest && packageDeclaration(readPackageManifest(rootManifest), "vue") === undefined
@@ -78,8 +84,26 @@ export function resolveRuntimeGraph(
     packages.vue = resolveRuntimePackage("vue", rootManifest, "project");
     edges.push(edge("project", packages.vue));
   }
-
-  return { packages, edges };
+  const declared = declaredRuntimes(readPackageManifest(rootManifest), rootManifest);
+  if (!packages.vue && declared.includes("vue")) {
+    packages.vue = resolveRuntimePackage("vue", rootManifest, "project");
+    edges.push(edge("project", packages.vue));
+  }
+  const ownH3 = declared.includes("h3")
+    ? resolveRuntimePackage("h3", rootManifest, "project")
+    : undefined;
+  const directH3 = packages.h3 ? ownH3 : undefined;
+  if (ownH3) {
+    packages.h3 ??= ownH3;
+    edges.push(edge("project", ownH3));
+  }
+  return {
+    packages,
+    edges,
+    ...(directH3 ? { directH3 } : {}),
+    ...(nuxtH3MayBeShimmed ? { nuxtH3MayBeShimmed } : {}),
+    ...(nuxtServerBuilder ? { nuxtServerBuilder } : {}),
+  };
 }
 
 /** nuxt.config sources keyed by layer root, scoped to one Doctor Run. */
@@ -280,13 +304,98 @@ export function applyRuntimeTarget(
   graph: RuntimeGraph,
   compatibility: NuxtCompatibilityInfo | undefined,
   target: RuntimeTarget | undefined,
+  nuxtRoot?: string,
+  configs: NuxtConfigCache = new Map(),
 ): { graph: RuntimeGraph; compatibility: NuxtCompatibilityInfo | undefined } {
+  const installedManifest = graph.packages.nuxt?.packageJsonPath;
+  const targetsShimCapableBuilder =
+    target?.nuxt &&
+    graph.packages.h3?.owner === "nitro" &&
+    installedManifest &&
+    packageDeclaration(readPackageManifest(installedManifest), nuxtNitroV3Builder) !== undefined;
+  if (nuxtRoot && (graph.nuxtH3MayBeShimmed || targetsShimCapableBuilder)) {
+    const config = readNuxtConfig(nuxtRoot, configs);
+    const legacy = config
+      ? readExportedNuxtOption(config.file, config.text, "nitroLegacy")
+      : undefined;
+    const inheritsConfig =
+      (config && readExportedNuxtOption(config.file, config.text, "extends") !== undefined) ||
+      autoRegisteredNuxtLayers(nuxtRoot).length > 0;
+    const compatibilityVersion = target?.nuxtCompatibility ?? compatibility?.version;
+    const compatibilityDefault =
+      inheritsConfig || compatibilityVersion === undefined ? undefined : compatibilityVersion < 5;
+    const booleanOption = (option: AnyRuntimeNode | null | undefined, fallback?: boolean) =>
+      option === undefined
+        ? fallback
+        : option?.type === "Literal" && typeof option.value === "boolean"
+          ? (option.value as boolean)
+          : undefined;
+    const legacyOption = (key: string, fallback = compatibilityDefault) => {
+      if (legacy?.type !== "ObjectExpression" || !config) return booleanOption(legacy, fallback);
+      const option = readExportedNuxtOption(config.file, config.text, "nitroLegacy", key);
+      return booleanOption(option, inheritsConfig ? undefined : true);
+    };
+    const autoImports = config
+      ? readExportedNuxtOption(config.file, config.text, "experimental", "nitroAutoImports")
+      : undefined;
+    const experimentalImports = booleanOption(autoImports, compatibilityDefault);
+    const legacyImportsDefault = inheritsConfig
+      ? undefined
+      : compatibilityDefault === false || experimentalImports === false
+        ? false
+        : compatibilityDefault && experimentalImports;
+    const legacyImports = legacyOption("imports", legacyImportsDefault);
+    graph = {
+      ...graph,
+      nuxtH3MayBeShimmed: legacyOption("h3") === false ? undefined : true,
+      nuxtServerAutoImports:
+        experimentalImports === true || legacyImports === true
+          ? "enabled"
+          : experimentalImports === false && legacyImports === false
+            ? "disabled"
+            : "unknown",
+    };
+  }
   if (!target) return { graph, compatibility };
   const packages = { ...graph.packages };
+  let directH3 = graph.directH3;
+  const upgradesNitro =
+    packages.nitro?.owner === "nuxt"
+      ? Boolean(target.nuxt && packages.nuxt)
+      : !target.nuxt || target.standaloneNitro;
+  const upgrade = (current: RuntimePackageInstance, version: string): RuntimePackageInstance => ({
+    ...current,
+    state: "resolved",
+    version,
+    provenance: "target",
+    identity: "exact",
+  });
+  if (directH3 && target.h3 && target.h3Owner !== "nitro") {
+    if (
+      !target.h3Owner ||
+      !directH3.version ||
+      Number(directH3.version.split(".")[0]) < 2 ||
+      directH3.state !== "resolved"
+    )
+      directH3 = upgrade(directH3, target.h3);
+  }
   for (const runtime of ["nuxt", "nitro", "h3", "vue"] as const) {
     const version = target[runtime];
     if (!version) continue;
     const current = packages[runtime];
+    if (target.h3Owner) {
+      if (!current || (runtime === "nitro" && !upgradesNitro)) continue;
+      if (runtime === "h3") {
+        if (target.h3Owner !== "both" && current.owner !== target.h3Owner) continue;
+        if (current.owner === "nitro" && !upgradesNitro) continue;
+        if (
+          current.owner === "project" &&
+          current.state === "resolved" &&
+          Number(current.version?.split(".")[0]) >= 2
+        )
+          continue;
+      }
+    }
     packages[runtime] = {
       runtime,
       state: "resolved",
@@ -300,10 +409,14 @@ export function applyRuntimeTarget(
   }
   return {
     graph: {
+      ...graph,
       packages,
+      ...(directH3 ? { directH3 } : {}),
       edges: graph.edges.map((item) => ({
         ...item,
-        state: packages[item.to]?.state ?? item.state,
+        state:
+          (item.to === "h3" && item.from === "project" && directH3 ? directH3 : packages[item.to])
+            ?.state ?? item.state,
       })),
     },
     compatibility:
@@ -321,15 +434,16 @@ function resolveRuntimePackage(
   runtime: RuntimePackageName,
   ownerManifest: string,
   owner: RuntimePackageInstance["owner"],
+  names = packageCandidates[runtime],
 ): RuntimePackageInstance {
   const ownerPackage = readPackageManifest(ownerManifest);
   const require = createRequire(ownerManifest);
   let lastReason = `No ${runtime} package is resolvable from ${ownerManifest}.`;
   let danglingLink: RuntimePackageInstance["danglingLink"];
-  const declaredCandidates = packageCandidates[runtime].filter(
+  const declaredCandidates = names.filter(
     (name) => packageDeclaration(ownerPackage, name) !== undefined,
   );
-  const candidates = declaredCandidates.length ? declaredCandidates : packageCandidates[runtime];
+  const candidates = declaredCandidates.length ? declaredCandidates : names;
 
   for (const requestedName of candidates) {
     const declaration = packageDeclaration(ownerPackage, requestedName);
@@ -392,21 +506,76 @@ function resolveRuntimePackage(
   );
 }
 
+type NuxtNitroSelection = 2 | 3 | "vite" | "uncertain";
+const nuxtNitroV3Builder = "@nuxt/nitro-v3-server";
+
+function selectNuxtNitro(
+  nuxtManifest: string,
+  appManifest: string,
+  workspaceManifest: string,
+): NuxtNitroSelection {
+  if (packageDeclaration(readPackageManifest(nuxtManifest), nuxtNitroV3Builder) === undefined)
+    return 2;
+
+  const hasBuilder = (manifest: Record<string, unknown> | null, name: string) =>
+    packageDeclaration(manifest, name, ["dependencies", "devDependencies"]) !== undefined;
+  const app = readPackageManifest(appManifest);
+  const workspace =
+    workspaceManifest === appManifest ? null : readPackageManifest(workspaceManifest);
+  const defaultMajor = hasBuilder(app, "nitro")
+    ? 3
+    : hasBuilder(app, "nitropack")
+      ? 2
+      : hasBuilder(workspace, "nitro") && !hasBuilder(workspace, "nitropack")
+        ? 3
+        : 2;
+
+  const appRoot = dirname(appManifest);
+  const config = findNuxtConfig(appRoot);
+  const option = (name: string, nested?: string) =>
+    config && readExportedNuxtOption(config.file, config.text, name, nested);
+  const builder = config ? option("server", "builder") : undefined;
+  if (builder?.type === "Literal" && builder.value === "vite") return "vite";
+  if (builder !== undefined && !(builder?.type === "Literal" && builder.value === "nitro"))
+    return "uncertain";
+  const major = config ? option("_nitroMajor") : undefined;
+  const selection =
+    major === undefined ? defaultMajor : major?.type === "Literal" ? major.value : null;
+  if (selection !== 2 && selection !== 3) return "uncertain";
+  if (
+    selection === 3 &&
+    ((config && option("extends") !== undefined) || autoRegisteredNuxtLayers(appRoot).length)
+  )
+    return "uncertain";
+  return selection;
+}
+
 /** Nuxt 4.5 moved its Nitro dependency into @nuxt/nitro-server. */
-function resolveNuxtNitro(nuxtManifest: string): RuntimePackageInstance {
+function resolveNuxtNitro(
+  nuxtManifest: string,
+  selection: Exclude<NuxtNitroSelection, "vite">,
+): RuntimePackageInstance {
+  if (selection === "uncertain") {
+    return unknownRuntime("nitro", "nitro", "nuxt", undefined, {
+      reason: "Doctor could not establish which server builder the effective Nuxt config selects.",
+    });
+  }
   const nuxt = readPackageManifest(nuxtManifest);
-  const declaresNitro = packageCandidates.nitro.some(
-    (name) => packageDeclaration(nuxt, name) !== undefined,
-  );
-  const serverDeclaration = packageDeclaration(nuxt, "@nuxt/nitro-server");
-  if (declaresNitro || serverDeclaration === undefined)
+  const usesV3Builder = selection === 3;
+  const builder = usesV3Builder ? nuxtNitroV3Builder : "@nuxt/nitro-server";
+  const serverDeclaration = packageDeclaration(nuxt, builder);
+  if (
+    !usesV3Builder &&
+    (serverDeclaration === undefined ||
+      packageCandidates.nitro.some((name) => packageDeclaration(nuxt, name) !== undefined))
+  )
     return resolveRuntimePackage("nitro", nuxtManifest, "nuxt");
   let serverManifest: string;
   try {
-    serverManifest = resolvePackageJson(createRequire(nuxtManifest), "@nuxt/nitro-server");
+    serverManifest = resolvePackageJson(createRequire(nuxtManifest), builder);
   } catch (error) {
-    const danglingLink = findDanglingLink(nuxtManifest, "@nuxt/nitro-server");
-    return unknownRuntime("nitro", "@nuxt/nitro-server", "nuxt", serverDeclaration, {
+    const danglingLink = findDanglingLink(nuxtManifest, builder);
+    return unknownRuntime("nitro", builder, "nuxt", serverDeclaration, {
       reason: danglingLink
         ? danglingLinkReason(danglingLink)
         : error instanceof Error
@@ -415,7 +584,12 @@ function resolveNuxtNitro(nuxtManifest: string): RuntimePackageInstance {
       danglingLink,
     });
   }
-  return resolveRuntimePackage("nitro", serverManifest, "nuxt");
+  return resolveRuntimePackage(
+    "nitro",
+    serverManifest,
+    "nuxt",
+    usesV3Builder ? ["nitro"] : undefined,
+  );
 }
 
 function danglingLinkReason(link: NonNullable<RuntimePackageInstance["danglingLink"]>): string {
@@ -503,13 +677,9 @@ function packageIdentity(
 function packageDeclaration(
   manifest: Record<string, unknown> | null,
   name: string,
+  keys = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"],
 ): string | undefined {
-  for (const key of [
-    "dependencies",
-    "devDependencies",
-    "peerDependencies",
-    "optionalDependencies",
-  ]) {
+  for (const key of keys) {
     const dependencies = manifest?.[key];
     if (dependencies && typeof dependencies === "object") {
       const value = (dependencies as Record<string, unknown>)[name];

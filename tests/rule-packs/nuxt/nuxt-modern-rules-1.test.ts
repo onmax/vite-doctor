@@ -37,17 +37,23 @@ import {
 import {
   noBrowserApiInServer,
   noClientComposablesInServer,
-  preferAssertMethod,
   preferRouteMethodSuffix,
+  requireEventRuntimeConfigInServer,
+} from "../../../src/rule-packs/nitro/rules.ts";
+import {
+  preferAssertMethod,
   preferGetRequestIp,
   preferValidatedBody,
   preferValidatedQuery,
   preferValidatedRouterParams,
-  requireEventRuntimeConfigInServer,
-} from "../../../src/rule-packs/nitro/rules.ts";
+} from "../../../src/rule-packs/h3/index.ts";
 import { runProjectFixture, runRuleFixture } from "../../../src/core/testkit.ts";
 import { createTextReport } from "../../../src/core/index.ts";
-import { nitroRulePack, nuxtRulePacks } from "../../../src/rule-packs/nuxt/rules/index.ts";
+import {
+  h3RulePack,
+  nitroRulePack,
+  nuxtRulePacks,
+} from "../../../src/rule-packs/nuxt/rules/index.ts";
 import {
   htmlButtonHasType,
   preferSameNamePropShorthand,
@@ -1165,21 +1171,28 @@ test("prefer NuxtLink provides a safe fix for static internal anchors", async ()
   });
 });
 
-test("Nitro pack is exported and consumed by Nuxt rule packs", () => {
+test("Nitro and H3 packs are exported and consumed by Nuxt rule packs", () => {
   const packs = nuxtRulePacks();
   expect(nitroRulePack.rules.map((rule) => rule.meta.id)).toEqual(
     expect.arrayContaining([
       "nitro/migration/no-v2-imports",
       "nitro/runtime/require-event-runtime-config-in-server",
-      "nitro/request/prefer-validated-body",
-      "nitro/request/prefer-validated-query",
-      "nitro/request/prefer-validated-router-params",
-      "nitro/request/prefer-assert-method",
       "nitro/request/prefer-route-method-suffix",
-      "nitro/request/prefer-get-request-ip",
     ]),
   );
-  expect(packs.map((pack) => pack.name)).toContain("vite-doctor/nitro");
+  expect(h3RulePack.rules.map((rule) => rule.meta.id)).toEqual(
+    expect.arrayContaining([
+      "h3/request/prefer-validated-body",
+      "h3/request/prefer-validated-query",
+      "h3/request/prefer-validated-router-params",
+      "h3/request/prefer-assert-method",
+      "h3/request/prefer-get-request-ip",
+    ]),
+  );
+  expect(packs.map((pack) => pack.name)).toEqual(
+    expect.arrayContaining(["vite-doctor/nitro", "vite-doctor/h3"]),
+  );
+  expect(packs.filter((pack) => pack.name === "vite-doctor/h3")).toHaveLength(1);
   expect(
     packs.find((pack) => pack.name === "vite-doctor/nuxt")?.rules.map((rule) => rule.meta.id),
   ).not.toContain("nitro/migration/no-v2-imports");
@@ -1217,9 +1230,9 @@ test("Nitro request rules prefer validated H3 utilities", async () => {
     },
   });
 
-  expect(body.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-validated-body");
-  expect(query.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-validated-query");
-  expect(params.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-validated-router-params");
+  expect(body.diagnostics[0]?.ruleId).toBe("h3/request/prefer-validated-body");
+  expect(query.diagnostics[0]?.ruleId).toBe("h3/request/prefer-validated-query");
+  expect(params.diagnostics[0]?.ruleId).toBe("h3/request/prefer-validated-router-params");
 });
 
 test("Nitro validation rules ignore validated utilities and unrelated validation", async () => {
@@ -1628,7 +1641,7 @@ test("Nitro request rules prefer assertMethod for non-file-routed single-method 
     },
   });
 
-  expect(result.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-assert-method");
+  expect(result.diagnostics[0]?.ruleId).toBe("h3/request/prefer-assert-method");
 });
 
 test("Nitro assertMethod rule ignores file-routed method gates", async () => {
@@ -1668,7 +1681,7 @@ test("Nitro request IP rule reports only request-sensitive raw header reads", as
     },
   });
 
-  expect(sensitive.diagnostics[0]?.ruleId).toBe("nitro/request/prefer-get-request-ip");
+  expect(sensitive.diagnostics[0]?.ruleId).toBe("h3/request/prefer-get-request-ip");
   expect(passive.diagnostics).toHaveLength(0);
 });
 

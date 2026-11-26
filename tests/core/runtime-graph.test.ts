@@ -626,6 +626,124 @@ test("unknown package identity suppresses version rules and emits one inventory 
   );
 });
 
+test("a package without Nitro resolves the h3 it declares as its own", async () => {
+  await withRuntimeGraph(
+    {
+      "package.json": JSON.stringify({ dependencies: { h3: "^2.0.1-rc.26", srvx: "^0.9.0" } }),
+      "node_modules/h3/package.json": packageManifest("h3", "2.0.1-rc.26"),
+    },
+    async (root) => {
+      const project = await detectProject(root);
+
+      expect(project.framework).toBe("vite");
+      expect(project.runtimeGraph?.packages.h3).toMatchObject({
+        state: "resolved",
+        version: "2.0.1-rc.26",
+        owner: "project",
+        declaration: "^2.0.1-rc.26",
+      });
+      expect(project.runtimeGraph?.edges).toContainEqual({
+        from: "project",
+        to: "h3",
+        state: "resolved",
+      });
+      expect(project.workspaceRuntimeGraphs).toBeUndefined();
+    },
+  );
+});
+
+test("a peer h3 declaration resolves h3 for a package without Nitro", async () => {
+  await withRuntimeGraph(
+    {
+      "package.json": JSON.stringify({ peerDependencies: { h3: "^1.15.0" } }),
+      "node_modules/h3/package.json": packageManifest("h3", "1.15.11"),
+    },
+    async (root) => {
+      const project = await detectProject(root);
+
+      expect(project.runtimeGraph?.packages.h3).toMatchObject({
+        version: "1.15.11",
+        owner: "project",
+      });
+    },
+  );
+});
+
+test("each workspace package that declares h3 outside Nitro resolves its own", async () => {
+  await withRuntimeGraph(
+    {
+      "package.json": JSON.stringify({ private: true, workspaces: ["packages/*"] }),
+      "packages/web/package.json": JSON.stringify({ name: "web", dependencies: { vue: "3.5.35" } }),
+      "packages/api/package.json": JSON.stringify({ name: "api", dependencies: { h3: "^2.0.0" } }),
+      "packages/api/node_modules/h3/package.json": packageManifest("h3", "2.0.1-rc.26"),
+      "packages/legacy/package.json": JSON.stringify({
+        name: "legacy",
+        dependencies: { h3: "^1.15.0" },
+      }),
+      "packages/legacy/node_modules/h3/package.json": packageManifest("h3", "1.15.11"),
+      "node_modules/vue/package.json": packageManifest("vue", "3.5.35"),
+    },
+    async (root) => {
+      const project = await detectProject(root);
+
+      expect(project.framework).toBe("vue");
+      expect(project.runtimeGraph?.packages.h3).toBeUndefined();
+      expect(Object.keys(project.workspaceRuntimeGraphs ?? {}).sort()).toEqual([
+        ".",
+        "packages/api",
+        "packages/legacy",
+      ]);
+      expect(project.workspaceRuntimeGraphs?.["packages/api"]?.packages.h3).toMatchObject({
+        version: "2.0.1-rc.26",
+        owner: "project",
+      });
+      expect(project.workspaceRuntimeGraphs?.["packages/legacy"]?.packages.h3).toMatchObject({
+        version: "1.15.11",
+        owner: "project",
+      });
+      expect(project.workspaceRuntimeGraphs?.["packages/api"]?.packages.vue).toBeUndefined();
+    },
+  );
+});
+
+test("a Nitro package keeps resolving h3 through Nitro when it also declares h3", async () => {
+  await withRuntimeGraph(
+    {
+      "package.json": JSON.stringify({ dependencies: { nitro: "3.0.260610-beta", h3: "1.15.11" } }),
+      "node_modules/nitro/package.json": packageManifest("nitro", "3.0.260610-beta", {
+        h3: "2.0.1-rc.26",
+      }),
+      "node_modules/nitro/node_modules/h3/package.json": packageManifest("h3", "2.0.1-rc.26"),
+      "node_modules/h3/package.json": packageManifest("h3", "1.15.11"),
+    },
+    async (root) => {
+      const project = await detectProject(root);
+
+      expect(project.runtimeGraph?.packages.h3).toMatchObject({
+        version: "2.0.1-rc.26",
+        owner: "nitro",
+      });
+      expect(project.workspaceRuntimeGraphs).toBeUndefined();
+    },
+  );
+});
+
+test("a declared h3 that is not installed resolves as unknown", async () => {
+  await withRuntimeGraph(
+    { "package.json": JSON.stringify({ dependencies: { h3: "^2.0.0" } }) },
+    async (root) => {
+      const project = await withoutNodePath(() => detectProject(root));
+
+      expect(project.runtimeGraph?.packages.h3).toMatchObject({
+        state: "unknown",
+        owner: "project",
+        declaration: "^2.0.0",
+      });
+      expect(project.runtimeGraph?.packages.h3?.version).toBeUndefined();
+    },
+  );
+});
+
 /** pnpm points NODE_PATH at its hoisted store, which would resolve fixture packages Doctor must not find. */
 async function withoutNodePath<T>(run: () => Promise<T>): Promise<T> {
   const saved = process.env.NODE_PATH;

@@ -1,3 +1,4 @@
+import { h3RulePack } from "../../../src/rule-packs/h3/index.js";
 import { nitroRulePack } from "../../../src/rule-packs/nitro/index.js";
 import { typescriptRulePack } from "../../../src/rule-packs/typescript/index.js";
 import { nextTick, ref } from "vue";
@@ -99,6 +100,7 @@ test("rule source exposes canonical docs paths and framework counts", () => {
   expect(reports.nuxt.rules.length).toBe(
     reports.vue.rules.length +
       reports.nitro.rules.length +
+      reports.h3.rules.length +
       reports.all.rules.filter((rule) => rule.framework === "nuxt").length,
   );
 });
@@ -112,9 +114,9 @@ test("selected rules expose official upstream documentation anchors", () => {
     "nuxt-image/require-alt": "https://image.nuxt.com/usage/nuxt-img#alt",
     "vite/assets/no-public-src-import": "https://vite.dev/guide/assets.html#the-public-directory",
     "vue/reactivity/no-ref-as-operand": "https://vuejs.org/api/reactivity-core.html#ref",
-    "nitro/request/prefer-assert-method":
+    "h3/request/prefer-assert-method":
       "https://h3.dev/utils/request#assertmethodevent-expected-allowhead",
-    "nitro/request/prefer-validated-body":
+    "h3/request/prefer-validated-body":
       "https://h3.dev/utils/request#readvalidatedbodyevent-validate",
   });
 });
@@ -372,6 +374,7 @@ test("rules navigation keeps framework overview pages above category groups", ()
     "Vue",
     "Vite",
     "Nitro",
+    "H3",
     "Pinia",
     "MCP",
     "Package",
@@ -392,6 +395,8 @@ test("rules navigation keeps framework overview pages above category groups", ()
     "Installation",
     "Nitro rules",
     "Installation",
+    "H3 rules",
+    "Installation",
     "Pinia rules",
     "Installation",
     "MCP rules",
@@ -408,7 +413,7 @@ test("rules navigation keeps framework overview pages above category groups", ()
 
   expect(
     appendRulesNavigation([{ title: "CLI", path: "/cli" }], navigation).map((item) => item.title),
-  ).toEqual(["CLI", "TypeScript", "Nuxt", "Vue", "Vite", "Nitro", "Pinia", "MCP", "Package"]);
+  ).toEqual(["CLI", "TypeScript", "Nuxt", "Vue", "Vite", "Nitro", "H3", "Pinia", "MCP", "Package"]);
 });
 
 test("rule examples do not reuse generic placeholders", () => {
@@ -419,7 +424,7 @@ test("rule examples do not reuse generic placeholders", () => {
         return (
           (pair.includes("props.count++") && pair.includes("defineModel")) ||
           (rule.id !== "nitro/server/prefer-event-fetch" &&
-            !rule.id.startsWith("nitro/request/prefer-validated-") &&
+            !rule.id.startsWith("h3/request/prefer-validated-") &&
             pair.includes("readBody(event)") &&
             pair.includes("readValidatedBody(event")) ||
           (pair.includes("const route = useRoute()") &&
@@ -439,9 +444,7 @@ test("rule rationales describe the diagnosed behavior", () => {
     "Vue and Nuxt reactivity depends on stable references and serializable state.";
 
   expect(rules.filter((rule) => rule.why.includes(placeholder))).toEqual([]);
-  expect(rules.find((rule) => rule.id === "nitro/request/prefer-assert-method")?.why).toContain(
-    "405",
-  );
+  expect(rules.find((rule) => rule.id === "h3/request/prefer-assert-method")?.why).toContain("405");
   expect(rules.find((rule) => rule.id === "vite/env/no-broad-env-prefix")?.why).toContain(
     "import.meta.env",
   );
@@ -499,10 +502,11 @@ test("authorization review generates its Rule Catalog and Diagnostic Reference",
   );
 });
 
-test("documents every Nitro rule and the HTTP masking diagnostic", () => {
+test("documents every Nitro and H3 rule and the HTTP masking diagnostic", () => {
   const ids = getRuleDocuments().map((rule) => rule.id);
-  for (const rule of nitroRulePack.rules) expect(ids).toContain(rule.meta.id);
-  expect(
-    getDiagnosticDocuments().find((diagnostic) => diagnostic.code === "NITRO0018")?.ruleId,
-  ).toBe("nitro/h3/no-http-error-masking");
+  for (const rule of [...nitroRulePack.rules, ...h3RulePack.rules])
+    expect(ids).toContain(rule.meta.id);
+  expect(getDiagnosticDocuments().find((diagnostic) => diagnostic.code === "H30004")?.ruleId).toBe(
+    "h3/errors/no-http-error-masking",
+  );
 });

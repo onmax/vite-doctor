@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
+import { Module } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -260,12 +261,12 @@ useRoute();
       expect(nuxt.output).toContain("nuxt/routing/prefer-nuxt-useroute");
 
       const nitro = await runCli(
-        [".", "--rules", "nitro/request/prefer-get-request-ip", "--max-warnings", "0"],
+        [".", "--rules", "h3/request/prefer-get-request-ip", "--max-warnings", "0"],
         root,
       );
       expect(nitro.code).toBe(1);
       expect(nitro.output).toContain("Detected: Nuxt");
-      expect(nitro.output).toContain("nitro/request/prefer-get-request-ip");
+      expect(nitro.output).toContain("h3/request/prefer-get-request-ip");
     },
   );
 });
@@ -1176,7 +1177,7 @@ test("installed Nitro 2 and H3 v1 activate only their generation of runtime conf
         [
           ".",
           "--rules",
-          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,nitro/h3/prefer-with-base",
+          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,h3/migration/prefer-with-base",
           "--format",
           "json",
           "--no-cache",
@@ -1190,7 +1191,7 @@ test("installed Nitro 2 and H3 v1 activate only their generation of runtime conf
       expect(codes).toContain("NITRO0008");
       expect(codes).not.toContain("NITRO0013");
       expect(codes).not.toContain("NITRO0014");
-      expect(codes).not.toContain("NITRO0017");
+      expect(codes).not.toContain("H30003");
     },
   );
 });
@@ -1249,7 +1250,7 @@ export default defineHandler((event) => {
         [
           ".",
           "--rules",
-          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,nitro/h3/no-removed-send,nitro/h3/prefer-redirect-response,nitro/h3/prefer-with-base",
+          "nitro/runtime/require-event-runtime-config-in-server,nitro/runtime/no-event-runtime-config-in-server,nitro/migration/no-v2-imports,h3/migration/no-removed-exports,h3/migration/prefer-redirect-response,h3/migration/prefer-with-base",
           "--format",
           "json",
           "--no-cache",
@@ -1261,7 +1262,7 @@ export default defineHandler((event) => {
       );
 
       expect(codes).toEqual(
-        expect.arrayContaining(["NITRO0013", "NITRO0014", "NITRO0015", "NITRO0016", "NITRO0017"]),
+        expect.arrayContaining(["NITRO0013", "NITRO0014", "H30001", "H30002", "H30003"]),
       );
       expect(
         JSON.parse(result.output).diagnostics.find(
@@ -1358,8 +1359,8 @@ export default defineEventHandler((event) => {
         expect.arrayContaining([
           "NITRO0013",
           "NITRO0014",
-          "NITRO0015",
-          "NITRO0017",
+          "H30001",
+          "H30003",
           "NUXT0021",
           "NUXT0073",
         ]),
@@ -1405,8 +1406,9 @@ export default defineNuxtConfig({
 
       expect(configChange).toMatchObject({
         to: "future.compatibilityVersion: 5",
-        instruction:
+        instruction: expect.stringContaining(
           "Verify that the effective future.compatibilityVersion resolves to 5; Doctor could not prove it from the composed Nuxt config.",
+        ),
       });
       expect(report.summary.errors).toBe(0);
       expect(JSON.parse(formatMigrationReport(report, "agent")).status).toBe("findings");
@@ -1471,6 +1473,724 @@ test("migrate rejects Nitro targets outside Nuxt and Nitro projects", async () =
       });
     },
   );
+});
+
+const h3RedirectHandler = `import { send, sendRedirect } from "h3"
+export default defineEventHandler((event) => {
+  if (event.path === "/old") return sendRedirect(event, "/new")
+  return send(event, "ok")
+})
+`;
+
+test.each([false, true])(
+  "Nitro migration leaves Nuxt-owned Nitro inactive (standalone sibling: %s)",
+  async (standalone) => {
+    const runtime = nuxtRuntimeFixture({ nuxt: "4.7.0", nitro: "2.13.1", h3: "1.15.11" });
+    const sibling = nitroRuntimeFixture({ nitro: "2.13.1", h3: "1.15.11" });
+    await withFixture(
+      {
+        ...runtime,
+        "package.json": JSON.stringify({
+          ...JSON.parse(runtime["package.json"]),
+          workspaces: ["packages/*"],
+        }),
+        "nuxt.config.ts": "export default defineNuxtConfig({})",
+        "server/api/redirect.ts": h3RedirectHandler,
+        ...(standalone
+          ? Object.fromEntries(
+              Object.entries({
+                ...sibling,
+                "server/api/redirect.ts": h3RedirectHandler,
+              }).map(([path, contents]) => [`packages/api/${path}`, contents]),
+            )
+          : {}),
+      },
+      async (root) => {
+        const result = await runCli(["migrate", ".", "--to", "nitro@3", "--format", "agent"], root);
+        expect(result.code, result.output).toBe(3);
+        const report = JSON.parse(result.output);
+        const stage = report.stages[1];
+        expect(
+          stage.diagnostics
+            .filter((item: { code: string }) => item.code === "H30001")
+            .map((item: { file: string }) => item.file),
+        ).toEqual(standalone ? ["packages/api/server/api/redirect.ts"] : []);
+        expect(stage.changes.map((item: { file: string }) => item.file)).toEqual(
+          standalone ? ["packages/api/package.json"] : [],
+        );
+        expect(report.status).toBe("incomplete");
+        expect(report.target.blockedScopes).toEqual([
+          { root: ".", instruction: expect.stringContaining("Nuxt manages Nitro") },
+        ]);
+        expect(formatMigrationReport(report)).toContain(
+          "Migration blocked in .: Nuxt manages Nitro",
+        );
+        expect(
+          report.stages[2].checks.some(({ id }: { id: string }) => id === "install-target"),
+        ).toBe(standalone);
+      },
+    );
+  },
+);
+
+test.each([
+  { scenario: "app opt-in", modern: true, needsExplicitImports: true },
+  { scenario: "explicit legacy shim", modern: true, config: "{ nitroLegacy: true }" },
+  { scenario: "selective legacy shim", modern: true, config: "{ nitroLegacy: { h3: true } }" },
+  {
+    scenario: "legacy imports disabled",
+    modern: true,
+    config: "{ nitroLegacy: { imports: false } }",
+    needsExplicitImports: true,
+  },
+  {
+    scenario: "experimental imports off with default legacy settings",
+    modern: true,
+    config: "{ experimental: { nitroAutoImports: false } }",
+    importsOff: true,
+    dropsDefaultShim: true,
+  },
+  {
+    scenario: "legacy imports override experimental off",
+    modern: true,
+    config: "{ nitroLegacy: true, experimental: { nitroAutoImports: false } }",
+  },
+  {
+    scenario: "both import switches off",
+    modern: true,
+    config: "{ nitroLegacy: { imports: false }, experimental: { nitroAutoImports: false } }",
+    importsOff: true,
+  },
+  {
+    scenario: "H3 shim off with auto-imports enabled",
+    modern: true,
+    config: "{ nitroLegacy: { h3: false }, experimental: { nitroAutoImports: true } }",
+    h3ShimOff: true,
+  },
+  { scenario: "workspace opt-in", workspace: true, modern: true, needsExplicitImports: true },
+  { scenario: "missing builder", missing: true },
+  { scenario: "app nitropack", workspace: true, appLegacy: true },
+  { scenario: "both at workspace root", workspace: true, rootLegacy: true },
+  { scenario: "optional-only nitro", optional: true },
+  { scenario: "explicit Nitro 2", config: "{ _nitroMajor: 2 }" },
+  { scenario: "explicit Vite", config: '{ server: { builder: "vite" } }' },
+  { scenario: "computed builder", config: "{ server: { builder: process.env.BUILDER } }" },
+])(
+  "Nitro migration checks the effective builder ($scenario)",
+  async ({
+    workspace,
+    modern: usesModern,
+    missing,
+    appLegacy,
+    rootLegacy,
+    optional,
+    config,
+    importsOff,
+    needsExplicitImports,
+    h3ShimOff,
+    dropsDefaultShim,
+  }) => {
+    const nitro = "3.0.261103-rc";
+    const legacy = "node_modules/nuxt/node_modules/@nuxt/nitro-server";
+    const modern = "node_modules/nuxt/node_modules/@nuxt/nitro-v3-server";
+    const appRoot = workspace ? "apps/web/" : "";
+    const native = `${appRoot}server/api/native.ts`;
+    const shimmed = `${appRoot}server/api/shimmed.ts`;
+    const auto = `${appRoot}server/api/auto.ts`;
+    const cors = `${appRoot}server/api/cors.ts`;
+    const redirect = `${appRoot}server/api/native-redirect.ts`;
+    const hooksWithKnownAPI = h3ShimOff ? [native, native, shimmed] : [native];
+    const hook = `export default defineEventHandler({ handler: () => "ok", onBeforeResponse: () => {} })`;
+    await withFixture(
+      {
+        "package.json": JSON.stringify(
+          workspace
+            ? {
+                workspaces: ["apps/*"],
+                devDependencies: { nitro, ...(rootLegacy ? { nitropack: "2.13.1" } : {}) },
+              }
+            : {
+                dependencies: { nuxt: "4.7.0", vue: "3.5.18", ...(!optional ? { nitro } : {}) },
+                ...(optional ? { optionalDependencies: { nitro } } : {}),
+              },
+        ),
+        ...(appRoot
+          ? {
+              [`${appRoot}package.json`]: JSON.stringify({
+                dependencies: {
+                  nuxt: "4.7.0",
+                  vue: "3.5.18",
+                  ...(appLegacy ? { nitropack: "2.13.1" } : {}),
+                },
+              }),
+            }
+          : {}),
+        [`${appRoot}nuxt.config.ts`]: `export default defineNuxtConfig(${config ?? "{}"})`,
+        [native]: `import { defineEventHandler } from "nitro/h3"
+import { defineEventHandler as legacyHandler } from "h3"
+export const legacy = legacyHandler({ handler: () => "ok", onBeforeResponse: () => {} })
+${hook}`,
+        [shimmed]: `import { defineEventHandler } from "h3"\n${hook}`,
+        [auto]: `${hook}\nexport const notFound = () => createError(404)\nexport const auto = defineEventHandler(() => { redirect("/new") })`,
+        ...(importsOff
+          ? {
+              [`${appRoot}server/api/custom-error.ts`]: `import { defineEventHandler } from "nitro/h3"
+export default defineEventHandler(() => createError(404))`,
+              [`${appRoot}server/utils/custom.ts`]: `export function createError(status: number) {
+  return new Response("custom", { status })
+}`,
+            }
+          : {}),
+        [cors]: `import type { H3Event } from "nitro/h3"
+export default defineEventHandler((event: H3Event) => {
+  if (handleCors(event, {})) return
+  return "ok"
+})`,
+        [redirect]: `import type { H3Event } from "h3"
+import { defineEventHandler, redirect } from "nitro/h3"
+export default defineEventHandler((_event: H3Event) => { redirect("/new") })`,
+        "node_modules/nuxt/package.json": JSON.stringify({
+          name: "nuxt",
+          version: "4.7.0",
+          dependencies: { "@nuxt/nitro-server": "4.7.0", "@nuxt/nitro-v3-server": "4.7.0" },
+        }),
+        [`${legacy}/package.json`]: JSON.stringify({
+          name: "@nuxt/nitro-server",
+          version: "4.7.0",
+          dependencies: { nitropack: "2.13.1" },
+        }),
+        [`${legacy}/node_modules/nitropack/package.json`]: JSON.stringify({
+          name: "nitropack",
+          version: "2.13.1",
+          dependencies: { h3: "1.15.11" },
+        }),
+        [`${legacy}/node_modules/nitropack/node_modules/h3/package.json`]: JSON.stringify({
+          name: "h3",
+          version: "1.15.11",
+        }),
+        ...(!missing
+          ? {
+              [`${modern}/package.json`]: JSON.stringify({
+                name: "@nuxt/nitro-v3-server",
+                version: "4.7.0",
+                peerDependencies: { nitro },
+              }),
+            }
+          : {}),
+        "node_modules/nitro/package.json": JSON.stringify({
+          name: "nitro",
+          version: nitro,
+          dependencies: { h3: "2.0.8" },
+        }),
+        "node_modules/nitro/node_modules/h3/package.json": JSON.stringify({
+          name: "h3",
+          version: "2.0.8",
+        }),
+        "node_modules/vue/package.json": JSON.stringify({ name: "vue", version: "3.5.18" }),
+      },
+      async (root) => {
+        const result = await runCli(["migrate", ".", "--to", "nitro@3", "--format", "agent"], root);
+        const report = JSON.parse(result.output);
+        expect(result.code, JSON.stringify(report.target)).toBe(usesModern ? 1 : 3);
+        const scan = await runCli([".", "--no-cache", "--format", "json"], root);
+        const diagnostics = JSON.parse(scan.output).diagnostics;
+        expect(diagnostics.filter((item: { code: string }) => item.code === "H30011")).toEqual(
+          usesModern
+            ? [expect.objectContaining({ location: expect.objectContaining({ path: redirect }) })]
+            : [],
+        );
+        expect(diagnostics.filter((item: { code: string }) => item.code === "H30018")).toEqual(
+          usesModern
+            ? hooksWithKnownAPI.map((path) =>
+                expect.objectContaining({ location: expect.objectContaining({ path }) }),
+              )
+            : [],
+        );
+        if (!h3ShimOff) {
+          expect(diagnostics).not.toContainEqual(
+            expect.objectContaining({
+              code: "NITRO0027",
+              location: expect.objectContaining({ path: shimmed }),
+            }),
+          );
+        }
+        if (usesModern) {
+          expect(diagnostics.some((item: { code: string }) => item.code === "H30014")).toBe(
+            !importsOff,
+          );
+          expect(report.target.blockedScopes).toBeUndefined();
+          expect(
+            report.stages[0].diagnostics.filter((item: { code: string }) => item.code === "H30018"),
+          ).toEqual(hooksWithKnownAPI.map((file) => expect.objectContaining({ file })));
+          expect(report.stages[1].changes).toEqual([]);
+          const migration = await runCli(
+            ["migrate", ".", "--to", "nuxt@5", "--format", "json"],
+            root,
+          );
+          const [source, dependencies] = JSON.parse(migration.output).stages;
+          const compatibilityChange = dependencies.changes.find(
+            (change: { kind: string }) => change.kind === "config",
+          );
+          expect(
+            compatibilityChange.instruction.includes("make server auto-imports explicit"),
+          ).toBe(Boolean(needsExplicitImports));
+          const hooks = (stage: { diagnostics: { code: string; file: string }[] }) =>
+            stage.diagnostics.filter((item) => item.code === "H30018").map((item) => item.file);
+          expect(hooks(source)).toEqual(hooksWithKnownAPI);
+          expect(new Set(hooks(dependencies))).toEqual(
+            new Set(!config || dropsDefaultShim ? [native, shimmed] : []),
+          );
+          expect(report.stages[2].checks).not.toContainEqual(
+            expect.objectContaining({ id: "install-target" }),
+          );
+        } else {
+          expect(report.target.blockedScopes).toEqual([
+            expect.objectContaining({ root: appRoot.slice(0, -1) || "." }),
+          ]);
+          expect(report.stages[0].diagnostics).not.toContainEqual(
+            expect.objectContaining({ code: "H30018" }),
+          );
+          expect(report.stages[1].diagnostics).not.toContainEqual(
+            expect.objectContaining({ code: "H30018" }),
+          );
+        }
+      },
+    );
+  },
+);
+
+test.each([
+  ["nitro@3", nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" })],
+  ["nuxt@5", nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" })],
+] as const)(
+  "migrate --to %s keeps the H3 Rule Pack's v2 migration rules",
+  async (target, files) => {
+    await withFixture({ ...files, "server/api/redirect.ts": h3RedirectHandler }, async (root) => {
+      const result = await runCli(["migrate", ".", "--to", target, "--format", "json"], root);
+      const report = JSON.parse(result.output);
+
+      expect(report.applicability.activated).toEqual(
+        expect.arrayContaining([
+          "h3/migration/no-removed-exports",
+          "h3/migration/prefer-redirect-response",
+        ]),
+      );
+      expect(report.applicability.retained).toContain("h3/errors/no-http-error-masking");
+      expect(
+        report.stages[1].diagnostics
+          .filter((item: { file: string }) => item.file === "server/api/redirect.ts")
+          .map((item: { ruleId: string }) => item.ruleId),
+      ).toEqual(
+        expect.arrayContaining([
+          "h3/migration/no-removed-exports",
+          "h3/migration/prefer-redirect-response",
+        ]),
+      );
+    });
+  },
+);
+
+const h3ServerFiles = (h3: string) => ({
+  "package.json": JSON.stringify({ dependencies: { h3: `^${h3}` } }),
+  "node_modules/h3/package.json": JSON.stringify({ name: "h3", version: h3 }),
+  "src/server.ts": `import { createServer } from "node:http"
+import { createApp, sendRedirect, toNodeListener } from "h3"
+const app = createApp()
+app.use("/old", defineEventHandler((event) => sendRedirect(event, "/new")))
+createServer(toNodeListener(app)).listen(3000)
+`,
+});
+
+test.each([
+  ["explicit", ["--to", "h3@2"]],
+  ["inferred", []],
+] as const)("migrate targets h3@2 for a plain h3 1.x server (%s)", async (source, to) => {
+  await withFixture(h3ServerFiles("1.15.4"), async (root) => {
+    const result = await runCli(["migrate", ".", ...to, "--format", "json"], root);
+    const report = JSON.parse(result.output);
+
+    expect(report.framework).toBe("vite");
+    expect(report.target).toEqual({ source, requested: ["h3@2"], runtime: { h3: "2.0.0-0" } });
+    expect(report.applicability.activated).toEqual(
+      expect.arrayContaining([
+        "h3/migration/no-removed-exports",
+        "h3/migration/prefer-redirect-response",
+      ]),
+    );
+    expect(
+      report.stages[1].diagnostics
+        .filter((item: { file: string }) => item.file === "src/server.ts")
+        .map((item: { code: string }) => item.code),
+    ).toContain("H30002");
+    expect(report.stages[1].changes).toEqual([
+      {
+        kind: "dependency",
+        package: "h3",
+        file: "package.json",
+        from: "1.15.4",
+        to: "h3@2",
+        instruction: "Update h3 from 1.15.4 to h3@2 in package.json.",
+      },
+    ]);
+    expect(report.stages[2].checks.map((check: { id: string }) => check.id)).toContain(
+      "serve-h3-app",
+    );
+  });
+});
+
+test("migrate --to h3@2 proposes the h3 bump in each workspace package that declares h3 1.x", async () => {
+  await withFixture(
+    {
+      ...h3ServerFiles("2.0.8"),
+      "package.json": JSON.stringify({
+        private: true,
+        workspaces: ["packages/*"],
+        dependencies: { h3: "2.0.8" },
+      }),
+      "packages/api/src/server.ts": 'import { send } from "h3"; export { send };',
+      "packages/api/package.json": JSON.stringify({
+        name: "api",
+        dependencies: { h3: "^1.15.4" },
+      }),
+      "packages/api/node_modules/h3/package.json": JSON.stringify({
+        name: "h3",
+        version: "1.15.4",
+      }),
+      "packages/edge/package.json": JSON.stringify({
+        name: "edge",
+        dependencies: { h3: "^2.0.1-rc.26" },
+      }),
+      "packages/edge/node_modules/h3/package.json": JSON.stringify({
+        name: "h3",
+        version: "2.0.1-rc.26",
+      }),
+    },
+    async (root) => {
+      const result = await runCli(["migrate", ".", "--to", "h3@2", "--format", "json"], root);
+      const report = JSON.parse(result.output);
+
+      expect(report.stages[0].diagnostics).not.toContainEqual(
+        expect.objectContaining({ code: "H30001", file: "packages/api/src/server.ts" }),
+      );
+      expect(report.stages[1].diagnostics).toContainEqual(
+        expect.objectContaining({ code: "H30001", file: "packages/api/src/server.ts" }),
+      );
+      expect(report.stages[1].changes).toEqual([
+        expect.objectContaining({
+          package: "h3",
+          file: "packages/api/package.json",
+          from: "1.15.4",
+          to: "h3@2",
+        }),
+      ]);
+    },
+  );
+});
+
+test.each(["nitro@3", "nuxt@5"] as const)(
+  "migrate targets only owning H3 copies alongside %s",
+  async (target) => {
+    const frameworkFiles =
+      target === "nitro@3"
+        ? nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" })
+        : nuxtRuntimeFixture({ nuxt: "4.2.0", nitro: "2.12.0", h3: "1.15.4" });
+    await withFixture(
+      {
+        ...frameworkFiles,
+        "package.json": JSON.stringify({
+          ...JSON.parse(frameworkFiles["package.json"]),
+          workspaces: ["packages/*"],
+        }),
+        "server/api/redirect.ts": h3RedirectHandler,
+        ...Object.fromEntries(
+          Object.entries(h3ServerFiles("1.15.4")).map(([path, contents]) => [
+            `packages/api/${path}`,
+            contents,
+          ]),
+        ),
+        "packages/api/src/server.ts": 'import { send } from "h3"; export { send };',
+      },
+      async (root) => {
+        for (const [to, file] of [
+          [target, "server/api/redirect.ts"],
+          ["h3@2", "packages/api/src/server.ts"],
+        ]) {
+          const result = await runCli(["migrate", ".", "--to", to!, "--format", "json"], root);
+          const report = JSON.parse(result.output);
+          const removed = report.stages
+            .slice(0, 2)
+            .flatMap(
+              (stage: { diagnostics: Array<{ code: string; file: string }> }) => stage.diagnostics,
+            )
+            .filter((item: { code: string }) => item.code === "H30001");
+          expect([...new Set(removed.map((item: { file: string }) => item.file))]).toEqual([file]);
+          expect(report.stages[1].changes).toContainEqual(
+            expect.objectContaining(
+              to === "h3@2" ? { to, file: "packages/api/package.json" } : { to },
+            ),
+          );
+        }
+      },
+    );
+  },
+);
+
+test("Nuxt migration keeps layer source advice without editing the layer manifest or config", async () => {
+  const runtime = nuxtRuntimeFixture({ nuxt: "4.0.0", nitro: "2.12.0", h3: "1.15.4" });
+  await withFixture(
+    {
+      ...runtime,
+      "package.json": JSON.stringify({
+        ...JSON.parse(runtime["package.json"]),
+        workspaces: ["layers/*"],
+      }),
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "layers/shared/package.json": JSON.stringify({ name: "shared-layer" }),
+      "layers/shared/nuxt.config.ts": "export default defineNuxtConfig({})",
+      "layers/shared/server/api/redirect.ts": h3RedirectHandler,
+    },
+    async (root) => {
+      const result = await runCli(["migrate", ".", "--to", "nuxt@5", "--format", "json"], root);
+      const stage = JSON.parse(result.output).stages[1];
+      expect(stage.changes).toEqual([
+        expect.objectContaining({
+          kind: "dependency",
+          to: "nuxt@5",
+          instruction: expect.not.stringContaining("layers/shared"),
+        }),
+        expect.objectContaining({
+          kind: "config",
+          to: "future.compatibilityVersion: 5",
+          instruction: expect.not.stringContaining("layers/shared"),
+        }),
+      ]);
+      expect(stage.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "H30001", file: "layers/shared/server/api/redirect.ts" }),
+      );
+    },
+  );
+});
+
+test("an explicit Nitro run ignores a sibling's missing Nuxt but reports its own missing H3", async () => {
+  const runtime = nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" });
+  await withFixture(
+    {
+      ...runtime,
+      "package.json": JSON.stringify({
+        ...JSON.parse(runtime["package.json"]),
+        workspaces: ["packages/*"],
+      }),
+      "packages/module/package.json": JSON.stringify({
+        devDependencies: { nuxt: "4.0.0", "@nuxt/module-builder": "1.0.0" },
+      }),
+      "packages/module/src/module.ts":
+        'import { defineNuxtModule } from "@nuxt/kit"; export default defineNuxtModule({})',
+      "packages/api/package.json": JSON.stringify({ dependencies: { h3: "2.0.8" } }),
+    },
+    async (root) => {
+      const nodePath = process.env.NODE_PATH;
+      const initPaths = () => (Module as unknown as { _initPaths(): void })._initPaths();
+      delete process.env.NODE_PATH;
+      initPaths();
+      try {
+        const args = [".", "--no-cache", "--no-server", "--format", "json"];
+        const explicit = [...args, "--framework", "nitro"];
+        const missing = await runCli(explicit, root);
+        expect(missing.code, missing.output).toBe(3);
+        expect(missing.output).toContain("DOC0022");
+        expect(missing.output).toContain("packages/api/package.json");
+        expect(missing.output).not.toContain("packages/module/package.json");
+
+        const manifest = join(root, "packages/api/node_modules/h3/package.json");
+        mkdirSync(dirname(manifest), { recursive: true });
+        writeFileSync(manifest, JSON.stringify({ name: "h3", version: "2.0.8" }));
+        const complete = await runCli(explicit, root);
+        expect(complete.code, complete.output).toBe(0);
+        expect(complete.output).not.toContain("DOC0022");
+
+        const automatic = await runCli(args, root);
+        expect(automatic.code, automatic.output).toBe(3);
+        expect(automatic.output).toContain("packages/module/package.json");
+      } finally {
+        if (nodePath !== undefined) process.env.NODE_PATH = nodePath;
+        initPaths();
+      }
+    },
+  );
+});
+
+test("an explicit Nuxt run reports missing Vue in a sibling covered by the Vue Rule Pack", async () => {
+  const runtime = nuxtRuntimeFixture({ nuxt: "4.7.0", nitro: "2.13.1", h3: "1.15.11" });
+  const { "node_modules/vue/package.json": vueManifest, ...files } = runtime;
+  await withFixture(
+    {
+      ...files,
+      "package.json": JSON.stringify({
+        dependencies: { nuxt: "4.7.0" },
+        workspaces: ["packages/*"],
+      }),
+      "node_modules/nuxt/node_modules/vue/package.json": vueManifest,
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "packages/frontend/package.json": JSON.stringify({ dependencies: { vue: "3.5.18" } }),
+      "packages/frontend/src/App.vue": `<script setup>
+defineProps(['modelValue'])
+defineEmits(['update:modelValue'])
+</script>`,
+    },
+    async (root) => {
+      const nodePath = process.env.NODE_PATH;
+      const initPaths = () => (Module as unknown as { _initPaths(): void })._initPaths();
+      delete process.env.NODE_PATH;
+      initPaths();
+      try {
+        const args = [
+          ".",
+          "--framework",
+          "nuxt",
+          "--strict",
+          "--rules",
+          "vue/style/prefer-define-model",
+          "--no-cache",
+          "--no-server",
+          "--format",
+          "json",
+        ];
+        const missing = await runCli(args, root);
+        expect(missing.code, missing.output).toBe(3);
+        expect(JSON.parse(missing.output).status).toBe("incomplete");
+        expect(missing.output).toContain("DOC0022");
+        expect(missing.output).toContain("packages/frontend/package.json");
+        const manifest = join(root, "packages/frontend/node_modules/vue/package.json");
+        mkdirSync(dirname(manifest), { recursive: true });
+        writeFileSync(manifest, vueManifest);
+        const installed = await runCli(args, root);
+        expect(installed.output).toContain("VUE0014");
+        expect(installed.output).not.toContain("DOC0022");
+      } finally {
+        if (nodePath !== undefined) process.env.NODE_PATH = nodePath;
+        initPaths();
+      }
+    },
+  );
+});
+
+test.each(["json", "agent"])("missing nested h3 makes the %s run incomplete", async (format) => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+      "packages/api/package.json": JSON.stringify({ dependencies: { h3: "2.0.8" } }),
+      "packages/api/src/server.ts": 'import { send } from "h3"; export { send };',
+    },
+    async (root) => {
+      const nodePath = process.env.NODE_PATH;
+      const initPaths = () => (Module as unknown as { _initPaths(): void })._initPaths();
+      delete process.env.NODE_PATH;
+      initPaths();
+      try {
+        for (const path of [".", "packages/api"]) {
+          const result = await runCli(
+            [path, "--no-cache", "--no-server", "--format", format],
+            root,
+          );
+          expect(result.code, `${path}: ${result.output}`).toBe(3);
+          expect(JSON.parse(result.output)).toMatchObject({ status: "incomplete" });
+          expect(result.output).toContain("DOC0022");
+          expect(result.output).not.toContain("H30001");
+        }
+      } finally {
+        if (nodePath !== undefined) process.env.NODE_PATH = nodePath;
+        initPaths();
+      }
+    },
+  );
+});
+
+test("workspace reports use owning Nitro and Vue runtimes and avoid mixed-copy H3 advice", async () => {
+  const modern = nitroRuntimeFixture({ nitro: "3.0.0-beta.4", h3: "2.0.8" });
+  const legacy = nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.11" });
+  const files = { "package.json": JSON.stringify({ workspaces: ["packages/*"] }) } as Record<
+    string,
+    string
+  >;
+  for (const [name, fixture] of Object.entries({ modern, legacy, mixed: modern })) {
+    for (const [path, contents] of Object.entries(fixture))
+      files[`packages/${name}/${path}`] = contents;
+    files[`packages/${name}/src/server.ts`] = 'import { send } from "h3"; export { send };';
+  }
+  files["packages/mixed/package.json"] = JSON.stringify({
+    dependencies: { nitropack: "3.0.0-beta.4", h3: "1.15.11" },
+  });
+  files["packages/mixed/node_modules/h3/package.json"] = JSON.stringify({
+    name: "h3",
+    version: "1.15.11",
+  });
+  for (const [name, version] of Object.entries({ web: "3.5.35", components: "3.4.38" })) {
+    files[`packages/${name}/package.json`] = JSON.stringify({ dependencies: { vue: version } });
+    files[`packages/${name}/node_modules/vue/package.json`] = JSON.stringify({
+      name: "vue",
+      version,
+    });
+  }
+  await withFixture(files, async (root) => {
+    const result = await runCli([".", "--no-cache", "--no-server", "--format", "json"], root);
+    const report = JSON.parse(result.output);
+    expect(report.workspacePackages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          root: "packages/modern",
+          runtimes: expect.objectContaining({ h3: expect.objectContaining({ version: "2.0.8" }) }),
+        }),
+        expect.objectContaining({
+          root: "packages/legacy",
+          runtimes: expect.objectContaining({
+            h3: expect.objectContaining({ version: "1.15.11" }),
+          }),
+        }),
+        expect.objectContaining({
+          root: "packages/web",
+          runtimes: expect.objectContaining({
+            vue: expect.objectContaining({ version: "3.5.35" }),
+          }),
+        }),
+        expect.objectContaining({
+          root: "packages/components",
+          runtimes: expect.objectContaining({
+            vue: expect.objectContaining({ version: "3.4.38" }),
+          }),
+        }),
+      ]),
+    );
+    expect(report.diagnostics.filter((item: { code: string }) => item.code === "H30001")).toEqual([
+      expect.objectContaining({
+        location: expect.objectContaining({ path: "packages/modern/src/server.ts" }),
+      }),
+    ]);
+  });
+});
+
+test.each([
+  [
+    "Nitro provides h3",
+    nitroRuntimeFixture({ nitro: "2.12.0", h3: "1.15.4" }),
+    "Nitro provides h3",
+  ],
+  ["h3 is already v2", h3ServerFiles("2.0.1-rc.26"), "h3 is already 2.0.1-rc.26"],
+  [
+    "no package declares h3",
+    { "package.json": JSON.stringify({ dependencies: { vite: "7.0.0" } }) },
+    "do not declare h3",
+  ],
+] as const)("migrate rejects h3@2 when %s", async (_case, files, message) => {
+  await withFixture(files, async (root) => {
+    const result = await runCli(["migrate", ".", "--to", "h3@2", "--format", "json"], root);
+
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.output)).toMatchObject({
+      schema: "vite-doctor.report/v4",
+      status: "failed",
+      error: { message: expect.stringContaining(message) },
+    });
+  });
 });
 
 test("CLI can record and refresh a baseline while retaining new-only findings", async () => {

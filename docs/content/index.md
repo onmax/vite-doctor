@@ -11,7 +11,7 @@ seo:
 #headline
 ::div{class="hero-eyebrow"}
 :img{src="/doctor-icon.png" alt="Doctor" class="hero-logo"}
-Vite, Vue, Nuxt, and Nitro
+Vite, Vue, Nuxt, Nitro, and H3
 ::
 
 #title
@@ -93,7 +93,7 @@ to: /nuxt
 #title
 Frameworks
 #description
-Choose the Nuxt, Vue, Vite, or Nitro guide before opening a rule.
+Choose the Nuxt, Vue, Vite, Nitro, or H3 guide before opening a rule.
 ::::
 
 ::::u-page-card

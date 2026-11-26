@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
-import { preferValidatedRouterParams } from "../../../src/rule-packs/nitro/rules/prefer-validated-router-params.ts";
+import { preferValidatedRouterParams } from "../../../src/rule-packs/h3/rules/prefer-validated-router-params.ts";
 
 for (const framework of ["nitro", "nuxt"] as const) {
   const file = "server/api/users/[id].ts";

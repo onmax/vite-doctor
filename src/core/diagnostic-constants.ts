@@ -8,6 +8,7 @@ export const FINGERPRINT_SCHEME = 4;
 export const RESERVED_DIAGNOSTIC_CODE_PREFIXES: readonly string[] = [
   "DOC",
   "DS",
+  "H3",
   "MCP",
   "NITRO",
   "NUXT",
@@ -31,7 +32,7 @@ export const STRUCTURAL_DIAGNOSTIC_CODES: readonly string[] = [
   "VUE0048",
 ];
 
-const DIAGNOSTIC_CODE_PATTERN = /^([A-Z]+)(\d{4})$/;
+const DIAGNOSTIC_CODE_PATTERN = /^([A-Z][A-Z0-9]*?)(\d{4})$/;
 
 export function diagnosticCodePrefix(code: string): string | undefined {
   return DIAGNOSTIC_CODE_PATTERN.exec(code)?.[1];

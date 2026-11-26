@@ -34,6 +34,7 @@
     "./nuxt": "./dist/nuxt.mjs",
     "./plugin": "./dist/plugin.mjs",
     "./rule-packs/design-system": "./dist/rule-packs/design-system/index.mjs",
+    "./rule-packs/h3": "./dist/rule-packs/h3/index.mjs",
     "./rule-packs/mcp": "./dist/rule-packs/mcp/index.mjs",
     "./rule-packs/nitro": "./dist/rule-packs/nitro/index.mjs",
     "./rule-packs/nitro/rules": "./dist/rule-packs/nitro/rules.mjs",

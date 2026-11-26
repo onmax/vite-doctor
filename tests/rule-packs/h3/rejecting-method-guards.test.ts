@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
-import { preferAssertMethod } from "../../../src/rule-packs/nitro/rules/prefer-assert-method.ts";
+import { preferAssertMethod } from "../../../src/rule-packs/h3/rules/prefer-assert-method.ts";
 
 async function diagnose(body: string, file = "server/middleware/handler.ts") {
   return runRuleFixture({
@@ -37,6 +37,7 @@ test.each([
 test.each([
   'if (getMethod(event) !== "POST") throw createError({ statusCode: 405 })',
   'if (event.method != "POST") { throw createError({ statusCode: 405 }) }',
+  'if (event.req.method !== "POST") throw createError({ statusCode: 405 })',
   'if ("POST" !== event.method) { console.log("rejected"); throw createError({ statusCode: 405 }) }',
   'const method = getMethod(event); if (method !== "POST") throw createError({ statusCode: 405 })',
   'function audit() {} if (event.method !== "POST") throw createError({ statusCode: 405 })',

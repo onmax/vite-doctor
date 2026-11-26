@@ -84,7 +84,7 @@ export async function main(
   addDoctorRunCommand(cli, args, cwd, surface, (code) => (exitCode = code));
   cli
     .command("migrate [path]", "Evaluate source against a future runtime graph.")
-    .option("--to <target>", "Explicit target such as nuxt@5 or nitro@3.")
+    .option("--to <target>", "Explicit target: nuxt@5, nitro@3, or h3@2.")
     .option("--format <format>", "Output: text, json, or agent.")
     .action(async (path = ".", options) => {
       const format = await presentationFormat(options.format, metadataFormats);
@@ -97,7 +97,7 @@ export async function main(
       const { createMigrationReport, formatMigrationReport } = await import("./migration.js");
       const report = await createMigrationReport(root, options.to ? [options.to] : []);
       process.stdout.write(formatMigrationReport(report, format));
-      exitCode = report.summary.errors > 0 ? 1 : 0;
+      exitCode = report.target.blockedScopes?.length ? 3 : report.summary.errors > 0 ? 1 : 0;
     });
   cli
     .command("rules", "List available Doctor rules.")
