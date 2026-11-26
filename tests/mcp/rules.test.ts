@@ -337,51 +337,65 @@ describe("rule details", () => {
   );
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
-    "%s reports undescribed defaults and skips only vacuous size minimums",
+    "%s reports dropped defaults even when the default is false or empty",
     (rule) => {
-      const constrained = object({
-        a: { type: ["string", "null"], default: null },
-        b: { type: "boolean", default: false, description: "Exclude expired rules." },
-        c: { type: "string", default: "", minLength: 1 },
-        d: { type: "array", items: { type: "string" }, default: [], minItems: 1 },
-        e: { type: "object", default: {}, minProperties: 0 },
-        changes: { type: "object", minProperties: 1, description: "Fields to update." },
-        g: { type: "string", minLength: 0 },
-        h: { type: "array", items: { type: "string" }, minItems: 0 },
-      });
-      expect(
-        hits(rule, schema({ ...constrained, required: ["changes"] }))[0]?.affectedPointers,
-      ).toEqual([
-        "/inputSchema/properties/a/default",
-        "/inputSchema/properties/b/default",
-        "/inputSchema/properties/c/default",
-        "/inputSchema/properties/c/minLength",
-        "/inputSchema/properties/d/default",
-        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/d/minItems"] : []),
-        "/inputSchema/properties/e/default",
-        "/inputSchema/properties/changes/minProperties",
+      const undescribed = {
+        owner: { type: ["string", "null"], default: null },
+        archived: {
+          type: ["boolean", "null"],
+          default: false,
+          description: "Filter by archived status.",
+        },
+        query: { type: "string", default: "" },
+        tags: { type: "array", items: { type: "string" }, default: [] },
+        options: { type: "object", default: {} },
+        offset: { type: "integer", default: 0 },
+      };
+      expect(hits(rule, schema(object(undescribed)))[0]?.affectedPointers).toEqual([
+        "/inputSchema/properties/owner/default",
+        "/inputSchema/properties/archived/default",
+        "/inputSchema/properties/query/default",
+        "/inputSchema/properties/tags/default",
+        "/inputSchema/properties/options/default",
+        "/inputSchema/properties/offset/default",
       ]);
       const described = object({
-        a: { type: ["string", "null"], default: null, description: "Defaults to null." },
-        b: { type: "boolean", default: false, description: "Default is false." },
-        c: { type: "string", default: "", description: 'Default: "".' },
-        d: { type: "array", items: { type: "string" }, default: [], description: "Default: []." },
-        e: { type: "object", default: {}, description: "Default: {}." },
-        f: { type: "integer", default: 0, description: "Defaults to 0." },
+        owner: { ...undescribed.owner, description: "Defaults to null." },
+        archived: { ...undescribed.archived, description: "Default is false." },
+        query: { ...undescribed.query, description: 'Default: "".' },
+        tags: { ...undescribed.tags, description: "Default: []." },
+        options: { ...undescribed.options, description: "Default: {}." },
+        offset: { ...undescribed.offset, description: "Defaults to 0." },
       });
       expect(hits(rule, schema(described))).toEqual([]);
-      const strict = object({
-        a: { type: "integer", default: 0 },
-        b: { type: "string", minLength: 2 },
-        c: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 1 },
-      });
-      expect(hits(rule, schema(strict))[0]?.affectedPointers).toEqual([
-        "/inputSchema/properties/a/default",
-        "/inputSchema/properties/b/minLength",
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s reports dropped nonempty bounds but skips size minimums of zero",
+    (rule) => {
+      const bounded = {
+        name: { type: "string", minLength: 1 },
+        tags: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 3 },
+        changes: { type: "object", minProperties: 1, description: "Fields to update." },
+        note: { type: "string", minLength: 0 },
+        labels: { type: "array", items: { type: "string" }, minItems: 0 },
+        options: { type: "object", minProperties: 0 },
+      };
+      const required = { required: ["changes"] };
+      expect(hits(rule, schema(object(bounded, required)))[0]?.affectedPointers).toEqual([
+        "/inputSchema/properties/name/minLength",
         // Codex keeps `minItems`.
-        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/c/minItems"] : []),
-        "/inputSchema/properties/c/maxItems",
+        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/tags/minItems"] : []),
+        "/inputSchema/properties/tags/maxItems",
+        "/inputSchema/properties/changes/minProperties",
       ]);
+      const described = {
+        name: { ...bounded.name, description: "At least 1 character." },
+        tags: { ...bounded.tags, description: "Between 1 and 3 tags." },
+        changes: { ...bounded.changes, description: "Specify at least 1 field to update." },
+      };
+      expect(hits(rule, schema(object(described, required)))).toEqual([]);
     },
   );
 
