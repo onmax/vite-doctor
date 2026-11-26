@@ -597,28 +597,36 @@ function isCustomArbitraryUtility(token: string): boolean {
   const [, utility, value = ""] = match;
   if (utility === "content") return true;
   if (utility === "transition") {
-    const properties = value.split(",").map((property) => property.replace(/^_+|_+$/g, ""));
-    return (
-      properties.length > 1 &&
-      properties.every((property) => /^-?[a-z][\w-]*$/i.test(property)) &&
-      properties.some((property) => !namedTransitionProperties.has(property.toLowerCase()))
+    const properties = value
+      .split(",")
+      .map((property) => property.replace(/^_+|_+$/g, ""))
+      .map((property) => (property.startsWith("--") ? property : property.toLowerCase()));
+    if (
+      properties.length < 2 ||
+      !properties.every((property) => /^(?:--[\w-]+|-?[a-z][\w-]*)$/i.test(property))
+    )
+      return false;
+    const list = new Set(properties);
+    return !namedTransitionLists.some(
+      (named) => named.size === list.size && [...list].every((property) => named.has(property)),
     );
   }
-  const tracks = value.replace(/\([^()]*\)/g, "()");
-  return (
-    /^.+_.+$/.test(tracks) &&
-    !/^(?:subgrid|none)_/i.test(tracks) &&
-    !/[()[\]\\]/.test(tracks.replaceAll("()", ""))
-  );
+  let tracks = value;
+  while (/\([^()]*\)/.test(tracks)) tracks = tracks.replace(/\([^()]*\)/g, "");
+  return /^.+_.+$/.test(tracks) && !/^(?:subgrid|none)_/i.test(tracks) && !/[()[\]\\]/.test(tracks);
 }
 
-const namedTransitionProperties = new Set(
-  (
-    "all none color background-color border-color outline-color text-decoration-color fill stroke " +
-    "opacity box-shadow transform translate scale rotate filter -webkit-backdrop-filter " +
-    "backdrop-filter display content-visibility overlay pointer-events"
-  ).split(" "),
-);
+const colorTransition =
+  "color background-color border-color outline-color text-decoration-color fill stroke " +
+  "--tw-gradient-from --tw-gradient-via --tw-gradient-to";
+const transformTransition = "transform translate scale rotate";
+// The property lists Tailwind's named `transition-*` utilities emit.
+const namedTransitionLists = [
+  `${colorTransition} opacity box-shadow ${transformTransition} filter -webkit-backdrop-filter ` +
+    "backdrop-filter display content-visibility overlay pointer-events",
+  colorTransition,
+  transformTransition,
+].map((list) => new Set(list.split(" ")));
 
 function hasVocabularyPolicy(options: unknown): boolean {
   const { ruleOptions } = unwrapRuleOptions(options);
@@ -675,6 +683,9 @@ function helperPattern(settings: unknown): RegExp {
 // Every @shadcn/lint finding starts at a class, style, or color attribute (fill, stroke, stop-color,
 // ...), an object key spread into one, a `<style>` element, or a call to a class helper.
 const markupWords = /class|style|fill|stroke|color/i;
+// Escapes and character references decode to names the raw text does not spell, such as
+// `c\u006e(...)` or Vue's `['st&#121;le']`.
+const encodedName = /\\(?:u|x|[0-7])|&(?:#|[a-z][a-z\d]*;)/i;
 // TypeScript parses these without JSX, so only helper calls can hold classes.
 const plainTypeScript = /\.[cm]?ts$/;
 
@@ -683,7 +694,7 @@ const plainTypeScript = /\.[cm]?ts$/;
  * Inline `eslint` comments can change a Rule's options, so files with them are always linted.
  */
 function mayHaveFindings(path: string, text: string, config: ShadcnRuleConfig): boolean {
-  if (!config.helpers || text.includes("eslint")) return true;
+  if (!config.helpers || text.includes("eslint") || encodedName.test(text)) return true;
   if (config.helpers.test(text)) return true;
   return !plainTypeScript.test(path) && markupWords.test(text);
 }

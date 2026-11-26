@@ -172,6 +172,34 @@ test("design-system Rules skip the ESLint parse for files that cannot hold a cla
   ).toEqual(["src/Card.tsx", "src/Card.vue", "src/variants.ts"]);
 });
 
+test("design-system Rules parse files whose escapes or character references spell a class site", async () => {
+  const result = await runProjectFixture({
+    framework: "vue",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: designSystemRules,
+    files: {
+      "src/Spread.tsx":
+        "export const Box = () => <div {...{ ['st\\u0079le']: { width: 100 } }} />;\n",
+      "src/Bound.vue":
+        "<template>\n  <div v-bind=\"{ ['st&#121;le']: { width: 100 } }\" />\n</template>\n",
+      "src/helper.ts": [
+        "declare function c\\u006e(...items: string[]): string;",
+        "export const className = c\\u006e('bg-red-500', 'p-[13px]');",
+        "",
+      ].join("\n"),
+    },
+  });
+
+  expect(
+    result.diagnostics.map((d) => `${d.file.slice(d.file.indexOf("src/"))} ${d.code}`).toSorted(),
+  ).toEqual([
+    "src/Bound.vue DS0004",
+    "src/Spread.tsx DS0004",
+    "src/helper.ts DS0002",
+    "src/helper.ts DS0003",
+  ]);
+});
+
 test("uses Tailwind and Nuxt UI package activation and composed presets", () => {
   expect(designSystemRulePack.activation).toEqual({ packages: ["tailwindcss", "@nuxt/ui"] });
   expect(designSystemRulePack.presets.recommended.toSorted()).toEqual([

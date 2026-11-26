@@ -471,6 +471,7 @@ test("accepts arbitrary grid track lists and transition properties, which have n
     "<template>",
     '  <div class="grid md:grid-cols-[14rem_minmax(0,1fr)] grid-rows-[auto_1fr]" />',
     '  <div class="transition-[width,color] h-[13px]" />',
+    '  <div class="transition-[opacity,transform] transition-[--progress,opacity] grid-cols-[minmax(0,clamp(10rem,20vw,20rem))_1fr]" />',
     '  <div class="transition-[opacity] transition-[transform,translate,scale,rotate] grid-rows-[subgrid] grid-cols-[repeat(2,minmax(0,1fr))]" />',
     "</template>",
     "",
