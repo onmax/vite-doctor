@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build, createServer, type InlineConfig, type Logger, type Plugin } from "vite";
@@ -7,7 +7,7 @@ import { readMcpServers } from "../../src/mcp/evidence.ts";
 import { doctor, type ViteDoctorSurfaceOptions } from "../../src/plugin.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import { defineDoctorExtension } from "../../src/extension.ts";
-import { mcpStubHandler, stubTools } from "../mcp/mcp-stub.ts";
+import { mcpStubHandler, startMcpStub, stubTools } from "../mcp/mcp-stub.ts";
 
 type RunResult = Awaited<ReturnType<typeof runViteDoctor>>;
 const doctorRuns = vi.hoisted(() => [] as Array<Promise<RunResult>>);
@@ -229,4 +229,35 @@ test("dev refreshes project findings as Extension MCP evidence appears and disap
       await server.close();
     }
   });
+});
+
+test("a build report keeps to the Report Budget and names plugin options to see more", async () => {
+  const fixture = JSON.parse(
+    await readFile(new URL("../fixtures/mcp/nuxt.json", import.meta.url), "utf8"),
+  );
+  const stub = await startMcpStub({ tools: fixture.tools });
+  try {
+    await withProject(async (root) => {
+      const { logger, warnings } = captureLogger();
+      await build({
+        ...config(root, logger, {
+          run: "build",
+          extends: ["auto", "mcp/strict"],
+          format: "text",
+          mcp: [{ url: stub.url }],
+        }),
+        build: { write: false, lib: { entry: "entry.ts", formats: ["es"] } },
+      });
+      const report = warnings.find((message) => message.includes("MCP0001"));
+      expect(report).toBeDefined();
+      expect(report!.length).toBeLessThanOrEqual(8000);
+      expect(report).toContain(
+        "More: apply the group's options, or set maxChars: Infinity in the Doctor plugin options",
+      );
+      expect(report).toMatch(/^ {2}more: rules: "mcp\//m);
+      expect(report).not.toContain("vite-doctor .");
+    });
+  } finally {
+    await stub.close();
+  }
 });

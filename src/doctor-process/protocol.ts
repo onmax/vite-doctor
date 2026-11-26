@@ -92,6 +92,7 @@ const VALUE_OPTIONS = new Set([
   "since",
   "baseline",
   "format",
+  "max-chars",
 ]);
 const BOOLEAN_OPTIONS = new Set([
   "changed",
@@ -105,6 +106,7 @@ const BOOLEAN_OPTIONS = new Set([
   "strict",
   "server",
   "no-server",
+  "full",
 ]);
 
 /**

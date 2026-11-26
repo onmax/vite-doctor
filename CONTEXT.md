@@ -112,6 +112,14 @@ _Avoid_: Docs index, rule docs
 The documented list of diagnostic codes and code-specific remediation pages.
 _Avoid_: Error Reference
 
+**Report Budget**:
+The character limit of a text or agent report.
+_Avoid_: truncation, pagination, verbosity
+
+**Progressive Report**:
+A report that prints its head whole, then groups, rows, and detail until the Report Budget, and names the command that shows more.
+_Avoid_: compact mode, summary mode
+
 **Agent Consumer**:
 An AI coding tool that runs Doctor or consumes Doctor reports and uses structured diagnostics to guide remediation.
 _Avoid_: Agent surface
@@ -148,6 +156,7 @@ _Avoid_: Agent surface
 - A **Rule Catalog** documents **Rule Packs** and **Rules**.
 - A **Diagnostic Reference** documents **Diagnostic Codes**.
 - An **Agent Consumer** runs Doctor or consumes Doctor reports; it is not a Doctor surface.
+- Text and agent reports are **Progressive Reports** under a **Report Budget**; JSON and SARIF reports are always complete, and a **Report Budget** never changes a **Doctor Run**.
 
 ## Example Dialogue
 
@@ -159,3 +168,4 @@ _Avoid_: Agent surface
 - "plugin" can mean a Doctor extension, a Vite plugin, or a Nuxt module. Resolved: use **Plugin Surface** for framework/build-tool integrations that run Doctor, **Doctor Extension** for Doctor's internal extension format, and **Rule Pack** for collections of rules.
 - "context" can mean runtime context, domain docs, or execution environment. Resolved: use **Runtime Evidence** for code execution facts and `CONTEXT.md` only for project language.
 - "diagnostic" and "rule" can be confused because a rule often emits one diagnostic condition. Resolved: use **Rule** for the executable policy and **Diagnostic Code** for the stable emitted condition documented at `/diagnostics/CODE`.
+- "incomplete" can mean missing evidence or a report that doesn't show everything. Resolved: an incomplete **Doctor Run** lacks required evidence; what a **Report Budget** leaves out of a **Progressive Report** is hidden.

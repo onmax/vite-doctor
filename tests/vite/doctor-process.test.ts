@@ -75,6 +75,9 @@ test("Doctor process output matches a direct run byte for byte", async () => {
     [".", "--format", "agent", "--changed"],
     [".", "--format", "bogus"],
     [".", "--format", "text", "--severity", "nope"],
+    [".", "--format", "text", "--max-chars", "1200"],
+    [".", "--format", "agent", "--full"],
+    [".", "--format", "json", "--max-chars", "1200"],
   ];
   for (const args of invocations) {
     const direct = await captured(() => main(args, root));
@@ -250,6 +253,9 @@ test("only declarative Doctor Run invocations are served by the Doctor process",
   );
   expect(doctorProcessRoot(["--format", "agent", "--server", "."], root)).toBe(root);
   expect(doctorProcessRoot(["--strict", "."], root)).toBe(root);
+  expect(doctorProcessRoot(["--full", "."], root)).toBe(root);
+  expect(doctorProcessRoot([".", "--max-chars", "2000"], root)).toBe(root);
+  expect(doctorProcessRoot([".", "--max-chars=2000"], root)).toBe(root);
   for (const args of [
     ["--config", "doctor.config.ts"],
     ["--config=doctor.config.ts"],

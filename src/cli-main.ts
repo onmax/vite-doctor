@@ -12,6 +12,7 @@ import {
   reportStatus,
   type CacheStatus,
   type DoctorConfig,
+  type DoctorReportContext,
   type DoctorReportFormat,
   type DoctorRunOptions,
 } from "./core/index.js";
@@ -322,6 +323,11 @@ function addDoctorRunCommand(
     .option("--baseline <file>", "Diagnostic baseline file.")
     .option("--update-baseline", "Write current Diagnostic fingerprints to the baseline file.")
     .option("--format <format>", "Output: text, json, sarif, or agent.")
+    .option(
+      "--max-chars <count>",
+      "Report Budget of text and agent reports in characters (default: 8000).",
+    )
+    .option("--full", "Print the whole text or agent report, without a Report Budget.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
     .option("--host-extensions", hostExtensionsHelp)
     .option(
@@ -350,6 +356,8 @@ function addDoctorRunCommand(
       applyDoctorOptions(runOptions, options);
       applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
+      validateReportBudget(options, format);
+      const report = { cwd, formatFlag: stringFlag(options.format) as DoctorReportFormat };
       const explicitConfig = stringFlag(options.config);
       const declarative = explicitConfig ? undefined : declarativeConfig(root);
       const configFile = explicitConfig ? resolve(root, explicitConfig) : declarative?.file;
@@ -364,7 +372,7 @@ function addDoctorRunCommand(
         return;
       }
       try {
-        setExitCode(await runDoctorCommand(runOptions, format, explicitConfig));
+        setExitCode(await runDoctorCommand(runOptions, format, explicitConfig, report));
       } catch (error) {
         if (configFile && isLoadedConfigValidationError(error, runOptions)) {
           throw createCliConfigError(configFile, error);
@@ -419,11 +427,14 @@ async function watchDoctorCommand(
 async function runDoctorCommand(
   options: DoctorRunOptions,
   format: DoctorReportFormat,
-  configFile?: string,
+  configFile: string | undefined,
+  report: Pick<DoctorReportContext, "cwd" | "formatFlag">,
 ): Promise<number> {
   const { runViteDoctor, shouldFailDoctorRun } = await import("./doctor.js");
   const result = await runViteDoctor(options);
-  process.stdout.write(createReport(result, format, { runOptions: options, configFile }));
+  process.stdout.write(
+    createReport(result, format, { ...report, runOptions: options, configFile }),
+  );
   if (reportStatus(result) === "incomplete") return 3;
   return shouldFailDoctorRun(result, options.maxWarnings) ? 1 : 0;
 }
@@ -521,7 +532,7 @@ async function writeCliError(
     process.stdout.write(
       `${JSON.stringify(
         {
-          schema: format === "agent" ? "vite-doctor.agent/v2" : "vite-doctor.report/v4",
+          schema: format === "agent" ? "vite-doctor.agent/v3" : "vite-doctor.report/v4",
           status: "failed",
           error: { kind: failure.kind, message, file: failure.file, code: failure.code },
           next:
@@ -566,6 +577,20 @@ async function writeCliError(
 
 function isDirectory(path: string): boolean {
   return Boolean(statSync(path, { throwIfNoEntry: false })?.isDirectory());
+}
+
+function validateReportBudget(flags: Record<string, unknown>, format: DoctorReportFormat): void {
+  if (flags.maxChars === undefined) return;
+  if (flags.full) throw new Error("--full cannot be combined with --max-chars.");
+  if (format === "json" || format === "sarif") {
+    throw new Error(
+      `--max-chars applies to text and agent reports; ${format} reports are always complete.`,
+    );
+  }
+  const maxChars = Number(flags.maxChars);
+  if (!Number.isInteger(maxChars) || maxChars < 1) {
+    throw new Error("--max-chars must be a positive integer.");
+  }
 }
 
 function validateCliRunOptions(options: DoctorRunOptions): void {

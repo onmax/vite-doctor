@@ -39,6 +39,8 @@ test.each([
     "agent",
   ];
   expect(result.commandArgs.rerun).toEqual(args);
+  expect(result.commandArgs.more).toEqual(args);
+  expect(result.commandArgs.full).toEqual([...args.slice(0, -2), "--full", "--format", "agent"]);
   expect(result.commandArgs.verify).toEqual([
     ...args.slice(0, -2),
     "--rules",
@@ -93,7 +95,7 @@ test.skipIf(process.platform === "win32")(
   () => {
     const presets = ["custom/a'b", "custom/$DOCTOR_TEST_VALUE", "custom/a;b"];
     const result = report("main", presets);
-    for (const name of ["explain", "verify", "rerun"]) {
+    for (const name of ["explain", "verify", "rerun", "more", "full"]) {
       const capture = spawnSync(
         "sh",
         ["-c", `set -- ${result.commands[name]}; printf '%s\\n' "$@"`],

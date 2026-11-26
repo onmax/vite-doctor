@@ -111,6 +111,13 @@ export interface Diagnostic {
    * as is, and the cache stores it as JSON. `ctx.report` validates and copies the payload.
    */
   data?: Record<string, unknown>;
+  /**
+   * What the Diagnostic is about when it has no source location, such as the MCP tool a server
+   * sent. Reports show it in place of the project root.
+   */
+  subject?: string;
+  /** The Rule's one-line summary of this Diagnostic, shown on its row in a Progressive Report. */
+  brief?: string;
   fixGroupId?: string;
   analysisPhase?: ExecutionKind;
   cacheHit?: boolean;
@@ -1471,6 +1478,8 @@ export interface DoctorRunResult {
   };
   diagnostics: Diagnostic[];
   suppressedDiagnostics?: Diagnostic[];
+  /** `meta.title` of each Rule that reported a Diagnostic, keyed by Rule ID. */
+  ruleTitles?: Record<string, string>;
   fixes?: {
     files: number;
     edits: number;
