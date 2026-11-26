@@ -16,9 +16,9 @@ const catalog = JSON.parse(
   ),
 ) as { aiAgentVar: string; agents: Array<{ match: Condition }> };
 
-const markers = new Set<string>([catalog.aiAgentVar]);
+export const agentMarkers = new Set<string>([catalog.aiAgentVar]);
 const collect = (condition: Condition): void => {
-  if (condition.name && condition.name !== "PATH") markers.add(condition.name);
+  if (condition.name && condition.name !== "PATH") agentMarkers.add(condition.name);
   condition.conditions?.forEach(collect);
 };
 for (const agent of catalog.agents) collect(agent.match);
@@ -28,7 +28,7 @@ for (const agent of catalog.agents) collect(agent.match);
  * Reader inside an agent, in CI, or in a terminal. Undo with `vi.unstubAllEnvs()`.
  */
 export function stubReaderEnv(env: Record<string, string | undefined>): void {
-  for (const name of markers) vi.stubEnv(name, undefined);
+  for (const name of agentMarkers) vi.stubEnv(name, undefined);
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
 }
 
