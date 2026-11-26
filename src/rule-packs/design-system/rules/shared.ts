@@ -49,6 +49,7 @@ export function createDesignSystemRule(options: {
       const diagnostic = diagnosticForCode(diagnostics, code);
       if (!code || !diagnostic) throw doctorInternalDiagnostics.DOC0013({ ruleId: options.id });
       const templates = (await loadShadcnLint()).templates[options.rule] ?? {};
+      const bomOffset = ctx.file.text.startsWith("\uFEFF") ? 1 : 0;
       for (const message of messages) {
         const suggested = message.suggestions?.[0];
         ctx.report(
@@ -58,14 +59,17 @@ export function createDesignSystemRule(options: {
             severity: ctx.severity,
             category: "ui",
             file: ctx.file.path,
-            range: lintRange(ctx.file.text, message),
+            range: lintRange(ctx.file.text, message, bomOffset),
             fix: suggested
               ? {
                   kind: "suggestion",
                   message: suggested.desc,
                   edits: [
                     {
-                      range: { start: suggested.fix.range[0], end: suggested.fix.range[1] },
+                      range: {
+                        start: suggested.fix.range[0] + bomOffset,
+                        end: suggested.fix.range[1] + bomOffset,
+                      },
                       text: suggested.fix.text,
                     },
                   ],
@@ -189,6 +193,7 @@ function verify(
   ctx: RuleContext,
   batch: ShadcnRuleConfig[],
 ): Linter.LintMessage[] {
+  const filenames = { filename: ctx.file.relativePath, physicalFilename: ctx.file.path };
   const messages = lint.linter.verify(
     file.sourceCode ?? ctx.file.text,
     [
@@ -205,7 +210,7 @@ function verify(
         rules: Object.fromEntries(batch.map((rule) => [rule.name, rule.entry])),
       },
     ],
-    { filename: ctx.file.relativePath },
+    filenames,
   );
   return messages;
 }
@@ -234,17 +239,22 @@ function stableKey(value: unknown): string {
   }
 }
 
-function lintRange(source: string, message: Linter.LintMessage) {
-  let offset = 0;
+function lintRange(source: string, message: Linter.LintMessage, bomOffset: number) {
+  let offset = bomOffset;
   for (let line = 1; line < message.line; line++) offset = source.indexOf("\n", offset) + 1;
   const start = Math.max(0, offset + message.column - 1);
   const end = message.endLine
     ? (() => {
-        let endOffset = 0;
+        let endOffset = bomOffset;
         for (let line = 1; line < message.endLine; line++)
           endOffset = source.indexOf("\n", endOffset) + 1;
         return endOffset + message.endColumn! - 1;
       })()
     : start;
-  return { start, end, line: message.line, column: message.column };
+  return {
+    start,
+    end,
+    line: message.line,
+    column: message.column + (message.line === 1 ? bomOffset : 0),
+  };
 }

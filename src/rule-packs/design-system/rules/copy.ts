@@ -129,7 +129,10 @@ export const designSystemMessageCopy: Record<string, Record<string, MessageCopy>
 };
 
 function nearest(list: string, noun: string): string {
-  const items = list.split(", ").map((item) => `"${item}"`);
+  const items = list.split(", ").map((item) => {
+    const measured = noun === "scale value" && /^(.*)( \(-?[\d.]+px\))$/.exec(item);
+    return measured ? `"${measured[1]}"${measured[2]}` : `"${item}"`;
+  });
   return items.length === 1
     ? `${items[0]}, the nearest ${noun}`
     : `one of the nearest ${noun}s: ${items.join(", ")}`;
@@ -187,7 +190,7 @@ export function designSystemCopy(
   const template = id ? templates[id] : undefined;
   const parsed = template === undefined ? undefined : parseTemplate(template);
   const match = parsed?.matcher.exec(message.message);
-  // A custom `message` option or settings note replaces the upstream text and drops its messageId.
+  // A custom `message` option or settings note drops the messageId, so the rendered text is opaque.
   if (!copy || copy === suggestion || !parsed || !match) return customCopy(message, docsUrl);
   const data: MessageData = { ...match.groups };
   // ESLint keeps a suggestion's data on the message, though its types omit it.
@@ -200,11 +203,10 @@ export function designSystemCopy(
 }
 
 function customCopy(message: Linter.LintMessage, docsUrl: string): { why: string; fix: string } {
-  const text = message.message.trim();
-  const cut = text.search(/[.?] /);
-  const remedy = cut === -1 ? "" : text.slice(cut + 2);
-  return {
-    why: cut === -1 ? text : text.slice(0, cut + 1),
-    fix: message.suggestions?.[0]?.desc ?? (remedy || `Resolve it as ${docsUrl} describes.`),
-  };
+  const why = message.message.trim();
+  const normalizedWhy = why.replace(/\s+/g, " ");
+  const suggested = message.suggestions?.[0]?.desc.trim();
+  if (suggested && suggested.replace(/\s+/g, " ") !== normalizedWhy) return { why, fix: suggested };
+  const remedy = `Resolve it as ${docsUrl} describes.`;
+  return { why, fix: normalizedWhy === remedy ? `Review the examples at ${docsUrl}.` : remedy };
 }
