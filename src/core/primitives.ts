@@ -568,8 +568,8 @@ export interface ProjectInfo {
   /** Explicit framework selection, as distinct from the detected primary framework. */
   requestedFramework?: DoctorFramework;
   /**
-   * The run root has no package.json, workspace, or framework config, and no framework was
-   * requested, so `framework` is Doctor's fallback rather than a detected project. When Runtime
+   * The run root has no package.json, workspace, framework config, TypeScript config, or source,
+   * and no framework was requested, so `framework` is Doctor's fallback. When Runtime
    * Evidence activates a Rule Pack, that evidence is what the run checks.
    */
   noProject?: true;

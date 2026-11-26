@@ -313,8 +313,9 @@ function textLayout(
   const total = result.diagnostics.length;
   const codes = new Set(groups.map((group) => group.code)).size;
   const plugin = context.surface === "plugin";
-  const projectPath = context.cwd ? relative(context.cwd, result.root) || "." : ".";
+  const projectPath = context.cwd ? relative(context.cwd, result.root) || "." : undefined;
   const commandRoot =
+    projectPath === undefined ||
     projectPath === "." ||
     projectPath === ".." ||
     projectPath.startsWith("../") ||
@@ -1132,9 +1133,8 @@ function runArguments(
   context: DoctorReportContext,
   command: RunCommand,
 ): string[] {
-  // A run without a project checked only its MCP servers, which need no project path or framework.
   const args = mcpSubject(result)
-    ? ["vite-doctor"]
+    ? ["vite-doctor", command.root ?? result.root]
     : ["vite-doctor", command.root ?? ".", "--framework", agentFramework(result, context)];
   if (result.scope.mode === "changed") {
     if (result.scope.base) args.push("--since", result.scope.base);

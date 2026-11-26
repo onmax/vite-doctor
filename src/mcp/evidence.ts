@@ -147,6 +147,7 @@ async function readServer(
   try {
     const list = await fetchMcpToolList(url, {
       headers,
+      maxPages: 50,
       clientInfo: { name: "vite-doctor", version: viteDoctorVersion },
       ...options,
     });
