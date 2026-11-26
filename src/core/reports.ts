@@ -1,5 +1,5 @@
 import { isAbsolute, relative } from "pathe";
-import { isMcpHeaderName, mcpEndpointLabel, parseMcpEndpoint } from "@loadsheet/mcp";
+import { isMcpHeaderName, mcpEndpointLabel } from "@loadsheet/mcp";
 import pc from "picocolors";
 import { formatDiagnostic } from "nostics";
 import type {
@@ -1164,7 +1164,8 @@ function runArguments(
   ] as const) {
     if (value !== undefined) args.push(flag, String(value));
   }
-  for (const target of options?.mcp ?? []) args.push("--mcp-url", commandMcpUrl(target.url));
+  for (let index = 0; index < (options?.mcp?.length ?? 0); index++)
+    args.push("--mcp-url", REDACTED);
   for (const name of Object.keys(options?.mcp?.[0]?.headers ?? {}))
     if (isMcpHeaderName(name)) args.push("--mcp-header", `${name}: ${REDACTED}`);
   if (options?.newOnly) args.push("--new-only");
@@ -1177,21 +1178,7 @@ function runArguments(
 
 const REDACTED = "<redacted>";
 const REDACTED_NOTE =
-  "Doctor never prints --mcp-header values, or the credentials and query values of an --mcp-url, because they can carry secrets. Replace each <redacted> with the value you ran with.";
-
-/**
- * The `--mcp-url` a command repeats: the endpoint as passed, with URL credentials and query
- * values redacted. The fragment never reaches the server, so it is dropped.
- */
-function commandMcpUrl(value: string): string {
-  const url = parseMcpEndpoint(value);
-  if (!url) return REDACTED;
-  const credentials = url.username || url.password ? `${REDACTED}@` : "";
-  const query = [...url.searchParams.keys()]
-    .map((name) => `${encodeURIComponent(name)}=${REDACTED}`)
-    .join("&");
-  return `${url.protocol}//${credentials}${url.host}${url.pathname}${query ? `?${query}` : ""}`;
-}
+  "Doctor redacts --mcp-url and --mcp-header values in rerun commands because they can carry secrets. Replace each <redacted> with the value you ran with.";
 
 // Workspace runs derive Rule Packs from every workspace package, which pinning the resolved
 // framework would replace with that framework's packs alone.

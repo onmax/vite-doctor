@@ -114,12 +114,9 @@ test("malformed tool lists leave a gap without exposing the request URL", async 
     runOptions: { root, mcp: [{ url, headers: { "invalid fake-secret": "value" } }] },
   });
   expect(JSON.parse(report).commandArgs.rerun).toEqual(
-    expect.arrayContaining([
-      "--mcp-url",
-      "https://<redacted>@example.test/path-secret?token=<redacted>",
-    ]),
+    expect.arrayContaining(["--mcp-url", "<redacted>"]),
   );
-  expect(report).not.toMatch(/query-secret|fragment-secret|password|fake-secret/);
+  expect(report).not.toMatch(/path-secret|query-secret|fragment-secret|password|fake-secret/);
   expect(JSON.stringify(result.project.runtimeEvidence)).not.toMatch(
     /path-secret|query-secret|fragment-secret|password/,
   );
@@ -408,7 +405,7 @@ test("--mcp-url and --mcp-header repeat, and every header goes to every URL", as
     expect(request.headers.authorization).toBe("Bearer secret");
     expect(request.headers["x-team"]).toBe("drops");
   }
-  expect(output).not.toMatch(/query-secret|Bearer secret|X-Team: drops/);
+  expect(output).not.toMatch(/path-secret|query-secret|Bearer secret|X-Team: drops/);
   const report = JSON.parse(output) as {
     commandArgs: { rerun: string[] };
     placeholders: Record<string, string>;
@@ -419,9 +416,9 @@ test("--mcp-url and --mcp-header repeat, and every header goes to every URL", as
     "--framework",
     "vite",
     "--mcp-url",
-    `${first.url}/path-secret?token=<redacted>`,
+    "<redacted>",
     "--mcp-url",
-    second.url,
+    "<redacted>",
     "--mcp-header",
     "Authorization: <redacted>",
     "--mcp-header",
@@ -487,7 +484,7 @@ test("an MCP server checked from an empty directory is the report's subject, not
   expect(report.commandArgs.rerun).toEqual([
     "vite-doctor",
     "--mcp-url",
-    server.url,
+    "<redacted>",
     "--no-cache",
     "--format",
     "agent",
@@ -499,7 +496,10 @@ test("an MCP server checked from an empty directory is the report's subject, not
     "--format",
     "agent",
   ]);
-  expect(report).not.toHaveProperty("placeholders");
+  expect(report).toHaveProperty(
+    ["placeholders", "<redacted>"],
+    expect.stringContaining("--mcp-url"),
+  );
 
   const text = await cli(root, [
     "--no-cache",
