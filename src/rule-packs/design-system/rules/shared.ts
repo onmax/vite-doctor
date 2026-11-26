@@ -84,7 +84,7 @@ export function createDesignSystemRule(options: {
 }
 
 interface ShadcnLint {
-  linter: Linter;
+  Linter: typeof Linter;
   parser: Linter.Parser;
   plugin: NonNullable<Linter.Config["plugins"]>[string];
   /** Each upstream Rule's `meta.messages`, keyed by Rule name. */
@@ -106,6 +106,7 @@ interface FileLint {
 }
 
 interface RunLint {
+  linter: Linter;
   rules: Map<string, ShadcnRuleConfig>;
   files: Map<string, FileLint>;
   retainedSource: number;
@@ -123,7 +124,7 @@ function loadShadcnLint(): Promise<ShadcnLint> {
     import("@typescript-eslint/parser"),
     import("@shadcn/lint"),
   ]).then(([eslint, parser, shadcn]) => ({
-    linter: new eslint.Linter({ configType: "flat" }),
+    Linter: eslint.Linter,
     parser: (parser.default ?? parser) as Linter.Parser,
     plugin: shadcn.plugin as ShadcnLint["plugin"],
     templates: Object.fromEntries(
@@ -139,8 +140,15 @@ const runs = new WeakMap<ProjectInfo, RunLint>();
 async function lintShadcnRule(ctx: RuleContext, name: string): Promise<Linter.LintMessage[]> {
   const lint = await loadShadcnLint();
   let run = runs.get(ctx.project);
-  if (!run)
-    runs.set(ctx.project, (run = { rules: new Map(), files: new Map(), retainedSource: 0 }));
+  if (!run) {
+    run = {
+      linter: new lint.Linter({ configType: "flat", cwd: ctx.project.root }),
+      rules: new Map(),
+      files: new Map(),
+      retainedSource: 0,
+    };
+    runs.set(ctx.project, run);
+  }
   const config = shadcnRuleConfig(name, ctx.options);
   run.rules.set(config.key, config);
 
@@ -164,15 +172,15 @@ async function lintShadcnRule(ctx: RuleContext, name: string): Promise<Linter.Li
 
   let messages: Linter.LintMessage[];
   try {
-    messages = verify(lint, file, ctx, batch);
+    messages = verify(lint, run.linter, file, ctx, batch);
   } catch (error) {
     // Another Rule's invalid options must not fail this Rule.
     if (batch.length === 1) throw error;
     batch.length = 1;
-    messages = verify(lint, file, ctx, batch);
+    messages = verify(lint, run.linter, file, ctx, batch);
   }
   if (file.sourceCode === undefined) {
-    const sourceCode = lint.linter.getSourceCode();
+    const sourceCode = run.linter.getSourceCode();
     if (!sourceCode) file.sourceCode = null;
     else if (run.retainedSource + ctx.file.text.length <= retainedSourceBudget) {
       file.sourceCode = sourceCode;
@@ -189,12 +197,13 @@ async function lintShadcnRule(ctx: RuleContext, name: string): Promise<Linter.Li
 
 function verify(
   lint: ShadcnLint,
+  linter: Linter,
   file: FileLint,
   ctx: RuleContext,
   batch: ShadcnRuleConfig[],
 ): Linter.LintMessage[] {
   const filenames = { filename: ctx.file.relativePath, physicalFilename: ctx.file.path };
-  const messages = lint.linter.verify(
+  const messages = linter.verify(
     file.sourceCode ?? ctx.file.text,
     [
       {
