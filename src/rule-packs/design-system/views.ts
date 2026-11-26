@@ -241,7 +241,7 @@ interface RuntimeLayouts {
 
 const SET_PAGE_LAYOUT = /\bsetPageLayout\b/;
 const LAYOUT_API = "setPageLayout";
-const LAYOUT_IMPORTS = new Set(["#imports", "#app", "nuxt", "nuxt/app", "#app/composables/router"]);
+const LAYOUT_IMPORTS = ["#imports", "#app", "nuxt", "nuxt/app", "#app/composables/router"];
 const DEFINE_ROUTE_RULES = /\bdefineRouteRules\b/;
 const NUXT_CONFIGS = ["ts", "mts", "js", "mjs", "cjs", "cts"].map((ext) => `nuxt.config.${ext}`);
 
@@ -266,12 +266,14 @@ async function runtimeLayouts(
     if (/\.d\.[cm]?ts$/.test(file)) continue;
     const text = ctx.fs.readText(file);
     if (!text) continue;
-    if (!SET_PAGE_LAYOUT.test(text) && !DEFINE_ROUTE_RULES.test(text)) continue;
+    const mayUseLayoutApi =
+      SET_PAGE_LAYOUT.test(text) || LAYOUT_IMPORTS.some((source) => text.includes(source));
+    if (!mayUseLayoutApi && !DEFINE_ROUTE_RULES.test(text)) continue;
     const sfc = file.endsWith(".vue") ? await readSfc(ctx, file) : undefined;
     const script = file.endsWith(".vue")
       ? sfc?.script
       : parseScriptResult(file, text, undefined, { astType: "ts", range: true }).ast;
-    if (SET_PAGE_LAYOUT.test(text) && usesLayoutApi(script, sfc?.template)) return "everywhere";
+    if (mayUseLayoutApi && usesLayoutApi(script, sfc?.template)) return "everywhere";
     if (
       NUXT_CONFIGS.includes(basename(file)) ||
       !callsApi(script, "defineRouteRules", maySetRouteLayout)
@@ -304,7 +306,7 @@ function layoutImport(binding: ScopeVariable | null | undefined, namespace: bool
       type !== "ImportBinding" ||
       parent.type !== "ImportDeclaration" ||
       parent.importKind === "type" ||
-      !LAYOUT_IMPORTS.has(parent.source.value)
+      !LAYOUT_IMPORTS.includes(parent.source.value)
     )
       return false;
     if (namespace) return node.type === "ImportNamespaceSpecifier";
@@ -330,24 +332,30 @@ function usesLayoutApi(script: any, template: TemplateAstNode | null | undefined
   const names = [
     LAYOUT_API,
     ...[...(bindings ?? [])].flatMap(([name, binding]) =>
-      layoutImport(binding, false) ? [name] : [],
+      layoutImport(binding, false) || layoutImport(binding, true) ? [name] : [],
     ),
   ];
   return visit(template, []);
 
-  function reads(expression: TemplateExpressionNode | undefined, locals: string[], event = false) {
-    const source = expression?.content;
-    if (expression?.isStatic || !source || !names.some((name) => source.includes(name)))
-      return false;
+  function scan(source: string, locals: string[]) {
+    if (!names.some((name) => source.includes(name))) return false;
     try {
-      const { ast, scopeManager } = parseScriptScope(
-        event ? `($event) => {\n${source}\n}` : `(\n${source}\n)`,
-        { sourceType: "module" },
-      );
+      const { ast, scopeManager } = parseScriptScope(source, { sourceType: "module" });
       return referencesLayoutApi(ast, scopeManager, bindings, locals);
     } catch {
       return false;
     }
+  }
+
+  function reads(expression: TemplateExpressionNode | undefined, locals: string[], event = false) {
+    if (expression?.isStatic || !expression?.content) return false;
+    const source = expression.content;
+    return scan(event ? `($event) => {\n${source}\n}` : `(\n${source}\n)`, locals);
+  }
+
+  function readsParams(params: Array<TemplateExpressionNode | undefined>, locals: string[]) {
+    const source = params.flatMap((param) => (param?.content ? [param.content] : [])).join(", ");
+    return scan(`(${source}) => {}`, locals);
   }
 
   function visit(node: TemplateAstNode, locals: string[]): boolean {
@@ -359,6 +367,9 @@ function usesLayoutApi(script: any, template: TemplateAstNode | null | undefined
     const loop = directives.find(({ name }) => name === "for");
     const slot = directives.find(({ name }) => name === "slot");
     if (reads(loop?.forParseResult?.source, locals)) return true;
+    const loopParams = loop?.forParseResult;
+    if (loopParams && readsParams([loopParams.value, loopParams.key, loopParams.index], locals))
+      return true;
     const inLoop = loop ? [...locals, ...templateDirectiveBindings(loop)] : locals;
     if (
       directives.some(
@@ -366,10 +377,15 @@ function usesLayoutApi(script: any, template: TemplateAstNode | null | undefined
           reads(arg, inLoop) ||
           (name !== "for" &&
             name !== "slot" &&
-            reads(exp, name === "if" ? locals : inLoop, name === "on" && !!arg)),
+            reads(
+              exp,
+              name === "if" || name === "else-if" ? locals : inLoop,
+              name === "on" && !!arg,
+            )),
       )
     )
       return true;
+    if (slot && readsParams([slot.exp], inLoop)) return true;
     const inSlot = slot ? [...inLoop, ...templateDirectiveBindings(slot)] : inLoop;
     return node.children.some((child) => visit(child, inSlot));
   }
@@ -394,16 +410,12 @@ function referencesLayoutApi(
       } else if (identifier.name === LAYOUT_API) return true;
     }
   if (!namespaces.size) return false;
-  let member = false;
   walkScriptLocal(ast, (node) => {
-    if (
-      node.type === "MemberExpression" &&
-      namespaces.has(unwrap(node.object)) &&
-      (node.computed ? node.property?.value : node.property?.name) === LAYOUT_API
-    )
-      member = true;
+    if (node.type !== "MemberExpression") return;
+    const member = propertyName({ key: node.property, computed: node.computed });
+    if (member !== null && member !== LAYOUT_API) namespaces.delete(unwrap(node.object));
   });
-  return member;
+  return namespaces.size > 0;
 }
 
 function hasProperty(ast: unknown, name: string): boolean {

@@ -539,7 +539,7 @@ function readProps(
     const value =
       property.value?.type === "AssignmentPattern" ? property.value.left : property.value;
     if (value?.type === "Identifier") aliases[value.name] = camelize(key);
-    if (property.value?.type === "AssignmentPattern") {
+    if (!defaults && property.value?.type === "AssignmentPattern") {
       const prop = facts.props?.find((item) => item.name === camelize(key));
       if (prop) setDefault(prop, stringLiteral(property.value.right));
     }

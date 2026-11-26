@@ -96,6 +96,11 @@ test.each([
   [`{{ setPageLayout }}`, `const setPageLayout = 'documentation'`],
   [`{{ examples.setPageLayout }}`, `const examples = { setPageLayout: 'documentation' }`],
   [`<div v-for="setPageLayout in examples">{{ setPageLayout }}</div>`, `const examples = []`],
+  [
+    `<div v-for="({ setPageLayout = 'label' }) in examples">{{ setPageLayout }}</div>`,
+    `const examples = [{}]`,
+  ],
+  [`{{ nuxt.useNuxtApp().payload }}`, `import * as nuxt from '#imports'`],
 ])(
   "layout API names used as local template data do not disable views: %s",
   async (body, script) => {
@@ -125,6 +130,36 @@ test.each<Record<string, string>>([
     "app/components/LayoutSelector.vue": page(
       `<button @click="nuxt['setPageLayout']('plain')">Change layout</button>`,
       `import * as nuxt from '#imports'`,
+    ),
+  },
+  {
+    "app/middleware/select.global.ts": `import * as nuxt from '#imports';
+      export default defineNuxtRouteMiddleware(() => {
+        const api = nuxt;
+        api.setPageLayout('plain');
+      });`,
+  },
+  {
+    "app/components/LayoutSelector.vue": page(
+      `<button @click="select(nuxt)">Change layout</button>`,
+      `import * as nuxt from '#imports'; import { select } from '../utils/layout'`,
+    ),
+    "app/utils/layout.ts": `export const select = api => api.setPageLayout('plain')`,
+  },
+  {
+    "app/pages/settings.vue": page(
+      `<div v-for="({ layout = setPageLayout('plain') }) in [{}]">{{ layout }}</div>`,
+    ),
+  },
+  {
+    "app/pages/settings.vue": page(
+      `<Toolbar v-slot="{ layout = setPageLayout('plain') }">{{ layout }}</Toolbar>`,
+    ),
+    "app/components/Toolbar.vue": `<template><slot /></template>`,
+  },
+  {
+    "app/pages/settings.vue": page(
+      `<div v-if="false"/><div v-else-if="setPageLayout('plain')" v-for="setPageLayout in []"/>`,
     ),
   },
 ])("layout API references can switch layouts through aliases: %j", async (files) => {
@@ -171,6 +206,30 @@ test("does not count a default declared under a different raw prop key", async (
     }),
   ).toEqual([]);
 });
+
+test.each([
+  ["{ variant: 'secondary' }", "primary", 0],
+  ["{ variant: 'primary' }", "secondary", 1],
+  ["{ ...defaults }", "primary", 0],
+  ["{}", "primary", 0],
+  [undefined, "primary", 1],
+])(
+  "distinguishes prop defaults from local destructuring fallbacks (%s)",
+  async (defaults, local, count) => {
+    const props = `defineProps<{ variant?: string }>()`;
+    const declaration = defaults ? `withDefaults(${props}, ${defaults})` : props;
+    expect(
+      await limitDiagnostics({
+        "app/components/AppButton.vue": appButton.replace(
+          /^withDefaults.*;$/m,
+          `${defaults === "{ ...defaults }" ? `import { defaults } from '../defaults';\n` : ""}const { variant = '${local}' } = ${declaration};`,
+        ),
+        "app/defaults.ts": `export const defaults = { variant: 'secondary' }`,
+        "app/pages/index.vue": page(primary + `<AppButton />`),
+      }),
+    ).toHaveLength(count);
+  },
+);
 
 test("does not count a statically named slot when its name is also bound", async () => {
   expect(
