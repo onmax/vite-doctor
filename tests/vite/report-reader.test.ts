@@ -72,6 +72,38 @@ test.each([
   }
 });
 
+test("GitHub Actions annotates the run after the text report", async () => {
+  const app = mkdtempSync(join(tmpdir(), "doctor-annotations-"));
+  try {
+    writeFileSync(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", type: "module", dependencies: { vue: "^3.5.0" } }),
+    );
+    writeFileSync(join(app, "App.vue"), "<template>\n  <button>Save</button>\n</template>\n");
+    stubReaderEnv({ CI: "true", GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: app });
+    const run = await capture(() =>
+      main([".", "--no-cache", "--rules", "vue/template/html-button-has-type"], app),
+    );
+    const [report, ...annotations] = run.stdout.split(/^(?=::)/m);
+    expect(report).toContain("VUE0022");
+    expect(annotations).toContainEqual(
+      expect.stringMatching(
+        /^::warning title=VUE0022,file=App\.vue,line=2,col=3,endLine=2,endColumn=\d+::.+%0Ahttps:\/\/\S+\/VUE0022\n$/,
+      ),
+    );
+
+    vi.unstubAllEnvs();
+    stubReaderEnv({ CI: "true", GITHUB_ACTIONS: undefined });
+    const plain = await capture(() =>
+      main([".", "--no-cache", "--rules", "vue/template/html-button-has-type"], app),
+    );
+    expect(plain.code).toBe(run.code);
+    expect(plain.stdout).toBe(report);
+  } finally {
+    rmSync(app, { recursive: true, force: true });
+  }
+});
+
 async function capture(fn: () => Promise<number>) {
   const stdout: string[] = [];
   const stderr: string[] = [];

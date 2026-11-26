@@ -24,6 +24,7 @@ import { shellArgument } from "./internal/utils.js";
 import { unresolvedRuntimeInventory } from "./internal/runtime-packages.js";
 import { defaultReportBudget, type ReportReader } from "./internal/agent-runtime.js";
 import { scoreDiagnostics } from "./internal/scoring.js";
+import { reportGroupKey, reportOrder, SEVERITIES } from "./internal/report-order.js";
 import {
   type BudgetGroup,
   type BudgetHidden,
@@ -47,8 +48,6 @@ export interface DoctorReportContext {
   /** Who reads the report, which sets the Report Budget when `runOptions.maxChars` is unset. */
   reader?: ReportReader;
 }
-
-const SEVERITIES = ["blocker", "error", "warn", "info"] as const;
 
 /** Diagnostics that share a severity, Diagnostic Code and confidence, in report order. */
 interface ReportGroup {
@@ -138,34 +137,23 @@ function reportBudget(context: DoctorReportContext, format: "text" | "agent"): n
 }
 
 function groupDiagnostics(result: DoctorRunResult): ReportGroup[] {
-  const groups = new Map<string, ReportGroup>();
-  for (const diagnostic of result.diagnostics) {
-    const key = `${diagnostic.severity}\0${diagnostic.code}\0${diagnostic.confidence ?? ""}`;
-    let group = groups.get(key);
-    if (!group) {
-      group = {
-        key,
-        severity: diagnostic.severity,
-        code: diagnostic.code,
-        ruleId: diagnostic.ruleId,
-        title:
-          result.ruleTitles?.[diagnostic.ruleId] ??
-          diagnosticMetadataByCode.get(diagnostic.code)?.title ??
-          diagnostic.ruleId,
-        confidence: diagnostic.confidence,
-        docs: diagnostic.docs,
-        diagnostics: [],
-        evidence: [],
-      };
-      groups.set(key, group);
-    }
-    group.diagnostics.push(diagnostic);
-  }
-  const ordered = [...groups.values()].sort(
-    (a, b) =>
-      SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity) ||
-      (a.code < b.code ? -1 : a.code > b.code ? 1 : 0),
-  );
+  const ordered = reportOrder(result.diagnostics).map((diagnostics): ReportGroup => {
+    const [diagnostic] = diagnostics as [Diagnostic];
+    return {
+      key: reportGroupKey(diagnostic),
+      severity: diagnostic.severity,
+      code: diagnostic.code,
+      ruleId: diagnostic.ruleId,
+      title:
+        result.ruleTitles?.[diagnostic.ruleId] ??
+        diagnosticMetadataByCode.get(diagnostic.code)?.title ??
+        diagnostic.ruleId,
+      confidence: diagnostic.confidence,
+      docs: diagnostic.docs,
+      diagnostics,
+      evidence: [],
+    };
+  });
   for (const group of ordered) {
     const fixes = new Set(group.diagnostics.map((diagnostic) => diagnostic.diagnostic.fix));
     const [fix] = fixes;
