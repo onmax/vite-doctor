@@ -106,11 +106,17 @@ test("an empty <button> used as a hit area reports nothing", async () => {
 </UTooltip>
 <button type="button" :aria-label="label"><!-- icon --> </button>
 <button type="button" v-text="label" />
+<button :textContent="label" />
+<button :innerHTML.prop="icon" />
+<button v-bind="{ 'textContent': label }" />
+<button :text-content.camel="label" />
+<button :innerHTML.attr="icon" />
+<button v-bind="{ 'aria-label': label }" />
 </template>`,
     },
     { framework: "nuxt", dependencies: NUXT_UI },
   );
-  expect(result.diagnostics.map((d) => d.range?.line)).toEqual([6]);
+  expect(result.diagnostics.map((d) => d.range?.line)).toEqual([6, 7, 8, 9, 10]);
 });
 
 test("ambiguous native inputs and non-text inputs report nothing", async () => {
@@ -776,6 +782,38 @@ test.each([
 );
 
 const telemetryRc = "telemetry.enabled=false\ntelemetry.consent=0\n";
+
+test.each([
+  ["ui.prefix=Brand\n", "{}", [], ""],
+  ["ui.prefix=Brand\n", "{ prefix: 'Local' }", ["index.vue", "LikeButton.vue"], "LocalButton"],
+  ["ignore.0=**/LikeButton.vue\n", "{}", ["index.vue"], "UButton"],
+  [telemetryRc, "{}", ["index.vue", "LikeButton.vue"], "UButton"],
+] as const)(
+  "checks inherited workspace rc settings %s with app ui: %s",
+  async (rc, ui, files, name) => {
+    const result = await diagnose(
+      {
+        "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+        ".nuxtrc": rc,
+        "apps/web/package.json": JSON.stringify({ dependencies: { nuxt: "^4.0.0", ...NUXT_UI } }),
+        "apps/web/.nuxtrc": telemetryRc,
+        "apps/web/nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'], pages: { pattern: ['**/*.vue'] }, ui: ${ui} })`,
+        "apps/web/app/pages/LikeButton.vue": rawButton,
+        "apps/web/app/pages/index.vue": rawButton,
+        "apps/web/app/app.vue": `<script setup>import LikeButton from './pages/LikeButton.vue'</script>
+<template><LikeButton /></template>`,
+      },
+      { framework: "nuxt" },
+    );
+    expect(result.diagnostics).toMatchObject(
+      files.map((file) => ({
+        code: "DS0007",
+        file: expect.stringContaining(`/apps/web/app/pages/${file}`),
+        suggestion: expect.stringContaining(`<${name}>`),
+      })),
+    );
+  },
+);
 
 test("telemetry settings do not hide an imported Nuxt page's contract diagnostic", async () => {
   const result = await diagnose(

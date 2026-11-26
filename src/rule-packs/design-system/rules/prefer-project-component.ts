@@ -1,4 +1,4 @@
-import { join, relative, resolve } from "pathe";
+import { dirname, join, relative, resolve } from "pathe";
 import {
   type ComponentNode,
   type ComponentUsageGraph,
@@ -235,12 +235,45 @@ function hasContent(ctx: RuleContext, element: TemplateElementNode): boolean {
   return (
     ctx.helpers.hasVueDirective(element, "text") ||
     ctx.helpers.hasVueDirective(element, "html") ||
+    element.props.some((prop) => {
+      if (prop.type === TemplateNodeType.ATTRIBUTE) return isContentProperty(prop.name);
+      if (prop.name !== "bind" || prop.modifiers.some(({ content }) => content === "attr"))
+        return false;
+      if (prop.arg) {
+        return (
+          prop.arg.isStatic &&
+          isContentProperty(
+            prop.modifiers.some(({ content }) => content === "camel")
+              ? camelize(prop.arg.content)
+              : prop.arg.content,
+          )
+        );
+      }
+      const binding = prop.exp && ctx.helpers.parseTemplateExpression(prop.exp);
+      return (
+        binding?.type === "ObjectExpression" &&
+        binding.properties.some(
+          (entry) =>
+            entry.type === "Property" &&
+            ((!entry.computed &&
+              entry.key.type === "Identifier" &&
+              isContentProperty(entry.key.name)) ||
+              (entry.key.type === "Literal" &&
+                typeof entry.key.value === "string" &&
+                isContentProperty(entry.key.value))),
+        )
+      );
+    }) ||
     element.children.some(
       (child) =>
         child.type !== TemplateNodeType.COMMENT &&
         !(child.type === TemplateNodeType.TEXT && !child.content.trim()),
     )
   );
+}
+
+function isContentProperty(name: string): boolean {
+  return name === "textContent" || name === "innerHTML";
 }
 
 // An object v-bind can set or override type, so the rendered control is unknown statically.
@@ -514,7 +547,10 @@ function readLiteralNuxtOption(ctx: RuleContext, root: string, key: string, nest
 function readNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
   const main = readMainNuxtOption(ctx, root, key, nested);
   if (main === null || (main?.type === "Literal" && typeof main.value === "string")) return main;
-  return nuxtRcMaySetOption(ctx, root, key, nested) ? null : main;
+  for (let candidate = root; ; candidate = dirname(candidate)) {
+    if (nuxtRcMaySetOption(ctx, candidate, key, nested)) return null;
+    if (candidate === ctx.project.root || candidate === dirname(candidate)) return main;
+  }
 }
 
 function nuxtRcMaySetOption(ctx: RuleContext, root: string, key: string, nested?: string) {
