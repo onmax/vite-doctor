@@ -20,7 +20,7 @@ export type RuleFramework =
   | "nuxt"
   | "nitro"
   | "typescript"
-  | "shadcn"
+  | "design-system"
   | "package"
   | "pinia"
   | "mcp";
@@ -126,7 +126,7 @@ export function getRuleReports() {
     nuxt: rules.filter((rule) => ["vue", "nitro", "nuxt"].includes(rule.framework)),
     typescript: rules.filter((rule) => rule.framework === "typescript"),
     package: rules.filter((rule) => rule.framework === "package"),
-    shadcn: rules.filter((rule) => rule.framework === "shadcn"),
+    "design-system": rules.filter((rule) => rule.framework === "design-system"),
     pinia: rules.filter((rule) => rule.framework === "pinia"),
     mcp: rules.filter((rule) => rule.framework === "mcp"),
     all: rules,
@@ -146,7 +146,7 @@ export function getRuleReports() {
     | "nitro"
     | "nuxt"
     | "typescript"
-    | "shadcn"
+    | "design-system"
     | "package"
     | "pinia"
     | "mcp"
@@ -409,7 +409,7 @@ function readDiagnosticCodeMaps() {
     "src/rule-packs/nitro/diagnostics.ts",
     "src/rule-packs/nuxt/diagnostics.ts",
     "src/rule-packs/typescript/diagnostics.ts",
-    "src/rule-packs/shadcn/diagnostics.ts",
+    "src/rule-packs/design-system/diagnostics.ts",
     "src/rule-packs/pinia/diagnostics.ts",
     "src/rule-packs/mcp/diagnostics.ts",
   ];
@@ -521,7 +521,7 @@ function collectRuleDocuments() {
     .sort()
     .map((file) => join(viteRulesDir, file));
   const typescriptRulesDir = join(root, "src/rule-packs/typescript/rules");
-  const shadcnRulesDir = join(root, "src/rule-packs/shadcn/rules");
+  const designSystemRulesDir = join(root, "src/rule-packs/design-system/rules");
   const typescriptSources = readdirSync(typescriptRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
@@ -550,10 +550,10 @@ function collectRuleDocuments() {
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
     .map((file) => join(mcpRulesDir, file));
-  const shadcnSources = readdirSync(shadcnRulesDir)
-    .filter((file) => file.endsWith(".ts") && file !== "shared.ts")
+  const designSystemSources = readdirSync(designSystemRulesDir)
+    .filter((file) => file.endsWith(".ts") && !["copy.ts", "shared.ts"].includes(file))
     .sort()
-    .map((file) => join(shadcnRulesDir, file));
+    .map((file) => join(designSystemRulesDir, file));
   const codesByRuleId = readDiagnosticCodeMaps();
 
   return withNavigationTitles(
@@ -570,7 +570,10 @@ function collectRuleDocuments() {
       ),
       ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
       ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
-      ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
+      ...withRulePath(
+        collectRules(designSystemSources, "vite-doctor/design-system", "design-system"),
+        "/design-system/rules",
+      ),
       ...withRulePath(collectRules(piniaSources, "vite-doctor/pinia", "pinia"), "/pinia/rules"),
       ...withRulePath(collectRules(mcpSources, "vite-doctor/mcp", "mcp"), "/mcp/rules"),
     ]),
@@ -641,7 +644,11 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         sourceUrl: githubSourceUrl(source),
       }),
     );
-    const shadcnRules = findRuleFactoryOptions(ast, visitorKeys, "createShadcnRule").map((opts) =>
+    const designSystemRules = findRuleFactoryOptions(
+      ast,
+      visitorKeys,
+      "createDesignSystemRule",
+    ).map((opts) =>
       applyDocumentationMetadata({
         pack,
         source,
@@ -659,7 +666,7 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         sourceUrl: githubSourceUrl(source),
       }),
     );
-    return [...metaRules, ...helperRules, ...shadcnRules].filter((rule) => rule.id);
+    return [...metaRules, ...helperRules, ...designSystemRules].filter((rule) => rule.id);
   });
 }
 
@@ -1456,8 +1463,8 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules ${rule.id}`;
   if (rule.framework === "package")
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
-  if (rule.framework === "shadcn")
-    return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
+  if (rule.framework === "design-system")
+    return `pnpm vite-doctor . --extends design-system/strict --rules ${rule.id}`;
   if (rule.framework === "mcp")
     return mcpRecommendedRuleIds.includes(rule.id)
       ? `pnpm vite-doctor . --rules ${rule.id}`

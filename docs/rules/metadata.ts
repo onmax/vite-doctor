@@ -8,7 +8,7 @@ export interface RuleDocumentationMetadata {
 }
 
 export const ruleDocumentationMetadata = {
-  "shadcn/no-restyle": {
+  "design-system/no-restyle": {
     description: "Keep component-owned visual styles inside the component contract.",
     why: "Appearance classes at a component call site can override the variants and sizes owned by the design system. The Rule checks recognized components against the configured class policy.",
     recommendedReplacement:
@@ -24,7 +24,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-raw-colors": {
+  "design-system/no-raw-colors": {
     description: "Prefer theme colors over raw color values.",
     why: "Raw palette colors and literal SVG colors bypass the project's theme. Checking undeclared color tokens and suggesting theme replacements requires a readable theme; without one, those checks are unavailable.",
     recommendedReplacement:
@@ -38,7 +38,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-arbitrary-values": {
+  "design-system/no-arbitrary-values": {
     description: "Use the design system's existing values instead of arbitrary utilities.",
     why: "Arbitrary utility values bypass theme tokens and scale values, making appearance harder to change consistently. Exceptions follow the configured class policy.",
     recommendedReplacement:
@@ -52,7 +52,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-inline-styles": {
+  "design-system/no-inline-styles": {
     description: "Keep styling in the design system rather than component call sites.",
     why: "Ordinary inline properties bypass class-based styling. The Rule checks JSX elements, unreadable style objects, hardcoded colors in custom properties, and style elements.",
     recommendedReplacement:
@@ -66,7 +66,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/require-static-classes": {
+  "design-system/require-static-classes": {
     description: "Use class values that the design-system analyzer can resolve.",
     why: "Unreadable class values on recognized components prevent other design-system Rules from checking those classes. Complete static strings and conditional choices between them remain analyzable.",
     recommendedReplacement:
@@ -82,7 +82,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-unknown-classes": {
+  "design-system/no-unknown-classes": {
     description: "Avoid classes that are not declared by the project's Tailwind theme.",
     why: "Misspelled or unsupported class names generate no CSS. Without a resolvable Tailwind theme, the Rule uses a reduced fallback that includes bundled utility names plus discovered @utility names and CSS class selectors, as in the example below. That fallback cannot validate theme tokens or provide spelling suggestions.",
     recommendedReplacement:

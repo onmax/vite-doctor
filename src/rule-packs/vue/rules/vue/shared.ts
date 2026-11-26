@@ -65,8 +65,12 @@ function unusedPropLabel(message: string): string {
   return name ? `prop "${name}"` : "prop";
 }
 
-function delegatedText(text: DelegatedText | undefined, eslintMessage: string): string {
-  if (text === undefined) return eslintMessage;
+function delegatedText(
+  text: DelegatedText | undefined,
+  eslintMessage: string,
+  fallback = eslintMessage,
+): string {
+  if (text === undefined) return fallback;
   return typeof text === "function" ? text(eslintMessage) : text;
 }
 
@@ -364,7 +368,7 @@ function reportEslintMessage(
   ctx.report(
     diagnostic({
       why: delegatedText(delegatedMessages[doctorId], message.message),
-      fix: delegatedText(delegatedSuggestions[doctorId], message.message),
+      fix: delegatedText(delegatedSuggestions[doctorId], message.message, eslintRemedy(message)),
     }),
     {
       ruleId: doctorId,
@@ -388,6 +392,13 @@ function reportEslintMessage(
       tags: ["eslint-plugin-vue"],
     },
   );
+}
+
+function eslintRemedy(message: EslintMessage): string {
+  const name = message.ruleId?.replace(/^vue\//, "");
+  return name
+    ? `Change the code as https://eslint.vuejs.org/rules/${name}.html describes, so eslint-plugin-vue's "${message.ruleId}" rule no longer reports it.`
+    : "Change the code as the eslint-plugin-vue rule docs describe, so the rule no longer reports it.";
 }
 
 function defaultExport<T>(mod: T): T {

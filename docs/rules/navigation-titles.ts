@@ -167,12 +167,12 @@ export const ruleNavigationTitles: Record<string, string> = {
   "pinia/stores/store-name-matches-id": "Store names",
   "pinia/stores/unique-store-id": "Unique store ids",
 
-  "shadcn/no-arbitrary-values": "Arbitrary values",
-  "shadcn/no-inline-styles": "Inline styles",
-  "shadcn/no-raw-colors": "Color tokens",
-  "shadcn/no-restyle": "Component restyling",
-  "shadcn/no-unknown-classes": "Unknown classes",
-  "shadcn/require-static-classes": "Static classes",
+  "design-system/no-arbitrary-values": "Arbitrary values",
+  "design-system/no-inline-styles": "Inline styles",
+  "design-system/no-raw-colors": "Color tokens",
+  "design-system/no-restyle": "Component restyling",
+  "design-system/no-unknown-classes": "Unknown classes",
+  "design-system/require-static-classes": "Static classes",
 
   "typescript/boundaries/no-cross-realm-prototype-identity": "Prototype identity",
   "typescript/boundaries/no-cross-realm-web-instanceof": "Web API instanceof",
