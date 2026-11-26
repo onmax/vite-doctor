@@ -1170,42 +1170,16 @@ function runArguments(
 
 const REDACTED = "<redacted>";
 const REDACTED_NOTE =
-  "Doctor never prints --mcp-header values, or the credentials, query values, and token-like path segments of an --mcp-url, because they can carry secrets. Replace each <redacted> with the value you ran with.";
+  "Doctor redacts --mcp-header values and the credentials, query strings, and custom paths of an --mcp-url because they can carry secrets. Replace each <redacted> with the value you ran with.";
+const PUBLIC_MCP_PATHS = new Set(["/", "/mcp", "/sse", "/v1/sse", "/github-copilot/mcp"]);
 
-/**
- * The `--mcp-url` a command repeats: the endpoint as passed, with URL credentials, query values,
- * and token-like path segments redacted. The fragment never reaches the server, so it is dropped.
- */
 function commandMcpUrl(value: string): string {
   const url = parseMcpEndpoint(value);
   if (!url) return REDACTED;
   const credentials = url.username || url.password ? `${REDACTED}@` : "";
-  const query = [...url.searchParams.keys()]
-    .map((name) => `${encodeURIComponent(name)}=${REDACTED}`)
-    .join("&");
-  const path = url.pathname
-    .split("/")
-    .map((segment) => (secretLikeSegment(segment) ? REDACTED : segment))
-    .join("/");
-  return `${url.protocol}//${credentials}${url.host}${path}${query ? `?${query}` : ""}`;
-}
-
-/**
- * Hosts such as Zapier put a per-user token in the path (`/api/mcp/s/<token>/mcp`). A segment
- * reads as one when it is 16 or more characters mixing letters and digits, or 20 or more hex or
- * base64url characters that are not just a lowercase or kebab-case word.
- */
-function secretLikeSegment(segment: string): boolean {
-  let value: string;
-  try {
-    value = decodeURIComponent(segment);
-  } catch {
-    value = segment;
-  }
-  if (value.length >= 16 && /[a-z]/i.test(value) && /\d/.test(value)) return true;
-  if (value.length < 20) return false;
-  if (/^[\da-f]+$/i.test(value)) return true;
-  return /^[\w-]+$/.test(value) && /[A-Z]/.test(value) && /[a-z]/.test(value);
+  const path = PUBLIC_MCP_PATHS.has(url.pathname) ? url.pathname : `/${REDACTED}`;
+  const query = url.search ? `?${REDACTED}` : "";
+  return `${url.protocol}//${credentials}${url.host}${path}${query}`;
 }
 
 // Workspace runs derive Rule Packs from every workspace package, which pinning the resolved
