@@ -525,6 +525,45 @@ export interface PageRoute {
   fullPath?: string;
 }
 
+function staticallyDisablesPages(ctx: RuleContext, layer: NuxtAppSource): boolean {
+  const config = configFile(ctx, layer.root);
+  if (!config || /pages:(?:extend|resolved)/.test(config.text)) return false;
+  const program = parseScript(config.file, config.text) as AnyNode;
+  if (!program) return false;
+  const object = exportedConfigObject(program, new Map());
+  const properties = object?.properties;
+  if (
+    !properties ||
+    properties.some((property: AnyNode) => {
+      const name = propertyName(property);
+      return (
+        property.type !== "Property" ||
+        property.kind !== "init" ||
+        !name ||
+        name.startsWith("$") ||
+        name === "router"
+      );
+    })
+  )
+    return false;
+  const pages = unwrap(
+    properties.findLast((property: AnyNode) => propertyName(property) === "pages")?.value,
+  );
+  if (pages?.type === "Literal") return pages.value === false;
+  if (pages?.type !== "ObjectExpression") return false;
+  if (
+    pages.properties.some(
+      (property: AnyNode) =>
+        property.type !== "Property" || property.kind !== "init" || !propertyName(property),
+    )
+  )
+    return false;
+  const enabled = unwrap(
+    pages.properties.findLast((property: AnyNode) => propertyName(property) === "enabled")?.value,
+  );
+  return enabled?.type === "Literal" && enabled.value === false;
+}
+
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
   const prepared = isProjectApp(ctx, layers) ? ctx.project.nuxt?.manifest?.resolvedApp : undefined;
   const conventionalDir = prepared && conventionalPagesDirectory(ctx, layers);
@@ -549,6 +588,7 @@ export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: r
   }
   if (pages.length || layers.length !== 1 || unreadLayers(ctx, layers)) return undefined;
   const layer = layers[0]!;
+  if (staticallyDisablesPages(ctx, layer)) return [];
   if (!scanIsReliable(ctx, layer, "pages")) return undefined;
   const dir = prepared ? conventionalDir : join(layer.srcDir, "pages");
   if (!dir) return undefined;

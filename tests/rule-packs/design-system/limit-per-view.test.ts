@@ -767,6 +767,78 @@ test("adds no evidence gap when every route has a View", async () => {
   ).toEqual([]);
 });
 
+test.each(["false", "{ enabled: false }"])(
+  "treats pages: %s as an empty route list",
+  async (pages) => {
+    expect(
+      await limitGaps({ "nuxt.config.ts": `export default defineNuxtConfig({ pages: ${pages} })` }),
+    ).toEqual([]);
+  },
+);
+
+test.each([
+  'pages: { pattern: "**/*.vue" }',
+  "pages: false, ...overrides",
+  "pages: { enabled: false, ...overrides }",
+  "pages: false, $development: { pages: true }",
+])("does not assume routing is disabled with %s", async (config) => {
+  expect(
+    await limitGaps({ "nuxt.config.ts": `export default defineNuxtConfig({ ${config} })` }),
+  ).toEqual([
+    expect.objectContaining({ message: expect.stringContaining("cannot list the routes") }),
+  ]);
+});
+
+test("migrating a page's appLayout rule to literal metadata restores its View", async () => {
+  const metadata = 'definePageMeta({ layout: "default" })';
+  const files = { "app/layouts/default.vue": layout(primary) };
+  expect(
+    await limitGaps({
+      ...files,
+      "app/pages/index.vue": page(primary, `${metadata}; defineRouteRules({ appLayout: "plain" })`),
+    }),
+  ).toEqual([expect.objectContaining({ message: expect.stringContaining("Remove appLayout") })]);
+  const fixed = await diagnose({ ...files, "app/pages/index.vue": page(primary, metadata) });
+  expect(fixed.project.evidenceGaps ?? []).toEqual([]);
+  expect(fixed.diagnostics.filter(({ code }) => code === "DS0008")).toHaveLength(1);
+});
+
+test("removing setPageLayout restores a View that already declares a literal layout", async () => {
+  const files = {
+    "app/layouts/default.vue": layout(primary),
+    "app/pages/index.vue": page(primary, 'definePageMeta({ layout: "default" })'),
+  };
+  expect(
+    await limitGaps({
+      ...files,
+      "app/middleware/layout.global.ts": `export default defineNuxtRouteMiddleware(() => setPageLayout("plain"))`,
+    }),
+  ).toEqual([
+    expect.objectContaining({
+      message: expect.stringContaining("Remove the setPageLayout reference"),
+    }),
+  ]);
+  const fixed = await diagnose(files);
+  expect(fixed.project.evidenceGaps ?? []).toEqual([]);
+  expect(fixed.diagnostics.filter(({ code }) => code === "DS0008")).toHaveLength(1);
+});
+
+test("names the layout whose default slot can block the page outlet", async () => {
+  const files = { "app/pages/index.vue": page(primary) };
+  expect(
+    await limitGaps({
+      ...files,
+      "app/layouts/default.vue": `<template><div><slot v-if="showPage" /></div></template>`,
+    }),
+  ).toEqual([
+    expect.objectContaining({
+      files: ["app/app.vue", "app/layouts/default.vue"],
+      message: expect.stringContaining("unconditional default <slot />"),
+    }),
+  ]);
+  expect(await limitGaps({ ...files, "app/layouts/default.vue": layout() })).toEqual([]);
+});
+
 test("adds no evidence gap when no contract declares limits", async () => {
   expect(
     await limitGaps({
@@ -836,6 +908,7 @@ test.each<[string, Record<string, string>, string[], RegExp]>([
     "an app component chosen by a hook",
     {
       "nuxt.config.ts": `export default defineNuxtConfig({ hooks: { "app:resolve"(app) {} } })\n`,
+      "app/pages/index.vue": page(primary),
     },
     ["nuxt.config.ts"],
     /which app component.*nuxt prepare.*vite-doctor\/nuxt/,
@@ -884,7 +957,9 @@ test("an appLayout route rule in the manifest names the routes it left out", asy
       ).toEqual([
         {
           source: "vite-doctor/design-system",
-          message: expect.stringMatching(/appLayout route rules \/admin\/\*\*.*2 routes/),
+          message: expect.stringMatching(
+            /appLayout route rules \/admin\/\*\*.*2 routes.*Remove appLayout.*nuxt prepare/,
+          ),
           files: ["app/pages/admin/[id].vue", "app/pages/admin/index.vue"],
         },
       ]);

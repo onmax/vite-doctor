@@ -173,7 +173,8 @@ export interface ViewGap {
 const PREPARE =
   "Run nuxt prepare with vite-doctor/nuxt to write .nuxt/doctor.manifest.json, then rerun Doctor.";
 const LITERAL_LAYOUT =
-  "Pick each page's layout with a literal definePageMeta({ layout }) so Doctor can count its view.";
+  "Move layout selection to a literal definePageMeta({ layout }) on each affected page.";
+const REMOVE_APP_LAYOUT = `Remove appLayout from the route rules (or remove the call if it only sets the layout). ${LITERAL_LAYOUT}`;
 
 /**
  * Every View of the Doctor Run's Nuxt apps that Doctor can establish. A route whose view depends
@@ -217,6 +218,7 @@ export async function projectViews(
       );
       continue;
     }
+    if (!routes.length) continue;
     const app = mainApp(ctx, layers);
     if (app === null) {
       gap(
@@ -237,9 +239,9 @@ export async function projectViews(
       const { everywhere, file } = runtime;
       gap(`${everywhere}${appRoot}`, [file], (files) =>
         everywhere === "api"
-          ? `${files} references setPageLayout(), which can switch any route's layout at runtime, so ${everyRoute}. ${LITERAL_LAYOUT}`
+          ? `${files} references setPageLayout(), which can switch any route's layout at runtime, so ${everyRoute}. Remove the setPageLayout reference. ${LITERAL_LAYOUT}`
           : everywhere === "rules"
-            ? `${files} calls defineRouteRules() outside a page, where it may set appLayout for any route, so ${everyRoute}. ${LITERAL_LAYOUT}`
+            ? `${files} calls defineRouteRules() outside a page, where it may set appLayout for any route, so ${everyRoute}. ${REMOVE_APP_LAYOUT}`
             : `${files} sets appLayout in routeRules, and without a current Doctor manifest Doctor cannot tell which routes it matches, so ${everyRoute}. ${PREPARE}`,
       );
       continue;
@@ -278,7 +280,7 @@ export async function projectViews(
           "page-rules",
           rules.map(({ file }) => file),
           (files) =>
-            `${files} call defineRouteRules(), which may set appLayout, so DS0008 did not count component limits on their routes. ${LITERAL_LAYOUT}`,
+            `${files} call defineRouteRules(), which may set appLayout, so DS0008 did not count component limits on their routes. ${REMOVE_APP_LAYOUT}`,
         );
         continue;
       }
@@ -321,7 +323,7 @@ export async function projectViews(
       if (matched.length) {
         for (const pattern of matched) patterns.add(pattern);
         gap(`patterns${appRoot}`, [route.file], (files, count) => {
-          return `appLayout route rules ${[...patterns].join(", ")} may pick the layout of ${count} route${count === 1 ? "" : "s"}, which DS0008 does not follow, so it did not count component limits on ${files}. ${LITERAL_LAYOUT}`;
+          return `appLayout route rules ${[...patterns].join(", ")} may pick the layout of ${count} route${count === 1 ? "" : "s"}, which DS0008 does not follow, so it did not count component limits on ${files}. Remove appLayout from the matching route rules. ${LITERAL_LAYOUT} ${PREPARE}`;
         });
         continue;
       }
@@ -354,9 +356,9 @@ export async function projectViews(
       if (placed.unplacedFrom)
         gap(
           "outlet",
-          [placed.unplacedFrom],
+          placed.unplacedFrom,
           (files) =>
-            `Doctor cannot verify that ${files} renders the route's page: its <NuxtPage> or <RouterView> is missing, conditional, named, given a route or slot content, or sits in a slot Doctor cannot follow. DS0008 counted those routes without their pages. Render an unconditional <NuxtPage /> where Doctor can see it.`,
+            `Doctor cannot verify that ${files} renders the route's page: the <NuxtPage> or <RouterView> is missing, conditional, named, given a route or slot content, or sits in a slot Doctor cannot follow. DS0008 counted those routes without their pages. Render an unconditional <NuxtPage /> and, if it passes through a layout, give the layout an unconditional default <slot />.`,
         );
       views.push({ route: label, page: route.file, layout: layoutFile, roots: placed.roots });
     }
@@ -690,26 +692,28 @@ function routeSegment(layers: NuxtAppSource[], page: string, parent: string | nu
 
 /**
  * The files a route renders and how certain Doctor is that each renders, or undefined when the
- * app picks its layout in a way Doctor cannot read. `unplacedFrom` is the file whose router outlet
- * Doctor could not follow, when the View stops before the route's page.
+ * app picks its layout in a way Doctor cannot read. `unplacedFrom` names the files to check when
+ * Doctor cannot follow a router outlet and the View stops before the route's page.
  */
 function viewRoots(
   graph: ViewGraph,
   app: string | undefined,
   layout: string | undefined,
   chain: PageRoute[],
-): { roots: ViewRoot[]; unplacedFrom?: string } | undefined {
+): { roots: ViewRoot[]; unplacedFrom?: string[] } | undefined {
   const roots: ViewRoot[] = [];
-  let from = app ?? layout;
+  let from = app ? [app] : layout ? [layout] : [];
   let pages = layout ? slotPlacement(graph, layout, "default", layout, new Set()) : [DIRECT];
   if (app) {
     roots.push({ file: app, kind: "app", ...DIRECT });
     const rendered = renderedUsages(graph, app, layout);
     const layouts = rendered.filter(({ edge }) => graph.outlet(edge) === "NuxtLayout");
     if (layouts.some(({ usage }) => choosesLayout(usage))) return undefined;
-    if (layout)
+    if (layout) {
+      if (layouts.length && !pages.length) from.push(layout);
       for (const mount of layouts)
         roots.push({ file: layout, kind: "layout", ...throughUsage(mount) });
+    }
     pages = pageOutlets(graph, rendered);
   } else if (layout) {
     roots.push({ file: layout, kind: "layout", ...DIRECT });
@@ -720,7 +724,7 @@ function viewRoots(
     if (index === chain.length - 1) break;
     const outlets = pageOutlets(graph, renderedUsages(graph, route.file, layout));
     pages = pages.flatMap((parent) => outlets.map((outlet) => joinPaths(parent, outlet)));
-    from = route.file;
+    from = [route.file];
   }
   return { roots };
 }
