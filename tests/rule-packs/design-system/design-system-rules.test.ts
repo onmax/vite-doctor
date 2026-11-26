@@ -141,6 +141,7 @@ test("design-system Rules share one ESLint verify per file when they run file by
 test("uses Tailwind and Nuxt UI package activation and composed presets", () => {
   expect(designSystemRulePack.activation).toEqual({ packages: ["tailwindcss", "@nuxt/ui"] });
   expect(designSystemRulePack.presets.recommended.toSorted()).toEqual([
+    "design-system/limit-per-view",
     "design-system/no-arbitrary-values",
     "design-system/no-inline-styles",
     "design-system/no-raw-colors",
@@ -148,6 +149,7 @@ test("uses Tailwind and Nuxt UI package activation and composed presets", () => 
     "design-system/unreadable-contract",
   ]);
   expect(designSystemRulePack.presets.strict?.toSorted()).toEqual([
+    "design-system/limit-per-view",
     "design-system/no-arbitrary-values",
     "design-system/no-inline-styles",
     "design-system/no-raw-colors",

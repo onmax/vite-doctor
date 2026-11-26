@@ -179,6 +179,7 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "design-system/no-arbitrary-values": "Arbitrary values",
   "design-system/no-inline-styles": "Inline styles",
+  "design-system/limit-per-view": "Limits per view",
   "design-system/no-raw-colors": "Color tokens",
   "design-system/no-restyle": "Component restyling",
   "design-system/no-unknown-classes": "Unknown classes",

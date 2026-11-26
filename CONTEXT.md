@@ -77,8 +77,12 @@ The discovered facts about a target project that rules use during analysis.
 _Avoid_: Project metadata, scan data
 
 **Component Contract**:
-What a component promises the design system, declared statically so Rules can enforce it at call sites. A project component declares it in `<script setup>` as `defineOptions({ doctor: { replaces: "button" } })`; a component the project does not own gets the same object in a design-system Rule's `contracts` option. Today it holds `replaces`, the raw HTML elements call sites should render the component instead of.
+What a component promises the design system, declared statically so Rules can enforce it at call sites. A project component declares it in `<script setup>` as `defineOptions({ doctor: { replaces: "button" } })`; a component the project does not own gets the same object in a design-system Rule's `contracts` option. It holds `replaces`, the raw HTML elements call sites should render the component instead of, and `limits`, how many matching usages one **View** may render.
 _Avoid_: Component metadata, component annotation
+
+**View**:
+Everything one Nuxt route renders at once: the main app, the route's layout, its parent pages, and the page, each followed through the components they render. Design-system Rules count a usage in a View only when it renders every time the View does.
+_Avoid_: Screen, page (a page is one file of a View)
 
 **Runtime Evidence**:
 Facts that explain where and how code executes across client, server, build, and framework runtimes.
@@ -155,6 +159,7 @@ _Avoid_: Agent surface
 - A **Rule** reads **Project Inventory** and **Runtime Evidence**.
 - A component declares at most one **Component Contract**; Doctor reads it statically from the SFC into **Project Inventory**, and only literal values count.
 - Design-system **Rules** enforce **Component Contracts** at call sites; a contract Doctor cannot read is itself a **Diagnostic**.
+- A **Component Contract** can limit how many of its usages one **View** renders; Doctor builds **Views** only for Nuxt routes it can read statically.
 - A **Doctor** can be exposed through **CLI Surfaces** and **Plugin Surfaces**.
 - A **Plugin Surface** can contribute **Project Inventory** and **Runtime Evidence**.
 - A **Plugin Surface** attaches **Doctor Extensions** that other host plugins or modules register through the host, such as Vite plugin `api.doctor` or the Nuxt `doctor:extendExtensions` hook.

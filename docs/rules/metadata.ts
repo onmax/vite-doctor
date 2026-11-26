@@ -111,10 +111,27 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "design-system/limit-per-view": {
+    description:
+      "Finds views that render more usages of a component than its Component Contract allows, such as two primary buttons.",
+    why: "A component can declare how many of its usages one view may render, such as one primary button. Doctor builds each Nuxt route's view from the app, its layout, its parent pages, and the page, follows the components they render, and counts only usages that render every time the view does. Usages behind `v-if`, `v-show`, or `v-for`, inside overlays such as modals and menus, in teleports or dynamic components, or with props Doctor cannot read do not count, so a report always names usages that are on screen together.",
+    recommendedReplacement:
+      "Apply the contract's fix to the extra usages, usually a quieter variant, so the view keeps one clear choice.",
+    examples: [
+      {
+        title: "Keep one primary UButton per view",
+        language: "vue",
+        invalid:
+          '<template>\n  <UButton @click="save">Save</UButton>\n  <UButton @click="publish">Publish</UButton>\n</template>',
+        valid:
+          '<template>\n  <UButton @click="save">Save</UButton>\n  <UButton variant="outline" @click="publish">Publish</UButton>\n</template>',
+      },
+    ],
+  },
   "design-system/unreadable-contract": {
     description:
       "Finds `defineOptions({ doctor })` values Doctor cannot read as a Component Contract.",
-    why: "Doctor reads Component Contracts statically from the SFC. A variable, function call, or unknown key in the `doctor` option leaves the contract unread, so design-system/prefer-project-component cannot point raw elements to the component.",
+    why: "Doctor reads Component Contracts statically from the SFC. A variable, function call, or unknown key in the `doctor` option leaves the contract unread, so design-system/prefer-project-component cannot point raw elements to the component and design-system/limit-per-view cannot count its usages. A limit that misses `max`, `why`, or `fix`, or whose `fix` repeats its `why`, is unreadable too.",
     recommendedReplacement:
       'Write the `doctor` option as a literal object, such as `defineOptions({ doctor: { replaces: "button" } })`.',
     examples: [

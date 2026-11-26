@@ -2,6 +2,7 @@ import type {
   ComponentFacts,
   ComponentPropFact,
   ComponentRootBranch,
+  ComponentSlotHost,
   ComponentUsageFact,
   DoctorComponentOption,
   SourceRange,
@@ -30,6 +31,7 @@ const BUILT_IN_COMPONENTS = new Set([
   "teleport",
   "suspense",
 ]);
+const CONDITIONAL_DIRECTIVES = new Set(["if", "else-if", "else", "show"]);
 const DECLARATION_MACROS = new Set([
   "defineProps",
   "defineEmits",
@@ -76,6 +78,7 @@ export function createComponentFactsCollector(
     nuxtAttrsReferences: [],
     comparisons: [],
     usages: [],
+    slotOutlets: [],
     bindingReferences: [],
   };
   const references = new Set<string>();
@@ -468,14 +471,15 @@ function readMacroCall(
     if (inner?.callee?.name !== "defineProps") return false;
     readProps(facts, inner, id, types, rangeOf);
     const defaults = call.arguments?.[1];
-    const defaulted = new Set<string>();
+    const defaulted = new Map<string, string | undefined>();
     if (defaults?.type === "ObjectExpression")
       for (const property of defaults.properties ?? []) {
         const key = propertyKey(property);
-        if (key) defaulted.add(camelize(key));
+        if (key) defaulted.set(camelize(key), stringLiteral(property.value));
       }
     else if (defaults) facts.props = undefined;
-    for (const prop of facts.props ?? []) if (defaulted.has(prop.name)) prop.default = true;
+    for (const prop of facts.props ?? [])
+      if (defaulted.has(prop.name)) setDefault(prop, defaulted.get(prop.name));
     return true;
   }
   if (name === "defineProps") {
@@ -537,7 +541,7 @@ function readProps(
     if (value?.type === "Identifier") aliases[value.name] = camelize(key);
     if (property.value?.type === "AssignmentPattern") {
       const prop = facts.props?.find((item) => item.name === camelize(key));
-      if (prop) prop.default = true;
+      if (prop) setDefault(prop, stringLiteral(property.value.right));
     }
   }
   facts.propAliases = aliases;
@@ -562,11 +566,14 @@ function propsFromRuntime(argument: AnyNode, rangeOf: RangeOf): ComponentPropFac
   for (const property of argument.properties ?? []) {
     const key = propertyKey(property);
     if (!key) return undefined;
-    props.push({
+    const prop: ComponentPropFact = {
       name: camelize(key),
-      default: hasProperty(property.value, "default"),
+      default: false,
       range: rangeOf(property.start, property.end),
-    });
+    };
+    const fallback = propertyValue(property.value, "default");
+    if (fallback) setDefault(prop, stringLiteral(fallback));
+    props.push(prop);
   }
   return props;
 }
@@ -703,6 +710,24 @@ function propertyKey(property: AnyNode): string | undefined {
   return undefined;
 }
 
+function propertyValue(node: AnyNode, name: string): AnyNode {
+  if (node?.type !== "ObjectExpression") return undefined;
+  return (node.properties ?? []).find((property: AnyNode) => propertyKey(property) === name)?.value;
+}
+
+function setDefault(prop: ComponentPropFact, value: string | undefined): void {
+  prop.default = true;
+  if (value === undefined) delete prop.defaultValue;
+  else prop.defaultValue = value;
+}
+
+function stringLiteral(node: AnyNode): string | undefined {
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && !node.expressions?.length)
+    return node.quasis?.[0]?.value?.cooked ?? undefined;
+  return undefined;
+}
+
 function hasProperty(node: AnyNode, name: string): boolean {
   return (
     node?.type === "ObjectExpression" &&
@@ -747,7 +772,14 @@ function walkComponentTemplate(
     facts.roots.push({ branches });
   }
   facts.rootNodes = facts.roots.length;
-  for (const child of root.children) walkChild(walk, child, [], false, undefined);
+  for (const child of root.children)
+    walkChild(walk, child, {
+      scope: [],
+      inFor: false,
+      conditional: false,
+      parent: undefined,
+      builtInHosts: [],
+    });
 }
 
 function rootBranch(element: TemplateElementNode, rangeOf: RangeOf): ComponentRootBranch {
@@ -762,13 +794,17 @@ function locRange(rangeOf: RangeOf, node: TemplateChildNode): SourceRange {
   return rangeOf(node.loc.start.offset, node.loc.end.offset);
 }
 
-function walkChild(
-  walk: TemplateWalk,
-  node: TemplateChildNode,
-  scope: string[],
-  inFor: boolean,
-  parent: ComponentUsageFact["parent"],
-): void {
+/** Where a template node sits: what encloses it and whether it always renders. */
+interface WalkPlace {
+  scope: string[];
+  inFor: boolean;
+  conditional: boolean;
+  parent: ComponentUsageFact["parent"];
+  host?: ComponentSlotHost;
+  builtInHosts: string[];
+}
+
+function walkChild(walk: TemplateWalk, node: TemplateChildNode, place: WalkPlace): void {
   if (node.type === TemplateNodeType.TEXT) {
     if (node.content.trim()) walk.facts.ownMarkup = true;
     return;
@@ -779,28 +815,24 @@ function walkChild(
     return;
   }
   if (node.type !== TemplateNodeType.ELEMENT) return;
-  walkElement(walk, node, scope, inFor, parent);
+  walkElement(walk, node, place);
 }
 
-function walkElement(
-  walk: TemplateWalk,
-  element: TemplateElementNode,
-  scope: string[],
-  inFor: boolean,
-  parent: ComponentUsageFact["parent"],
-): void {
-  let elementScope = scope;
-  let childScope = scope;
-  let elementInFor = inFor;
+function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: WalkPlace): void {
+  let elementScope = place.scope;
+  let childScope = place.scope;
+  let elementInFor = place.inFor;
+  let conditional = place.conditional;
   for (const prop of element.props) {
     if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
     if (prop.name === "for" && prop.forParseResult) {
       const aliases = templateDirectiveBindings(prop);
 
-      elementScope = [...scope, ...aliases];
+      elementScope = [...place.scope, ...aliases];
       childScope = elementScope;
       elementInFor = true;
     }
+    if (CONDITIONAL_DIRECTIVES.has(prop.name)) conditional = true;
   }
   for (const prop of element.props) {
     if (prop.type === TemplateNodeType.DIRECTIVE && prop.name === "slot" && prop.exp)
@@ -808,10 +840,20 @@ function walkElement(
   }
   const kind = elementKind(element);
   if (kind === "markup") walk.facts.ownMarkup = true;
+  const here = {
+    inFor: elementInFor,
+    conditional,
+    ...(place.host && { host: place.host }),
+    builtInHosts: place.builtInHosts,
+  };
   const usage =
-    kind === "component"
-      ? createUsage(walk, element, elementScope, elementInFor, parent)
-      : undefined;
+    kind === "component" ? createUsage(walk, element, elementScope, here, place.parent) : undefined;
+  if (kind === "slot")
+    walk.facts.slotOutlets.push({
+      name: slotOutletName(element),
+      ...here,
+      range: locRange(walk.rangeOf, element),
+    });
   for (const prop of element.props) {
     if (prop.type === TemplateNodeType.ATTRIBUTE) {
       walk.visitAttribute(
@@ -839,11 +881,59 @@ function walkElement(
       walk.facts.ownMarkup = true;
     if (usage) readUsageDirective(walk, usage, prop);
   }
+  const usageIndex = walk.facts.usages.length;
   if (usage) walk.facts.usages.push(usage);
   const childParent =
-    element.tagType === 3 ? parent : { tag: element.tag, element: element.tagType === 0 };
-  for (const child of element.children)
-    walkChild(walk, child, childScope, elementInFor, childParent);
+    element.tagType === 3 ? place.parent : { tag: element.tag, element: element.tagType === 0 };
+  const builtIn = element.tagType === 1 && kind === "markup";
+  const childPlace: WalkPlace = {
+    scope: childScope,
+    inFor: elementInFor,
+    // Fallback content of a <slot> renders only when the caller passes nothing.
+    conditional: conditional || kind === "slot",
+    parent: childParent,
+    ...(place.host && { host: place.host }),
+    builtInHosts: builtIn ? [...place.builtInHosts, element.tag] : place.builtInHosts,
+  };
+  const ownSlot = slotName(findTemplateDirective(element, "slot")) ?? "default";
+  for (const child of element.children) {
+    const slot = child.type === TemplateNodeType.ELEMENT ? slotTemplateName(child) : undefined;
+    if (usage)
+      walkChild(walk, child, {
+        ...childPlace,
+        host: { usage: usageIndex, slot: slot === undefined ? ownSlot : slot },
+      });
+    else if (builtIn && slot !== undefined && slot !== "default")
+      walkChild(walk, child, { ...childPlace, conditional: true });
+    else walkChild(walk, child, childPlace);
+  }
+}
+
+/** The slot a `<template v-slot>` fills: its static name, null when dynamic, undefined if none. */
+function slotTemplateName(element: TemplateElementNode): string | null | undefined {
+  if (element.tagType !== 3) return undefined;
+  return slotName(findTemplateDirective(element, "slot"));
+}
+
+function slotName(slot: TemplateDirectiveNode | undefined): string | null | undefined {
+  if (!slot) return undefined;
+  if (!slot.arg) return "default";
+  return slot.arg.isStatic ? slot.arg.content : null;
+}
+
+function slotOutletName(element: TemplateElementNode): string | null {
+  for (const prop of element.props) {
+    if (prop.type === TemplateNodeType.ATTRIBUTE && prop.name === "name")
+      return prop.value?.content ?? "default";
+    if (
+      prop.type === TemplateNodeType.DIRECTIVE &&
+      prop.name === "bind" &&
+      prop.arg?.isStatic &&
+      prop.arg.content === "name"
+    )
+      return null;
+  }
+  return "default";
 }
 
 function elementKind(element: TemplateElementNode): "component" | "markup" | "slot" | "template" {
@@ -859,7 +949,7 @@ function createUsage(
   walk: TemplateWalk,
   element: TemplateElementNode,
   scope: string[],
-  inFor: boolean,
+  place: Pick<ComponentUsageFact, "inFor" | "conditional" | "host" | "builtInHosts">,
   parent: ComponentUsageFact["parent"],
 ): ComponentUsageFact {
   const start = element.loc.start.offset + 1;
@@ -873,7 +963,7 @@ function createUsage(
     listeners: [],
     directives: [],
     scope,
-    inFor,
+    ...place,
   };
 }
 
