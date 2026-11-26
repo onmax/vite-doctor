@@ -584,6 +584,7 @@ export interface ProjectInfo {
    * Rules read the package's runtimes through `ctx.project` for files that package owns.
    */
   workspaceRuntimeGraphs?: Record<string, RuntimeGraph>;
+  /** Workspace package that owns the run's runtime graph and, if present, its Nuxt inventory. */
   runtimeGraphRoot?: string;
   tsconfigPath?: string;
   languages?: ProjectLanguage[];
