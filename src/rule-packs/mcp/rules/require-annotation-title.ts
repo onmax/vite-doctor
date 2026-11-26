@@ -13,7 +13,7 @@ export const requireAnnotationTitle = createRule({
     id: "mcp/tools/require-annotation-title",
     title: "Give every MCP tool an annotations.title",
     description: "Report MCP tools whose annotations have no human-readable title.",
-    why: "Clients show a tool by its title, and MCP has carried it in `annotations.title` since the 2025-03-26 revision. The top-level `title` only arrived in 2025-06-18, so older clients never see it. Anthropic's Connectors Directory requires a title on every tool, and its portal flags tools whose annotations have none, even when a top-level `title` is set. Both MCP toolkits fill the top-level `title` from the file name and pass `annotations` through as written, so a file-discovered tool ships without one unless you add it.",
+    why: "Clients show a tool by its title, and MCP has carried it in `annotations.title` since the 2025-03-26 revision. The top-level `title` only arrived in 2025-06-18, so older clients never see it, and some newer client surfaces still ignore it: Claude Code's transcript shows the bare tool name. Anthropic's Connectors Directory review asks every tool for a `title` and hint annotations, and its portal has flagged tools that set only the top-level `title`. Both MCP toolkits fill the top-level `title` from the file name and pass `annotations` through as written, so a file-discovered tool ships without one unless you add it.",
     recommendedReplacement:
       "Set `annotations.title` to the same human-readable name as the top-level `title`.",
     examples: [
@@ -65,12 +65,12 @@ export const requireAnnotationTitle = createRule({
           const topLevel = tool.title
             ? tool.title.source === "file"
               ? ` Its top-level title "${tool.title.value}" comes from the file name, and the toolkit doesn't copy it into the annotations.`
-              : ` It has a top-level title "${tool.title.value}", which clients that read only \`annotations.title\` never show.`
-            : "";
+              : ` It has a top-level title "${tool.title.value}", which some client surfaces ignore: Claude Code's transcript, for example, shows the bare name${tool.name ? ` \`${tool.name.value}\`` : ""}, and clients on the 2025-03-26 revision know only \`annotations.title\`.`
+            : " Clients show only the bare tool name.";
           const suggested = tool.title?.value ?? "<Human-readable name>";
           ctx.report(
             diagnostics.MCP0001({
-              why: `MCP tool ${label} has no non-empty string in \`annotations.title\`.${topLevel} Anthropic's Connectors Directory flags tools without one, and clients on the 2025-03-26 revision show only the bare name.`,
+              why: `MCP tool ${label} has no non-empty string in \`annotations.title\`.${topLevel} Anthropic's Connectors Directory review asks every tool for a \`title\` and hint annotations, and its portal flags tools missing them${tool.title ? "; it has flagged tools that set only the top-level `title`" : ""}.`,
               fix:
                 annotations.state === "absent"
                   ? `Add \`annotations: { title: ${JSON.stringify(suggested)}, readOnlyHint: true }\` (or \`destructiveHint: true\` for a tool that changes data).`
