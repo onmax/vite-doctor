@@ -182,7 +182,10 @@ function isLocallyNegated(prose: string, start: number): boolean {
 }
 
 function mentionsDefault(prose: string, value: unknown): boolean {
-  for (const declaration of prose.matchAll(/\bdefault(?:s?\s+to\b|\s+is\b|\s*:)\s*`?/gi)) {
+  for (const declaration of prose.matchAll(
+    /\bdefault(?:s?\s+to\b|\s+is\b|\s*:|(?<numericShorthand>\s+(?=`?-?\d)))\s*`?/gi,
+  )) {
+    if (declaration.groups?.numericShorthand && typeof value !== "number") continue;
     if (isLocallyNegated(prose, declaration.index)) continue;
     const literal = prose.slice(declaration.index + declaration[0].length);
     if (typeof value === "boolean" && new RegExp(`^${value}\\b`, "i").test(literal)) return true;

@@ -399,6 +399,25 @@ describe("rule details", () => {
   );
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s recognizes numeric default shorthand without treating it as a string declaration",
+    (rule) => {
+      const withDescription = (value: number | string, description: string) =>
+        schema(object({ limit: { type: typeof value, default: value, description } }));
+      expect(hits(rule, withDescription(10, "Default 10."))).toEqual([]);
+      expect(hits(rule, withDescription(10, "Page size (default 10, max 50)."))).toEqual([]);
+      expect(hits(rule, withDescription(-100, "Default `-1e2`."))).toEqual([]);
+      for (const [value, description] of [
+        [50, "Page size (default 10, max 50)."],
+        [10, "Not default 10."],
+        ["10", "Default 10."],
+      ] as const)
+        expect(hits(rule, withDescription(value, description))[0]?.pointer, description).toBe(
+          "/inputSchema/properties/limit/default",
+        );
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
     "%s ignores incidental and negated mentions of defaults",
     (rule) => {
       const withDescription = (value: string | boolean, description: string) =>
