@@ -6,7 +6,6 @@ import { defineDoctorExtension, defineRulePack, runDoctor } from "../../../src/c
 import { vueRulePack } from "../../../src/rule-packs/vue/rules.ts";
 import nuxtContentRulePack from "../../../src/rule-packs/nuxt/rules/nuxt-content.ts";
 import docusRulePack from "../../../src/rule-packs/nuxt/rules/docus.ts";
-import { preferUButton, preferUFormControls } from "../../../src/rule-packs/nuxt/rules/nuxt-ui.ts";
 import {
   noBrowserGlobalInUniversalCode,
   noBrowserSideEffectsInSetup,
@@ -113,88 +112,6 @@ test("Vue lifecycle evidence skips Nuxt content, server, generated, and client-o
       expect(result.diagnostics[0]?.file).toContain("app/components/Leaky.vue");
     },
   );
-});
-
-test("Nuxt UI button rule reports native buttons", async () => {
-  const result = await runRuleFixture({
-    rule: preferUButton,
-    framework: "nuxt",
-    files: {
-      "app/pages/index.vue": `<template><button type="button" @click="copy()">Copy</button></template>`,
-    },
-  });
-
-  expect(result.diagnostics).toHaveLength(1);
-  expect(result.diagnostics[0]?.ruleId).toBe("nuxt-ui/prefer-u-button");
-  expect(result.diagnostics[0]?.suggestion).toContain("<UButton>");
-});
-
-test("Nuxt UI button rule ignores UButton and explicit doctor ignores", async () => {
-  const result = await runRuleFixture({
-    rule: preferUButton,
-    framework: "nuxt",
-    files: {
-      "app/pages/index.vue": `<template>
-<UButton @click="copy()">Copy</UButton>
-<button data-doctor-ignore type="button">Native</button>
-</template>`,
-    },
-  });
-
-  expect(result.diagnostics).toHaveLength(0);
-});
-
-test("Nuxt UI form controls rule reports clear native form control replacements", async () => {
-  const result = await runRuleFixture({
-    rule: preferUFormControls,
-    framework: "nuxt",
-    files: {
-      "app/pages/index.vue": `<template>
-<input type="email" v-model="email">
-<textarea v-model="body" />
-<select v-model="value"><option value="a">A</option></select>
-</template>`,
-    },
-  });
-
-  expect(result.diagnostics.map((item) => item.ruleId)).toEqual([
-    "nuxt-ui/prefer-u-form-controls",
-    "nuxt-ui/prefer-u-form-controls",
-    "nuxt-ui/prefer-u-form-controls",
-  ]);
-  expect(result.diagnostics.map((item) => item.suggestion)).toEqual([
-    expect.stringContaining("<UInput>"),
-    expect.stringContaining("<UTextarea>"),
-    expect.stringContaining("<USelect>"),
-  ]);
-});
-
-test("Nuxt UI form controls rule ignores ambiguous native inputs and layout elements", async () => {
-  const result = await runRuleFixture({
-    rule: preferUFormControls,
-    framework: "nuxt",
-    files: {
-      "app/pages/index.vue": `<template>
-<div>
-  <form>
-    <label>Email</label>
-    <input type="checkbox">
-    <input type="file">
-    <input type="hidden">
-    <input :type="dynamicType">
-    <input ref="input" v-bind="attachments.inputProps.value" class="sr-only">
-    <input type="text" v-bind="inputAttrs">
-    <input v-bind="inputAttrs" type="text">
-  </form>
-</div>
-</template>`,
-    },
-  });
-
-  // Only the input whose static type follows the spread is known to be text.
-  expect(result.diagnostics.map((item) => [item.range?.line, item.suggestion])).toEqual([
-    [11, expect.stringContaining("<UInput>")],
-  ]);
 });
 
 test("browser globals inside client-only callbacks are not reported", async () => {

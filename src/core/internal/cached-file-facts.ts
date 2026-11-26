@@ -106,7 +106,9 @@ function componentFacts(value: unknown): boolean {
             typeof item.parent.tag === "string" &&
             typeof item.parent.element === "boolean")),
     ) &&
-    strings(value.bindingReferences)
+    strings(value.bindingReferences) &&
+    (value.doctorOption === undefined ||
+      (record(value.doctorOption) && optionalRange(value.doctorOption.range)))
   );
 }
 

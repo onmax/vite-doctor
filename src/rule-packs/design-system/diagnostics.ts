@@ -7,6 +7,9 @@ export const designSystemDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DS0004", ruleId: "design-system/no-inline-styles" },
   { code: "DS0005", ruleId: "design-system/require-static-classes" },
   { code: "DS0006", ruleId: "design-system/no-unknown-classes" },
+  { code: "DS0007", ruleId: "design-system/prefer-project-component" },
+  // DS0008 is reserved for design-system/limit-per-view.
+  { code: "DS0009", ruleId: "design-system/unreadable-contract" },
 ]);
 
 export const diagnostics = designSystemDiagnosticRegistry.diagnostics;

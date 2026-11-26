@@ -877,7 +877,18 @@ export interface ComponentFacts {
   usages: ComponentUsageFact[];
   /** Imported names the component references outside a template tag, in script code or template expressions. */
   bindingReferences: string[];
+  /**
+   * The component's `doctor` option, from `defineOptions()` or the `<script>` default export.
+   * `value` is the JSON it spells when every part is a literal; otherwise `unreadable` is the range
+   * of the first part Doctor cannot evaluate statically. Undefined when the component sets none.
+   */
+  doctorOption?: DoctorComponentOption;
 }
+
+/** A component's `doctor` option as Doctor read it statically. */
+export type DoctorComponentOption =
+  | { range: SourceRange; value: unknown }
+  | { range: SourceRange; unreadable: SourceRange };
 
 /** A component usage in an SFC template, resolved to the SFC it renders when Doctor can prove it. */
 export interface ComponentUsageEdge {

@@ -342,7 +342,9 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     await writeManifest(nuxt, evidence);
   });
 
-  nuxt.hook?.("prepare:types", async () => {
+  nuxt.hook?.("prepare:types", async (options?: { references?: Array<{ types: string }> }) => {
+    // Types `defineOptions({ doctor })`, the Component Contract design-system Rules read.
+    options?.references?.push({ types: "vite-doctor/component-contract" });
     await writeManifest(nuxt, evidence);
   });
 

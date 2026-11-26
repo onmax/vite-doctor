@@ -3,6 +3,7 @@ import type {
   ComponentPropFact,
   ComponentRootBranch,
   ComponentUsageFact,
+  DoctorComponentOption,
   SourceRange,
   TemplateChildNode,
   TemplateDirectiveNode,
@@ -236,6 +237,9 @@ function readScriptDeclarations(
           typeof inherit.value.value === "boolean"
         ? inherit.value.value
         : undefined;
+  const doctor = option("doctor");
+  if (doctor !== "absent" && doctor !== "unknown")
+    facts.doctorOption = readDoctorOption(doctor.value, rangeOf);
   const delegated = option("mixins") !== "absent" || option("extends") !== "absent";
   if (delegated) {
     facts.props = undefined;
@@ -244,6 +248,61 @@ function readScriptDeclarations(
     if (!declaresProps && !plainScriptCode && option("props") === "absent") facts.props = [];
     if (!declaresEmits && !plainScriptCode && option("emits") === "absent") facts.emits = [];
   }
+}
+
+function readDoctorOption(node: AnyNode, rangeOf: RangeOf): DoctorComponentOption {
+  const range = rangeOf(node.start, node.end);
+  const read = staticJson(node);
+  return "unreadable" in read
+    ? { range, unreadable: rangeOf(read.unreadable.start, read.unreadable.end) }
+    : { range, value: read.value };
+}
+
+/** The JSON value a literal expression spells, or the first node that is not a literal. */
+function staticJson(node: AnyNode): { value: unknown } | { unreadable: AnyNode } {
+  while (
+    node?.type === "TSAsExpression" ||
+    node?.type === "TSSatisfiesExpression" ||
+    node?.type === "ParenthesizedExpression"
+  )
+    node = node.expression;
+  if (node?.type === "Literal" && !node.regex && node.bigint === undefined)
+    return { value: node.value };
+  if (node?.type === "TemplateLiteral" && !node.expressions.length)
+    return { value: node.quasis[0]?.value.cooked };
+  if (
+    node?.type === "UnaryExpression" &&
+    node.operator === "-" &&
+    node.argument?.type === "Literal" &&
+    typeof node.argument.value === "number"
+  )
+    return { value: -node.argument.value };
+  if (node?.type === "ArrayExpression") {
+    const value: unknown[] = [];
+    for (const element of node.elements) {
+      if (!element || element.type === "SpreadElement") return { unreadable: element ?? node };
+      const item = staticJson(element);
+      if ("unreadable" in item) return item;
+      value.push(item.value);
+    }
+    return { value };
+  }
+  if (node?.type === "ObjectExpression") {
+    const value: Record<string, unknown> = {};
+    for (const property of node.properties) {
+      const key =
+        property.computed && property.key?.type === "Literal"
+          ? String(property.key.value)
+          : propertyKey(property);
+      if (key === undefined || property.kind !== "init" || property.method)
+        return { unreadable: property };
+      const item = staticJson(property.value);
+      if ("unreadable" in item) return item;
+      value[key] = item.value;
+    }
+    return { value };
+  }
+  return { unreadable: node };
 }
 
 function componentOptions(declaration: AnyNode): AnyNode {

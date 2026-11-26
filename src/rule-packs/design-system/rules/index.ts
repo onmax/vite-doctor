@@ -1,4 +1,8 @@
+import { preferProjectComponent } from "./prefer-project-component.js";
 import { createDesignSystemRule } from "./shared.js";
+import { unreadableContract } from "./unreadable-contract.js";
+
+export { preferProjectComponent, unreadableContract };
 
 export const noRestyle = createDesignSystemRule({
   id: "design-system/no-restyle",
@@ -56,4 +60,6 @@ export const designSystemRules = [
   noInlineStyles,
   requireStaticClasses,
   noUnknownClasses,
+  preferProjectComponent,
+  unreadableContract,
 ];

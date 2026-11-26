@@ -96,6 +96,38 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "design-system/prefer-project-component": {
+    description:
+      "Finds raw elements such as <button> where the project has a component that replaces them.",
+    why: "A raw element skips the component the project built or installed for it, so it can look and behave differently from every other instance: focus rings, sizes, disabled and loading states, and form field wiring drift. The Rule learns which component replaces which element from Component Contracts, the Nuxt UI component table, or a project SFC named after the element, and reports nothing when two components claim the same element.",
+    recommendedReplacement:
+      "Render the replacing component instead of the raw element, keep its attributes, v-model, listeners, and content, and move styling classes to the component's props.",
+    examples: [
+      {
+        title: "Use UButton in a Nuxt UI app",
+        language: "vue",
+        invalid: '<template>\n  <button type="button" @click="save">Save</button>\n</template>',
+        valid: '<template>\n  <UButton @click="save">Save</UButton>\n</template>',
+      },
+    ],
+  },
+  "design-system/unreadable-contract": {
+    description:
+      "Finds `defineOptions({ doctor })` values Doctor cannot read as a Component Contract.",
+    why: "Doctor reads Component Contracts statically from the SFC. A variable, function call, or unknown key in the `doctor` option leaves the contract unread, so design-system/prefer-project-component cannot point raw elements to the component.",
+    recommendedReplacement:
+      'Write the `doctor` option as a literal object, such as `defineOptions({ doctor: { replaces: "button" } })`.',
+    examples: [
+      {
+        title: "Write the contract as a literal",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nconst element = "button";\ndefineOptions({ doctor: { replaces: element } });\n</script>\n\n<template>\n  <button class="app-button"><slot /></button>\n</template>',
+        valid:
+          '<script setup lang="ts">\ndefineOptions({ doctor: { replaces: "button" } });\n</script>\n\n<template>\n  <button class="app-button"><slot /></button>\n</template>',
+      },
+    ],
+  },
   "docus/appconfig/no-unknown-key": {
     description: "Flags unknown key in Docus appconfig code before it leaks into runtime behavior.",
     why: "Runtime configuration has different server and client visibility. Using the framework API keeps environment data typed and scoped.",
@@ -703,33 +735,6 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: "useHead({\n  script: [{ src: 'https://example.com/widget.js' }],\n})",
         valid: "useHeadSafe({\n  script: [{ src: trustedWidgetUrl }],\n})",
-      },
-    ],
-  },
-  "nuxt-ui/prefer-u-button": {
-    description: "Finds Nuxt project code that should use the supported u button pattern instead.",
-    why: "Native buttons repeat styling, loading, icon, and link behavior that UButton keeps consistent with the project's Nuxt UI theme.",
-    recommendedReplacement: "Use the Nuxt-supported u button pattern instead.",
-    examples: [
-      {
-        title: "Use UButton",
-        language: "vue",
-        invalid: '<template>\n  <button type="button">Save</button>\n</template>',
-        valid: '<template>\n  <UButton type="button">Save</UButton>\n</template>',
-      },
-    ],
-  },
-  "nuxt-ui/prefer-u-form-controls": {
-    description:
-      "Finds Nuxt project code that should use the supported u form controls pattern instead.",
-    why: "Native form controls bypass Nuxt UI's validation, help text, error state, and accessibility wiring.",
-    recommendedReplacement: "Use the Nuxt-supported u form controls pattern instead.",
-    examples: [
-      {
-        title: "Use Nuxt UI form controls",
-        language: "vue",
-        invalid: '<template>\n  <input v-model="email" type="email">\n</template>',
-        valid: '<template>\n  <UInput v-model="email" type="email" />\n</template>',
       },
     ],
   },

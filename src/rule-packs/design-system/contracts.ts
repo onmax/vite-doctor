@@ -1,0 +1,269 @@
+import { basename, dirname, extname, isAbsolute, relative, resolve } from "pathe";
+import type {
+  ComponentNode,
+  ComponentUsageGraph,
+  DoctorComponentOption,
+  ProjectInfo,
+  SourceRange,
+} from "../../core/index.js";
+import { projectWorkspacePackages } from "../../core/internal/applicability.js";
+
+/**
+ * A Component Contract as a component author writes it, in `<script setup>`:
+ *
+ * ```ts
+ * defineOptions({ doctor: { replaces: "button" } });
+ * ```
+ *
+ * or, for a component the project does not own, in a design-system Rule's options:
+ *
+ * ```ts
+ * { contracts: { UButton: { replaces: "button" } } }
+ * ```
+ *
+ * Doctor reads it statically, so every value must be a literal.
+ */
+export interface ComponentContractInput {
+  /** The raw HTML element, or elements, that call sites should render this component instead of. */
+  replaces?: string | string[];
+}
+
+/** A Component Contract after Doctor read and normalized it. New keys are added here, never reshaped. */
+export interface ComponentContract {
+  /** Lowercase HTML tag names, such as `["input", "textarea"]`. */
+  replaces: string[];
+}
+
+/** A Component Contract and the component that declares it. */
+export interface DeclaredContract {
+  /** The tag call sites use for the component, such as `AppButton` or `UButton`. */
+  component: string;
+  /** The SFC that declares the contract, or that the config entry names when Doctor can find it. */
+  file?: string;
+  contract: ComponentContract;
+  /** `component` for `defineOptions({ doctor })`, `config` for a Rule's `contracts` option. */
+  declaredIn: "component" | "config";
+  /** Where `doctor` is set in `file`, for `component` contracts. */
+  range?: SourceRange;
+}
+
+/** A `doctor` option Doctor cannot turn into a Component Contract. */
+export interface UnreadableContract {
+  component: string;
+  file: string;
+  range: SourceRange;
+  /** Why, as a sentence fragment that completes "Doctor cannot read it because …". */
+  reason: string;
+}
+
+export interface ProjectContracts {
+  contracts: DeclaredContract[];
+  unreadable: UnreadableContract[];
+}
+
+/** Keys a Component Contract may set. A later key extends this table and `parseContract`. */
+const CONTRACT_KEYS = new Set(["replaces"]);
+const TAG = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * Turns one literal contract value into a Component Contract, or explains what is wrong with it.
+ * Used for `defineOptions({ doctor })` values and for each entry of a Rule's `contracts` option.
+ */
+export function parseContract(
+  value: unknown,
+): { contract: ComponentContract } | { problem: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return { problem: 'it is not an object such as { replaces: "button" }' };
+  const unknown = Object.keys(value).filter((key) => !CONTRACT_KEYS.has(key));
+  if (unknown.length)
+    return {
+      problem: `it sets ${unknown.map((key) => `\`${key}\``).join(", ")}, which a Component Contract does not have (known keys: ${[...CONTRACT_KEYS].join(", ")})`,
+    };
+  const { replaces = [] } = value as Record<string, unknown>;
+  const elements = typeof replaces === "string" ? [replaces] : replaces;
+  if (
+    !Array.isArray(elements) ||
+    !elements.every((element) => typeof element === "string" && TAG.test(element))
+  )
+    return {
+      problem: '`replaces` is not a lowercase HTML tag name or an array of them, such as "button"',
+    };
+  return { contract: { replaces: [...new Set(elements as string[])] } };
+}
+
+/**
+ * Reads a Rule's `contracts` option: Component Contracts keyed by the tag call sites use. Throws
+ * a message for DOC0020 when the option is malformed.
+ */
+export function parseContractOptions(contracts: unknown): Record<string, ComponentContract> {
+  if (contracts === undefined) return {};
+  if (!contracts || typeof contracts !== "object" || Array.isArray(contracts))
+    throw new Error(
+      '`contracts` must map component names to contracts such as { replaces: "button" }',
+    );
+  const parsed: Record<string, ComponentContract> = {};
+  for (const [component, value] of Object.entries(contracts)) {
+    const read = parseContract(value);
+    if ("problem" in read)
+      throw new Error(`\`contracts.${component}\` is not a Component Contract: ${read.problem}`);
+    parsed[component] = read.contract;
+  }
+  return parsed;
+}
+
+/**
+ * Every Component Contract in the Doctor Run: those SFCs declare with `defineOptions({ doctor })`,
+ * then those `configContracts` declares for components the project does not own.
+ */
+export function projectContracts(
+  graph: ComponentUsageGraph,
+  names: ComponentNames,
+  configContracts: Record<string, ComponentContract> = {},
+): ProjectContracts {
+  const contracts: DeclaredContract[] = [];
+  const unreadable: UnreadableContract[] = [];
+  for (const node of graph.components.values()) {
+    const option: DoctorComponentOption | undefined = node.facts.doctorOption;
+    if (!option) continue;
+    const component = componentTag(node, names);
+    if ("unreadable" in option) {
+      unreadable.push({
+        component,
+        file: node.file,
+        range: option.unreadable,
+        reason: "part of it is computed at runtime instead of written as a literal",
+      });
+      continue;
+    }
+    const read = parseContract(option.value);
+    if ("problem" in read)
+      unreadable.push({ component, file: node.file, range: option.range, reason: read.problem });
+    else
+      contracts.push({
+        component,
+        file: node.file,
+        contract: read.contract,
+        declaredIn: "component",
+        range: option.range,
+      });
+  }
+  for (const [component, contract] of Object.entries(configContracts)) {
+    const file = componentFile(component, names, graph);
+    contracts.push({ component, ...(file && { file }), contract, declaredIn: "config" });
+  }
+  return { contracts, unreadable };
+}
+
+/**
+ * How a Doctor Run names components: `registered` holds the names Nuxt resolved (from the Nuxt
+ * manifest), `nuxtDefault` the names Nuxt gives SFCs under `components/` by default, for Nuxt
+ * projects Doctor has no manifest for.
+ */
+export interface ComponentNames {
+  registered: ReadonlyMap<string, string>;
+  nuxtDefault: ReadonlyMap<string, string>;
+}
+
+/** Component names for the project, each mapped to the absolute SFC path. */
+export function componentNames(project: ProjectInfo, graph: ComponentUsageGraph): ComponentNames {
+  const registered = new Map<string, string>();
+  const nuxtDefault = new Map<string, string>();
+  const nuxt = project.nuxt;
+  if (!nuxt) return { registered, nuxtDefault };
+  const absolute = (file: string) => (isAbsolute(file) ? file : resolve(project.root, file));
+  for (const entry of nuxt.manifest?.resolvedComponents ?? [])
+    if (entry.file.endsWith(".vue")) registered.set(entry.name, absolute(entry.file));
+  for (const entry of nuxt.components.values())
+    if (entry.file?.endsWith(".vue") && !registered.has(entry.name))
+      registered.set(entry.name, absolute(entry.file));
+  if (registered.size) return { registered, nuxtDefault };
+  // shadcn-nuxt registers `components/ui` by export name, not by path.
+  const shadcnNuxt = usesPackage(project, "shadcn-nuxt");
+  for (const node of graph.components.values()) {
+    if (node.sourceKind === "module" || (shadcnNuxt && isUiKitFile(node.file))) continue;
+    const match = /(?:^|\/)components\/(.+\.vue)$/.exec(relative(project.root, node.file));
+    const name = match && nuxtComponentName(match[1]!);
+    if (name && !nuxtDefault.has(name)) nuxtDefault.set(name, node.file);
+  }
+  return { registered, nuxtDefault };
+}
+
+/** The SFC a component name refers to, when Doctor can tell. */
+export function componentFile(
+  name: string,
+  names: ComponentNames,
+  graph: ComponentUsageGraph,
+): string | undefined {
+  return (
+    names.registered.get(name) ??
+    [...graph.components.values()].find((node) =>
+      node.callers.some((edge) => pascalCase(edge.usage.tag) === name),
+    )?.file ??
+    names.nuxtDefault.get(name) ??
+    [...graph.components.values()].find((node) => fileTag(node.file) === name)?.file
+  );
+}
+
+/**
+ * The tag call sites use for an SFC: the name Nuxt registered, else the tag its callers write
+ * most, else Nuxt's default name, else its file name.
+ */
+export function componentTag(node: ComponentNode, names: ComponentNames): string {
+  for (const [name, file] of names.registered) if (file === node.file) return name;
+  const counts = new Map<string, number>();
+  for (const edge of node.callers) {
+    const tag = pascalCase(edge.usage.tag);
+    counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  }
+  const used = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (used) return used;
+  for (const [name, file] of names.nuxtDefault) if (file === node.file) return name;
+  return fileTag(node.file);
+}
+
+/** The name Nuxt gives the component at `path`, relative to a `components/` directory. */
+function nuxtComponentName(path: string): string {
+  const directory = dirname(path);
+  const prefixParts = directory === "." ? [] : splitByCase(directory);
+  let fileName = basename(path, extname(path)).replace(/\.(client|server|island|global)$/, "");
+  if (fileName.toLowerCase() === "index") fileName = "";
+  const fileNameParts = splitByCase(fileName);
+  const fileNameContent = fileNameParts.join("/").toLowerCase();
+  const nameParts = [...prefixParts];
+  const matched: string[] = [];
+  for (let index = prefixParts.length - 1; index >= 0; index--) {
+    matched.unshift(prefixParts[index]!.toLowerCase());
+    const content = matched.join("/");
+    if (fileNameContent === content || fileNameContent.startsWith(`${content}/`))
+      nameParts.length = index;
+  }
+  return [...nameParts, ...fileNameParts]
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+}
+
+/** Whether any workspace package depends on `name`, or the Nuxt app installs it as a module. */
+export function usesPackage(project: ProjectInfo, name: string): boolean {
+  return (
+    projectWorkspacePackages(project).some((item) => name in item.packages) ||
+    !!project.nuxt?.modules?.some((module) => module.name === name)
+  );
+}
+
+/** Whether a file sits in a `components/ui/` directory, where shadcn-style kits keep primitives. */
+export function isUiKitFile(file: string): boolean {
+  return /(?:^|\/)components\/ui\//.test(file);
+}
+
+function splitByCase(value: string): string[] {
+  return value.split(/[\\/_.\-\s]+|(?<=[a-z0-9])(?=[A-Z])/).filter(Boolean);
+}
+
+function fileTag(file: string): string {
+  return pascalCase(basename(file, extname(file)));
+}
+
+function pascalCase(tag: string): string {
+  const camel = tag.replace(/-(\w)/g, (_, char: string) => char.toUpperCase());
+  return camel.charAt(0).toUpperCase() + camel.slice(1);
+}

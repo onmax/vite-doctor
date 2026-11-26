@@ -49,8 +49,6 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt-scripts/no-raw-third-party-script-tag": "Raw script tags",
   "nuxt-scripts/no-third-party-config-script": "app.head scripts",
   "nuxt-scripts/no-third-party-usehead-script": "useHead scripts",
-  "nuxt-ui/prefer-u-button": "UButton",
-  "nuxt-ui/prefer-u-form-controls": "Form controls",
   "nuxt-ui/require-uapp-root": "UApp root",
   "nuxt/async-data-explicit-key-for-refreshable": "Refresh keys",
   "nuxt/async-data-handler-pure": "Pure handlers",
@@ -173,6 +171,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "design-system/no-restyle": "Component restyling",
   "design-system/no-unknown-classes": "Unknown classes",
   "design-system/require-static-classes": "Static classes",
+  "design-system/prefer-project-component": "Project components",
+  "design-system/unreadable-contract": "Component Contracts",
 
   "typescript/boundaries/no-cross-realm-prototype-identity": "Prototype identity",
   "typescript/boundaries/no-cross-realm-web-instanceof": "Web API instanceof",

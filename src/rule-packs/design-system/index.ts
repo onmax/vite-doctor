@@ -4,18 +4,27 @@ import {
   noInlineStyles,
   noRawColors,
   designSystemRules,
+  preferProjectComponent,
+  unreadableContract,
 } from "./rules/index.js";
 
 export * from "./rules/index.js";
+export * from "./contracts.js";
 export { diagnostics, designSystemDiagnosticRegistry } from "./diagnostics.js";
 
 const designSystemRulePack = defineRulePack({
   name: "vite-doctor/design-system",
   version: "0.0.0",
-  activation: { packages: ["tailwindcss"] },
+  activation: { packages: ["tailwindcss", "@nuxt/ui"] },
   rules: designSystemRules,
   presets: {
-    recommended: [noRawColors, noArbitraryValues, noInlineStyles].map((rule) => rule.meta.id),
+    recommended: [
+      noRawColors,
+      noArbitraryValues,
+      noInlineStyles,
+      preferProjectComponent,
+      unreadableContract,
+    ].map((rule) => rule.meta.id),
     strict: designSystemRules.map((rule) => rule.meta.id),
   },
 });
