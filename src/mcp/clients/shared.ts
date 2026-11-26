@@ -128,7 +128,7 @@ export function undescribedConstraints(
       if (!dropped.has(keyword)) continue;
       if (node.schema.type === "integer" && isSafeIntegerBound(keyword, node.schema[keyword]))
         continue;
-      if (isVacuousSizeMinimum(keyword, node.schema[keyword])) continue;
+      if (isImplied(keyword, node.schema[keyword])) continue;
       if (mentions(prose, keyword, node.schema[keyword])) continue;
       found.push({ pointer: inputPointer(`${node.pointer}/${keyword}`), keyword });
     }
@@ -144,10 +144,20 @@ function isSafeIntegerBound(keyword: string, value: unknown): boolean {
   );
 }
 
-function isVacuousSizeMinimum(keyword: string, value: unknown): boolean {
+// A model already reads an omitted argument as null, false, or empty, and a size minimum of 1
+// only rejects an empty value, so neither is something a description has to repeat.
+function isImplied(keyword: string, value: unknown): boolean {
+  if (keyword === "default")
+    return (
+      value === null ||
+      value === false ||
+      value === "" ||
+      (typeof value === "object" && Object.keys(value).length === 0)
+    );
   return (
     (keyword === "minLength" || keyword === "minItems" || keyword === "minProperties") &&
-    value === 0
+    typeof value === "number" &&
+    value <= 1
   );
 }
 

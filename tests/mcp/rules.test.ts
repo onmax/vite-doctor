@@ -337,9 +337,9 @@ describe("rule details", () => {
   );
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
-    "%s reports undescribed defaults and skips only vacuous size minimums",
+    "%s skips empty defaults and size minimums of 0 or 1",
     (rule) => {
-      const constrained = object({
+      const implied = object({
         a: { type: ["string", "null"], default: null },
         b: { type: "boolean", default: false, description: "Exclude expired rules." },
         c: { type: "string", default: "", minLength: 1 },
@@ -349,18 +349,7 @@ describe("rule details", () => {
         g: { type: "string", minLength: 0 },
         h: { type: "array", items: { type: "string" }, minItems: 0 },
       });
-      expect(
-        hits(rule, schema({ ...constrained, required: ["changes"] }))[0]?.affectedPointers,
-      ).toEqual([
-        "/inputSchema/properties/a/default",
-        "/inputSchema/properties/b/default",
-        "/inputSchema/properties/c/default",
-        "/inputSchema/properties/c/minLength",
-        "/inputSchema/properties/d/default",
-        ...(rule.startsWith("vscode") ? ["/inputSchema/properties/d/minItems"] : []),
-        "/inputSchema/properties/e/default",
-        "/inputSchema/properties/changes/minProperties",
-      ]);
+      expect(hits(rule, schema({ ...implied, required: ["changes"] }))).toEqual([]);
       const described = object({
         a: { type: ["string", "null"], default: null, description: "Defaults to null." },
         b: { type: "boolean", default: false, description: "Default is false." },
