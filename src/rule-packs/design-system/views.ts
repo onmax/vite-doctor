@@ -143,7 +143,12 @@ export async function projectViews(ctx: RuleContext, resolved: ViewGraph): Promi
       if (layoutFile === undefined && name !== false && !layouts) continue;
       if (layoutFile && !graph.components.has(layoutFile)) continue;
       const roots = viewRoots(resolved, app, layoutFile, chain);
-      if (roots) views.push({ route: routeName(ctx, layers, chain), page: route.file, roots });
+      if (roots)
+        views.push({
+          route: route.fullPath ?? routeName(ctx, layers, route.file),
+          page: route.file,
+          roots,
+        });
     }
   }
   return views;
@@ -174,8 +179,7 @@ function routeChain(route: PageRoute, byFile: Map<string, PageRoute | null>) {
   return chain;
 }
 
-function routeName(ctx: RuleContext, layers: NuxtAppSource[], chain: PageRoute[]): string {
-  const page = chain.at(-1)!.file;
+function routeName(ctx: RuleContext, layers: NuxtAppSource[], page: string): string {
   for (const layer of layers) {
     const dir = join(layer.srcDir, "pages");
     if (!page.startsWith(`${dir}/`)) continue;

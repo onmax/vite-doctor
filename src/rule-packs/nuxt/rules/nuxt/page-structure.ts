@@ -522,6 +522,7 @@ export interface PageRoute {
   file: string;
   parent: string | null;
   path?: string;
+  fullPath?: string;
 }
 
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
@@ -540,6 +541,7 @@ export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: r
               file: resolve(root, page.file),
               parent: page.parentFile ? resolve(root, page.parentFile) : null,
               path: page.path,
+              fullPath: page.fullPath,
             },
           ]
         : [],

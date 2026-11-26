@@ -32,7 +32,7 @@ interface Finding {
   declared: DeclaredContract;
   limit: ComponentLimit;
   counted: RenderedUsage[];
-  routes: string[];
+  views: View[];
 }
 
 export const limitPerView = createRule({
@@ -88,12 +88,12 @@ export const limitPerView = createRule({
                 counted.map(usageKey),
               ]);
               const finding = findings.get(key);
-              if (finding) finding.routes.push(view.route);
-              else findings.set(key, { declared, limit, counted, routes: [view.route] });
+              if (finding) finding.views.push(view);
+              else findings.set(key, { declared, limit, counted, views: [view] });
             }
           }
         }
-        for (const finding of findings.values()) report(ctx, finding, views);
+        for (const finding of findings.values()) report(ctx, finding);
       },
     };
   },
@@ -181,8 +181,9 @@ function usageKey(rendered: RenderedUsage): string {
     .join(">");
 }
 
-function report(ctx: RuleContext, finding: Finding, views: View[]) {
-  const { declared, limit, counted, routes } = finding;
+function report(ctx: RuleContext, finding: Finding) {
+  const { declared, limit, counted, views } = finding;
+  const routes = views.map(({ route }) => route);
   const excess = counted[limit.max]!;
   const component = declared.component;
   const where = (rendered: RenderedUsage) =>
@@ -228,10 +229,7 @@ function report(ctx: RuleContext, finding: Finding, views: View[]) {
       max: limit.max,
       when: limit.when,
       routes,
-      pages: routes.flatMap((route) => {
-        const page = views.find((view) => view.route === route)?.page;
-        return page ? [relative(ctx.project.root, page)] : [];
-      }),
+      pages: views.map(({ page }) => relative(ctx.project.root, page)),
       counted: counted.map((rendered) => ({
         file: relative(ctx.project.root, rendered.file),
         line: rendered.usage.range.line,

@@ -895,13 +895,16 @@ function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: Wa
     ...(place.host && { host: place.host }),
     builtInHosts: builtIn ? [...place.builtInHosts, element.tag] : place.builtInHosts,
   };
-  const ownSlot = slotName(findTemplateDirective(element, "slot")) ?? "default";
+  const ownSlot = slotName(findTemplateDirective(element, "slot"));
   for (const child of element.children) {
     const slot = child.type === TemplateNodeType.ELEMENT ? slotTemplateName(child) : undefined;
     if (usage)
       walkChild(walk, child, {
         ...childPlace,
-        host: { usage: usageIndex, slot: slot === undefined ? ownSlot : slot },
+        host: {
+          usage: usageIndex,
+          slot: slot === undefined ? (ownSlot === undefined ? "default" : ownSlot) : slot,
+        },
       });
     else if (builtIn && slot !== undefined && slot !== "default")
       walkChild(walk, child, { ...childPlace, conditional: true });

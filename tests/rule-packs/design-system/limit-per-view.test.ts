@@ -1,10 +1,13 @@
 import { expect, test } from "vite-plus/test";
+import { nuxtAppInputSignature } from "../../../src/core/internal/nuxt-app-inputs.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
+import { runViteDoctor } from "../../../src/doctor.ts";
 import {
   limitPerView,
   parseContract,
   unreadableContract,
 } from "../../../src/rule-packs/design-system/index.ts";
+import { withFixture, writeFileManifest } from "../nuxt/nuxt-modern-rules-fixture.ts";
 
 const NUXT_UI = { "@nuxt/ui": "^4.0.0" };
 const WHY = "Two primary buttons compete and the user can't tell which one moves them forward.";
@@ -96,6 +99,42 @@ test("a nested parent page and child page report in the child's view", async () 
   expect(result[0]?.why).toContain("the /settings/profile view");
 });
 
+test("uses the prepared full path of a nested route", async () => {
+  const parent = "app/pages/settings.vue";
+  const child = "app/pages/settings/profile.vue";
+  await withFixture(
+    {
+      "app/app.vue": app,
+      "app/components/AppButton.vue": appButton,
+      [parent]: page(`${primary}<NuxtPage />`),
+      [child]: page(primary),
+    },
+    NUXT_UI,
+    async (root) => {
+      const inputs = {
+        directories: [{ directory: "app/pages", patterns: ["**/*.vue"] }],
+        files: [],
+        ignore: { patterns: [], roots: ["."] },
+      };
+      await writeFileManifest(root, [], {
+        generatedAt: new Date(Date.now() + 10_000).toISOString(),
+        pages: [
+          { path: "/custom", fullPath: "/custom", file: parent, parentFile: null },
+          { path: ":id", fullPath: "/custom/:id", file: child, parentFile: parent },
+        ],
+        resolvedApp: {
+          pagesResolved: true,
+          inputs: { pages: { ...inputs, signature: nuxtAppInputSignature(root, inputs) } },
+        },
+      });
+      const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+      expect(result.diagnostics.filter(({ code }) => code === "DS0008")).toMatchObject([
+        { data: { routes: ["/custom/:id"], pages: [child] } },
+      ]);
+    },
+  );
+});
+
 test("a usage passed through a resolved wrapper's default slot counts", async () => {
   const result = await limitDiagnostics({
     "app/components/Toolbar.vue": `<template><div class="toolbar"><slot /></div></template>`,
@@ -104,6 +143,15 @@ test("a usage passed through a resolved wrapper's default slot counts", async ()
 
   expect(result).toHaveLength(1);
   expect(result[0]?.confidence).toBe("proven");
+});
+
+test("a dynamic slot binding on the host is not treated as its default slot", async () => {
+  const result = await limitDiagnostics({
+    "app/components/Toolbar.vue": `<template><div><slot /></div></template>`,
+    "app/pages/index.vue": page(`<Toolbar v-slot:[name]>${primary}</Toolbar>${primary}`),
+  });
+
+  expect(result).toEqual([]);
 });
 
 test("a usage in a package component's default slot counts as heuristic-high", async () => {
