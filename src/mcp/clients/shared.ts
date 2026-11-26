@@ -151,7 +151,12 @@ function isVacuousSizeMinimum(keyword: string, value: unknown): boolean {
   );
 }
 
-const calendarDatePattern = String.raw`^(?:\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9])))$`;
+// Known date patterns described by `YYYY-MM-DD`.
+const DATE_PATTERNS = new Set([
+  String.raw`^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))$`,
+  String.raw`^\d{4}-\d{2}-\d{2}$`,
+  String.raw`^(?:\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9])))$`,
+]);
 
 function mentions(prose: string, keyword: string, value: unknown): boolean {
   if (!prose) return false;
@@ -162,9 +167,7 @@ function mentions(prose: string, keyword: string, value: unknown): boolean {
     return keyword === "uniqueItems" && /unique|duplicate/i.test(prose);
   if (typeof value === "string") {
     if (keyword === "pattern")
-      return (
-        prose.includes(value) || (value === calendarDatePattern && /\bYYYY-MM-DD\b/.test(prose))
-      );
+      return prose.includes(value) || (DATE_PATTERNS.has(value) && /\bYYYY-MM-DD\b/.test(prose));
     return prose.toLowerCase().includes(value.toLowerCase());
   }
   return prose.includes(JSON.stringify(value));
@@ -172,6 +175,7 @@ function mentions(prose: string, keyword: string, value: unknown): boolean {
 
 function isLocallyNegated(prose: string, start: number): boolean {
   const prefix = prose.slice(prose.lastIndexOf("\n", start - 1) + 1, start);
+  if (/\bor\s+not\s*\(\s*$/i.test(prefix)) return false;
   return /(?:\b(?:not|never|no|neither|nor)|n['’]t)\s+(?:(?:actually|always|necessarily|the|set\s+to)\s+)*(?:\(\s*)?`?$/i.test(
     prefix,
   );
@@ -179,8 +183,9 @@ function isLocallyNegated(prose: string, start: number): boolean {
 
 function mentionsDefault(prose: string, value: unknown): boolean {
   for (const declaration of prose.matchAll(
-    /\bdefault(?:s?\s+to\b|\s+is\b|\s*:|\s+(?=-?\d))\s*`?/gi,
+    /\bdefault(?:s?\s+to\b|\s+is\b|\s*:|(?<numericShorthand>\s+(?=`?-?\d)))\s*`?/gi,
   )) {
+    if (declaration.groups?.numericShorthand && typeof value !== "number") continue;
     if (isLocallyNegated(prose, declaration.index)) continue;
     const literal = prose.slice(declaration.index + declaration[0].length);
     if (typeof value === "boolean" && new RegExp(`^${value}\\b`, "i").test(literal)) return true;
@@ -192,23 +197,28 @@ function mentionsDefault(prose: string, value: unknown): boolean {
     )
       return true;
   }
+  for (const match of prose.matchAll(/(?<=\()[ \t]*default[ \t]+([^\r\n)]+)\)/gi)) {
+    if (isLocallyNegated(prose, match.index)) continue;
+    const literal = match[1]!.trim().replace(/^`(.*)`$/, "$1");
+    if (literal === value || jsonEqual(readDefaultLiteral(literal, true), value)) return true;
+  }
   if (typeof value === "string") {
-    for (const match of prose.matchAll(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\(default\)/gi)) {
+    for (const match of prose.matchAll(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\(default\)/gi))
       if (!isLocallyNegated(prose, match.index) && readDefaultLiteral(match[0]) === value)
         return true;
-    }
   }
   if (typeof value !== "boolean") return false;
   const reverse = new RegExp(`\\b${value}\`?\\s+by\\s+default\\b`, "gi");
   return Array.from(prose.matchAll(reverse)).some((match) => !isLocallyNegated(prose, match.index));
 }
 
-function readDefaultLiteral(text: string): unknown {
+function readDefaultLiteral(text: string, whole = false): unknown {
   const tokens =
     /\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[[\]{}:,]|(?:true|false|null)\b|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?(?!\w|\.\d))/gy;
   let depth = 0;
   const json = [];
-  for (const [, token] of text.matchAll(tokens)) {
+  for (const match of text.matchAll(tokens)) {
+    const [matched, token] = match;
     if (token === "[" || token === "{") depth++;
     if (token === "]" || token === "}") depth--;
     json.push(
@@ -216,7 +226,10 @@ function readDefaultLiteral(text: string): unknown {
         ? `"${token.slice(1, -1).replace(/\\.|"/g, (part) => (part === "\\'" ? "'" : part === '"' ? '\\"' : part))}"`
         : token,
     );
-    if (depth === 0) return parseJson(json.join(""));
+    if (depth === 0)
+      return whole && match.index + matched.length !== text.length
+        ? undefined
+        : parseJson(json.join(""));
   }
   return undefined;
 }

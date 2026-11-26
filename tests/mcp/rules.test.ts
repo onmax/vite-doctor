@@ -307,15 +307,7 @@ describe("rule details", () => {
         "Enabled true by default.",
       ])
         expect(hits(rule, withDescription(description)), description).toEqual([]);
-      for (const description of [
-        "Enable the feature.",
-        "Defaults to false.",
-        "true or false",
-        "Receipt delivery is not true by default.",
-        "Receipt delivery isn't `true` by default.",
-        "The default is not true.",
-        "Not default: true.",
-      ]) {
+      for (const description of ["Enable the feature.", "Defaults to false.", "true or false"]) {
         expect(hits(rule, withDescription(description))[0]?.pointer, description).toBe(
           "/inputSchema/properties/enabled/default",
         );
@@ -324,32 +316,23 @@ describe("rule details", () => {
   );
 
   test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
-    "%s scopes negation to the default declaration",
+    "%s counts a string default only where the prose declares it",
     (rule) => {
-      for (const [value, description] of [
-        [true, "Include archived results, not just active ones (default: true)."],
-        [true, "Returns all results, not just active ones, when enabled (true by default)."],
-        [true, "Do not supply a value unless you want to override the default: true."],
-        ["all", 'Use a named scope, not a path: "all" (default), "docs", or "blog".'],
-      ] as const) {
-        const input = schema(
-          object({ option: { type: typeof value, default: value, description } }),
-        );
-        expect(hits(rule, input), description).toEqual([]);
-      }
-      for (const [value, description] of [
-        [true, "It doesn't actually default to true."],
-        [true, "The flag is not set to true by default."],
-        [true, "The flag is not (true by default)."],
-        ["all", 'Use a named scope, but not "all" (default).'],
-      ] as const) {
-        const input = schema(
-          object({ option: { type: typeof value, default: value, description } }),
-        );
-        expect(hits(rule, input)[0]?.pointer, description).toBe(
-          "/inputSchema/properties/option/default",
-        );
-      }
+      const withDescription = (description: string) =>
+        schema(object({ order: { type: "string", default: "desc", description } }));
+      for (const description of [
+        "Sort order. Defaults to desc.",
+        "Sort order (default: `desc`).",
+        "Sort order, asc or desc (default desc).",
+        'Sort order: "asc" or "desc" (default).',
+        "Newest first or not (default: desc).",
+      ])
+        expect(hits(rule, withDescription(description)), description).toEqual([]);
+      for (const description of [
+        "Sort order (ascending or descending).",
+        "Sort order: asc or desc.",
+      ])
+        expect(hits(rule, withDescription(description)), description).toHaveLength(1);
     },
   );
 
@@ -358,15 +341,17 @@ describe("rule details", () => {
     (rule) => {
       const constrained = object({
         a: { type: ["string", "null"], default: null },
-        b: { type: "boolean", default: false },
+        b: { type: "boolean", default: false, description: "Exclude expired rules." },
         c: { type: "string", default: "", minLength: 1 },
         d: { type: "array", items: { type: "string" }, default: [], minItems: 1 },
         e: { type: "object", default: {}, minProperties: 0 },
-        f: { type: "object", minProperties: 1 },
+        changes: { type: "object", minProperties: 1, description: "Fields to update." },
         g: { type: "string", minLength: 0 },
         h: { type: "array", items: { type: "string" }, minItems: 0 },
       });
-      expect(hits(rule, schema(constrained))[0]?.affectedPointers).toEqual([
+      expect(
+        hits(rule, schema({ ...constrained, required: ["changes"] }))[0]?.affectedPointers,
+      ).toEqual([
         "/inputSchema/properties/a/default",
         "/inputSchema/properties/b/default",
         "/inputSchema/properties/c/default",
@@ -374,7 +359,7 @@ describe("rule details", () => {
         "/inputSchema/properties/d/default",
         ...(rule.startsWith("vscode") ? ["/inputSchema/properties/d/minItems"] : []),
         "/inputSchema/properties/e/default",
-        "/inputSchema/properties/f/minProperties",
+        "/inputSchema/properties/changes/minProperties",
       ]);
       const described = object({
         a: { type: ["string", "null"], default: null, description: "Defaults to null." },
@@ -385,9 +370,6 @@ describe("rule details", () => {
         f: { type: "integer", default: 0, description: "Defaults to 0." },
       });
       expect(hits(rule, schema(described))).toEqual([]);
-      expect(
-        hits(rule, schema(object({ c: { type: "string", default: "", description: "A label." } }))),
-      ).toHaveLength(1);
       const strict = object({
         a: { type: "integer", default: 0 },
         b: { type: "string", minLength: 2 },
@@ -400,6 +382,70 @@ describe("rule details", () => {
         ...(rule.startsWith("vscode") ? ["/inputSchema/properties/c/minItems"] : []),
         "/inputSchema/properties/c/maxItems",
       ]);
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s compares declared numeric defaults by value, not unrelated limits",
+    (rule) => {
+      const withDescription = (value: number, description: string) =>
+        schema(object({ limit: { type: "integer", default: value, maximum: 10, description } }));
+      expect(hits(rule, withDescription(10, "Maximum: 10."))[0]?.affectedPointers).toEqual([
+        "/inputSchema/properties/limit/default",
+      ]);
+      expect(hits(rule, withDescription(10, "Maximum: 10 (default 10)."))).toEqual([]);
+      expect(hits(rule, withDescription(1000, "Maximum: 10. Defaults to 1e3."))).toEqual([]);
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s recognizes numeric default shorthand without treating it as a string declaration",
+    (rule) => {
+      const withDescription = (value: number | string, description: string) =>
+        schema(object({ limit: { type: typeof value, default: value, description } }));
+      expect(hits(rule, withDescription(10, "Default 10."))).toEqual([]);
+      expect(hits(rule, withDescription(10, "Page size (default 10, max 50)."))).toEqual([]);
+      expect(hits(rule, withDescription(-100, "Default `-1e2`."))).toEqual([]);
+      for (const [value, description] of [
+        [50, "Page size (default 10, max 50)."],
+        [10, "Not default 10."],
+        ["10", "Default 10."],
+      ] as const)
+        expect(hits(rule, withDescription(value, description))[0]?.pointer, description).toBe(
+          "/inputSchema/properties/limit/default",
+        );
+    },
+  );
+
+  test.each(["codex/dropped-constraints", "vscode/gpt-4-dropped-constraints"])(
+    "%s ignores incidental and negated mentions of defaults",
+    (rule) => {
+      const withDescription = (value: string | boolean, description: string) =>
+        schema(object({ option: { type: typeof value, default: value, description } }));
+      for (const [value, description] of [
+        [true, "Include archived results, not just active ones (default: true)."],
+        [true, "Returns all results, not just active ones, when enabled (true by default)."],
+        [true, "Do not supply a value unless you want to override the default: true."],
+        [true, "Include forks or not (default: true)."],
+        ["all", 'Use a named scope, not a path: "all" (default), "docs", or "blog".'],
+      ] as const)
+        expect(hits(rule, withDescription(value, description)), description).toEqual([]);
+      for (const [value, description] of [
+        ["value", "The default value depends on the record type."],
+        ["value", "The option (default value depends on the record type)."],
+        [true, "It does not actually default to true."],
+        [true, "It doesn't actually default to true."],
+        [true, "Receipt delivery is not true by default."],
+        [true, "Receipt delivery isn't `true` by default."],
+        [true, "The default is not true."],
+        [true, "Not default: true."],
+        [true, "The flag is not set to true by default."],
+        [true, "The flag is not (true by default)."],
+        ["all", 'Use a named scope, but not "all" (default).'],
+      ] as const)
+        expect(hits(rule, withDescription(value, description))[0]?.pointer, description).toBe(
+          "/inputSchema/properties/option/default",
+        );
     },
   );
 
@@ -448,12 +494,16 @@ describe("rule details", () => {
     (rule) => {
       const withPattern = (pattern: string, description = "First date, formatted YYYY-MM-DD.") =>
         schema(object({ from: { type: "string", pattern, description } }));
-      const date =
-        "^(?:\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|02-(?:0[1-9]|1\\d|2[0-9])))$";
-      expect(hits(rule, withPattern(date))).toEqual([]);
-      expect(hits(rule, withPattern(date, "First date."))).toHaveLength(1);
+      for (const date of [
+        // Zod 4's `z.iso.date()`.
+        String.raw`^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))$`,
+        String.raw`^\d{4}-\d{2}-\d{2}$`,
+        String.raw`^(?:\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9])))$`,
+      ]) {
+        expect(hits(rule, withPattern(date)), date).toEqual([]);
+        expect(hits(rule, withPattern(date, "First date.")), date).toHaveLength(1);
+      }
       for (const other of [
-        "^\\d{4}-\\d{2}-\\d{2}$",
         "^\\d{4}-\\d{1,2}-\\d{1,2}$",
         "\\d{4}-\\d{2}-\\d{2}",
         "[",
