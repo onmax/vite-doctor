@@ -578,7 +578,19 @@ function resolveRulePackActivations(
   packs: readonly RulePack[],
   project: ProjectInfo,
 ): Map<RulePack, string[]> {
-  return new Map(packs.map((pack) => [pack, activatingWorkspacePackages(pack, project)]));
+  const activations = new Map(
+    packs.map((pack) => [pack, activatingWorkspacePackages(pack, project)]),
+  );
+  if (!project.noProject) return activations;
+  // Without a project, Runtime Evidence such as an MCP server's tools/list is what the run checks,
+  // so the fallback framework's Rule Packs do not activate beside it.
+  const evidence = project.runtimeEvidence ?? {};
+  const byEvidence = packs.filter(
+    (pack) => pack.activation && pack.activation.runtimeEvidence?.(evidence),
+  );
+  if (!byEvidence.length) return activations;
+  for (const pack of packs) if (!byEvidence.includes(pack)) activations.set(pack, []);
+  return activations;
 }
 
 function workspacePackageActivations(

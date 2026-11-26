@@ -14,6 +14,7 @@ import type {
 import {
   addConsumerSsrEvidence,
   detectWorkspacePackages,
+  hasConfig,
   manifestSsrEvidence,
   nuxtInventoryOwner,
   owningWorkspacePackage,
@@ -131,10 +132,18 @@ export async function detectProject(
     ? join(root, "tsconfig.json")
     : undefined;
   const walk = new ProjectFileWalk(root);
+  // Vite is only the fallback when nothing names a framework, which is not a detected project.
+  const noProject =
+    requested === "auto" &&
+    !packageJson &&
+    workspacePackages.length === 1 &&
+    framework === "vite" &&
+    !hasConfig(root, "vite.config");
   const project: ProjectInfo = {
     root: resolve(root),
     framework,
     ...(requested !== "auto" ? { requestedFramework: requested } : {}),
+    ...(noProject ? { noProject: true as const } : {}),
     ssr: ssr && owner?.nuxt?.ssr !== false,
     vueVersion: runtime.graph.packages.vue?.version ?? cleanVersion(vueVersion),
     nuxtVersion: owner?.nuxtVersion,

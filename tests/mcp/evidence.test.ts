@@ -113,8 +113,13 @@ test("malformed tool lists leave a gap without exposing the request URL", async 
   const report = createReport(result, "agent", {
     runOptions: { root, mcp: [{ url, headers: { "invalid fake-secret": "value" } }] },
   });
-  expect(report).toContain("<mcp-url>");
-  expect(report).not.toMatch(/path-secret|query-secret|fragment-secret|password|fake-secret/);
+  expect(JSON.parse(report).commandArgs.rerun).toEqual(
+    expect.arrayContaining([
+      "--mcp-url",
+      "https://<redacted>@example.test/path-secret?token=<redacted>",
+    ]),
+  );
+  expect(report).not.toMatch(/query-secret|fragment-secret|password|fake-secret/);
   expect(JSON.stringify(result.project.runtimeEvidence)).not.toMatch(
     /path-secret|query-secret|fragment-secret|password/,
   );
@@ -403,11 +408,29 @@ test("--mcp-url and --mcp-header repeat, and every header goes to every URL", as
     expect(request.headers.authorization).toBe("Bearer secret");
     expect(request.headers["x-team"]).toBe("drops");
   }
-  expect(output).not.toContain("secret");
-  const report = JSON.parse(output) as { commandArgs: { rerun: string[] } };
-  expect(report.commandArgs.rerun).toEqual(expect.arrayContaining(["--mcp-url", "<mcp-url>"]));
-  expect(report.commandArgs.rerun.filter((arg) => arg === "<mcp-url>")).toHaveLength(2);
-  expect(report.commandArgs.rerun).toContain("Authorization: <value>");
+  expect(output).not.toMatch(/query-secret|Bearer secret|X-Team: drops/);
+  const report = JSON.parse(output) as {
+    commandArgs: { rerun: string[] };
+    placeholders: Record<string, string>;
+  };
+  expect(report.commandArgs.rerun).toEqual([
+    "vite-doctor",
+    ".",
+    "--framework",
+    "vite",
+    "--mcp-url",
+    `${first.url}/path-secret?token=<redacted>`,
+    "--mcp-url",
+    second.url,
+    "--mcp-header",
+    "Authorization: <redacted>",
+    "--mcp-header",
+    "X-Team: <redacted>",
+    "--no-cache",
+    "--format",
+    "agent",
+  ]);
+  expect(report.placeholders["<redacted>"]).toContain("--mcp-header values");
 });
 
 test("--mcp-url checks a server from an empty directory, naming Doctor as the client", async () => {
@@ -428,9 +451,100 @@ test("--mcp-url checks a server from an empty directory, naming Doctor as the cl
     name: "vite-doctor",
     version: viteDoctorVersion,
   });
-  const report = JSON.parse(output) as { status: string; diagnostics: Array<{ code: string }> };
+  const report = JSON.parse(output) as {
+    status: string;
+    subject: unknown;
+    framework: unknown;
+    rulePacks: Array<{ name: string }>;
+    diagnostics: Array<{ code: string }>;
+  };
   expect(report.status).toBe("findings");
+  expect(report.subject).toEqual({ mcpServers: [new URL(server.url).origin] });
+  expect(report.framework).toBeNull();
+  expect(report.rulePacks.map((pack) => pack.name)).toEqual(["vite-doctor/mcp"]);
   expect(report.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["MCP0001", "MCP0002"]);
+});
+
+function emptyDirectory() {
+  const root = mkdtempSync(join(tmpdir(), "doctor-mcp-empty-"));
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+
+test("an MCP server checked from an empty directory is the report's subject, not a project", async () => {
+  const server = await stub({ tools: [{ name: "search" }, { name: "fetch" }] });
+  const root = emptyDirectory();
+  const agent = await cli(root, ["--no-cache", "--format", "agent", "--mcp-url", server.url]);
+  const report = JSON.parse(agent.output) as {
+    subject: unknown;
+    project: unknown;
+    rulePacks: Array<{ name: string }>;
+    commandArgs: Record<string, string[]>;
+  };
+  expect(report.subject).toEqual({ mcpServers: [new URL(server.url).origin] });
+  expect(report.project).toBeNull();
+  expect(report.rulePacks.map((pack) => pack.name)).toEqual(["vite-doctor/mcp"]);
+  expect(report.commandArgs.rerun).toEqual([
+    "vite-doctor",
+    "--mcp-url",
+    server.url,
+    "--no-cache",
+    "--format",
+    "agent",
+  ]);
+  expect(report.commandArgs.explain).toEqual([
+    "vite-doctor",
+    "explain",
+    "<code>",
+    "--format",
+    "agent",
+  ]);
+  expect(report).not.toHaveProperty("placeholders");
+
+  const text = await cli(root, [
+    "--no-cache",
+    "--format",
+    "text",
+    "--full",
+    "--mcp-url",
+    server.url,
+  ]);
+  expect(text.output).toContain(`Checked: MCP server ${new URL(server.url).origin}\n`);
+  expect(text.output).toContain(`Project: none, ${root} has no package.json\n`);
+  expect(text.output).not.toMatch(/Detected:|Vite/);
+});
+
+test("the text report prints evidence every Diagnostic of a group shares once", async () => {
+  const server = await stub({ tools: [{ name: "search" }, { name: "fetch" }, { name: "list" }] });
+  const { output } = await cli(emptyDirectory(), [
+    "--no-cache",
+    "--format",
+    "text",
+    "--full",
+    "--mcp-url",
+    server.url,
+  ]);
+  const group = output.slice(output.indexOf("MCP0001  "), output.indexOf("MCP0002  "));
+  const read = `evidence: runtime: Read from the tools/list of MCP server "stub" at ${new URL(server.url).origin} during this Doctor Run.`;
+  expect(group.split(read)).toHaveLength(2);
+  expect(group.indexOf(read)).toBeLessThan(group.indexOf("[MCP0001]"));
+  for (const tool of ["search", "fetch", "list"]) expect(group).toContain(`source: ${tool}\n`);
+});
+
+test("an MCP server that answers 401 from an empty directory reports missing MCP server evidence", async () => {
+  const server = await stub({ token: "secret" });
+  const { code, output } = await cli(emptyDirectory(), [
+    "--no-cache",
+    "--format",
+    "text",
+    "--mcp-url",
+    server.url,
+  ]);
+  expect(code).toBe(3);
+  expect(output).toContain("Status: incomplete, required MCP server evidence is missing\n");
+  expect(output).toMatch(
+    /Evidence missing: .*HTTP 401.*--mcp-header "Authorization: Bearer <token>"\.\n/,
+  );
 });
 
 test.each([

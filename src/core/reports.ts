@@ -1,5 +1,5 @@
 import { isAbsolute, relative } from "pathe";
-import { isMcpHeaderName } from "@loadsheet/mcp";
+import { isMcpHeaderName, mcpEndpointLabel, parseMcpEndpoint } from "@loadsheet/mcp";
 import pc from "picocolors";
 import { formatDiagnostic } from "nostics";
 import type {
@@ -21,6 +21,7 @@ import { codeForRuleId } from "./diagnostics.js";
 import { diagnosticMetadataByCode, diagnosticMetadataByRuleId } from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
 import { shellArgument } from "./internal/utils.js";
+import { readMcpServers } from "../mcp/evidence.js";
 import { unresolvedRuntimeInventory } from "./internal/runtime-packages.js";
 import { defaultReportBudget, type ReportReader } from "./internal/agent-runtime.js";
 import { scoreDiagnostics } from "./internal/scoring.js";
@@ -105,13 +106,20 @@ export function formatTextDiagnostic(root: string, diagnostic: Diagnostic): stri
   return textDiagnosticBlock(diagnosticLocation(root, diagnostic), diagnostic);
 }
 
-function textDiagnosticBlock(source: string, diagnostic: Diagnostic): string {
+/** `shared` names evidence the group already printed once for every one of its Diagnostics. */
+function textDiagnosticBlock(
+  source: string,
+  diagnostic: Diagnostic,
+  shared: ReadonlySet<string> = new Set(),
+): string {
   return [
     indent(formatDiagnostic(diagnostic.diagnostic), "  "),
     `    rule: ${diagnostic.ruleId}`,
     `    source: ${source}`,
     ...(diagnostic.confidence ? [`    confidence: ${diagnostic.confidence}`] : []),
-    ...(diagnostic.evidence ?? []).map((item) => `    evidence: ${item.kind}: ${item.summary}`),
+    ...(diagnostic.evidence ?? [])
+      .filter((item) => !shared.has(evidenceKey(item)))
+      .map((item) => `    evidence: ${item.kind}: ${item.summary}`),
   ].join("\n");
 }
 
@@ -162,13 +170,7 @@ function groupDiagnostics(result: DoctorRunResult): ReportGroup[] {
     for (const diagnostic of group.diagnostics) {
       const seen = new Set<string>();
       for (const item of diagnostic.evidence ?? []) {
-        const key = JSON.stringify([
-          item.kind,
-          item.summary,
-          item.file,
-          item.range && [item.range.start, item.range.end, item.range.line, item.range.column],
-          item.relatedId,
-        ]);
+        const key = evidenceKey(item);
         if (seen.has(key)) continue;
         seen.add(key);
         const entry = evidence.get(key);
@@ -182,6 +184,33 @@ function groupDiagnostics(result: DoctorRunResult): ReportGroup[] {
     );
   }
   return ordered;
+}
+
+function evidenceKey(item: DiagnosticEvidence): string {
+  return JSON.stringify([
+    item.kind,
+    item.summary,
+    item.file,
+    item.range && [item.range.start, item.range.end, item.range.line, item.range.column],
+    item.relatedId,
+  ]);
+}
+
+/**
+ * The MCP servers a Doctor Run without a project checked, by endpoint label. Without a project
+ * they are the run's subject, so reports name them instead of a fallback framework.
+ */
+function mcpSubject(result: DoctorRunResult): string[] | undefined {
+  if (!result.project.noProject) return undefined;
+  const servers = readMcpServers(result.project.runtimeEvidence);
+  if (!servers.length) return undefined;
+  return [
+    ...new Set(
+      servers.map((server) =>
+        server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server"),
+      ),
+    ),
+  ];
 }
 
 /** Diagnostic Codes with their counts, in report order. */
@@ -319,7 +348,11 @@ function textLayout(
       "",
       first,
       ...(commands
-        ? [`One group: ${commands.more} plus its "more:" flags`, `Everything: ${commands.full}`]
+        ? [
+            `One group: ${commands.more} plus its "more:" flags`,
+            `Everything: ${commands.full}`,
+            ...(commands.full.includes(REDACTED) ? [REDACTED_NOTE] : []),
+          ]
         : [
             "More: apply the group's options, or set maxChars: Infinity in the Doctor plugin options",
           ]),
@@ -374,9 +407,15 @@ function textLayout(
       `  rule: ${group.ruleId}${group.docs ? ` · see: ${group.docs}` : ""}`,
       ...(hint ? [hintLine(hint)] : []),
     ];
-    const details = group.diagnostics.map((diagnostic, row) =>
-      textDiagnosticBlock(labels[row]!, diagnostic),
-    );
+    // Evidence every Diagnostic of the group carries is printed once, above their blocks.
+    const shared = count > 1 ? group.evidence.filter((entry) => entry.count === count) : [];
+    const sharedKeys = new Set(shared.map((entry) => evidenceKey(entry.item)));
+    const details = [
+      ...shared.map((entry) => `  evidence: ${entry.item.kind}: ${entry.item.summary}`),
+      ...group.diagnostics.map((diagnostic, row) =>
+        textDiagnosticBlock(labels[row]!, diagnostic, sharedKeys),
+      ),
+    ];
     const headingSize = cost(heading) + cost(title);
     const trailerSize = cost(trailer(count, { rules: group.ruleId, full: true }));
     const detailSize = cost(details);
@@ -426,13 +465,25 @@ function textLayout(
 function textHead(result: DoctorRunResult, groups: ReportGroup[]): string[] {
   const lines: string[] = [];
   const status = reportStatus(result);
-  lines.push(`Detected: ${frameworkLabel(result)}`);
-  lines.push(`Project: ${result.root}`);
+  const subject = mcpSubject(result);
+  if (subject) {
+    lines.push(
+      `Checked: ${subject.length === 1 ? "MCP server" : "MCP servers"} ${subject.join(", ")}`,
+    );
+    lines.push(`Project: none, ${result.root} has no package.json`);
+  } else {
+    lines.push(`Detected: ${frameworkLabel(result)}`);
+    lines.push(`Project: ${result.root}`);
+  }
   if (status === "incomplete") {
-    lines.push("Status: incomplete, required project evidence is missing");
+    lines.push(
+      `Status: incomplete, required ${subject ? "MCP server" : "project"} evidence is missing`,
+    );
   }
   for (const gap of result.project.evidenceGaps ?? []) {
-    lines.push(`Evidence missing: ${gap.message} ${gap.files.join(", ")}`);
+    lines.push(
+      `Evidence missing: ${gap.message}${gap.files.length ? ` ${gap.files.join(", ")}` : ""}`,
+    );
   }
   for (const used of result.project.evidenceUsed ?? [])
     lines.push(`Evidence used: ${used.message}`);
@@ -531,13 +582,15 @@ function isEvidenceBacked(confidence: Confidence) {
 }
 
 export function createJsonReport(result: DoctorRunResult): string {
+  const subject = mcpSubject(result);
   return `${JSON.stringify(
     {
       version: result.version,
       reportVersion: result.reportVersion ?? 4,
       fingerprintScheme: FINGERPRINT_SCHEME,
       status: reportStatus(result),
-      framework: result.framework,
+      subject: subject && { mcpServers: subject },
+      framework: subject ? null : result.framework,
       root: result.root,
       scope: result.scope,
       summary: result.summary,
@@ -554,7 +607,7 @@ export function createJsonReport(result: DoctorRunResult): string {
       graph: result.graph,
       extends: result.extends,
       rulePacks: result.rulePacks,
-      workspacePackages: result.workspacePackages,
+      workspacePackages: subject ? undefined : result.workspacePackages,
       evidenceGaps: result.project.evidenceGaps,
       evidenceUsed: result.project.evidenceUsed,
       runtimeGraph: result.project.runtimeGraph,
@@ -580,6 +633,7 @@ function agentLayout(
 ): ProgressiveLayout {
   const status = reportStatus(result);
   const plugin = context.surface === "plugin";
+  const subject = mcpSubject(result);
   const commandArgs = plugin
     ? undefined
     : {
@@ -587,8 +641,7 @@ function agentLayout(
           "vite-doctor",
           "explain",
           "<code>",
-          "--framework",
-          agentFramework(result, context),
+          ...(subject ? [] : ["--framework", agentFramework(result, context)]),
           ...(context.configFile ? ["--config", context.configFile] : []),
           ...(context.runOptions?.hostExtensions ? ["--host-extensions"] : []),
           "--format",
@@ -604,6 +657,9 @@ function agentLayout(
     Object.fromEntries(
       Object.entries(commandArgs).map(([name, args]) => [name, args.map(shellArgument).join(" ")]),
     );
+  const placeholders = commandArgs?.rerun.some((arg) => arg.includes(REDACTED))
+    ? { [REDACTED]: REDACTED_NOTE }
+    : undefined;
   const recovery = plugin
     ? "Rerun the host with the group's more options or pluginOptions.full (use numeric Infinity for maxChars)."
     : "To see what the Report Budget hid, append a group's more items to commandArgs.more, or use commandArgs.full when no more items are given.";
@@ -613,11 +669,14 @@ function agentLayout(
     `${JSON.stringify({
       schema: "vite-doctor.agent/v3",
       status,
-      project: {
-        cwd: result.root,
-        framework: result.framework,
-        workspacePackages: result.workspacePackages,
-      },
+      subject: subject && { mcpServers: subject },
+      project: subject
+        ? null
+        : {
+            cwd: result.root,
+            framework: result.framework,
+            workspacePackages: result.workspacePackages,
+          },
       rulePacks: result.rulePacks,
       scope: result.scope,
       summary: result.summary,
@@ -629,6 +688,7 @@ function agentLayout(
       evidenceUsed: result.project.evidenceUsed,
       commands,
       commandArgs,
+      placeholders,
       pluginOptions: plugin && budget ? { full: FULL_PLUGIN_OPTIONS } : undefined,
       next:
         status === "clean"
@@ -1079,7 +1139,10 @@ function runArguments(
   context: DoctorReportContext,
   command: RunCommand,
 ): string[] {
-  const args = ["vite-doctor", command.root ?? ".", "--framework", agentFramework(result, context)];
+  // A run without a project checked only its MCP servers, which need no project path or framework.
+  const args = mcpSubject(result)
+    ? ["vite-doctor"]
+    : ["vite-doctor", command.root ?? ".", "--framework", agentFramework(result, context)];
   if (result.scope.mode === "changed") {
     if (result.scope.base) args.push("--since", result.scope.base);
     else args.push("--changed");
@@ -1101,17 +1164,33 @@ function runArguments(
   ] as const) {
     if (value !== undefined) args.push(flag, String(value));
   }
-  for (let index = 0; index < (options?.mcp?.length ?? 0); index++)
-    args.push("--mcp-url", "<mcp-url>");
-  // Header values carry tokens, so commands name the header and leave its value to the agent.
+  for (const target of options?.mcp ?? []) args.push("--mcp-url", commandMcpUrl(target.url));
   for (const name of Object.keys(options?.mcp?.[0]?.headers ?? {}))
-    if (isMcpHeaderName(name)) args.push("--mcp-header", `${name}: <value>`);
+    if (isMcpHeaderName(name)) args.push("--mcp-header", `${name}: ${REDACTED}`);
   if (options?.newOnly) args.push("--new-only");
   if (options?.profile) args.push("--profile");
   if (options?.cache !== undefined) args.push(options.cache ? "--cache" : "--no-cache");
   if (command.full) args.push("--full");
   if (command.format) args.push("--format", command.format);
   return args;
+}
+
+const REDACTED = "<redacted>";
+const REDACTED_NOTE =
+  "Doctor never prints --mcp-header values, or the credentials and query values of an --mcp-url, because they can carry secrets. Replace each <redacted> with the value you ran with.";
+
+/**
+ * The `--mcp-url` a command repeats: the endpoint as passed, with URL credentials and query
+ * values redacted. The fragment never reaches the server, so it is dropped.
+ */
+function commandMcpUrl(value: string): string {
+  const url = parseMcpEndpoint(value);
+  if (!url) return REDACTED;
+  const credentials = url.username || url.password ? `${REDACTED}@` : "";
+  const query = [...url.searchParams.keys()]
+    .map((name) => `${encodeURIComponent(name)}=${REDACTED}`)
+    .join("&");
+  return `${url.protocol}//${credentials}${url.host}${url.pathname}${query ? `?${query}` : ""}`;
 }
 
 // Workspace runs derive Rule Packs from every workspace package, which pinning the resolved
