@@ -5,6 +5,7 @@ import { build, createServer, type InlineConfig, type Logger, type ViteDevServer
 import { expect, test, vi } from "vite-plus/test";
 import type { DoctorExtension } from "../../src/extension.ts";
 import { doctor, type ViteDoctorSurfaceOptions } from "../../src/plugin.ts";
+import { stubReaderEnv } from "../report-reader-env.ts";
 
 const doctorRuns = vi.hoisted(() => [] as Promise<unknown>[]);
 
@@ -128,6 +129,51 @@ test("a serve-mode Doctor Run starts after the dev server listens and logs Diagn
     }
   });
 });
+
+test.each([true, false])(
+  "the built serve worker uses the host stdout TTY state (%s)",
+  async (tty) => {
+    const { doctor: builtDoctor } = await import("vite-doctor/plugin");
+    await withProject(async (root) => {
+      const { logger, doctorLogs } = captureLogger();
+      const previousTty = process.stdout.isTTY;
+      stubReaderEnv({ CURSOR_TRACE_ID: "1" });
+      vi.stubEnv("CI", undefined);
+      vi.stubEnv("GITHUB_ACTIONS", undefined);
+      process.stdout.isTTY = tty;
+      try {
+        const server = await createServer(
+          serveConfig(
+            root,
+            logger,
+            {},
+            {
+              plugins: [builtDoctor({ run: "serve", rules: secretRule, cache: false })],
+              server: { middlewareMode: true, ws: false, watch: null },
+            },
+          ),
+        );
+        try {
+          const report = await vi.waitFor(
+            () => {
+              const report = doctorLogs().find((message) => message.includes(secretRule));
+              expect(report).toBeDefined();
+              return report!;
+            },
+            { timeout: 15_000 },
+          );
+          if (tty) expect(report).not.toMatch(/^\s*\{/);
+          else expect(JSON.parse(report).schema).toBe("vite-doctor.agent/v3");
+        } finally {
+          await server.close();
+        }
+      } finally {
+        process.stdout.isTTY = previousTty;
+        vi.unstubAllEnvs();
+      }
+    });
+  },
+);
 
 test("warn mode logs serve-mode Diagnostics as warnings", async () => {
   await withProject(async (root) => {

@@ -10,6 +10,7 @@ import type {
   DoctorRunOptions,
   DoctorSerializableConfig,
 } from "./core/index.js";
+import { selectDoctorPresentation } from "./core/internal/agent-runtime.js";
 import type { HostImportResolver } from "./core/internal/host-imports.js";
 import {
   diffStates,
@@ -20,6 +21,7 @@ import {
 } from "./plugin-delta.js";
 import type { McpServerTarget } from "./mcp/evidence.js";
 import type {
+  SurfaceReportInput,
   SurfaceRunInput,
   SurfaceRunOutcome,
   SurfaceWorkerMessage,
@@ -195,7 +197,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
   ) {
     const { runSurfaceDoctor } = await import("./plugin-run.js");
     return runSurfaceDoctor(
-      surfaceRunInput(resolved, options, targets),
+      await withHostPresentation(surfaceRunInput(resolved, options, targets)),
       surfaceExtensions(resolved, options),
       resolveImport,
     );
@@ -449,7 +451,7 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
           });
           if (!environment.browserStubReads.length) return;
           const outcome = await runBuildEvidenceDoctor(
-            surfaceRunInput(resolved, options, undefined, evidence),
+            await withHostPresentation(surfaceRunInput(resolved, options, undefined, evidence)),
             extensions,
           );
           if (!outcome.diagnostics.length) return;
@@ -637,11 +639,13 @@ class ServeDoctorRun {
     this.active = run;
     let outcome: SurfaceRunOutcome | undefined;
     try {
-      const worker = canRunInWorker(input, extensions);
-      if (worker) outcome = await this.runInWorker(input, run, resolveImport);
-      else if (!run.stale) {
+      const reportInput = await withHostPresentation(input);
+      if (run.stale) return;
+      if (canRunInWorker(reportInput, extensions)) {
+        outcome = await this.runInWorker(reportInput, run, resolveImport);
+      } else {
         const { runSurfaceDoctor } = await import("./plugin-run.js");
-        outcome = await runSurfaceDoctor(input, extensions, resolveImport);
+        if (!run.stale) outcome = await runSurfaceDoctor(reportInput, extensions, resolveImport);
       }
     } catch (error) {
       if (!run.stale && !this.closed) {
@@ -679,7 +683,11 @@ class ServeDoctorRun {
     if (log) this.server.config.logger[log.level](log.message);
   }
 
-  private runInWorker(input: SurfaceRunInput, run: ActiveRun, resolveImport: HostImportResolver) {
+  private runInWorker(
+    input: SurfaceReportInput,
+    run: ActiveRun,
+    resolveImport: HostImportResolver,
+  ) {
     return new Promise<SurfaceRunOutcome | undefined>((resolvePromise, reject) => {
       const worker = new Worker(workerUrl, { workerData: input });
       run.worker = worker;
@@ -785,7 +793,7 @@ function packageInputs(root: string): string[] {
 
 const workerUrl = new URL("./plugin-worker.mjs", import.meta.url);
 
-function canRunInWorker(input: SurfaceRunInput, extensions: DoctorExtensionInput[]) {
+function canRunInWorker(input: SurfaceReportInput, extensions: DoctorExtensionInput[]) {
   if (extensions.length > 0 || !existsSync(fileURLToPath(workerUrl))) return false;
   try {
     structuredClone(input);
@@ -793,6 +801,11 @@ function canRunInWorker(input: SurfaceRunInput, extensions: DoctorExtensionInput
   } catch {
     return false;
   }
+}
+
+async function withHostPresentation(input: SurfaceRunInput): Promise<SurfaceReportInput> {
+  const { format, reader } = await selectDoctorPresentation(input.options.format);
+  return { ...input, presentation: { format, reader } };
 }
 
 function surfaceRoot(config: ResolvedConfig, options: ViteDoctorSurfaceOptions) {

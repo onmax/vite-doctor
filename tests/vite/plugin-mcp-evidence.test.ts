@@ -2,12 +2,13 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build, createServer, type InlineConfig, type Logger, type Plugin } from "vite";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readMcpServers } from "../../src/mcp/evidence.ts";
 import { doctor, type ViteDoctorSurfaceOptions } from "../../src/plugin.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import { defineDoctorExtension } from "../../src/extension.ts";
 import { mcpStubHandler, startMcpStub, stubTools } from "../mcp/mcp-stub.ts";
+import { mockReportReaderMcp, reportReaderMcpUrl, stubReaderEnv } from "../report-reader-env.ts";
 
 type RunResult = Awaited<ReturnType<typeof runViteDoctor>>;
 const doctorRuns = vi.hoisted(() => [] as Array<Promise<RunResult>>);
@@ -22,6 +23,10 @@ vi.mock("../../src/doctor.ts", async (importOriginal) => {
       return run;
     },
   };
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 async function withProject(run: (root: string) => Promise<void>) {
@@ -232,6 +237,7 @@ test("dev refreshes project findings as Extension MCP evidence appears and disap
 });
 
 test("a build report keeps to the Report Budget and names plugin options to see more", async () => {
+  stubReaderEnv({ AI_AGENT: "test-agent" });
   const fixture = JSON.parse(
     await readFile(new URL("../fixtures/mcp/nuxt.json", import.meta.url), "utf8"),
   );
@@ -260,4 +266,50 @@ test("a build report keeps to the Report Budget and names plugin options to see 
   } finally {
     await stub.close();
   }
+});
+
+async function buildCiReport(options: ViteDoctorSurfaceOptions = {}) {
+  const fetch = mockReportReaderMcp();
+  try {
+    let report: string | undefined;
+    await withProject(async (root) => {
+      const { logger, warnings } = captureLogger();
+      await build({
+        ...config(root, logger, {
+          run: "build",
+          extends: ["auto", "mcp/strict"],
+          mcp: [{ url: reportReaderMcpUrl }],
+          ...options,
+        }),
+        build: { write: false, lib: { entry: "entry.ts", formats: ["es"] } },
+      });
+      report = warnings.find((message) => message.includes("MCP0001"));
+    });
+    expect(report).toBeDefined();
+    return report!;
+  } finally {
+    fetch.mockRestore();
+  }
+}
+
+test("a CI build prints the complete report without pointing at more", async () => {
+  stubReaderEnv({ CI: "1" });
+  const report = await buildCiReport();
+  expect(report.length).toBeGreaterThan(8000);
+  expect(report).not.toContain("maxChars: Infinity");
+  expect(report).not.toMatch(/^ {2}more: /m);
+});
+
+test("a CI build run by an agent defaults to the budgeted agent report", async () => {
+  stubReaderEnv({ CI: "1", CLAUDECODE: "1" });
+  const report = await buildCiReport();
+  expect(JSON.parse(report).schema).toBe("vite-doctor.agent/v3");
+  expect(report.length).toBeLessThanOrEqual(8000);
+});
+
+test("a CI build run by an agent keeps explicit format and budget options", async () => {
+  stubReaderEnv({ CI: "1", CLAUDECODE: "1" });
+  const report = await buildCiReport({ format: "text", maxChars: 4000 });
+  expect(report.length).toBeLessThanOrEqual(4000);
+  expect(report).toMatch(/^ {2}more: /m);
 });
