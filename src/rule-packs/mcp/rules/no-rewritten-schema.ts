@@ -8,7 +8,7 @@ export const noRewrittenSchema = createRule({
     title: "Send MCP tools clients pass on unchanged",
     description:
       "Report MCP tools in a server's `tools/list` whose name, description, or input schema a client rewrites before the model sees it.",
-    why: "Some clients reshape a tool instead of rejecting it. Codex, Gemini CLI, Cursor, and VS Code rename tools whose names use other characters or run past their length limits, so the model calls a name your docs and logs don't use. Copilot Studio reads `enum` inputs as plain strings, and VS Code gives a tool without a description the description `<empty>`. Claude Code flattens a root `anyOf`, `oneOf`, or `allOf` into one object described in prose. Most of these are `info`: the tool still works. A Diagnostic is `warn` when the model is left with less to go on, such as an empty description or a flattened root combinator. Doctor checks the `tools/list` it reads as Runtime Evidence and cites each client's source.",
+    why: "Some clients reshape a tool instead of rejecting it. Codex, Gemini CLI, Cursor, and VS Code rename tools whose names use other characters or run past their length limits, so the model calls a name your docs and logs don't use. Copilot Studio reads `enum` inputs as plain strings, and VS Code gives a tool without a description the description `<empty>`. Claude Code flattens a root `anyOf`, `oneOf`, or `allOf` into one object and states the branches in an \"Input constraint\" line of the description. Most of these are `info`: the tool still works. A Diagnostic is `warn` when the model is left with less to go on, such as an empty description. Doctor checks the `tools/list` it reads as Runtime Evidence and cites each client's source.",
     recommendedReplacement:
       "Use short tool names of letters, digits, and `_`; describe every tool; list `enum` values in the description; and declare one root object schema.",
     examples: [
@@ -38,10 +38,8 @@ export const noRewrittenSchema = createRule({
   create(ctx) {
     return clientLimitsVisitor(ctx, {
       ruleId: "mcp/clients/no-rewritten-schema",
+      code: "MCP0007",
       diagnostic: diagnostics.MCP0007,
-      effect: "rewritten",
-      outcome: "is rewritten",
-      brief: "rewritten",
     });
   },
 });

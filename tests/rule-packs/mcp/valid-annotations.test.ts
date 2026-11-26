@@ -4,7 +4,7 @@ import { join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
 import type { DoctorRunOptions } from "../../../src/core/index.ts";
 import { runViteDoctor } from "../../../src/doctor.ts";
-import type { McpTool } from "../../../src/mcp/types.ts";
+import type { McpTool } from "@loadsheet/mcp";
 
 const cleanups: Array<() => void> = [];
 

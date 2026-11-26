@@ -206,7 +206,7 @@ test("report commands drop mutating flags, redact header values, and name the ro
     expect(args.join(" ")).not.toContain("secret-token");
   }
   expect(agent.commandArgs.more).toEqual(
-    expect.arrayContaining(["--mcp-header", "authorization: <value>"]),
+    expect.arrayContaining(["--mcp-header", "authorization: <redacted>"]),
   );
   expect(agent.commandArgs.full.at(-3)).toBe("--full");
 

@@ -1,5 +1,5 @@
 import type { DoctorRunOptions } from "../config.js";
-import { isMcpHeaderName } from "../../mcp/endpoint.js";
+import { isMcpHeaderName } from "@loadsheet/mcp";
 
 export function applyDoctorOptions(
   options: DoctorRunOptions,

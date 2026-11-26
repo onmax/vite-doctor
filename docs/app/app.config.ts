@@ -14,7 +14,7 @@ export default defineAppConfig({
     x: "https://x.com/_onmax",
   },
   github: {
-    url: "https://github.com/onmax/vite-doctor",
+    url: "https://github.com/loadsheet/vite-doctor",
     branch: "main",
     rootDir: "docs",
   },

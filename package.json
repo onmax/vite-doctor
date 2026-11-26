@@ -8,11 +8,14 @@
     "javascript",
     "vite"
   ],
-  "homepage": "https://github.com/onmax/vite-doctor#readme",
+  "homepage": "https://github.com/loadsheet/vite-doctor#readme",
+  "bugs": {
+    "url": "https://github.com/loadsheet/vite-doctor/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/onmax/vite-doctor.git"
+    "url": "git+https://github.com/loadsheet/vite-doctor.git"
   },
   "bin": {
     "nuxt-doctor": "./dist/nuxt-cli.mjs",
@@ -76,12 +79,12 @@
   },
   "dependencies": {
     "@jridgewell/trace-mapping": "catalog:prod",
+    "@loadsheet/mcp": "^0.1.3",
     "@shadcn/lint": "catalog:analysis",
     "@typescript-eslint/parser": "catalog:analysis",
     "@typescript-eslint/scope-manager": "catalog:analysis",
     "@typescript-eslint/visitor-keys": "catalog:analysis",
     "@vue/compiler-sfc": "catalog:analysis",
-    "ajv": "catalog:prod",
     "c12": "catalog:prod",
     "cac": "catalog:prod",
     "consola": "catalog:prod",

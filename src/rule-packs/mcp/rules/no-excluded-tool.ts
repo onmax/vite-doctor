@@ -8,7 +8,7 @@ export const noExcludedTool = createRule({
     title: "Send MCP tools every client accepts",
     description:
       "Report MCP tools in a server's `tools/list` that a client leaves out, or that make its requests fail, because of the tool's name or input schema.",
-    why: "Clients validate tools before they reach the model, each against its own limits. Claude Code excludes a tool whose full name is over 128 characters, whose top-level property names aren't plain, or whose schema isn't valid draft 2020-12. VS Code omits a tool whose schema isn't valid draft-07. Copilot Studio drops a tool with `$ref` and fails on a numeric `exclusiveMinimum`. The server still answers `tools/list` without an error, so the tool works in your own tests and is missing for users of that client. Doctor checks the `tools/list` it reads as Runtime Evidence; the Diagnostic names each client and cites its source. A Diagnostic is `error` when a client leaves the tool out, and `warn` when the failure is inferred from the client's source.",
+    why: "Clients validate tools before they reach the model, each against its own limits. Claude Code excludes a tool whose full name is over 128 characters, whose top-level property names aren't plain, or whose schema isn't valid draft 2020-12, and loads none of a server's tools when one has a root `anyOf`, `oneOf`, or `allOf` without `type: \"object\"`. VS Code omits a tool whose schema isn't valid draft-07. Copilot Studio drops a tool with `$ref` and fails on a numeric `exclusiveMinimum`. The server still answers `tools/list` without an error, so the tool works in your own tests and is missing for users of that client. Doctor checks the `tools/list` it reads as Runtime Evidence; the Diagnostic names each client and cites its source. A Diagnostic is `error` when a client leaves the tool out, and `warn` when the failure is inferred from the client's source.",
     recommendedReplacement:
       "Keep tool names short, inline referenced schemas, use plain top-level property names, and keep the input schema valid against both draft-07 and draft 2020-12.",
     examples: [
@@ -38,10 +38,8 @@ export const noExcludedTool = createRule({
   create(ctx) {
     return clientLimitsVisitor(ctx, {
       ruleId: "mcp/clients/no-excluded-tool",
+      code: "MCP0005",
       diagnostic: diagnostics.MCP0005,
-      effect: "excluded",
-      outcome: "is left out, or makes requests fail,",
-      brief: "left out or failing",
     });
   },
 });
