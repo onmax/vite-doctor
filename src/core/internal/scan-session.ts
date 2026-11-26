@@ -46,6 +46,7 @@ import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import { reportedDoctorRuleIds } from "../diagnostic-registry.js";
 import {
   activatingWorkspacePackages,
+  runtimeEvidenceActivation,
   evaluateRuleApplicability,
   packageRunsRuntime,
   projectWorkspacePackages,
@@ -224,7 +225,7 @@ export async function createScanSession(
       .map((pack) => ({
         name: pack.name,
         selected: selection.packs.has(pack),
-        activatedBy: activations.get(pack) ?? [],
+        activatedBy: reportedActivation(pack, project, activations.get(pack) ?? []),
       }))
       .filter((pack) => pack.selected || pack.activatedBy.length),
     ruleConfigs,
@@ -584,13 +585,21 @@ function resolveRulePackActivations(
   if (!project.noProject) return activations;
   // Without a project, Runtime Evidence such as an MCP server's tools/list is what the run checks,
   // so the fallback framework's Rule Packs do not activate beside it.
-  const evidence = project.runtimeEvidence ?? {};
-  const byEvidence = packs.filter(
-    (pack) => pack.activation && pack.activation.runtimeEvidence?.(evidence),
-  );
+  const byEvidence = packs.filter((pack) => runtimeEvidenceActivation(pack, project));
   if (!byEvidence.length) return activations;
   for (const pack of packs) if (!byEvidence.includes(pack)) activations.set(pack, []);
   return activations;
+}
+
+/**
+ * What a report names as having activated `pack`. Activation stays keyed by workspace root, since
+ * Rule scopes come from it, but a run without a project has no root worth naming: the Runtime
+ * Evidence that activated the pack, such as an MCP server's origin, is the honest source.
+ */
+function reportedActivation(pack: RulePack, project: ProjectInfo, roots: string[]): string[] {
+  if (!project.noProject || !roots.length) return roots;
+  const sources = runtimeEvidenceActivation(pack, project);
+  return sources?.length ? [...sources] : roots;
 }
 
 function workspacePackageActivations(

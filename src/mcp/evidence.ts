@@ -66,6 +66,20 @@ export function readMcpServers(
   });
 }
 
+/**
+ * The MCP servers in a Doctor Run's Runtime Evidence by endpoint origin, or by name when an
+ * Extension reported no URL. Reports never show more of the endpoint than this.
+ */
+export function mcpServerLabels(runtimeEvidence: Record<string, unknown> | undefined): string[] {
+  return [
+    ...new Set(
+      readMcpServers(runtimeEvidence).map((server) =>
+        server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server"),
+      ),
+    ),
+  ];
+}
+
 // A read that failed has no tools, whatever else an Extension put beside its error.
 function withoutFailedTools(server: McpServerEvidence): McpServerEvidence {
   if (typeof (server as { error?: unknown }).error !== "string" || !("tools" in server))

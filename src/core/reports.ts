@@ -1,5 +1,5 @@
 import { isAbsolute, relative } from "pathe";
-import { isMcpHeaderName, mcpEndpointLabel } from "@loadsheet/mcp";
+import { isMcpHeaderName, parseMcpEndpoint } from "@loadsheet/mcp";
 import pc from "picocolors";
 import { formatDiagnostic } from "nostics";
 import type {
@@ -21,7 +21,7 @@ import { codeForRuleId } from "./diagnostics.js";
 import { diagnosticMetadataByCode, diagnosticMetadataByRuleId } from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
 import { shellArgument } from "./internal/utils.js";
-import { readMcpServers } from "../mcp/evidence.js";
+import { mcpServerLabels } from "../mcp/evidence.js";
 import { unresolvedRuntimeInventory } from "./internal/runtime-packages.js";
 import { defaultReportBudget, type ReportReader } from "./internal/agent-runtime.js";
 import { scoreDiagnostics } from "./internal/scoring.js";
@@ -202,15 +202,8 @@ function evidenceKey(item: DiagnosticEvidence): string {
  */
 function mcpSubject(result: DoctorRunResult): string[] | undefined {
   if (!result.project.noProject) return undefined;
-  const servers = readMcpServers(result.project.runtimeEvidence);
-  if (!servers.length) return undefined;
-  return [
-    ...new Set(
-      servers.map((server) =>
-        server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server"),
-      ),
-    ),
-  ];
+  const servers = mcpServerLabels(result.project.runtimeEvidence);
+  return servers.length ? servers : undefined;
 }
 
 /** Diagnostic Codes with their counts, in report order. */
@@ -1164,8 +1157,7 @@ function runArguments(
   ] as const) {
     if (value !== undefined) args.push(flag, String(value));
   }
-  for (let index = 0; index < (options?.mcp?.length ?? 0); index++)
-    args.push("--mcp-url", REDACTED);
+  for (const target of options?.mcp ?? []) args.push("--mcp-url", commandMcpUrl(target.url));
   for (const name of Object.keys(options?.mcp?.[0]?.headers ?? {}))
     if (isMcpHeaderName(name)) args.push("--mcp-header", `${name}: ${REDACTED}`);
   if (options?.newOnly) args.push("--new-only");
@@ -1178,7 +1170,43 @@ function runArguments(
 
 const REDACTED = "<redacted>";
 const REDACTED_NOTE =
-  "Doctor redacts --mcp-url and --mcp-header values in rerun commands because they can carry secrets. Replace each <redacted> with the value you ran with.";
+  "Doctor never prints --mcp-header values, or the credentials, query values, and token-like path segments of an --mcp-url, because they can carry secrets. Replace each <redacted> with the value you ran with.";
+
+/**
+ * The `--mcp-url` a command repeats: the endpoint as passed, with URL credentials, query values,
+ * and token-like path segments redacted. The fragment never reaches the server, so it is dropped.
+ */
+function commandMcpUrl(value: string): string {
+  const url = parseMcpEndpoint(value);
+  if (!url) return REDACTED;
+  const credentials = url.username || url.password ? `${REDACTED}@` : "";
+  const query = [...url.searchParams.keys()]
+    .map((name) => `${encodeURIComponent(name)}=${REDACTED}`)
+    .join("&");
+  const path = url.pathname
+    .split("/")
+    .map((segment) => (secretLikeSegment(segment) ? REDACTED : segment))
+    .join("/");
+  return `${url.protocol}//${credentials}${url.host}${path}${query ? `?${query}` : ""}`;
+}
+
+/**
+ * Hosts such as Zapier put a per-user token in the path (`/api/mcp/s/<token>/mcp`). A segment
+ * reads as one when it is 16 or more characters mixing letters and digits, or 20 or more hex or
+ * base64url characters that are not just a lowercase or kebab-case word.
+ */
+function secretLikeSegment(segment: string): boolean {
+  let value: string;
+  try {
+    value = decodeURIComponent(segment);
+  } catch {
+    value = segment;
+  }
+  if (value.length >= 16 && /[a-z]/i.test(value) && /\d/.test(value)) return true;
+  if (value.length < 20) return false;
+  if (/^[\da-f]+$/i.test(value)) return true;
+  return /^[\w-]+$/.test(value) && /[A-Z]/.test(value) && /[a-z]/.test(value);
+}
 
 // Workspace runs derive Rule Packs from every workspace package, which pinning the resolved
 // framework would replace with that framework's packs alone.

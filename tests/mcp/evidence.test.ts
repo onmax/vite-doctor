@@ -114,9 +114,12 @@ test("malformed tool lists leave a gap without exposing the request URL", async 
     runOptions: { root, mcp: [{ url, headers: { "invalid fake-secret": "value" } }] },
   });
   expect(JSON.parse(report).commandArgs.rerun).toEqual(
-    expect.arrayContaining(["--mcp-url", "<redacted>"]),
+    expect.arrayContaining([
+      "--mcp-url",
+      "https://<redacted>@example.test/path-secret?token=<redacted>",
+    ]),
   );
-  expect(report).not.toMatch(/path-secret|query-secret|fragment-secret|password|fake-secret/);
+  expect(report).not.toMatch(/query-secret|fragment-secret|password|fake-secret/);
   expect(JSON.stringify(result.project.runtimeEvidence)).not.toMatch(
     /path-secret|query-secret|fragment-secret|password/,
   );
@@ -405,7 +408,7 @@ test("--mcp-url and --mcp-header repeat, and every header goes to every URL", as
     expect(request.headers.authorization).toBe("Bearer secret");
     expect(request.headers["x-team"]).toBe("drops");
   }
-  expect(output).not.toMatch(/path-secret|query-secret|Bearer secret|X-Team: drops/);
+  expect(output).not.toMatch(/query-secret|Bearer secret|X-Team: drops/);
   const report = JSON.parse(output) as {
     commandArgs: { rerun: string[] };
     placeholders: Record<string, string>;
@@ -416,9 +419,9 @@ test("--mcp-url and --mcp-header repeat, and every header goes to every URL", as
     "--framework",
     "vite",
     "--mcp-url",
-    "<redacted>",
+    `${first.url}/path-secret?token=<redacted>`,
     "--mcp-url",
-    "<redacted>",
+    second.url,
     "--mcp-header",
     "Authorization: <redacted>",
     "--mcp-header",
@@ -475,16 +478,18 @@ test("an MCP server checked from an empty directory is the report's subject, not
   const report = JSON.parse(agent.output) as {
     subject: unknown;
     project: unknown;
-    rulePacks: Array<{ name: string }>;
+    rulePacks: unknown[];
     commandArgs: Record<string, string[]>;
   };
   expect(report.subject).toEqual({ mcpServers: [new URL(server.url).origin] });
   expect(report.project).toBeNull();
-  expect(report.rulePacks.map((pack) => pack.name)).toEqual(["vite-doctor/mcp"]);
+  expect(report.rulePacks).toEqual([
+    { name: "vite-doctor/mcp", selected: true, activatedBy: [new URL(server.url).origin] },
+  ]);
   expect(report.commandArgs.rerun).toEqual([
     "vite-doctor",
     "--mcp-url",
-    "<redacted>",
+    server.url,
     "--no-cache",
     "--format",
     "agent",
@@ -496,10 +501,7 @@ test("an MCP server checked from an empty directory is the report's subject, not
     "--format",
     "agent",
   ]);
-  expect(report).toHaveProperty(
-    ["placeholders", "<redacted>"],
-    expect.stringContaining("--mcp-url"),
-  );
+  expect(report).not.toHaveProperty("placeholders");
 
   const text = await cli(root, [
     "--no-cache",
@@ -512,6 +514,54 @@ test("an MCP server checked from an empty directory is the report's subject, not
   expect(text.output).toContain(`Checked: MCP server ${new URL(server.url).origin}\n`);
   expect(text.output).toContain(`Project: none, ${root} has no package.json\n`);
   expect(text.output).not.toMatch(/Detected:|Vite/);
+});
+
+async function rerunArgs(urls: string[]) {
+  const args = urls.flatMap((url) => ["--mcp-url", url]);
+  const { output } = await cli(emptyDirectory(), ["--no-cache", "--format", "agent", ...args]);
+  return JSON.parse(output) as { commandArgs: { rerun: string[] }; placeholders?: object };
+}
+
+test("rerun commands redact token-like segments of an --mcp-url path", async () => {
+  const server = await stub();
+  const { origin } = new URL(server.url);
+  const zapier = "ZDk0YjM2NzQtNDU1Mi00ZmRhLWI3NTEtOGQ3ZTk1ZjM0YzQx";
+  const hex = "9f86d081884c7d659a2feaa0c55ad015";
+  const report = await rerunArgs([
+    `${origin}/api/mcp/s/${zapier}/mcp`,
+    `${origin}/servers/${hex}/sse`,
+  ]);
+
+  expect(report.commandArgs.rerun).toEqual([
+    "vite-doctor",
+    "--mcp-url",
+    `${origin}/api/mcp/s/<redacted>/mcp`,
+    "--mcp-url",
+    `${origin}/servers/<redacted>/sse`,
+    "--no-cache",
+    "--format",
+    "agent",
+  ]);
+  expect(JSON.stringify(report)).not.toMatch(new RegExp(`${zapier}|${hex}`));
+  expect(report.placeholders).toEqual({
+    "<redacted>": expect.stringContaining("token-like path segments of an --mcp-url"),
+  });
+});
+
+test("rerun commands keep an ordinary --mcp-url path", async () => {
+  const server = await stub();
+  const { origin } = new URL(server.url);
+  const urls = [`${origin}/mcp`, `${origin}/v1/sse`, `${origin}/github-copilot/mcp`];
+  const report = await rerunArgs(urls);
+
+  expect(report.commandArgs.rerun).toEqual([
+    "vite-doctor",
+    ...urls.flatMap((url) => ["--mcp-url", url]),
+    "--no-cache",
+    "--format",
+    "agent",
+  ]);
+  expect(report).not.toHaveProperty("placeholders");
 });
 
 test("the text report prints evidence every Diagnostic of a group shares once", async () => {
