@@ -7,12 +7,12 @@ export const FINGERPRINT_SCHEME = 3;
 
 export const RESERVED_DIAGNOSTIC_CODE_PREFIXES: readonly string[] = [
   "DOC",
+  "DS",
   "MCP",
   "NITRO",
   "NUXT",
   "PINIA",
   "PKG",
-  "SHAD",
   "TS",
   "VITE",
   "VUE",

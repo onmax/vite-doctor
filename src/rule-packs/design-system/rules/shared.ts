@@ -10,10 +10,12 @@ import {
 } from "../../../core/index.js";
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
 import { diagnosticCodesByRuleId, diagnostics } from "../diagnostics.js";
+import { designSystemCopy } from "./copy.js";
 
-const ruleName = (id: string) => `shadcn/${id.slice("shadcn/".length)}`;
+// Upstream ESLint rule names keep the `shadcn/` plugin key, so `eslint-disable shadcn/...` comments still apply.
+const ruleName = (id: string) => `shadcn/${id.slice("design-system/".length)}`;
 
-export function createShadcnRule(options: {
+export function createDesignSystemRule(options: {
   id: string;
   title: string;
   description: string;
@@ -42,30 +44,36 @@ export function createShadcnRule(options: {
       if (ctx.file.path.endsWith(".vue") || ctx.file.scriptAst?.type !== "Program") return;
       // Linting in create() instead of node visitors avoids a full Doctor AST walk per file.
       const messages = await lintShadcnRule(ctx, ruleName(options.id));
+      if (!messages.length) return;
+      const code = codeForRuleId(diagnosticCodesByRuleId, options.id);
+      const diagnostic = diagnosticForCode(diagnostics, code);
+      if (!code || !diagnostic) throw doctorInternalDiagnostics.DOC0013({ ruleId: options.id });
+      const templates = (await loadShadcnLint()).templates[options.rule] ?? {};
       for (const message of messages) {
-        const code = codeForRuleId(diagnosticCodesByRuleId, options.id);
-        const diagnostic = diagnosticForCode(diagnostics, code);
-        if (!code || !diagnostic) throw doctorInternalDiagnostics.DOC0013({ ruleId: options.id });
-        ctx.report(diagnostic({ why: message.message, fix: message.message }), {
-          ruleId: options.id,
-          severity: ctx.severity,
-          category: "ui",
-          file: ctx.file.path,
-          range: lintRange(ctx.file.text, message),
-          fix: message.fix
-            ? {
-                kind: "suggestion",
-                message: "Review the suggested design-system edit before applying it.",
-                edits: [
-                  {
-                    range: { start: message.fix.range[0], end: message.fix.range[1] },
-                    text: message.fix.text,
-                  },
-                ],
-              }
-            : null,
-          tags: ["shadcn", "@shadcn/lint"],
-        });
+        const suggested = message.suggestions?.[0];
+        ctx.report(
+          diagnostic(designSystemCopy(options.rule, message, templates, options.docsUrl)),
+          {
+            ruleId: options.id,
+            severity: ctx.severity,
+            category: "ui",
+            file: ctx.file.path,
+            range: lintRange(ctx.file.text, message),
+            fix: suggested
+              ? {
+                  kind: "suggestion",
+                  message: suggested.desc,
+                  edits: [
+                    {
+                      range: { start: suggested.fix.range[0], end: suggested.fix.range[1] },
+                      text: suggested.fix.text,
+                    },
+                  ],
+                }
+              : null,
+            tags: ["design-system", "@shadcn/lint"],
+          },
+        );
       }
     },
   });
@@ -75,6 +83,8 @@ interface ShadcnLint {
   linter: Linter;
   parser: Linter.Parser;
   plugin: NonNullable<Linter.Config["plugins"]>[string];
+  /** Each upstream Rule's `meta.messages`, keyed by Rule name. */
+  templates: Record<string, Record<string, string>>;
 }
 
 interface ShadcnRuleConfig {
@@ -112,6 +122,9 @@ function loadShadcnLint(): Promise<ShadcnLint> {
     linter: new eslint.Linter({ configType: "flat" }),
     parser: (parser.default ?? parser) as Linter.Parser,
     plugin: shadcn.plugin as ShadcnLint["plugin"],
+    templates: Object.fromEntries(
+      Object.entries(shadcn.plugin.rules).map(([name, rule]) => [name, rule.meta?.messages ?? {}]),
+    ),
   }));
   return shadcnLint;
 }
@@ -134,7 +147,7 @@ async function lintShadcnRule(ctx: RuleContext, name: string): Promise<Linter.Li
   if (cached) return cached;
   if (file.sourceCode === null) return [];
 
-  // Every shadcn Rule already seen in this run joins one verify, so a file is linted once per
+  // Every design-system Rule already seen in this run joins one verify, so a file is linted once per
   // batch of Rules instead of once per Rule. Within the budget, later batches reuse the parse.
   const batch = [config];
   const names = new Set([config.name]);
@@ -180,7 +193,7 @@ function verify(
     file.sourceCode ?? ctx.file.text,
     [
       {
-        name: "vite-doctor/shadcn",
+        name: "vite-doctor/design-system",
         files: ["**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"],
         languageOptions: {
           parser: lint.parser,
