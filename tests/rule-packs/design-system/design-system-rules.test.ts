@@ -44,6 +44,8 @@ const scriptFiles = {
     "export const Broken = () => <div className=\"bg-red-500\" style={{ color: 'red' }}",
 };
 
+const fileRules = designSystemRules.filter((rule) => rule.meta.execution === "file");
+
 test("activates for Tailwind projects and adapts upstream diagnostics", async () => {
   const result = await runProjectFixture({
     framework: "vite",
@@ -82,6 +84,9 @@ test("strict design-system Rules parse each file once and report only their own 
       d.range?.column,
     ]),
   ).toEqual([
+    ["design-system/no-restyle", "DS0001", "src/Card.tsx", 5, 27],
+    ["design-system/no-restyle", "DS0001", "src/Card.tsx", 5, 27],
+    ["design-system/no-restyle", "DS0001", "src/Card.tsx", 5, 64],
     ["design-system/no-raw-colors", "DS0002", "src/Card.tsx", 4, 25],
     ["design-system/no-raw-colors", "DS0002", "src/Card.tsx", 5, 27],
     ["design-system/no-raw-colors", "DS0002", "src/Disabled.tsx", 3, 25],
@@ -90,12 +95,12 @@ test("strict design-system Rules parse each file once and report only their own 
     ["design-system/no-arbitrary-values", "DS0003", "src/Card.tsx", 4, 25],
     ["design-system/no-inline-styles", "DS0004", "src/Card.tsx", 4, 92],
     ["design-system/no-inline-styles", "DS0004", "src/Inline.tsx", 2, 78],
+    ["design-system/require-static-classes", "DS0005", "src/Card.tsx", 6, 24],
     ["design-system/no-unknown-classes", "DS0006", "src/Card.tsx", 4, 25],
   ]);
 });
 
 test("design-system Rules share one ESLint verify per file when they run file by file", async () => {
-  const lintRules = designSystemRules.filter((rule) => rule.meta.execution === "file");
   const files = Object.entries(scriptFiles).map(([relativePath, text]) => ({
     path: `/project/${relativePath}`,
     relativePath,
@@ -119,16 +124,16 @@ test("design-system Rules share one ESLint verify per file when they run file by
     return reports;
   };
   const ruleMajor = await lint(
-    lintRules.flatMap((rule) => files.map((file) => [rule, file] as [DoctorRule, typeof file])),
+    fileRules.flatMap((rule) => files.map((file) => [rule, file] as [DoctorRule, typeof file])),
   );
 
   const verify = vi.spyOn(Linter.prototype, "verify");
   const fileMajor = await lint(
-    files.flatMap((file) => lintRules.map((rule) => [rule, file] as [DoctorRule, typeof file])),
+    files.flatMap((file) => fileRules.map((rule) => [rule, file] as [DoctorRule, typeof file])),
   );
 
   // The first file teaches the run which design-system Rules are enabled; every later file is one verify.
-  expect(verify).toHaveBeenCalledTimes(lintRules.length + files.length - 1);
+  expect(verify).toHaveBeenCalledTimes(fileRules.length + files.length - 1);
   expect(fileMajor).toHaveLength(ruleMajor.length);
   expect(fileMajor).toEqual(expect.arrayContaining(ruleMajor));
 });
@@ -245,4 +250,123 @@ test("a custom upstream message keeps its text as the why and points the fix at 
   const [diagnostic] = result.diagnostics;
   expect(diagnostic?.why).toBe("Inline styles are banned");
   expect(diagnostic?.suggestion).toBe(`Resolve it as ${noInlineStyles.meta.docsUrl} describes.`);
+});
+
+test.each([
+  [
+    'Replace with "{{suggestions}}" (same value, on the scale).',
+    'Replace with "p-3.25" (same value, on the scale).',
+  ],
+  [
+    'Replace with   "{{suggestions}}" (same value, on the scale).',
+    'Replace with   "p-3.25" (same value, on the scale).',
+  ],
+  ["Repeat this. Repeat this.", "Repeat this. Repeat this."],
+])("preserves a custom message without repeating it as the remedy: %s", async (message, why) => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: [noArbitraryValues],
+    config: { rules: { "design-system/no-arbitrary-values": ["warn", { message }] } },
+    files: { "src/Box.tsx": 'export const Box = () => <div className="p-[13px]" />' },
+  });
+  expect(result.diagnostics).toMatchObject([{ why, fix: { kind: "suggestion" } }]);
+  expect(result.diagnostics[0]?.suggestion).not.toBe(why);
+});
+
+test("preserves settings notes and distinguishing text on findings at the same location", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: [noArbitraryValues],
+    config: {
+      rules: {
+        "design-system/no-arbitrary-values": [
+          "warn",
+          {
+            options: {
+              message: "Off-scale spacing value. Replace {{className}} with {{suggestions}}.",
+            },
+            settings: { note: "Apply only spacing tokens approved in DESIGN.md." },
+          },
+        ],
+      },
+    },
+    files: { "src/Box.tsx": 'export const Box = () => <div className="p-[13px] m-[13px]" />' },
+  });
+  expect(result.diagnostics.map(({ why }) => why).sort()).toEqual([
+    "Off-scale spacing value. Replace m-[13px] with m-3.25. Apply only spacing tokens approved in DESIGN.md.",
+    "Off-scale spacing value. Replace p-[13px] with p-3.25. Apply only spacing tokens approved in DESIGN.md.",
+  ]);
+});
+
+test("uses the imported Tailwind theme in a project outside the working directory", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: [noArbitraryValues],
+    files: {
+      "src/theme.css": '@import "tailwindcss";\n@theme { --spacing: 5px; }',
+      "src/Box.tsx":
+        'import "./theme.css";\nexport const Box = () => <div className="p-[13px] m-[15px]" />',
+    },
+  });
+  expect(result.diagnostics).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ why: expect.stringContaining('"p-[13px]"'), fix: null }),
+      expect.objectContaining({
+        why: expect.stringContaining('"m-[15px]"'),
+        fix: expect.objectContaining({ message: expect.stringContaining('"m-3"') }),
+      }),
+    ]),
+  );
+});
+
+test("a structured suggestion applies cleanly to BOM-prefixed JSX", async () => {
+  const source = '\uFEFFexport const Box = () => <div className="p-[13px]" />';
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: [noArbitraryValues],
+    files: { "src/Box.tsx": source },
+  });
+  const edit = result.diagnostics[0]?.fix?.edits?.[0];
+  expect(edit).toBeDefined();
+  const { range, text } = edit!;
+  expect(source.slice(0, range.start) + text + source.slice(range.end)).toBe(
+    '\uFEFFexport const Box = () => <div className="p-3.25" />',
+  );
+});
+
+test.each([
+  ["text-[13px]", '"text-xs" (12px)', '"text-sm" (14px)'],
+  ["rounded-[5px]", '"rounded-sm" (4px)', '"rounded-md" (6px)'],
+])("keeps measurements outside the quoted replacement for %s", async (className, first, second) => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: [noArbitraryValues],
+    files: { "src/Box.tsx": `export const Box = () => <div className="${className}" />` },
+  });
+  expect(result.diagnostics[0]?.suggestion).toBe(
+    `Replace "${className}" with one of the nearest scale values: ${first}, ${second}.`,
+  );
+});
+
+test("warns when a baseline predates the Design System rename", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: [noArbitraryValues],
+    files: {
+      "src/Box.tsx": 'export const Box = () => <div className="p-[13px]" />',
+      "baseline.json": JSON.stringify({
+        version: 2,
+        fingerprintScheme: 3,
+        diagnostics: [{ fingerprint: "a".repeat(64) }],
+      }),
+    },
+    run: { baseline: "baseline.json", newOnly: true },
+  });
+  expect(result.diagnostics.map(({ code }) => code)).toContain("DOC0032");
 });

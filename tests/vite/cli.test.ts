@@ -1517,6 +1517,49 @@ test("CLI can record and refresh a baseline while retaining new-only findings", 
   );
 });
 
+test("CLI baselines preserve Design System findings across working directories", async () => {
+  await withFixture(
+    {
+      "package.json": JSON.stringify({ dependencies: { vite: "^8.0.0", tailwindcss: "^4.0.0" } }),
+      "doctor.config.json": JSON.stringify({
+        extends: ["design-system/strict"],
+        rules: {
+          "design-system/no-arbitrary-values": [
+            "warn",
+            { options: {}, settings: { note: "Use only approved brand colors." } },
+          ],
+        },
+      }),
+      "src/theme.css": '@import "tailwindcss";\n@theme { --color-primary: #3b82f6; }',
+      "src/Box.tsx":
+        'import "./theme.css";\nexport const Box = () => <div className="bg-[#3b82f6]" />',
+    },
+    async (root) => {
+      const caller = process.cwd();
+      const args = [
+        "--rules",
+        "design-system/no-arbitrary-values",
+        "--baseline",
+        join(root, "baseline.json"),
+        "--format",
+        "json",
+        "--no-cache",
+      ];
+      const recorded = await runCli([".", ...args, "--update-baseline"], root);
+      expect(JSON.parse(recorded.output).diagnostics).toEqual([
+        expect.objectContaining({
+          code: "DS0003",
+          message: expect.stringContaining("in src/theme.css. Use only approved brand colors."),
+        }),
+      ]);
+
+      const known = await runCli([root, ...args, "--new-only"], caller);
+      expect(known.code).toBe(0);
+      expect(JSON.parse(known.output).diagnostics).toEqual([]);
+    },
+  );
+});
+
 test("CLI reports resolved baseline findings when syntax is removed, not when it is unreadable", async () => {
   const template = "<template><div /></template>";
   const script = "const { MODE } = import.meta.env";

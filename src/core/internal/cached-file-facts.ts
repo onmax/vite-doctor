@@ -63,6 +63,7 @@ function componentFacts(value: unknown): boolean {
         typeof item.imported === "string" &&
         typeof item.source === "string",
     ) &&
+    strings(value.registeredComponentNames) &&
     typeof value.ownLogic === "boolean" &&
     typeof value.ownMarkup === "boolean" &&
     integer(value.rootNodes) &&

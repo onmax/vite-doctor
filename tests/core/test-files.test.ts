@@ -254,7 +254,12 @@ const extension = defineDoctorExtension({
 test("--changed reports changed lines of test files, and .gitignore still wins", async () => {
   const root = gitProject();
   write(root, "src/foo.test.ts", "// TODO\nexport {};\n// TODO new\n");
-  const options = { root, framework: "vue" as const, extensions: [extension] };
+  const options = {
+    root,
+    framework: "vue" as const,
+    extensions: [extension],
+    runtimeTarget: { vue: "3.5.0" },
+  };
 
   const full = await runDoctor({ ...options, cache: false });
   expect(full.diagnostics.map((item) => [relative(root, item.file), item.range?.line])).toEqual([

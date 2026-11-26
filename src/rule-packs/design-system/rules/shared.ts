@@ -49,6 +49,7 @@ export function createDesignSystemRule(options: {
       const diagnostic = diagnosticForCode(diagnostics, code);
       if (!code || !diagnostic) throw doctorInternalDiagnostics.DOC0013({ ruleId: options.id });
       const templates = (await loadShadcnLint()).templates[options.rule] ?? {};
+      const bomOffset = ctx.file.text.startsWith("\uFEFF") ? 1 : 0;
       for (const message of messages) {
         const suggested = message.suggestions?.[0];
         ctx.report(
@@ -58,14 +59,17 @@ export function createDesignSystemRule(options: {
             severity: ctx.severity,
             category: "ui",
             file: ctx.file.path,
-            range: lintRange(ctx.file.text, message),
+            range: lintRange(ctx.file.text, message, bomOffset),
             fix: suggested
               ? {
                   kind: "suggestion",
                   message: suggested.desc,
                   edits: [
                     {
-                      range: { start: suggested.fix.range[0], end: suggested.fix.range[1] },
+                      range: {
+                        start: suggested.fix.range[0] + bomOffset,
+                        end: suggested.fix.range[1] + bomOffset,
+                      },
                       text: suggested.fix.text,
                     },
                   ],
@@ -80,7 +84,7 @@ export function createDesignSystemRule(options: {
 }
 
 interface ShadcnLint {
-  linter: Linter;
+  Linter: typeof Linter;
   parser: Linter.Parser;
   plugin: NonNullable<Linter.Config["plugins"]>[string];
   /** Each upstream Rule's `meta.messages`, keyed by Rule name. */
@@ -102,6 +106,7 @@ interface FileLint {
 }
 
 interface RunLint {
+  linter: Linter;
   rules: Map<string, ShadcnRuleConfig>;
   files: Map<string, FileLint>;
   retainedSource: number;
@@ -119,7 +124,7 @@ function loadShadcnLint(): Promise<ShadcnLint> {
     import("@typescript-eslint/parser"),
     import("@shadcn/lint"),
   ]).then(([eslint, parser, shadcn]) => ({
-    linter: new eslint.Linter({ configType: "flat" }),
+    Linter: eslint.Linter,
     parser: (parser.default ?? parser) as Linter.Parser,
     plugin: shadcn.plugin as ShadcnLint["plugin"],
     templates: Object.fromEntries(
@@ -135,8 +140,15 @@ const runs = new WeakMap<ProjectInfo, RunLint>();
 async function lintShadcnRule(ctx: RuleContext, name: string): Promise<Linter.LintMessage[]> {
   const lint = await loadShadcnLint();
   let run = runs.get(ctx.project);
-  if (!run)
-    runs.set(ctx.project, (run = { rules: new Map(), files: new Map(), retainedSource: 0 }));
+  if (!run) {
+    run = {
+      linter: new lint.Linter({ configType: "flat", cwd: ctx.project.root }),
+      rules: new Map(),
+      files: new Map(),
+      retainedSource: 0,
+    };
+    runs.set(ctx.project, run);
+  }
   const config = shadcnRuleConfig(name, ctx.options);
   run.rules.set(config.key, config);
 
@@ -160,15 +172,15 @@ async function lintShadcnRule(ctx: RuleContext, name: string): Promise<Linter.Li
 
   let messages: Linter.LintMessage[];
   try {
-    messages = verify(lint, file, ctx, batch);
+    messages = verify(lint, run.linter, file, ctx, batch);
   } catch (error) {
     // Another Rule's invalid options must not fail this Rule.
     if (batch.length === 1) throw error;
     batch.length = 1;
-    messages = verify(lint, file, ctx, batch);
+    messages = verify(lint, run.linter, file, ctx, batch);
   }
   if (file.sourceCode === undefined) {
-    const sourceCode = lint.linter.getSourceCode();
+    const sourceCode = run.linter.getSourceCode();
     if (!sourceCode) file.sourceCode = null;
     else if (run.retainedSource + ctx.file.text.length <= retainedSourceBudget) {
       file.sourceCode = sourceCode;
@@ -185,11 +197,13 @@ async function lintShadcnRule(ctx: RuleContext, name: string): Promise<Linter.Li
 
 function verify(
   lint: ShadcnLint,
+  linter: Linter,
   file: FileLint,
   ctx: RuleContext,
   batch: ShadcnRuleConfig[],
 ): Linter.LintMessage[] {
-  const messages = lint.linter.verify(
+  const filenames = { filename: ctx.file.relativePath, physicalFilename: ctx.file.path };
+  const messages = linter.verify(
     file.sourceCode ?? ctx.file.text,
     [
       {
@@ -205,7 +219,7 @@ function verify(
         rules: Object.fromEntries(batch.map((rule) => [rule.name, rule.entry])),
       },
     ],
-    { filename: ctx.file.relativePath },
+    filenames,
   );
   return messages;
 }
@@ -234,17 +248,22 @@ function stableKey(value: unknown): string {
   }
 }
 
-function lintRange(source: string, message: Linter.LintMessage) {
-  let offset = 0;
+function lintRange(source: string, message: Linter.LintMessage, bomOffset: number) {
+  let offset = bomOffset;
   for (let line = 1; line < message.line; line++) offset = source.indexOf("\n", offset) + 1;
   const start = Math.max(0, offset + message.column - 1);
   const end = message.endLine
     ? (() => {
-        let endOffset = 0;
+        let endOffset = bomOffset;
         for (let line = 1; line < message.endLine; line++)
           endOffset = source.indexOf("\n", endOffset) + 1;
         return endOffset + message.endColumn! - 1;
       })()
     : start;
-  return { start, end, line: message.line, column: message.column };
+  return {
+    start,
+    end,
+    line: message.line,
+    column: message.column + (message.line === 1 ? bomOffset : 0),
+  };
 }

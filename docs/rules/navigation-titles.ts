@@ -170,9 +170,9 @@ export const ruleNavigationTitles: Record<string, string> = {
   "design-system/no-raw-colors": "Color tokens",
   "design-system/no-restyle": "Component restyling",
   "design-system/no-unknown-classes": "Unknown classes",
-  "design-system/require-static-classes": "Static classes",
   "design-system/prefer-project-component": "Project components",
   "design-system/unreadable-contract": "Component Contracts",
+  "design-system/require-static-classes": "Static classes",
 
   "typescript/boundaries/no-cross-realm-prototype-identity": "Prototype identity",
   "typescript/boundaries/no-cross-realm-web-instanceof": "Web API instanceof",

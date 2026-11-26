@@ -233,7 +233,7 @@ test("shadcn-vue components/ui/button/Button.vue is inferred", async () => {
 </template>`,
     "src/components/ui/button/index.ts": `export { default as Button } from "./Button.vue";\n`,
     "src/App.vue": `<script setup lang="ts">
-import { Button } from "@/components/ui/button";
+import { Button } from "./components/ui/button";
 </script>
 
 <template>
@@ -284,6 +284,137 @@ defineOptions({ doctor: { replaces: "button" } });
   });
 
   expect(result.diagnostics).toEqual([]);
+});
+
+const brandButton = `<script setup lang="ts">
+defineOptions({ doctor: { replaces: "button" } });
+</script>
+<template><div><button><slot /></button></div></template>`;
+
+const rawButton = `<template><button>Save</button></template>`;
+
+test("distinct contracts with the same component name remain ambiguous", async () => {
+  const result = await diagnose({
+    "src/one/BrandButton.vue": brandButton,
+    "src/two/BrandButton.vue": brandButton,
+    "src/App.vue": rawButton,
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("uses a call-site import alias but neither leaks it nor recommends a shadowed name", async () => {
+  const result = await diagnose({
+    "src/BrandButton.vue": brandButton,
+    "src/Other.vue": `<template><span /></template>`,
+    "src/Alias.vue": `<script setup>import Action from './BrandButton.vue'</script>
+<template><div><Action /><button /></div></template>`,
+    "src/Unrelated.vue": `<script setup>import Action from './Other.vue'</script>${rawButton}`,
+    "src/Shadowed.vue": `<script setup>import BrandButton from './Other.vue'</script>${rawButton}`,
+  });
+  expect(result.diagnostics.map((item) => [item.file.split("/").pop(), item.suggestion])).toEqual([
+    ["Alias.vue", expect.stringContaining("<Action>")],
+    ["Unrelated.vue", expect.stringContaining("<BrandButton>")],
+  ]);
+});
+
+test("workspace apps only see their own contracts or explicitly imported components", async () => {
+  const result = await diagnose({
+    "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+    "apps/a/package.json": JSON.stringify({ name: "app-a", dependencies: { vue: "^3.5.0" } }),
+    "apps/b/package.json": JSON.stringify({ name: "app-b", dependencies: { vue: "^3.5.0" } }),
+    "apps/a/BrandButton.vue": brandButton,
+    "apps/a/App.vue": rawButton,
+    "apps/b/App.vue": rawButton,
+    "apps/b/Imported.vue": `<script setup>import Action from '../a/BrandButton.vue'</script>${rawButton}`,
+  });
+  expect(
+    result.diagnostics.map((item) => [item.file.split("/").slice(-2).join("/"), item.suggestion]),
+  ).toEqual([
+    ["a/App.vue", expect.stringContaining("<BrandButton>")],
+    ["b/Imported.vue", expect.stringContaining("<Action>")],
+  ]);
+});
+
+test("Nuxt UI module evidence does not cross into another workspace app", async () => {
+  const result = await diagnose(
+    {
+      "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+      "apps/a/package.json": JSON.stringify({
+        name: "app-a",
+        dependencies: { nuxt: "^4.0.0", ...NUXT_UI },
+      }),
+      "apps/a/nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'], ui: { prefix: 'Ui' } })`,
+      "apps/a/app/pages/index.vue": rawButton,
+      "apps/b/package.json": JSON.stringify({ name: "app-b", dependencies: { vue: "^3.5.0" } }),
+      "apps/b/App.vue": rawButton,
+    },
+    { framework: "nuxt" },
+  );
+  expect(result.diagnostics.map((item) => [item.file.split("/").pop(), item.suggestion])).toEqual([
+    ["index.vue", expect.stringContaining("<UiButton>")],
+  ]);
+});
+
+test("uses Nuxt UI registration provenance, not the UButton spelling", async () => {
+  const result = await diagnose(
+    {
+      "app/pages/index.vue": rawButton,
+      "app/components/UButton.vue": `<template><div><button /></div></template>`,
+      ".nuxt/doctor.manifest.json": JSON.stringify({
+        components: [
+          { name: "UButton", file: "app/components/UButton.vue" },
+          { name: "UiButton", file: "node_modules/@nuxt/ui/dist/runtime/components/Button.vue" },
+        ],
+      }),
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(result.diagnostics.map((item) => item.suggestion)).toEqual([
+    expect.stringContaining("<UiButton>"),
+    expect.stringContaining("<UiButton>"),
+  ]);
+});
+
+test("Options API wrapper roots are exempt but Nuxt page roots still report", async () => {
+  const register = (name: string, file: string) =>
+    `<script>import ${name} from '${file}'; export default { components: { ${name} } }</script>`;
+  const result = await diagnose(
+    {
+      "app/App.vue": `${register("LikeButton", "./LikeButton.vue")}
+<template><LikeButton /></template>`,
+      "app/Preview.vue": `${register("Home", "./pages/index.vue")}<template><Home /></template>`,
+      "app/LikeButton.vue": rawButton,
+      "app/pages/index.vue": rawButton,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(result.diagnostics.map((item) => item.file.split("/").pop())).toEqual(["index.vue"]);
+});
+
+test.each(["as const", "satisfies Record<string, unknown>"])(
+  "reads options wrapped in %s",
+  async (suffix) => {
+    const result = await diagnose({
+      "src/BrandButton.vue": brandButton.replace(" });", ` } ${suffix});`),
+      "src/App.vue": rawButton,
+    });
+    expect(result.diagnostics.map((item) => item.code)).toEqual(["DS0007"]);
+  },
+);
+
+test("reports a later unknown spread only when an explicit contract may be overwritten", async () => {
+  const imported = `import options from './options';`;
+  const result = await diagnose({
+    "src/options.ts": `export default { name: 'Button' }`,
+    "src/BrandButton.vue": brandButton
+      .replace("defineOptions", `${imported}\ndefineOptions`)
+      .replace('"button" }', '"button" },\n  ...options'),
+    "src/Unrelated.vue": `<script setup>${imported}\ndefineOptions({ ...options })</script>`,
+    "src/App.vue": rawButton,
+  });
+  expect(result.diagnostics).toEqual([
+    expect.objectContaining({ code: "DS0009", range: expect.objectContaining({ line: 4 }) }),
+  ]);
 });
 
 test("LikeButton.vue whose root is a <button> reports nothing inside itself", async () => {

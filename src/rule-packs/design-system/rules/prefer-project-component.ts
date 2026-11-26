@@ -1,8 +1,10 @@
-import { relative } from "pathe";
+import { join, relative, resolve } from "pathe";
 import {
+  type ComponentNode,
   type ComponentUsageGraph,
   type Confidence,
   createRule,
+  type NuxtProjectInfo,
   type ProjectInfo,
   type RuleContext,
   type TemplateElementNode,
@@ -11,20 +13,26 @@ import {
 import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-handles.js";
 import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
 import { loadVueCompilerSfc } from "../../../core/internal/lazy-parsers.js";
+import { readExportedNuxtOption } from "../../../core/internal/runtime-graph.js";
 import {
   SFC_TEMPLATE_PARSE_OPTIONS,
   startTagEnd,
   TemplateNodeType,
   walkTemplate,
 } from "../../../core/internal/template.js";
-import { owningWorkspacePackage } from "../../../core/internal/workspace-packages.js";
+import {
+  nuxtInventoryOwner,
+  owningWorkspacePackage,
+} from "../../../core/internal/workspace-packages.js";
 import {
   type ComponentContract,
   type ComponentNames,
+  componentFile,
   componentNames,
   componentTag,
   isUiKitFile,
   parseContractOptions,
+  pascalCase,
   projectContracts,
 } from "../contracts.js";
 import { diagnostics } from "../diagnostics.js";
@@ -32,10 +40,10 @@ import { diagnostics } from "../diagnostics.js";
 const RULE_ID = "design-system/prefer-project-component";
 const TEXT_INPUT_TYPES = new Set(["text", "email", "password", "search", "url", "tel", "number"]);
 const NUXT_UI: Record<string, string> = {
-  button: "UButton",
-  input: "UInput",
-  textarea: "UTextarea",
-  select: "USelect",
+  button: "Button",
+  input: "Input",
+  textarea: "Textarea",
+  select: "Select",
 };
 const INFERRED_NAMES = new Set(["Button", "Input", "Textarea", "Select", "Label"]);
 
@@ -74,16 +82,14 @@ export const preferProjectComponent = createRule({
     return {
       async onWorkspaceEnd() {
         const graph = await ctx.inventory.componentUsage();
-        const names = componentNames(ctx.project, graph);
+        const scopes = componentScopes(ctx, graph);
         const templates = new Map<string, ParsedSfc | null>();
         const parsed = (file: string) => {
           if (!templates.has(file)) templates.set(file, parseSfc(ctx, file));
           return templates.get(file)!;
         };
-        const declared = declaredCandidates(graph, names, options.contracts);
-        const inferred = inferredCandidates(graph, names, parsed);
-        const nuxtUi = nuxtUiCandidates(ctx.project);
-        const usesNuxtUi = nuxtUiOwners(ctx.project);
+        const declared = declaredCandidates(graph, options.contracts);
+        const inferred = inferredCandidates(graph, parsed);
         const tags = new Set([...declared.keys(), ...inferred.keys(), ...Object.keys(NUXT_UI)]);
         const mentions = new RegExp(`<(?:${[...tags].join("|")})[\\s/>]`, "i");
 
@@ -92,25 +98,34 @@ export const preferProjectComponent = createRule({
           if (!mentions.test(ctx.fs.readText(node.file) ?? "")) continue;
           const sfc = parsed(node.file);
           if (!sfc) continue;
-          const appUsesNuxtUi = usesNuxtUi(node.relativePath);
-          // A component whose only root is the element wraps it, like a LikeButton; pages do not.
+          const scope = scopes(node);
+          const bindings = localBindings(node);
+          const replacements = new Map<string, Candidate | undefined>();
           const wrapper =
-            node.callers.length > 0 || /(?:^|\/)components\//.test(node.relativePath)
+            !/(?:^|\/)pages\//.test(node.relativePath) &&
+            (node.callers.length > 0 ||
+              node.indirectImporters.length > 0 ||
+              scope.registrations.has(node.file) ||
+              /(?:^|\/)components\//.test(node.relativePath))
               ? sfc.root
               : undefined;
           walkTemplate(sfc.ast, (element) => {
             if (element.type !== TemplateNodeType.ELEMENT || element.tagType !== 0) return;
             const tag = element.tag.toLowerCase();
             if (!tags.has(tag) || element === wrapper || exempt(ctx, element)) return;
-            const candidates = [
-              declared.get(tag),
-              appUsesNuxtUi ? nuxtUi.get(tag) : undefined,
-              inferred.get(tag),
-            ].find((list) => list?.length);
-            const components = new Set(candidates?.map((candidate) => candidate.component));
-            if (!candidates || components.size !== 1) return;
-            if (candidates.some((candidate) => candidate.file === node.file)) return;
-            const candidate = candidates[0]!;
+            if (!replacements.has(tag))
+              replacements.set(
+                tag,
+                selectCandidate(
+                  [declared.get(tag), scope.nuxtUi.get(tag), inferred.get(tag)],
+                  node,
+                  scope,
+                  bindings,
+                  graph,
+                ),
+              );
+            const candidate = replacements.get(tag);
+            if (!candidate) return;
             const start = element.loc.start.offset;
             const range = ctx.helpers.rangeFromOffsets(
               node.file,
@@ -225,45 +240,185 @@ function spreadAfterType(element: TemplateElementNode): boolean {
 
 function declaredCandidates(
   graph: ComponentUsageGraph,
-  names: ComponentNames,
   configContracts: Record<string, ComponentContract>,
 ): Map<string, Candidate[]> {
   const byTag = new Map<string, Candidate[]>();
-  for (const declared of projectContracts(graph, names, configContracts).contracts)
+  const names = { registered: new Map(), nuxtDefault: new Map() };
+  for (const declared of projectContracts(graph, names).contracts)
     for (const tag of declared.contract.replaces)
       push(byTag, tag, {
         component: declared.component,
-        source: declared.declaredIn === "component" ? "contract" : "config",
+        source: "contract",
         confidence: "proven",
         ...(declared.file && { file: declared.file }),
       });
+  for (const [component, contract] of Object.entries(configContracts))
+    for (const tag of contract.replaces)
+      push(byTag, tag, { component, source: "config", confidence: "proven" });
   return byTag;
 }
 
-function nuxtUiCandidates(project: ProjectInfo): Map<string, Candidate[]> {
+interface ComponentScope {
+  names: ComponentNames;
+  files: ReadonlyMap<string, ComponentNode>;
+  registrations: ReadonlySet<string>;
+  nuxtUi: Map<string, Candidate[]>;
+}
+
+function componentScopes(ctx: RuleContext, graph: ComponentUsageGraph) {
+  const project = ctx.project;
+  const packages = projectWorkspacePackages(project);
+  const owner = nuxtInventoryOwner(packages)?.root ?? ".";
+  const packageFor = (node: ComponentNode) => owningWorkspacePackage(packages, node.relativePath);
+  const filesByRoot = new Map<string, Map<string, ComponentNode>>();
+  const scopes = new Map<string, ComponentScope>();
+  for (const node of graph.components.values()) {
+    const root = packageFor(node);
+    const files = filesByRoot.get(root) ?? new Map();
+    files.set(node.file, node);
+    filesByRoot.set(root, files);
+  }
+  return (node: ComponentNode): ComponentScope => {
+    const root = packageFor(node);
+    const cached = scopes.get(root);
+    if (cached) return cached;
+    const pkg = packages.find((item) => item.root === root);
+    const nuxt =
+      project.workspaceNuxt?.find((entry) => entry.root === root)?.nuxt ??
+      (root === owner ? project.nuxt : undefined);
+    const appRoot = resolve(project.root, root);
+    const files = filesByRoot.get(root) ?? new Map();
+    const names = componentNames(
+      { ...project, root: appRoot, nuxt, workspacePackages: pkg ? [pkg] : [] },
+      { components: files, unresolved: [] },
+    );
+    const scope = {
+      names,
+      files,
+      registrations: new Set([...names.registered.values(), ...names.nuxtDefault.values()]),
+      nuxtUi:
+        (pkg && "@nuxt/ui" in pkg.packages) ||
+        nuxt?.modules?.some((entry) => entry.name === "@nuxt/ui")
+          ? nuxtUiCandidates(ctx, appRoot, nuxt)
+          : new Map<string, Candidate[]>(),
+    };
+    scopes.set(root, scope);
+    return scope;
+  };
+}
+
+function localBindings(node: ComponentNode): Map<string, string | undefined> {
+  const bindings = new Map(
+    node.facts.registeredComponentNames.map((name) => [pascalCase(name), undefined]),
+  );
+  return new Map<string, string | undefined>([
+    ...bindings,
+    ...[...node.importedComponents].map(([name, file]) => [pascalCase(name), file] as const),
+  ]);
+}
+
+function selectCandidate(
+  sources: (Candidate[] | undefined)[],
+  node: ComponentNode,
+  scope: ComponentScope,
+  bindings: ReadonlyMap<string, string | undefined>,
+  graph: ComponentUsageGraph,
+): Candidate | undefined {
+  const visible = (file: string) =>
+    scope.files.has(file) || scope.registrations.has(file) || [...bindings.values()].includes(file);
+  for (const source of sources) {
+    const choices = new Map<string, Candidate>();
+    for (const original of source ?? []) {
+      let { file, component } = original;
+      if (original.source === "config") {
+        file =
+          bindings.get(component) ??
+          componentFile(component, scope.names, {
+            components: scope.files,
+            unresolved: [],
+          });
+      } else if (file && original.source !== "nuxt-ui") {
+        if (!visible(file)) continue;
+        const target = graph.components.get(file)!;
+        component =
+          [...bindings].find(([, value]) => value === file)?.[0] ??
+          componentTag(target, scope.names);
+      }
+      const key = file ?? component;
+      if (!choices.has(key)) choices.set(key, { ...original, component, file });
+    }
+    if (!choices.size) continue;
+    if (choices.size !== 1) return undefined;
+    const candidate = choices.values().next().value!;
+    if (candidate.file === node.file) return undefined;
+    const name = pascalCase(candidate.component);
+    if (bindings.has(name)) {
+      if (!candidate.file || bindings.get(name) !== candidate.file) return undefined;
+    } else {
+      const registered = scope.names.registered.get(name) ?? scope.names.nuxtDefault.get(name);
+      if (registered && registered !== candidate.file) return undefined;
+    }
+    return candidate;
+  }
+}
+
+function nuxtUiCandidates(
+  ctx: RuleContext,
+  appRoot: string,
+  nuxt: NuxtProjectInfo | undefined,
+): Map<string, Candidate[]> {
   const byTag = new Map<string, Candidate[]>();
-  const resolved = project.nuxt?.manifest?.resolvedComponents;
-  for (const [tag, component] of Object.entries(NUXT_UI)) {
-    // A current manifest without the component means the app renamed or disabled it.
-    if (resolved && !resolved.some((entry) => entry.name === component)) continue;
-    push(byTag, tag, {
-      component,
-      source: "nuxt-ui",
-      confidence: resolved ? "manifest-backed" : "heuristic-high",
-    });
+  const resolved = nuxt?.manifest?.resolvedComponents;
+  const registered = resolved ?? [...(nuxt?.components.values() ?? [])];
+  const prefix = resolved ? undefined : nuxtUiPrefix(ctx, nuxt, appRoot);
+  for (const [tag, implementation] of Object.entries(NUXT_UI)) {
+    const matches = registered.filter(
+      ({ file }) =>
+        file
+          .replaceAll("\\", "/")
+          .endsWith(`/node_modules/@nuxt/ui/dist/runtime/components/${implementation}.vue`) ||
+        file.replaceAll("\\", "/") ===
+          `node_modules/@nuxt/ui/dist/runtime/components/${implementation}.vue`,
+    );
+    for (const entry of matches) {
+      if (
+        entry.mode === "server" ||
+        registered.some((other) => other.name === entry.name && other.file !== entry.file)
+      )
+        continue;
+      push(byTag, tag, {
+        component: entry.name,
+        file: resolve(appRoot, entry.file),
+        source: "nuxt-ui",
+        confidence: resolved ? "manifest-backed" : "heuristic-high",
+      });
+    }
+    if (resolved || matches.length || prefix === undefined) continue;
+    const component = `${prefix}${implementation}`;
+    if (registered.some((entry) => entry.name === component)) continue;
+    push(byTag, tag, { component, source: "nuxt-ui", confidence: "heuristic-high" });
   }
   return byTag;
 }
 
-/** Whether the workspace package that owns a file uses Nuxt UI. */
-function nuxtUiOwners(project: ProjectInfo): (relativePath: string) => boolean {
-  const packages = projectWorkspacePackages(project);
-  const module = !!project.nuxt?.modules?.some((entry) => entry.name === "@nuxt/ui");
-  return (relativePath) => {
-    const root = owningWorkspacePackage(packages, relativePath);
-    const owner = packages.find((item) => item.root === root) ?? packages[0];
-    return module || (!!owner && "@nuxt/ui" in owner.packages);
-  };
+function nuxtUiPrefix(ctx: RuleContext, nuxt: NuxtProjectInfo | undefined, appRoot: string) {
+  if (!nuxt) return "U";
+  for (const root of new Set([appRoot, ...nuxt.appRoots])) {
+    for (const ext of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
+      const file = join(root, `nuxt.config.${ext}`);
+      const text = ctx.fs.readText(file);
+      if (text === undefined) {
+        if (ctx.fs.exists(file)) return undefined;
+        continue;
+      }
+      const prefix = readExportedNuxtOption(file, text, "ui", "prefix");
+      if (prefix === undefined) break;
+      return prefix?.type === "Literal" && typeof prefix.value === "string"
+        ? prefix.value
+        : undefined;
+    }
+  }
+  return "U";
 }
 
 /**
@@ -272,7 +427,6 @@ function nuxtUiOwners(project: ProjectInfo): (relativePath: string) => boolean {
  */
 function inferredCandidates(
   graph: ComponentUsageGraph,
-  names: ComponentNames,
   parsed: (file: string) => ParsedSfc | null,
 ): Map<string, Candidate[]> {
   const byTag = new Map<string, Candidate[]>();
@@ -287,7 +441,7 @@ function inferredCandidates(
     if (!isUiKitFile(node.relativePath) && parsed(node.file)?.root?.tag.toLowerCase() !== tag)
       continue;
     push(byTag, tag, {
-      component: componentTag(node, names),
+      component: base,
       source: "inferred",
       confidence: "heuristic-high",
       file: node.file,
@@ -298,7 +452,10 @@ function inferredCandidates(
 
 function push(byTag: Map<string, Candidate[]>, tag: string, candidate: Candidate) {
   const list = byTag.get(tag) ?? [];
-  if (!list.some((entry) => entry.component === candidate.component)) list.push(candidate);
+  if (
+    !list.some((entry) => entry.file === candidate.file && entry.component === candidate.component)
+  )
+    list.push(candidate);
   byTag.set(tag, list);
 }
 
@@ -333,6 +490,11 @@ function componentCopy(
 ): { why: string; fix: string } {
   const { component } = candidate;
   const nuxtUi = candidate.source === "nuxt-ui";
+  const prefix =
+    nuxtUi && component.endsWith(NUXT_UI[tag]!)
+      ? component.slice(0, -NUXT_UI[tag]!.length)
+      : undefined;
+  const formFieldName = prefix === undefined ? "the form field component" : `${prefix}FormField`;
   const source = {
     contract: `${component} declares that it replaces <${tag}>`,
     config: `the project's Doctor config declares that ${component} replaces <${tag}>`,
@@ -341,16 +503,19 @@ function componentCopy(
   }[candidate.source];
   const formField =
     nuxtUi && tag !== "button"
-      ? ", and it misses the label, help text, and error wiring UFormField gives Nuxt UI controls"
+      ? `, and it misses the label, help text, and error wiring ${formFieldName} gives Nuxt UI controls`
       : "";
   const why = `This raw <${tag}> bypasses ${component}: ${source}. Users see a control that does not match the rest of the app: ${LOSSES[tag] ?? "its styling and states can differ from the project's other instances"}${formField}.`;
+  const fieldAdvice =
+    prefix === undefined
+      ? " Wrap it in the form field component to get its label and validation error."
+      : ` Wrap it in <${prefix}FormField> to get its label and validation error.`;
   const props = nuxtUi
     ? {
-        button: " Move styling classes to UButton props: color, variant, size, and icon.",
-        input: " Wrap it in <UFormField> to get its label and validation error.",
-        textarea: " Wrap it in <UFormField> to get its label and validation error.",
-        select:
-          " Turn the <option> elements into its `items` prop, or use <USelectMenu> for searchable or rich options.",
+        button: ` Move styling classes to ${component} props: color, variant, size, and icon.`,
+        input: fieldAdvice,
+        textarea: fieldAdvice,
+        select: ` Turn the <option> elements into its \`items\` prop.${prefix === undefined ? "" : ` Use <${prefix}SelectMenu> for searchable or rich options.`}`,
       }[tag]
     : ` Move styling classes to ${component}'s props, and drop classes it already applies.`;
   const fix = `Replace <${tag}> with <${component}>, keeping its attributes, v-model, listeners, and content.${props ?? ""}`;

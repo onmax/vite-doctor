@@ -844,6 +844,8 @@ export interface ComponentFacts {
   models: Array<{ name: string; binding?: string; default: boolean; range?: SourceRange }>;
   /** Value imports in `<script setup>`, which its template can render as tags. */
   imports: Array<{ local: string; imported: string; source: string }>;
+  /** Names explicitly registered in the Options API `components` object. */
+  registeredComponentNames: string[];
   /**
    * Whether the component runs code of its own: `<script setup>` statements other than imports,
    * type declarations, and macro declarations, macro defaults included, or any `<script>` code.
@@ -916,6 +918,8 @@ export interface ComponentNode {
    * binding in code. Usages through them are invisible to `callers`.
    */
   indirectImporters: string[];
+  /** Local `<script setup>` imports, including unused imports and unresolved targets. */
+  importedComponents: ReadonlyMap<string, string | undefined>;
 }
 
 /** Project Inventory of which Vue SFCs render which components, built from File Facts. */

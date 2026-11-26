@@ -176,15 +176,19 @@ export function componentNames(project: ProjectInfo, graph: ComponentUsageGraph)
   for (const entry of nuxt.components.values())
     if (entry.file?.endsWith(".vue") && !registered.has(entry.name))
       registered.set(entry.name, absolute(entry.file));
-  if (registered.size) return { registered, nuxtDefault };
+  if (nuxt.manifest?.resolvedComponents || registered.size) return { registered, nuxtDefault };
   // shadcn-nuxt registers `components/ui` by export name, not by path.
   const shadcnNuxt = usesPackage(project, "shadcn-nuxt");
+  const ambiguous = new Set<string>();
   for (const node of graph.components.values()) {
     if (node.sourceKind === "module" || (shadcnNuxt && isUiKitFile(node.file))) continue;
     const match = /(?:^|\/)components\/(.+\.vue)$/.exec(relative(project.root, node.file));
     const name = match && nuxtComponentName(match[1]!);
-    if (name && !nuxtDefault.has(name)) nuxtDefault.set(name, node.file);
+    if (!name) continue;
+    if (nuxtDefault.has(name)) ambiguous.add(name);
+    else nuxtDefault.set(name, node.file);
   }
+  for (const name of ambiguous) nuxtDefault.delete(name);
   return { registered, nuxtDefault };
 }
 
@@ -194,29 +198,17 @@ export function componentFile(
   names: ComponentNames,
   graph: ComponentUsageGraph,
 ): string | undefined {
-  return (
-    names.registered.get(name) ??
-    [...graph.components.values()].find((node) =>
-      node.callers.some((edge) => pascalCase(edge.usage.tag) === name),
-    )?.file ??
-    names.nuxtDefault.get(name) ??
-    [...graph.components.values()].find((node) => fileTag(node.file) === name)?.file
-  );
+  const registered = names.registered.get(name) ?? names.nuxtDefault.get(name);
+  if (registered) return registered;
+  const matches = [...graph.components.values()].filter((node) => fileTag(node.file) === name);
+  return matches.length === 1 ? matches[0]?.file : undefined;
 }
 
 /**
- * The tag call sites use for an SFC: the name Nuxt registered, else the tag its callers write
- * most, else Nuxt's default name, else its file name.
+ * The project's default tag for an SFC, independent of local import aliases.
  */
 export function componentTag(node: ComponentNode, names: ComponentNames): string {
   for (const [name, file] of names.registered) if (file === node.file) return name;
-  const counts = new Map<string, number>();
-  for (const edge of node.callers) {
-    const tag = pascalCase(edge.usage.tag);
-    counts.set(tag, (counts.get(tag) ?? 0) + 1);
-  }
-  const used = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
-  if (used) return used;
   for (const [name, file] of names.nuxtDefault) if (file === node.file) return name;
   return fileTag(node.file);
 }
@@ -263,7 +255,7 @@ function fileTag(file: string): string {
   return pascalCase(basename(file, extname(file)));
 }
 
-function pascalCase(tag: string): string {
+export function pascalCase(tag: string): string {
   const camel = tag.replace(/-(\w)/g, (_, char: string) => char.toUpperCase());
   return camel.charAt(0).toUpperCase() + camel.slice(1);
 }
