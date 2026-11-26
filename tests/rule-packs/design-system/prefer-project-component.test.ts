@@ -1,3 +1,4 @@
+import { join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { nuxtAppInputSignature } from "../../../src/core/internal/nuxt-app-inputs.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
@@ -112,11 +113,19 @@ test("an empty <button> used as a hit area reports nothing", async () => {
 <button :text-content.camel="label" />
 <button :innerHTML.attr="icon" />
 <button v-bind="{ 'aria-label': label }" />
+<button textContent="" aria-label="Hover for details" />
+<button :textContent="''" />
+<button :innerHTML="null" />
+<button v-bind="{ textContent: '' }" />
+<button v-text="void 0" />
+<button v-html="\`\`" />
+<button textContent="Save" />
+<button :textContent="0" />
 </template>`,
     },
     { framework: "nuxt", dependencies: NUXT_UI },
   );
-  expect(result.diagnostics.map((d) => d.range?.line)).toEqual([6, 7, 8, 9, 10]);
+  expect(result.diagnostics.map((d) => d.range?.line)).toEqual([6, 7, 8, 9, 10, 19, 20]);
 });
 
 test("ambiguous native inputs and non-text inputs report nothing", async () => {
@@ -784,6 +793,45 @@ test.each([
 const telemetryRc = "telemetry.enabled=false\ntelemetry.consent=0\n";
 
 test.each([
+  ["ui.prefix=Unused\n", telemetryRc, ["index.vue", "LikeButton.vue"]],
+  ["ignore.0=**/LikeButton.vue\n", telemetryRc, ["index.vue", "LikeButton.vue"]],
+  [telemetryRc, "ignore.0=**/LikeButton.vue\n", ["index.vue"]],
+  [telemetryRc, "ui.prefix=Brand\n", []],
+])(
+  "checks only applicable rc files when scanning a nested Nuxt app (%j, %j)",
+  async (parentRc, workspaceRc, pages) => {
+    await withFixture(
+      {
+        "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+        ".nuxtrc": workspaceRc,
+        "apps/.nuxtrc": parentRc,
+        "apps/web/package.json": JSON.stringify({
+          dependencies: { nuxt: "^4.0.0", vue: "^3.5.0", ...NUXT_UI },
+        }),
+        "apps/web/.nuxtrc": telemetryRc,
+        "apps/web/nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'], pages: { pattern: ['**/*.vue'] } })`,
+        "apps/web/app/pages/LikeButton.vue": rawButton,
+        "apps/web/app/pages/index.vue": rawButton,
+        "apps/web/app/app.vue": `<script setup>import LikeButton from './pages/LikeButton.vue'</script>
+<template><LikeButton /></template>`,
+      },
+      {},
+      async (root) => {
+        for (const target of [root, join(root, "apps/web")]) {
+          const result = await runViteDoctor({ root: target, framework: "nuxt", cache: false });
+          expect(result.diagnostics.filter(({ code }) => code === "DS0007")).toMatchObject(
+            pages.map((page) => ({
+              file: expect.stringContaining(`/apps/web/app/pages/${page}`),
+              suggestion: expect.stringContaining("<UButton>"),
+            })),
+          );
+        }
+      },
+    );
+  },
+);
+
+test.each([
   ["ui.prefix=Brand\n", "{}", [], ""],
   ["ui.prefix=Brand\n", "{ prefix: 'Local' }", ["index.vue", "LikeButton.vue"], "LocalButton"],
   ["ignore.0=**/LikeButton.vue\n", "{}", ["index.vue"], "UButton"],
@@ -933,6 +981,21 @@ test("unprepared Nuxt UI does not guess a prefix through unresolved extends", as
     { framework: "nuxt", dependencies: NUXT_UI },
   );
   expect(result.diagnostics).toEqual([]);
+});
+
+test("an automatic layer's rc file does not supply a Nuxt UI prefix", async () => {
+  const result = await diagnose(
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'] })`,
+      "layers/brand/nuxt.config.ts": `export default defineNuxtConfig({})`,
+      "layers/brand/.nuxtrc": "ui.prefix=Unused\n",
+      "app/pages/index.vue": rawButton,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(result.diagnostics).toMatchObject([
+    { code: "DS0007", suggestion: expect.stringContaining("<UButton>") },
+  ]);
 });
 
 test("an unreadable ui.prefix or a local component with Nuxt UI's name suggests nothing", async () => {

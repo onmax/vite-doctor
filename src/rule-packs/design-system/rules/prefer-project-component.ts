@@ -7,6 +7,8 @@ import {
   type NuxtProjectInfo,
   type ProjectInfo,
   type RuleContext,
+  type RuleFileSystem,
+  type ScriptAstNode,
   type TemplateElementNode,
   type TemplateRootNode,
 } from "../../../core/index.js";
@@ -52,6 +54,25 @@ const NUXT_UI: Record<string, string> = {
 const INFERRED_NAMES = new Set(["Button", "Input", "Textarea", "Select", "Label"]);
 const NUXT_CONFIG_SCRIPT_EXTENSIONS = ["js", "ts", "mjs", "cjs", "mts", "cts"];
 const NUXT_CONFIG_DATA_EXTENSIONS = ["json", "jsonc", "json5", "yaml", "yml", "toml"];
+const NUXT_LAYER_OPTIONS = ["extends", "_extends", "theme"];
+const WORKSPACE_FILES = [
+  "pnpm-workspace.yaml",
+  "lerna.json",
+  "turbo.json",
+  "rush.json",
+  "deno.json",
+  "deno.jsonc",
+];
+const LOCKFILES = [
+  "yarn.lock",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "npm-shrinkwrap.json",
+  "bun.lockb",
+  "bun.lock",
+  "deno.lock",
+];
+const PACKAGE_FILES = ["package.json", "package.json5", "package.yaml"];
 
 /** A component that replaces a raw element, and how Doctor learned it. */
 interface Candidate {
@@ -233,10 +254,12 @@ function exempt(ctx: RuleContext, element: TemplateElementNode): boolean {
 
 function hasContent(ctx: RuleContext, element: TemplateElementNode): boolean {
   return (
-    ctx.helpers.hasVueDirective(element, "text") ||
-    ctx.helpers.hasVueDirective(element, "html") ||
     element.props.some((prop) => {
-      if (prop.type === TemplateNodeType.ATTRIBUTE) return isContentProperty(prop.name);
+      if (prop.type === TemplateNodeType.ATTRIBUTE)
+        return isContentProperty(prop.name) && !!prop.value?.content;
+      const expression = () => prop.exp && ctx.helpers.parseTemplateExpression(prop.exp);
+      if (prop.name === "text" || prop.name === "html")
+        return !isStaticallyEmptyContent(expression());
       if (prop.name !== "bind" || prop.modifiers.some(({ content }) => content === "attr"))
         return false;
       if (prop.arg) {
@@ -246,15 +269,17 @@ function hasContent(ctx: RuleContext, element: TemplateElementNode): boolean {
             prop.modifiers.some(({ content }) => content === "camel")
               ? camelize(prop.arg.content)
               : prop.arg.content,
-          )
+          ) &&
+          !isStaticallyEmptyContent(expression())
         );
       }
-      const binding = prop.exp && ctx.helpers.parseTemplateExpression(prop.exp);
+      const binding = expression();
       return (
         binding?.type === "ObjectExpression" &&
         binding.properties.some(
           (entry) =>
             entry.type === "Property" &&
+            !isStaticallyEmptyContent(entry.value) &&
             ((!entry.computed &&
               entry.key.type === "Identifier" &&
               isContentProperty(entry.key.name)) ||
@@ -270,6 +295,24 @@ function hasContent(ctx: RuleContext, element: TemplateElementNode): boolean {
         !(child.type === TemplateNodeType.TEXT && !child.content.trim()),
     )
   );
+}
+
+function isStaticallyEmptyContent(value: ScriptAstNode | null | undefined): boolean {
+  switch (value?.type) {
+    case "Literal":
+      return value.value === "" || value.value === null;
+    case "TemplateLiteral":
+      return value.expressions.length === 0 && value.quasis[0]?.value.cooked === "";
+    case "UnaryExpression":
+      return value.operator === "void";
+    case "TSAsExpression":
+    case "TSSatisfiesExpression":
+    case "TSNonNullExpression":
+    case "TSTypeAssertion":
+      return isStaticallyEmptyContent(value.expression);
+    default:
+      return false;
+  }
 }
 
 function isContentProperty(name: string): boolean {
@@ -519,8 +562,9 @@ function nuxtUiPrefix(ctx: RuleContext, appRoot: string) {
   let prefix: string | undefined;
   for (const name of appNuxtLayerNames(ctx, appRoot)) {
     const root = join(appRoot, "layers", name);
-    if (hasUnresolvedNuxtLayers(ctx, root)) return undefined;
-    const layerPrefix = readLiteralNuxtOption(ctx, root, "ui", "prefix");
+    if (NUXT_LAYER_OPTIONS.some((key) => readMainNuxtOption(ctx, root, key) !== undefined))
+      return undefined;
+    const layerPrefix = literalNuxtString(readMainNuxtOption(ctx, root, "ui", "prefix"));
     if (layerPrefix === undefined) continue;
     if (layerPrefix === null || (prefix !== undefined && layerPrefix !== prefix)) return undefined;
     prefix = layerPrefix;
@@ -533,13 +577,14 @@ function appNuxtLayerNames(ctx: RuleContext, appRoot: string) {
 }
 
 function hasUnresolvedNuxtLayers(ctx: RuleContext, root: string) {
-  return ["extends", "_extends", "theme"].some(
-    (key) => readNuxtOption(ctx, root, key) !== undefined,
-  );
+  return NUXT_LAYER_OPTIONS.some((key) => readNuxtOption(ctx, root, key) !== undefined);
 }
 
 function readLiteralNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
-  const option = readNuxtOption(ctx, root, key, nested);
+  return literalNuxtString(readNuxtOption(ctx, root, key, nested));
+}
+
+function literalNuxtString(option: ReturnType<typeof readMainNuxtOption>) {
   if (option === undefined) return undefined;
   return option?.type === "Literal" && typeof option.value === "string" ? option.value : null;
 }
@@ -547,10 +592,28 @@ function readLiteralNuxtOption(ctx: RuleContext, root: string, key: string, nest
 function readNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
   const main = readMainNuxtOption(ctx, root, key, nested);
   if (main === null || (main?.type === "Literal" && typeof main.value === "string")) return main;
-  for (let candidate = root; ; candidate = dirname(candidate)) {
-    if (nuxtRcMaySetOption(ctx, candidate, key, nested)) return null;
-    if (candidate === ctx.project.root || candidate === dirname(candidate)) return main;
+  if (nuxtRcMaySetOption(ctx, root, key, nested)) return null;
+  const workspace = nuxtRcWorkspaceRoot(ctx.fs, root);
+  if (workspace && workspace !== root && nuxtRcMaySetOption(ctx, workspace, key, nested))
+    return null;
+  return main;
+}
+
+function nuxtRcWorkspaceRoot(fs: RuleFileSystem, appRoot: string): string | undefined {
+  const contains = (root: string, names: string[]) =>
+    names.some((name) => fs.stat(join(root, name))?.isFile());
+  let workspace: string | undefined;
+  let git: string | undefined;
+  let lockfile: string | undefined;
+  let pkg: string | undefined;
+  for (let root = appRoot; root !== dirname(root); root = dirname(root)) {
+    if (contains(root, WORKSPACE_FILES)) workspace = root;
+    if (!git && fs.stat(join(root, ".git/config"))?.isFile()) git = root;
+    if (contains(root, LOCKFILES)) lockfile = root;
+    if (contains(root, PACKAGE_FILES)) pkg = root;
+    if (root.endsWith("/node_modules")) break;
   }
+  return workspace ?? git ?? lockfile ?? pkg;
 }
 
 function nuxtRcMaySetOption(ctx: RuleContext, root: string, key: string, nested?: string) {
