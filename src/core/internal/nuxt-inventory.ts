@@ -39,9 +39,8 @@ export interface NuxtProjectInventory {
   serverHandlers: NuxtDoctorManifest["serverHandlers"];
   resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
   resolvedRouteRules?: Record<string, unknown>;
-  prePageRouteRules?: NuxtDoctorManifest["prePageRouteRules"];
+  inlineRouteRules?: boolean;
   routeRulePagesCurrent?: boolean;
-  routeRulePageScriptsCurrent?: boolean;
   nitroPreset?: string;
   pages: NonNullable<NuxtDoctorManifest["pages"]>;
   middleware?: NuxtResolvedMiddleware[];
@@ -116,14 +115,10 @@ export function createNuxtProjectInventory(
       file: resolve(root, handler.file),
     })),
     resolvedRouteRules: manifest?.resolvedRouteRules,
-    prePageRouteRules: manifest?.prePageRouteRules,
+    inlineRouteRules: manifest?.inlineRouteRules,
     routeRulePagesCurrent: manifest?.resolvedRouteRules
       ? routeRulePagesCurrent(root, manifest)
       : undefined,
-    routeRulePageScriptsCurrent:
-      isCurrent && manifest?.resolvedRouteRules && manifest.routeRulePageScriptHashes
-        ? routeRulePagesCurrent(root, manifest, manifest.routeRulePageScriptHashes)
-        : undefined,
     nitroPreset: manifest?.nitroPreset,
     pages: manifest?.pages ?? [],
     resolvedApp: manifest?.resolvedApp,
@@ -151,22 +146,13 @@ export function createNuxtProjectInventory(
   };
 }
 
-function routeRulePagesCurrent(
-  root: string,
-  manifest: NuxtDoctorManifest,
-  scriptHashes?: NonNullable<NuxtDoctorManifest["routeRulePageScriptHashes"]>,
-) {
-  const inputs = scriptHashes ?? manifest.routeRulePageMtimes;
-  if (!inputs) return false;
+function routeRulePagesCurrent(root: string, manifest: NuxtDoctorManifest) {
+  if (!manifest.routeRulePageMtimes) return false;
   try {
     return (
-      Object.entries(inputs).every(([file, value]) => {
-        const path = resolve(root, file);
-        return (
-          value !== null &&
-          (scriptHashes ? nuxtRouteRulePageScriptHash(path) : statSync(path).mtimeMs) === value
-        );
-      }) &&
+      Object.entries(manifest.routeRulePageMtimes).every(
+        ([file, mtime]) => mtime !== null && statSync(resolve(root, file)).mtimeMs === mtime,
+      ) &&
       Object.entries(manifest.routeRulePageInventory ?? {}).every(
         ([directory, files]) =>
           JSON.stringify(nuxtServerInventory(resolve(root, directory))) === JSON.stringify(files),
@@ -174,20 +160,6 @@ function routeRulePagesCurrent(
     );
   } catch {
     return false;
-  }
-}
-
-export function nuxtRouteRulePageScriptHash(path: string): string | null {
-  try {
-    const source = readFileSync(path, "utf8");
-    if (!path.endsWith(".vue")) return sha256(source);
-    const scripts = Array.from(
-      source.matchAll(/<script(?=\s|>)[^>]*>[\s\S]*?<\/script\s*>/gi),
-      ([block]) => block,
-    );
-    return sha256(JSON.stringify(scripts));
-  } catch {
-    return null;
   }
 }
 

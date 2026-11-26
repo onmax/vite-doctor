@@ -147,56 +147,80 @@ test.each<Record<string, string>>([
   expect(result.diagnostics).toEqual([]);
 });
 
-test.each(["inline page", "Nitro config", "late Nitro hook", "overwritten Nitro hook"] as const)(
-  "VUE0052 handles stale page inputs with route rules from %s",
-  async (source) => {
-    const root = mkdtempSync(join(tmpdir(), "doctor-hydration-routes-"));
-    const page = caller(["Card"], "<p><Card /></p>", "../components");
-    const pagePath = join(root, "app/pages/index.vue");
-    const lateHook = source === "late Nitro hook" || source === "overwritten Nitro hook";
-    const diagnostic = [["VUE0052", "app/pages/index.vue", 5]];
-    try {
-      symlinkSync(
-        fileURLToPath(new URL("../../../node_modules", import.meta.url)),
-        join(root, "node_modules"),
-        "junction",
-      );
-      mkdirSync(join(root, "app/pages"), { recursive: true });
-      mkdirSync(join(root, "app/components"), { recursive: true });
-      writeFileSync(
-        join(root, "package.json"),
-        JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }),
-      );
-      writeFileSync(
-        join(root, "nuxt.config.ts"),
-        `export default defineNuxtConfig({ experimental: { inlineRouteRules: true },
+test.each([
+  "inline page",
+  "Nitro config",
+  "late Nitro hook",
+  "overwritten Nitro hook",
+  "page hook",
+] as const)("VUE0052 handles stale page inputs with route rules from %s", async (source) => {
+  const root = mkdtempSync(join(tmpdir(), "doctor-hydration-routes-"));
+  const page = caller(["Card"], "<p><Card /></p>", "../components");
+  const pagePath = join(root, "app/pages/index.vue");
+  const lateHook = source === "late Nitro hook" || source === "overwritten Nitro hook";
+  const pageHook = source === "page hook";
+  const diagnostic = [["VUE0052", "app/pages/index.vue", 5]];
+  try {
+    symlinkSync(
+      fileURLToPath(new URL("../../../node_modules", import.meta.url)),
+      join(root, "node_modules"),
+      "junction",
+    );
+    mkdirSync(join(root, "app/pages"), { recursive: true });
+    mkdirSync(join(root, "app/components"), { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ type: "module", dependencies: { nuxt: "^4.0.0" } }),
+    );
+    writeFileSync(
+      join(root, "nuxt.config.ts"),
+      `export default defineNuxtConfig({ experimental: { inlineRouteRules: true },
           ${source === "Nitro config" ? "nitro: { routeRules: { '/': { ssr: false } } }" : ""}
         })`,
-      );
-      writeFileSync(join(root, "app/components/Card.vue"), component("<div />"));
-      if (lateHook) {
-        writeFileSync(
-          join(root, "late-route-rules.ts"),
-          `export default (_options, nuxt) => {
+    );
+    writeFileSync(join(root, "app/components/Card.vue"), component("<div />"));
+    if (lateHook) {
+      writeFileSync(
+        join(root, "late-route-rules.ts"),
+        `export default (_options, nuxt) => {
             nuxt.hook('nitro:init', (nitro) => {
               nitro.options.routeRules['/'] = { ssr: false }
             })
           }`,
-        );
-      }
-      const initialPage =
-        source === "late Nitro hook"
-          ? page
-          : page.replace(
-              "</script>",
-              `defineRouteRules({ ${source === "overwritten Nitro hook" ? "prerender: false" : "ssr: false"} })\n</script>`,
-            );
-      writeFileSync(pagePath, initialPage);
+      );
+    }
+    if (pageHook) {
+      writeFileSync(
+        join(root, "page-route-rules.ts"),
+        `import { readFileSync } from 'node:fs'
+          export default (_options, nuxt) => {
+            nuxt.hook('pages:extend', (pages) => {
+              const page = pages.find(page => page.path === '/')
+              if (page?.file && readFileSync(page.file, 'utf8').includes('template edit')) {
+                page.rules = { ssr: false }
+              }
+            })
+          }`,
+      );
+    }
+    const initialPage =
+      source === "late Nitro hook" || pageHook
+        ? page
+        : page.replace(
+            "</script>",
+            `defineRouteRules({ ${source === "overwritten Nitro hook" ? "prerender: false" : "ssr: false"} })\n</script>`,
+          );
+    writeFileSync(pagePath, initialPage);
+    const prepare = async () => {
       const nuxt = await loadNuxt({
         cwd: root,
         overrides: {
           _prepare: true,
-          modules: [nuxtDoctorModule, ...(lateHook ? ["./late-route-rules.ts"] : [])],
+          modules: [
+            nuxtDoctorModule,
+            ...(lateHook ? ["./late-route-rules.ts"] : []),
+            ...(pageHook ? ["./page-route-rules.ts"] : []),
+          ],
           telemetry: false,
         },
       });
@@ -205,29 +229,35 @@ test.each(["inline page", "Nitro config", "late Nitro hook", "overwritten Nitro 
       } finally {
         await nuxt.close();
       }
-      const scan = () =>
-        runDoctor({
-          root,
-          framework: "nuxt",
-          cache: false,
-          rules: noInvalidRootNesting.meta.id,
-          extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
-        });
-      const initialDiagnostics =
-        source === "overwritten Nitro hook" ? [["VUE0052", "app/pages/index.vue", 6]] : [];
-      expect(located(await scan())).toEqual(initialDiagnostics);
-      writeFileSync(
-        pagePath,
-        initialPage.replace("<template>", "<template><!-- template edit -->"),
-      );
-      expect(located(await scan())).toEqual(initialDiagnostics);
-      writeFileSync(pagePath, page);
-      expect(located(await scan())).toEqual(source === "inline page" ? diagnostic : []);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  },
-);
+    };
+    await prepare();
+    const scan = () =>
+      runDoctor({
+        root,
+        framework: "nuxt",
+        cache: false,
+        rules: noInvalidRootNesting.meta.id,
+        extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
+      });
+    const initialDiagnostics =
+      source === "overwritten Nitro hook"
+        ? [["VUE0052", "app/pages/index.vue", 6]]
+        : pageHook
+          ? diagnostic
+          : [];
+    expect(located(await scan())).toEqual(initialDiagnostics);
+    writeFileSync(pagePath, initialPage.replace("<template>", "<template><!-- template edit -->"));
+    expect(located(await scan())).toEqual([]);
+    await prepare();
+    expect(located(await scan())).toEqual(pageHook ? [] : initialDiagnostics);
+    writeFileSync(pagePath, page);
+    expect(located(await scan())).toEqual([]);
+    await prepare();
+    expect(located(await scan())).toEqual(source === "inline page" || pageHook ? diagnostic : []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test.each([false, true])(
   "VUE0052 distinguishes Nuxt ClientOnly slots and callers (mixed: %s)",

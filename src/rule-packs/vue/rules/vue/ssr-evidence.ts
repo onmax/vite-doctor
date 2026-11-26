@@ -35,7 +35,8 @@ export function vueSsrEvidence(
  * Why Doctor treats the SFC at `relativePath` as rendered on the server and then hydrated, in a
  * Nuxt app or in other Vue code, or `undefined` without that evidence. A Nuxt app hydrates unless
  * `ssr` is false, but a route rule can turn SSR off for routes Doctor cannot map to components, so
- * an app with route rules Doctor cannot read, or with one that sets `ssr: false`, has no evidence.
+ * an app with unreadable or stale page-derived rules, or a rule that sets `ssr: false`, has no
+ * evidence.
  */
 export function hydrationEvidence(
   ctx: RuleContext,
@@ -56,9 +57,8 @@ export function hydrationEvidence(
 }
 
 function nitroRulesSupportSsr(manifest: NonNullable<NuxtProjectInfo["manifest"]>): boolean {
-  if ((manifest.routeRulePageScriptsCurrent ?? manifest.routeRulePagesCurrent) !== false)
-    return routeRulesKeepSsr(manifest.resolvedRouteRules);
-  return routeRulesKeepSsr(manifest.prePageRouteRules ?? manifest.resolvedRouteRules);
+  if (manifest.inlineRouteRules !== false && manifest.routeRulePagesCurrent === false) return false;
+  return routeRulesKeepSsr(manifest.resolvedRouteRules);
 }
 
 export function hydrationNuxtApp(
