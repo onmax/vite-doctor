@@ -333,9 +333,8 @@ function nuxtPageMatcher(ctx: RuleContext, appRoot: string, nuxt: NuxtProjectInf
     );
     return (file: string) => pages.has(file);
   }
-  const pages = readNuxtOption(ctx, appRoot, "pages");
-  if (pages !== undefined && (pages?.type !== "Literal" || pages.value !== true))
-    return () => false;
+  const patterns = nuxtPagePatterns(ctx, appRoot);
+  if (patterns === null) return () => false;
   const layers = manifest?.isCurrent ? nuxt.layers : [];
   const sources = new Map(layers.map(({ root, srcDir }) => [resolve(appRoot, root), srcDir]));
   sources.set(appRoot, nuxt.appDir);
@@ -346,7 +345,36 @@ function nuxtPageMatcher(ctx: RuleContext, appRoot: string, nuxt: NuxtProjectInf
       return [];
     return [resolve(root, srcDir ?? fallback ?? ".", pagesDir ?? "pages")];
   });
+  if (patterns !== undefined) {
+    const isExclusion = (pattern: string) => pattern.startsWith("!") && !pattern.startsWith("!(");
+    const exclude = patterns.filter(isExclusion).map((pattern) => pattern.slice(1));
+    const include = patterns.filter((pattern) => !isExclusion(pattern));
+    const pages = new Set(
+      directories.flatMap((cwd) =>
+        include.flatMap((pattern) => ctx.fs.glob(pattern, { cwd, exclude })),
+      ),
+    );
+    return (file: string) => pages.has(file);
+  }
   return (file: string) => directories.some((dir) => file.startsWith(`${dir}/`));
+}
+
+function nuxtPagePatterns(ctx: RuleContext, root: string): string[] | null | undefined {
+  const pages = readNuxtOption(ctx, root, "pages");
+  if (pages === undefined || (pages?.type === "Literal" && pages.value === true)) return undefined;
+  if (pages?.type !== "ObjectExpression") return null;
+  const enabled = readNuxtOption(ctx, root, "pages", "enabled");
+  if (enabled !== undefined && (enabled?.type !== "Literal" || enabled.value !== true)) return null;
+  const pattern = readNuxtOption(ctx, root, "pages", "pattern");
+  if (pattern === undefined) return undefined;
+  if (pattern?.type === "Literal" && typeof pattern.value === "string") return [pattern.value];
+  if (pattern?.type !== "ArrayExpression") return null;
+  const patterns: string[] = [];
+  for (const element of pattern.elements) {
+    if (element?.type !== "Literal" || typeof element.value !== "string") return null;
+    patterns.push(element.value);
+  }
+  return patterns;
 }
 
 function selectCandidate(
@@ -402,7 +430,7 @@ function nuxtUiCandidates(
   const byTag = new Map<string, Candidate[]>();
   const resolved = nuxt?.manifest?.resolvedComponents;
   const registered = resolved ?? [...(nuxt?.components.values() ?? [])];
-  const prefix = resolved ? undefined : nuxtUiPrefix(ctx, nuxt, appRoot);
+  const prefix = resolved ? undefined : nuxtUiPrefix(ctx, appRoot);
   for (const [tag, implementation] of Object.entries(NUXT_UI)) {
     const matches = registered.filter(
       ({ file }) =>
@@ -433,25 +461,27 @@ function nuxtUiCandidates(
   return byTag;
 }
 
-function nuxtUiPrefix(ctx: RuleContext, nuxt: NuxtProjectInfo | undefined, appRoot: string) {
+function nuxtUiPrefix(ctx: RuleContext, appRoot: string) {
   const appPrefix = readLiteralNuxtOption(ctx, appRoot, "ui", "prefix");
   if (appPrefix !== undefined) return appPrefix ?? undefined;
-  const prepared = nuxt?.manifest?.isCurrent;
-  if (!prepared && readNuxtOption(ctx, appRoot, "extends") !== undefined) return undefined;
-  const layers = prepared
-    ? [...nuxt.layers]
-        .sort((a, b) => a.priority - b.priority)
-        .map(({ root }) => resolve(appRoot, root))
-    : autoRegisteredNuxtLayers(appRoot, ctx.fs)
-        .sort((left, right) => right.localeCompare(left))
-        .map((name) => join(appRoot, "layers", name));
-  for (const root of new Set(layers)) {
-    if (root === appRoot) continue;
-    const prefix = readLiteralNuxtOption(ctx, root, "ui", "prefix");
-    if (prefix !== undefined) return prefix ?? undefined;
-    if (!prepared && readNuxtOption(ctx, root, "extends") !== undefined) return undefined;
+  if (hasUnresolvedNuxtLayers(ctx, appRoot)) return undefined;
+  let prefix: string | undefined;
+  for (const name of autoRegisteredNuxtLayers(appRoot, ctx.fs)) {
+    if (name.startsWith(".")) continue;
+    const root = join(appRoot, "layers", name);
+    if (hasUnresolvedNuxtLayers(ctx, root)) return undefined;
+    const layerPrefix = readLiteralNuxtOption(ctx, root, "ui", "prefix");
+    if (layerPrefix === undefined) continue;
+    if (layerPrefix === null || (prefix !== undefined && layerPrefix !== prefix)) return undefined;
+    prefix = layerPrefix;
   }
-  return "U";
+  return prefix ?? "U";
+}
+
+function hasUnresolvedNuxtLayers(ctx: RuleContext, root: string) {
+  return ["extends", "_extends", "theme"].some(
+    (key) => readNuxtOption(ctx, root, key) !== undefined,
+  );
 }
 
 function readLiteralNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
