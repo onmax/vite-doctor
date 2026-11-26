@@ -128,7 +128,7 @@ export function undescribedConstraints(
       if (!dropped.has(keyword)) continue;
       if (node.schema.type === "integer" && isSafeIntegerBound(keyword, node.schema[keyword]))
         continue;
-      if (isImplied(keyword, node.schema[keyword])) continue;
+      if (isVacuousSizeMinimum(keyword, node.schema[keyword])) continue;
       if (mentions(prose, keyword, node.schema[keyword])) continue;
       found.push({ pointer: inputPointer(`${node.pointer}/${keyword}`), keyword });
     }
@@ -144,34 +144,25 @@ function isSafeIntegerBound(keyword: string, value: unknown): boolean {
   );
 }
 
-// A model already reads an omitted argument as null, false, or empty, and a size minimum of 1
-// only rejects an empty value, so neither is something a description has to repeat.
-function isImplied(keyword: string, value: unknown): boolean {
-  if (keyword === "default")
-    return (
-      value === null ||
-      value === false ||
-      value === "" ||
-      (typeof value === "object" && Object.keys(value).length === 0)
-    );
+function isVacuousSizeMinimum(keyword: string, value: unknown): boolean {
   return (
     (keyword === "minLength" || keyword === "minItems" || keyword === "minProperties") &&
-    typeof value === "number" &&
-    value <= 1
+    value === 0
   );
 }
 
-// The patterns `YYYY-MM-DD` states in full: Zod 4's `z.iso.date()` and the plain digit shape.
+// Known date patterns described by `YYYY-MM-DD`.
 const DATE_PATTERNS = new Set([
   String.raw`^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))$`,
   String.raw`^\d{4}-\d{2}-\d{2}$`,
+  String.raw`^(?:\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|02-(?:0[1-9]|1\d|2[0-9])))$`,
 ]);
 
 function mentions(prose: string, keyword: string, value: unknown): boolean {
   if (!prose) return false;
+  if (keyword === "default") return mentionsDefault(prose, value);
   if (typeof value === "number")
     return new RegExp(`(?<![\\d.])${escapeRegExp(String(value))}(?![\\d])`).test(prose);
-  if (keyword === "default") return mentionsDefault(prose, value);
   if (typeof value === "boolean")
     return keyword === "uniqueItems" && /unique|duplicate/i.test(prose);
   if (typeof value === "string") {
@@ -182,8 +173,17 @@ function mentions(prose: string, keyword: string, value: unknown): boolean {
   return prose.includes(JSON.stringify(value));
 }
 
+function isLocallyNegated(prose: string, start: number): boolean {
+  const prefix = prose.slice(prose.lastIndexOf("\n", start - 1) + 1, start);
+  if (/\bor\s+not\s*\(\s*$/i.test(prefix)) return false;
+  return /(?:\b(?:not|never|no|neither|nor)|n['’]t)\s+(?:(?:actually|always|necessarily|the|set\s+to)\s+)*(?:\(\s*)?`?$/i.test(
+    prefix,
+  );
+}
+
 function mentionsDefault(prose: string, value: unknown): boolean {
-  for (const declaration of prose.matchAll(/\bdefaults?(?:\s+to\b|\s+is\b|\s*:)?\s*`?/gi)) {
+  for (const declaration of prose.matchAll(/\bdefault(?:s?\s+to\b|\s+is\b|\s*:)\s*`?/gi)) {
+    if (isLocallyNegated(prose, declaration.index)) continue;
     const literal = prose.slice(declaration.index + declaration[0].length);
     if (typeof value === "boolean" && new RegExp(`^${value}\\b`, "i").test(literal)) return true;
     if (jsonEqual(readDefaultLiteral(literal), value)) return true;
@@ -194,20 +194,28 @@ function mentionsDefault(prose: string, value: unknown): boolean {
     )
       return true;
   }
+  for (const match of prose.matchAll(/(?<=\()[ \t]*default[ \t]+([^\r\n)]+)\)/gi)) {
+    if (isLocallyNegated(prose, match.index)) continue;
+    const literal = match[1]!.trim().replace(/^`(.*)`$/, "$1");
+    if (literal === value || jsonEqual(readDefaultLiteral(literal, true), value)) return true;
+  }
   if (typeof value === "string") {
     for (const match of prose.matchAll(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\(default\)/gi))
-      if (readDefaultLiteral(match[0]) === value) return true;
+      if (!isLocallyNegated(prose, match.index) && readDefaultLiteral(match[0]) === value)
+        return true;
   }
   if (typeof value !== "boolean") return false;
-  return new RegExp(`\\b${value}\`?\\s+by\\s+default\\b`, "i").test(prose);
+  const reverse = new RegExp(`\\b${value}\`?\\s+by\\s+default\\b`, "gi");
+  return Array.from(prose.matchAll(reverse)).some((match) => !isLocallyNegated(prose, match.index));
 }
 
-function readDefaultLiteral(text: string): unknown {
+function readDefaultLiteral(text: string, whole = false): unknown {
   const tokens =
     /\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[[\]{}:,]|(?:true|false|null)\b|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?(?!\w|\.\d))/gy;
   let depth = 0;
   const json = [];
-  for (const [, token] of text.matchAll(tokens)) {
+  for (const match of text.matchAll(tokens)) {
+    const [matched, token] = match;
     if (token === "[" || token === "{") depth++;
     if (token === "]" || token === "}") depth--;
     json.push(
@@ -215,7 +223,10 @@ function readDefaultLiteral(text: string): unknown {
         ? `"${token.slice(1, -1).replace(/\\.|"/g, (part) => (part === "\\'" ? "'" : part === '"' ? '\\"' : part))}"`
         : token,
     );
-    if (depth === 0) return parseJson(json.join(""));
+    if (depth === 0)
+      return whole && match.index + matched.length !== text.length
+        ? undefined
+        : parseJson(json.join(""));
   }
   return undefined;
 }
