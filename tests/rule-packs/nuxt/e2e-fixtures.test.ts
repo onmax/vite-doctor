@@ -6,6 +6,7 @@ import { $fetch, setup, useTestContext } from "@nuxt/test-utils/e2e";
 import { defineDoctorExtension, runDoctor } from "../../../src/core/index.ts";
 import { vueRulePack } from "../../../src/rule-packs/vue/rules.ts";
 import { nuxtRulePacks } from "../../../src/rule-packs/nuxt/rules/index.ts";
+import { designSystemRulePack } from "../../../src/rule-packs/design-system/index.ts";
 
 const vueFixture = fileURLToPath(new URL("../../fixtures/vue-all-issues", import.meta.url));
 const nuxtFixture = fileURLToPath(new URL("../../fixtures/nuxt-all-issues", import.meta.url));
@@ -38,17 +39,18 @@ test("Nuxt all-issues fixture reports Nuxt and ecosystem rule packs", async () =
     extensions: [
       defineDoctorExtension({ name: "e2e-vue", rulePacks: [vueRulePack] }),
       defineDoctorExtension({ name: "e2e-nuxt", rulePacks: nuxtRulePacks() }),
+      defineDoctorExtension({ name: "e2e-design-system", rulePacks: [designSystemRulePack] }),
     ],
   });
 
   expect(uniqueDiagnosticIdentities(result)).toHaveLength(result.diagnostics.length);
   expect(diagnosticKeys(result, nuxtFixture)).toEqual([
+    "design-system/prefer-project-component:app/pages/account.vue",
     "nitro/context/no-navigateto-in-nitro:server/api/user.ts",
     "nitro/context/no-usenuxtapp-in-nitro:server/api/user.ts",
     "nuxt-better-auth/require-standard-auth-handler-mount:server/utils/auth.ts",
     "nuxt-content/no-querycontent-legacy-api:app/pages/account.vue",
     "nuxt-scripts/no-raw-third-party-script-tag:diagnostics/RawScript.vue",
-    "nuxt-ui/prefer-u-button:app/pages/account.vue",
     "nuxt-ui/require-uapp-root:app/pages/account.vue",
     "nuxt/composables/no-nested-autoimport-assumption:app/composables/nested/useThing.ts",
     "nuxt/context/no-composable-after-await:app/composables/useWrappedUser.ts",

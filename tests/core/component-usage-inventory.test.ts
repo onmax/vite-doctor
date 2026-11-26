@@ -206,6 +206,7 @@ test("Rules that read the component usage graph are not replayed from the cache"
     runDoctor({
       root,
       framework: "vue",
+      runtimeTarget: { vue: "3.5.0" },
       cache: true,
       extensions: [
         defineDoctorExtension({

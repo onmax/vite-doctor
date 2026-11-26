@@ -3,6 +3,7 @@ import type {
   ComponentPropFact,
   ComponentRootBranch,
   ComponentUsageFact,
+  DoctorComponentOption,
   SourceRange,
   TemplateChildNode,
   TemplateDirectiveNode,
@@ -65,6 +66,7 @@ export function createComponentFactsCollector(
   const facts: ComponentFacts = {
     models: [],
     imports: [],
+    registeredComponentNames: [],
     ownLogic: false,
     ownMarkup: false,
     rootNodes: 0,
@@ -236,6 +238,29 @@ function readScriptDeclarations(
           typeof inherit.value.value === "boolean"
         ? inherit.value.value
         : undefined;
+  const normalDoctor = normalOptions === undefined ? {} : findOption(normalOptions, "doctor");
+  const setupDoctor = setupOptions === undefined ? {} : findOption(setupOptions, "doctor");
+  const declaredDoctor = setupDoctor.value ?? normalDoctor.value;
+  const overwrite = setupDoctor.unknown ?? (setupDoctor.value ? undefined : normalDoctor.unknown);
+  if (declaredDoctor) {
+    const range = rangeOf(declaredDoctor.start, declaredDoctor.end);
+    facts.doctorOption = overwrite
+      ? {
+          range,
+          unreadable: rangeOf(overwrite.start, overwrite.end),
+          cause: setupDoctor.unknown && !setupDoctor.value ? "overridden-by-setup" : "overridden",
+        }
+      : readDoctorOption(declaredDoctor, rangeOf);
+  }
+  const registered = option("components");
+  if (registered !== "absent" && registered !== "unknown") {
+    const object = unwrapOptions(registered.value);
+    if (object?.type === "ObjectExpression")
+      for (const property of object.properties) {
+        const key = optionKey(property);
+        if (key !== undefined) facts.registeredComponentNames.push(key);
+      }
+  }
   const delegated = option("mixins") !== "absent" || option("extends") !== "absent";
   if (delegated) {
     facts.props = undefined;
@@ -246,29 +271,104 @@ function readScriptDeclarations(
   }
 }
 
+function readDoctorOption(node: AnyNode, rangeOf: RangeOf): DoctorComponentOption {
+  const range = rangeOf(node.start, node.end);
+  const read = staticJson(node);
+  return "unreadable" in read
+    ? { range, unreadable: rangeOf(read.unreadable.start, read.unreadable.end), cause: "computed" }
+    : { range, value: read.value };
+}
+
+/** The JSON value a literal expression spells, or the first node that is not a literal. */
+function unwrapOptions(node: AnyNode): AnyNode {
+  while (
+    node?.type === "TSAsExpression" ||
+    node?.type === "TSTypeAssertion" ||
+    node?.type === "TSNonNullExpression" ||
+    node?.type === "TSSatisfiesExpression" ||
+    node?.type === "ParenthesizedExpression"
+  )
+    node = node.expression;
+  return node;
+}
+
+function staticJson(node: AnyNode): { value: unknown } | { unreadable: AnyNode } {
+  node = unwrapOptions(node);
+  if (node?.type === "Literal" && !node.regex && node.bigint === undefined)
+    return { value: node.value };
+  if (node?.type === "TemplateLiteral" && !node.expressions.length)
+    return { value: node.quasis[0]?.value.cooked };
+  if (
+    node?.type === "UnaryExpression" &&
+    node.operator === "-" &&
+    node.argument?.type === "Literal" &&
+    typeof node.argument.value === "number"
+  )
+    return { value: -node.argument.value };
+  if (node?.type === "ArrayExpression") {
+    const value: unknown[] = [];
+    for (const element of node.elements) {
+      if (!element || element.type === "SpreadElement") return { unreadable: element ?? node };
+      const item = staticJson(element);
+      if ("unreadable" in item) return item;
+      value.push(item.value);
+    }
+    return { value };
+  }
+  if (node?.type === "ObjectExpression") {
+    const value: Record<string, unknown> = {};
+    for (const property of node.properties) {
+      const key =
+        property.computed && property.key?.type === "Literal"
+          ? String(property.key.value)
+          : propertyKey(property);
+      if (key === undefined || property.kind !== "init" || property.method)
+        return { unreadable: property };
+      const item = staticJson(property.value);
+      if ("unreadable" in item) return item;
+      value[key] = item.value;
+    }
+    return { value };
+  }
+  return { unreadable: node };
+}
+
 function componentOptions(declaration: AnyNode): AnyNode {
+  declaration = unwrapOptions(declaration);
   return declaration?.type === "CallExpression" && declaration.callee?.name === "defineComponent"
     ? declaration.arguments?.[0]
     : declaration;
 }
 
 function readOption(options: AnyNode, name: string): "absent" | "unknown" | { value: AnyNode } {
-  if (options?.type !== "ObjectExpression") return "unknown";
+  const result = findOption(options, name);
+  return "unknown" in result ? "unknown" : result.value ? { value: result.value } : "absent";
+}
+
+function findOption(options: AnyNode, name: string): { value?: AnyNode; unknown?: AnyNode } {
+  options = unwrapOptions(options);
+  if (options?.type !== "ObjectExpression") return { unknown: options };
+  let unknown: AnyNode;
   for (let index = options.properties.length - 1; index >= 0; index--) {
     const property = options.properties[index];
     if (property.type === "SpreadElement") {
-      const spread = readOption(property.argument, name);
-      if (spread !== "absent") return spread;
+      const spread = findOption(property.argument, name);
+      if ("unknown" in spread) unknown ??= spread.unknown ?? property;
+      if (spread.value) return unknown ? { value: spread.value, unknown } : { value: spread.value };
       continue;
     }
-    const key =
-      property.computed && property.key?.type === "Literal"
-        ? String(property.key.value)
-        : propertyKey(property);
-    if (key === name) return { value: property.value };
-    if (property.computed && key === undefined) return "unknown";
+    const key = optionKey(property);
+    if (key === name)
+      return unknown ? { value: property.value, unknown } : { value: property.value };
+    if (property.computed && key === undefined) unknown ??= property;
   }
-  return "absent";
+  return unknown ? { unknown } : {};
+}
+
+function optionKey(property: AnyNode): string | undefined {
+  return property.computed && property.key?.type === "Literal"
+    ? String(property.key.value)
+    : propertyKey(property);
 }
 
 function isMacroCall(statement: AnyNode, name: string): boolean {

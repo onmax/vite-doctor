@@ -54,12 +54,14 @@ test.each(designSystemRulePack.rules)(
     ].includes(rule.meta.id);
     const options = componentRule ? { componentImports: ["^@/components/ui/"] } : {};
     for (const example of document.examples) {
+      const vue = example.language === "vue";
       const diagnose = (source: string) =>
         runProjectFixture({
           rules: [rule],
           config: { rules: { [rule.meta.id]: ["warn", options] } },
-          framework: "vite",
-          files: { "src/Example.tsx": source },
+          framework: vue ? "vue" : "vite",
+          ...(vue && { dependencies: { "@nuxt/ui": "^4.0.0" } }),
+          files: { [vue ? "src/Example.vue" : "src/Example.tsx"]: source },
         });
       const before = await diagnose(example.invalid);
       const after = await diagnose(example.valid);

@@ -13,8 +13,7 @@ export const nuxtDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0010", ruleId: "nuxt-scripts/no-raw-third-party-script-tag" },
   { code: "NUXT0011", ruleId: "nuxt-scripts/no-third-party-config-script" },
   { code: "NUXT0012", ruleId: "nuxt-scripts/no-third-party-usehead-script" },
-  { code: "NUXT0013", ruleId: "nuxt-ui/prefer-u-button" },
-  { code: "NUXT0014", ruleId: "nuxt-ui/prefer-u-form-controls" },
+  // NUXT0013 and NUXT0014 moved to design-system/prefer-project-component (DS0007); codes are never reused.
   { code: "NUXT0015", ruleId: "nuxt-ui/require-uapp-root" },
   { code: "NUXT0016", ruleId: "nuxt/async-data-explicit-key-for-refreshable" },
   { code: "NUXT0017", ruleId: "nuxt/async-data-handler-pure" },

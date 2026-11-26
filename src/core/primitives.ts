@@ -880,6 +880,8 @@ export interface ComponentFacts {
   models: Array<{ name: string; binding?: string; default: boolean; range?: SourceRange }>;
   /** Value imports in `<script setup>`, which its template can render as tags. */
   imports: Array<{ local: string; imported: string; source: string }>;
+  /** Names explicitly registered in the Options API `components` object. */
+  registeredComponentNames: string[];
   /**
    * Whether the component runs code of its own: `<script setup>` statements other than imports,
    * type declarations, and macro declarations, macro defaults included, or any `<script>` code.
@@ -913,7 +915,23 @@ export interface ComponentFacts {
   usages: ComponentUsageFact[];
   /** Imported names the component references outside a template tag, in script code or template expressions. */
   bindingReferences: string[];
+  /**
+   * The component's `doctor` option, from `defineOptions()` or the `<script>` default export.
+   * `value` is the JSON it spells when every part is a literal; otherwise `unreadable` is the range
+   * of the first part Doctor cannot evaluate statically, or of a later spread or computed key that
+   * can replace it. Undefined when the component sets none.
+   */
+  doctorOption?: DoctorComponentOption;
 }
+
+/** A component's `doctor` option as Doctor read it statically. */
+export type DoctorComponentOption =
+  | { range: SourceRange; value: unknown }
+  | {
+      range: SourceRange;
+      unreadable: SourceRange;
+      cause: "computed" | "overridden" | "overridden-by-setup";
+    };
 
 /** A component usage in an SFC template, resolved to the SFC it renders when Doctor can prove it. */
 export interface ComponentUsageEdge {
@@ -941,6 +959,8 @@ export interface ComponentNode {
    * binding in code. Usages through them are invisible to `callers`.
    */
   indirectImporters: string[];
+  /** Local `<script setup>` imports, including unused imports and unresolved targets. */
+  importedComponents: ReadonlyMap<string, string | undefined>;
 }
 
 /** Project Inventory of which Vue SFCs render which components, built from File Facts. */

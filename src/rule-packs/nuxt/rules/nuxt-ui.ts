@@ -6,7 +6,6 @@ import {
   type DoctorRule,
   type RuleContext,
   type RuleFileSystem,
-  type TemplateElementNode,
   type TemplateRootNode,
 } from "../../../core/index.js";
 import { loadVueCompilerSfc } from "../../../core/internal/lazy-parsers.js";
@@ -14,8 +13,6 @@ import { TemplateNodeType, walkTemplate } from "../../../core/rule-authoring.js"
 import { diagnostics } from "../diagnostics.js";
 
 type AnyNode = any;
-
-const TEXT_INPUT_TYPES = new Set(["text", "email", "password", "search", "url", "tel", "number"]);
 
 export const requireUAppRoot = createRule({
   meta: {
@@ -59,79 +56,7 @@ export const requireUAppRoot = createRule({
   },
 });
 
-export const preferUButton = createRule({
-  meta: {
-    id: "nuxt-ui/prefer-u-button",
-    title: "Use UButton for interactive buttons",
-    category: "ui",
-    severity: "info",
-    confidence: "proven",
-    fixable: "suggestion",
-    docsUrl: "https://ui.nuxt.com/docs/components/button#usage",
-    requires: { template: true, nuxt: true },
-  },
-  create(ctx) {
-    return {
-      template: {
-        element(node) {
-          if (node.tag !== "button" || hasDoctorIgnore(ctx, node)) return;
-          ctx.helpers.report(
-            ctx,
-            node,
-            diagnostics.NUXT0013({
-              why: "Native <button> reimplements behavior that Nuxt UI already provides.",
-              fix: "Use <UButton> and map styling to Nuxt UI props such as icon, size, color, and variant.",
-            }),
-            {
-              ruleId: "nuxt-ui/prefer-u-button",
-              severity: "info",
-              category: "ui",
-            },
-          );
-        },
-      },
-    };
-  },
-});
-
-export const preferUFormControls = createRule({
-  meta: {
-    id: "nuxt-ui/prefer-u-form-controls",
-    title: "Use Nuxt UI form controls",
-    category: "ui",
-    severity: "info",
-    confidence: "proven",
-    fixable: "suggestion",
-    docsUrl: "https://ui.nuxt.com/docs/components/form#usage",
-    requires: { template: true, nuxt: true },
-  },
-  create(ctx) {
-    return {
-      template: {
-        element(node) {
-          if (hasDoctorIgnore(ctx, node)) return;
-          const replacement = formControlReplacement(ctx, node);
-          if (!replacement) return;
-          ctx.helpers.report(
-            ctx,
-            node,
-            diagnostics.NUXT0014({
-              why: `Native <${node.tag}> reimplements behavior that Nuxt UI already provides.`,
-              fix: replacement,
-            }),
-            {
-              ruleId: "nuxt-ui/prefer-u-form-controls",
-              severity: "info",
-              category: "ui",
-            },
-          );
-        },
-      },
-    };
-  },
-});
-
-export const rules: DoctorRule[] = [requireUAppRoot, preferUButton, preferUFormControls];
+export const rules: DoctorRule[] = [requireUAppRoot];
 
 export const nuxtUiRulePack = defineRulePack({
   name: "vite-doctor/nuxt-ui",
@@ -403,40 +328,4 @@ function hasUAppProvider(root: TemplateRootNode | null | undefined): boolean {
         (node.tag === "UApp" || node.tag === "u-app");
     });
   return found;
-}
-
-function hasDoctorIgnore(ctx: RuleContext, node: TemplateElementNode): boolean {
-  return (
-    ctx.helpers.hasVueAttribute(node, "data-doctor-ignore") ||
-    ctx.helpers.hasVueDirective(node, "bind", "data-doctor-ignore")
-  );
-}
-
-function formControlReplacement(ctx: RuleContext, node: TemplateElementNode): string | null {
-  if (node.tag === "textarea") return "Use <UTextarea> for multiline text input.";
-  if (node.tag === "select")
-    return "Use <USelect> for simple option lists, or <USelectMenu> for richer option data.";
-  if (node.tag !== "input") return null;
-
-  if (ctx.helpers.hasVueDirective(node, "bind", "type") || hasAmbiguousSpreadBinding(node))
-    return null;
-  const inputType = ctx.helpers.getStaticVueAttributeValue(node, "type")?.toLowerCase() ?? "text";
-  if (!TEXT_INPUT_TYPES.has(inputType)) return null;
-  return "Use <UInput> for text-like inputs. Use specialized Nuxt UI controls for checkbox, radio, switch, file, range, or other non-text inputs.";
-}
-
-// An object v-bind can set or override type, so the rendered control is unknown statically.
-function hasAmbiguousSpreadBinding(node: TemplateElementNode): boolean {
-  let staticTypeIndex = -1;
-  for (let index = 0; index < node.props.length; index++) {
-    const prop = node.props[index];
-    if (prop.type === TemplateNodeType.ATTRIBUTE && prop.name === "type") staticTypeIndex = index;
-  }
-  return node.props.some(
-    (prop, index) =>
-      prop.type === TemplateNodeType.DIRECTIVE &&
-      prop.name === "bind" &&
-      !prop.arg &&
-      index > staticTypeIndex,
-  );
 }

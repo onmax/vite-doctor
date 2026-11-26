@@ -63,6 +63,7 @@ function componentFacts(value: unknown): boolean {
         typeof item.imported === "string" &&
         typeof item.source === "string",
     ) &&
+    strings(value.registeredComponentNames) &&
     typeof value.ownLogic === "boolean" &&
     typeof value.ownMarkup === "boolean" &&
     integer(value.rootNodes) &&
@@ -106,7 +107,14 @@ function componentFacts(value: unknown): boolean {
             typeof item.parent.tag === "string" &&
             typeof item.parent.element === "boolean")),
     ) &&
-    strings(value.bindingReferences)
+    strings(value.bindingReferences) &&
+    (value.doctorOption === undefined ||
+      (record(value.doctorOption) &&
+        optionalRange(value.doctorOption.range) &&
+        (value.doctorOption.unreadable === undefined ||
+          value.doctorOption.cause === "computed" ||
+          value.doctorOption.cause === "overridden" ||
+          value.doctorOption.cause === "overridden-by-setup")))
   );
 }
 

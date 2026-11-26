@@ -10,6 +10,7 @@ export default defineConfig({
     "src/bin.ts",
     "src/nuxt-cli.ts",
     "src/config.ts",
+    "src/component-contract.ts",
     "src/extension.ts",
     "src/plugin.ts",
     "src/plugin-worker.ts",

@@ -44,6 +44,8 @@ const scriptFiles = {
     "export const Broken = () => <div className=\"bg-red-500\" style={{ color: 'red' }}",
 };
 
+const fileRules = designSystemRules.filter((rule) => rule.meta.execution === "file");
+
 test("activates for Tailwind projects and adapts upstream diagnostics", async () => {
   const result = await runProjectFixture({
     framework: "vite",
@@ -122,30 +124,28 @@ test("design-system Rules share one ESLint verify per file when they run file by
     return reports;
   };
   const ruleMajor = await lint(
-    designSystemRules.flatMap((rule) =>
-      files.map((file) => [rule, file] as [DoctorRule, typeof file]),
-    ),
+    fileRules.flatMap((rule) => files.map((file) => [rule, file] as [DoctorRule, typeof file])),
   );
 
   const verify = vi.spyOn(Linter.prototype, "verify");
   const fileMajor = await lint(
-    files.flatMap((file) =>
-      designSystemRules.map((rule) => [rule, file] as [DoctorRule, typeof file]),
-    ),
+    files.flatMap((file) => fileRules.map((rule) => [rule, file] as [DoctorRule, typeof file])),
   );
 
   // The first file teaches the run which design-system Rules are enabled; every later file is one verify.
-  expect(verify).toHaveBeenCalledTimes(designSystemRules.length + files.length - 1);
+  expect(verify).toHaveBeenCalledTimes(fileRules.length + files.length - 1);
   expect(fileMajor).toHaveLength(ruleMajor.length);
   expect(fileMajor).toEqual(expect.arrayContaining(ruleMajor));
 });
 
-test("uses Tailwind package activation and composed presets", () => {
-  expect(designSystemRulePack.activation).toEqual({ packages: ["tailwindcss"] });
+test("uses Tailwind and Nuxt UI package activation and composed presets", () => {
+  expect(designSystemRulePack.activation).toEqual({ packages: ["tailwindcss", "@nuxt/ui"] });
   expect(designSystemRulePack.presets.recommended.toSorted()).toEqual([
     "design-system/no-arbitrary-values",
     "design-system/no-inline-styles",
     "design-system/no-raw-colors",
+    "design-system/prefer-project-component",
+    "design-system/unreadable-contract",
   ]);
   expect(designSystemRulePack.presets.strict?.toSorted()).toEqual([
     "design-system/no-arbitrary-values",
@@ -153,7 +153,9 @@ test("uses Tailwind package activation and composed presets", () => {
     "design-system/no-raw-colors",
     "design-system/no-restyle",
     "design-system/no-unknown-classes",
+    "design-system/prefer-project-component",
     "design-system/require-static-classes",
+    "design-system/unreadable-contract",
   ]);
 });
 

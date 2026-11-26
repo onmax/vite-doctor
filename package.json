@@ -28,6 +28,7 @@
   "exports": {
     ".": "./dist/index.mjs",
     "./cli": "./dist/cli.mjs",
+    "./component-contract": "./dist/component-contract.mjs",
     "./config": "./dist/config.mjs",
     "./extension": "./dist/extension.mjs",
     "./mcp": "./dist/mcp/index.mjs",
@@ -126,7 +127,8 @@
     "pkg-pr-new": "catalog:release",
     "tsdown": "catalog:build",
     "vite": "catalog:build",
-    "vite-plus": "catalog:build"
+    "vite-plus": "catalog:build",
+    "vue": "catalog:frontend"
   },
   "peerDependencies": {
     "nuxt": ">=4.1.0",
