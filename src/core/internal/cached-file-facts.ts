@@ -109,7 +109,11 @@ function componentFacts(value: unknown): boolean {
     ) &&
     strings(value.bindingReferences) &&
     (value.doctorOption === undefined ||
-      (record(value.doctorOption) && optionalRange(value.doctorOption.range)))
+      (record(value.doctorOption) &&
+        optionalRange(value.doctorOption.range) &&
+        (value.doctorOption.unreadable === undefined ||
+          value.doctorOption.cause === "computed" ||
+          value.doctorOption.cause === "overridden")))
   );
 }
 

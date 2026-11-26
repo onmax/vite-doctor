@@ -28,9 +28,12 @@ export interface ComponentContractInput {
   replaces?: string | string[];
 }
 
-/** A Component Contract after Doctor read and normalized it. New keys are added here, never reshaped. */
+/**
+ * A Component Contract after Doctor read and normalized it. A new key is a field here and its
+ * reader in `CONTRACT_KEYS`; existing fields are never reshaped.
+ */
 export interface ComponentContract {
-  /** Lowercase HTML tag names, such as `["input", "textarea"]`. */
+  /** Lowercase HTML tag names, such as `["input", "textarea"]`. Empty when the contract sets none. */
   replaces: string[];
 }
 
@@ -54,6 +57,12 @@ export interface UnreadableContract {
   range: SourceRange;
   /** Why, as a sentence fragment that completes "Doctor cannot read it because …". */
   reason: string;
+  /**
+   * `computed` when part of the value is not a literal, `overridden` when a later spread or computed
+   * key in the same options object can replace it, `invalid` when the literal is not a Component
+   * Contract.
+   */
+  cause: "computed" | "overridden" | "invalid";
 }
 
 export interface ProjectContracts {
@@ -61,9 +70,21 @@ export interface ProjectContracts {
   unreadable: UnreadableContract[];
 }
 
-/** Keys a Component Contract may set. A later key extends this table and `parseContract`. */
-const CONTRACT_KEYS = new Set(["replaces"]);
+type KeyReader<T> = (value: unknown) => { value: T } | { problem: string };
+
+/**
+ * How Doctor reads each key a Component Contract may set. A reader receives the key's literal
+ * value, `undefined` when the contract omits it, and returns its normalized form or what is wrong.
+ */
+const CONTRACT_KEYS: { [Key in keyof ComponentContract]-?: KeyReader<ComponentContract[Key]> } = {
+  replaces: readReplaces,
+};
 const TAG = /^[a-z][a-z0-9-]*$/;
+
+/** The keys a Component Contract may set, in the order the docs list them. */
+export function contractKeys(): string[] {
+  return Object.keys(CONTRACT_KEYS);
+}
 
 /**
  * Turns one literal contract value into a Component Contract, or explains what is wrong with it.
@@ -72,14 +93,26 @@ const TAG = /^[a-z][a-z0-9-]*$/;
 export function parseContract(
   value: unknown,
 ): { contract: ComponentContract } | { problem: string } {
+  const keys = contractKeys();
   if (!value || typeof value !== "object" || Array.isArray(value))
-    return { problem: 'it is not an object such as { replaces: "button" }' };
-  const unknown = Object.keys(value).filter((key) => !CONTRACT_KEYS.has(key));
+    return {
+      problem: `it is not an object literal with Component Contract keys (${keys.join(", ")})`,
+    };
+  const unknown = Object.keys(value).filter((key) => !Object.hasOwn(CONTRACT_KEYS, key));
   if (unknown.length)
     return {
-      problem: `it sets ${unknown.map((key) => `\`${key}\``).join(", ")}, which a Component Contract does not have (known keys: ${[...CONTRACT_KEYS].join(", ")})`,
+      problem: `it sets ${unknown.map((key) => `\`${key}\``).join(", ")}, which a Component Contract does not have (known keys: ${keys.join(", ")})`,
     };
-  const { replaces = [] } = value as Record<string, unknown>;
+  const contract: Record<string, unknown> = {};
+  for (const [key, read] of Object.entries(CONTRACT_KEYS) as Array<[string, KeyReader<unknown>]>) {
+    const result = read((value as Record<string, unknown>)[key]);
+    if ("problem" in result) return result;
+    contract[key] = result.value;
+  }
+  return { contract: contract as unknown as ComponentContract };
+}
+
+function readReplaces(replaces: unknown = []): { value: string[] } | { problem: string } {
   const elements = typeof replaces === "string" ? [replaces] : replaces;
   if (
     !Array.isArray(elements) ||
@@ -88,7 +121,7 @@ export function parseContract(
     return {
       problem: '`replaces` is not a lowercase HTML tag name or an array of them, such as "button"',
     };
-  return { contract: { replaces: [...new Set(elements as string[])] } };
+  return { value: [...new Set(elements as string[])] };
 }
 
 /**
@@ -131,13 +164,23 @@ export function projectContracts(
         component,
         file: node.file,
         range: option.unreadable,
-        reason: "part of it is computed at runtime instead of written as a literal",
+        reason:
+          option.cause === "overridden"
+            ? "a spread or computed key after it in the same options object can replace it at runtime"
+            : "part of it is computed at runtime instead of written as a literal",
+        cause: option.cause,
       });
       continue;
     }
     const read = parseContract(option.value);
     if ("problem" in read)
-      unreadable.push({ component, file: node.file, range: option.range, reason: read.problem });
+      unreadable.push({
+        component,
+        file: node.file,
+        range: option.range,
+        reason: read.problem,
+        cause: "invalid",
+      });
     else
       contracts.push({
         component,

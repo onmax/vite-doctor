@@ -911,7 +911,8 @@ export interface ComponentFacts {
   /**
    * The component's `doctor` option, from `defineOptions()` or the `<script>` default export.
    * `value` is the JSON it spells when every part is a literal; otherwise `unreadable` is the range
-   * of the first part Doctor cannot evaluate statically. Undefined when the component sets none.
+   * of the first part Doctor cannot evaluate statically, or of a later spread or computed key that
+   * can replace it. Undefined when the component sets none.
    */
   doctorOption?: DoctorComponentOption;
 }
@@ -919,7 +920,12 @@ export interface ComponentFacts {
 /** A component's `doctor` option as Doctor read it statically. */
 export type DoctorComponentOption =
   | { range: SourceRange; value: unknown }
-  | { range: SourceRange; unreadable: SourceRange };
+  | {
+      range: SourceRange;
+      unreadable: SourceRange;
+      /** `computed` when part of the value is not a literal; `overridden` when a later spread or computed key can replace it. */
+      cause: "computed" | "overridden";
+    };
 
 /** A component usage in an SFC template, resolved to the SFC it renders when Doctor can prove it. */
 export interface ComponentUsageEdge {

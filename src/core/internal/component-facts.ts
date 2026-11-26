@@ -245,7 +245,7 @@ function readScriptDeclarations(
   if (declaredDoctor) {
     const range = rangeOf(declaredDoctor.start, declaredDoctor.end);
     facts.doctorOption = overwrite
-      ? { range, unreadable: rangeOf(overwrite.start, overwrite.end) }
+      ? { range, unreadable: rangeOf(overwrite.start, overwrite.end), cause: "overridden" }
       : readDoctorOption(declaredDoctor, rangeOf);
   }
   const registered = option("components");
@@ -271,7 +271,7 @@ function readDoctorOption(node: AnyNode, rangeOf: RangeOf): DoctorComponentOptio
   const range = rangeOf(node.start, node.end);
   const read = staticJson(node);
   return "unreadable" in read
-    ? { range, unreadable: rangeOf(read.unreadable.start, read.unreadable.end) }
+    ? { range, unreadable: rangeOf(read.unreadable.start, read.unreadable.end), cause: "computed" }
     : { range, value: read.value };
 }
 

@@ -1,5 +1,5 @@
 import { createRule } from "../../../core/index.js";
-import { componentNames, projectContracts } from "../contracts.js";
+import { componentNames, contractKeys, projectContracts } from "../contracts.js";
 import { diagnostics } from "../diagnostics.js";
 
 export const unreadableContract = createRule({
@@ -27,10 +27,17 @@ export const unreadableContract = createRule({
         for (const entry of unreadable) {
           const node = graph.components.get(entry.file);
           if (node?.sourceKind === "module") continue;
+          const keys = contractKeys()
+            .map((key) => `\`${key}\``)
+            .join(", ");
+          const fix =
+            entry.cause === "overridden"
+              ? `Move the spread or computed key before \`doctor\` in the options object, or remove it, so the literal \`doctor\` value is the one Vue keeps.`
+              : `Write the \`doctor\` option as an object literal whose keys (${keys}) hold literal values only: no variables, function calls, spreads, or computed keys.`;
           ctx.report(
             diagnostics.DS0009({
-              why: `Doctor cannot read the Component Contract of ${entry.component} because ${entry.reason}. Without it, design-system/prefer-project-component cannot point raw elements elsewhere in the app to ${entry.component}, so they keep drifting from it.`,
-              fix: `Write the \`doctor\` option as a literal object, such as \`defineOptions({ doctor: { replaces: "button" } })\`, with \`replaces\` set to the HTML tag or tags ${entry.component} stands in for.`,
+              why: `Doctor cannot read the Component Contract of ${entry.component} because ${entry.reason}. Doctor ignores the whole contract, so the design-system Rules that read Component Contracts check nothing ${entry.component} declares, and raw elements elsewhere in the app keep drifting from it.`,
+              fix,
             }),
             {
               file: entry.file,

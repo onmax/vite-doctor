@@ -590,3 +590,88 @@ test("the Nuxt module adds the Component Contract types to the app", async () =>
     expect(references).toEqual([{ types: "vite-doctor/component-contract" }]);
   });
 });
+
+test("Options API contracts are read from export default and defineComponent", async () => {
+  for (const options of [
+    `export default { doctor: { replaces: "button" } };`,
+    `import { defineComponent } from "vue";\nexport default defineComponent({ doctor: { replaces: "button" } } as const);`,
+  ]) {
+    const result = await diagnose({
+      "src/components/AppButton.vue": `<script lang="ts">
+${options}
+</script>
+
+<template>
+  <button class="app-button"><slot /></button>
+</template>`,
+      "src/App.vue": rawButton,
+    });
+    expect(result.diagnostics.map((item) => [item.code, item.suggestion])).toEqual([
+      ["DS0007", expect.stringContaining("<AppButton>")],
+    ]);
+  }
+});
+
+test("DS0009 names a later spread as the cause and says where to move it", async () => {
+  const result = await diagnose({
+    "src/options.ts": `export default { name: "Button" };\n`,
+    "src/BrandButton.vue": `<script setup lang="ts">
+import options from "./options";
+defineOptions({ doctor: { replaces: "button" }, ...options });
+</script>
+<template><button><slot /></button></template>`,
+  });
+
+  expect(result.diagnostics).toHaveLength(1);
+  expect(result.diagnostics[0]?.message).toContain("spread or computed key");
+  expect(result.diagnostics[0]?.suggestion).toContain("before `doctor`");
+});
+
+test("an unreadable ui.prefix or a local component with Nuxt UI's name suggests nothing", async () => {
+  const computed = await diagnose(
+    {
+      "nuxt.config.ts": `const prefix = process.env.UI_PREFIX;\nexport default defineNuxtConfig({ modules: ["@nuxt/ui"], ui: { prefix } });\n`,
+      "app/pages/index.vue": rawButton,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(computed.diagnostics).toEqual([]);
+
+  const local = await diagnose(
+    {
+      "app/components/UButton.vue": `<template><div class="wrap"><button><slot /></button></div></template>`,
+      "app/pages/index.vue": rawButton,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(local.diagnostics).toEqual([]);
+});
+
+test("a Nuxt app does not borrow a sibling workspace app's ui.prefix", async () => {
+  const result = await diagnose(
+    {
+      "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+      "nuxt.config.ts": `export default defineNuxtConfig({ modules: ["@nuxt/ui"] });\n`,
+      "app/pages/index.vue": rawButton,
+      "apps/docs/package.json": JSON.stringify({
+        name: "docs",
+        dependencies: { nuxt: "^4.0.0", ...NUXT_UI },
+      }),
+      "apps/docs/nuxt.config.ts": `export default defineNuxtConfig({ modules: ["@nuxt/ui"], ui: { prefix: "Ui" } });\n`,
+      "apps/docs/app/pages/index.vue": rawButton,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+
+  const byApp = Object.fromEntries(
+    result.diagnostics.map((item) => [
+      item.file.includes("/apps/docs/") ? "docs" : "root",
+      item.suggestion,
+    ]),
+  );
+  expect(result.diagnostics).toHaveLength(2);
+  expect(byApp).toEqual({
+    docs: expect.stringContaining("<UiButton>"),
+    root: expect.stringContaining("<UButton>"),
+  });
+});
