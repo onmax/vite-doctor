@@ -227,6 +227,94 @@ test.each([
   expect(result).toEqual([]);
 });
 
+test("a responsive header's desktop and mobile primaries stay quiet", async () => {
+  const result = await limitDiagnostics({
+    "app/layouts/default.vue": layout(
+      `<header><nav class="hidden lg:flex">${primary}</nav><div class="lg:hidden">${primary}</div></header>`,
+    ),
+    "app/pages/index.vue": page("<p>Home</p>"),
+  });
+
+  expect(result).toEqual([]);
+});
+
+test.each([
+  ["a hidden class on the usage", `<AppButton class="hidden" variant="primary" />`],
+  ["an sr-only ancestor", `<div class="sr-only">${primary}</div>`],
+  ["a max-sm:hidden ancestor", `<div class="flex max-sm:hidden">${primary}</div>`],
+  ["a bound class on an ancestor", `<div :class="{ hidden: compact }">${primary}</div>`],
+  ["a bound class on the usage", `<AppButton :class="classes" variant="primary" />`],
+  ["a native dialog", `<dialog>${primary}</dialog>`],
+  ["a native details", `<details><p>${primary}</p></details>`],
+  ["a hidden attribute", `<div hidden>${primary}</div>`],
+  ["a popover attribute", `<div popover>${primary}</div>`],
+  ["a bound hidden attribute", `<div :hidden="collapsed">${primary}</div>`],
+])("does not count a usage under %s", async (_name, hidden) => {
+  const result = await limitDiagnostics({
+    "app/pages/index.vue": page(hidden + primary),
+  });
+
+  expect(result).toEqual([]);
+});
+
+test("a usage under classes that do not hide it still counts", async () => {
+  const result = await limitDiagnostics({
+    "app/pages/index.vue": page(
+      `<div class="flex lg:flex-row hidden-x">${primary}</div>${primary}`,
+    ),
+  });
+
+  expect(result).toHaveLength(1);
+});
+
+test("stays quiet when the app calls setPageLayout", async () => {
+  const result = await limitDiagnostics({
+    "app/layouts/default.vue": layout(primary),
+    "app/layouts/admin.vue": layout(),
+    "app/middleware/admin.global.ts": `export default defineNuxtRouteMiddleware((to) => {\n  if (to.path.startsWith("/admin")) setPageLayout("admin");\n});\n`,
+    "app/pages/index.vue": page(primary),
+  });
+
+  expect(result).toEqual([]);
+});
+
+test("stays quiet when nuxt.config sets appLayout in routeRules", async () => {
+  const result = await limitDiagnostics({
+    "nuxt.config.ts": `export default defineNuxtConfig({ routeRules: { "/**": { appLayout: "admin" } } });\n`,
+    "app/layouts/default.vue": layout(primary),
+    "app/layouts/admin.vue": layout(),
+    "app/pages/index.vue": page(primary),
+  });
+
+  expect(result).toEqual([]);
+});
+
+test("an appLayout route rule in the manifest silences only the routes it may match", async () => {
+  await withFixture(
+    {
+      "app/app.vue": app,
+      "app/components/AppButton.vue": appButton,
+      "app/layouts/default.vue": layout(primary),
+      "app/layouts/admin.vue": layout(),
+      "app/pages/index.vue": page(primary),
+      "app/pages/admin/index.vue": page(primary),
+      "app/pages/admin/[id].vue": page(primary),
+      "nuxt.config.ts": `export default defineNuxtConfig({ routeRules: { "/admin/**": { appLayout: "admin" } } });\n`,
+    },
+    NUXT_UI,
+    async (root) => {
+      await writeFileManifest(root, [], {
+        generatedAt: new Date(Date.now() + 10_000).toISOString(),
+        routeRules: { "/admin/**": { appLayout: "admin" } },
+      });
+      const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+      expect(result.diagnostics.filter(({ code }) => code === "DS0008")).toMatchObject([
+        { data: { routes: ["/"] } },
+      ]);
+    },
+  );
+});
+
 test("stays quiet when the page's layout is computed", async () => {
   const result = await limitDiagnostics({
     "app/layouts/default.vue": layout(primary),

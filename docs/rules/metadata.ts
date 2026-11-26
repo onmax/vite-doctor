@@ -114,7 +114,7 @@ export const ruleDocumentationMetadata = {
   "design-system/limit-per-view": {
     description:
       "Finds views that render more usages of a component than its Component Contract allows, such as two primary buttons.",
-    why: "A component can declare how many of its usages one view may render, such as one primary button. Doctor builds each Nuxt route's view from the app, its layout, its parent pages, and the page, follows the components they render, and counts only usages that render every time the view does. Usages behind `v-if`, `v-show`, or `v-for`, inside overlays such as modals and menus, in teleports or dynamic components, or with props Doctor cannot read do not count, so a report always names usages that are on screen together.",
+    why: "A component can declare how many of its usages one view may render, such as one primary button. Doctor builds each Nuxt route's view from the app, its layout, its parent pages, and the page, follows the components they render, and counts only usages that render every time the view does. Usages behind `v-if`, `v-show`, or `v-for`, hidden by a class such as `lg:hidden`, inside a native `<dialog>` or `<details>` or overlays such as modals and menus, in teleports or dynamic components, or with props Doctor cannot read do not count, and an app that picks layouts with `setPageLayout()` or an `appLayout` route rule gets no view for the routes it may affect, so a report always names usages that are on screen together.",
     recommendedReplacement:
       "Apply the contract's fix to the extra usages, usually a quieter variant, so the view keeps one clear choice.",
     examples: [

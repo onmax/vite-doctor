@@ -116,10 +116,13 @@ export async function projectViews(ctx: RuleContext, resolved: ViewGraph): Promi
   if (!ctx.project.nuxt) return [];
   const sources = await ctx.inventory.sourcePaths();
   const views: View[] = [];
-  for (const layers of nuxtLayerSources(ctx)) {
+  for (const [index, layers] of nuxtLayerSources(ctx).entries()) {
     const routes = pageRoutes(ctx, layers, sources);
     const app = mainApp(ctx, layers);
     if (!routes || app === null || (app && !graph.components.has(app))) continue;
+    const main = index === 0 && !!ctx.project.nuxt.layers?.length;
+    const runtime = runtimeLayouts(ctx, layers, main, sources, routes);
+    if (runtime === "everywhere") continue;
     const layouts = registeredLayouts(ctx, layers, sources);
     const byFile = new Map<string, PageRoute | null>();
     for (const route of routes) byFile.set(route.file, byFile.has(route.file) ? null : route);
@@ -130,6 +133,9 @@ export async function projectViews(ctx: RuleContext, resolved: ViewGraph): Promi
       if (defaultParents.has(route.file)) continue;
       const chain = routeChain(route, byFile);
       if (!chain?.every(({ file }) => graph.components.has(file))) continue;
+      const path = route.fullPath ?? routeName(ctx, layers, route.file);
+      if (chain.some(({ file }) => runtime.pages.has(file))) continue;
+      if (runtime.patterns.some((pattern) => mayMatch(pattern, path))) continue;
       let layout: LayoutChoice | "unknown" | undefined;
       for (const { file } of chain) {
         const sfc = await readSfc(ctx, file);
@@ -145,13 +151,77 @@ export async function projectViews(ctx: RuleContext, resolved: ViewGraph): Promi
       const roots = viewRoots(resolved, app, layoutFile, chain);
       if (roots)
         views.push({
-          route: route.fullPath ?? routeName(ctx, layers, route.file),
+          route: path,
           page: route.file,
           roots,
         });
     }
   }
   return views;
+}
+
+/** Where the app may pick a layout at runtime, outside `definePageMeta`. */
+interface RuntimeLayouts {
+  /** Pages whose own `defineRouteRules` may set `appLayout`. */
+  pages: Set<string>;
+  /** Route rule patterns that set `appLayout`. */
+  patterns: string[];
+}
+
+const SET_PAGE_LAYOUT = /\bsetPageLayout\b/;
+const APP_LAYOUT = /\bappLayout\b/;
+const NUXT_CONFIGS = ["ts", "mts", "js", "mjs", "cjs", "cts"].map((ext) => `nuxt.config.${ext}`);
+
+/**
+ * `setPageLayout()` can switch any route's layout, so a call in the app's sources, or in a file no
+ * app owns, leaves the app without Views. An `appLayout` route rule removes the routes it may match
+ * when Nuxt's manifest records the rules, and the whole app when only the config text shows it.
+ */
+function runtimeLayouts(
+  ctx: RuleContext,
+  layers: NuxtAppSource[],
+  main: boolean,
+  sources: readonly string[],
+  routes: PageRoute[],
+): RuntimeLayouts | "everywhere" {
+  const owners = nuxtLayerSources(ctx).flat();
+  const owns = (file: string) => layers.some(({ root }) => file.startsWith(`${root}/`));
+  const pages = new Set(routes.map(({ file }) => file));
+  const found: RuntimeLayouts = { pages: new Set(), patterns: [] };
+  for (const file of sources) {
+    if (!owns(file) && owners.some(({ root }) => file.startsWith(`${root}/`))) continue;
+    if (/\.d\.[cm]?ts$/.test(file)) continue;
+    const text = ctx.fs.readText(file);
+    if (!text) continue;
+    if (SET_PAGE_LAYOUT.test(text)) return "everywhere";
+    if (!APP_LAYOUT.test(text) || NUXT_CONFIGS.includes(basename(file))) continue;
+    if (!owns(file) || !pages.has(file)) return "everywhere";
+    found.pages.add(file);
+  }
+  const manifest = main ? ctx.project.nuxt?.manifest : undefined;
+  const recorded = manifest?.hasManifest && manifest.isCurrent;
+  for (const { root } of layers)
+    for (const name of NUXT_CONFIGS)
+      if (APP_LAYOUT.test(ctx.fs.readText(join(root, name)) ?? "") && !recorded)
+        return "everywhere";
+  if (recorded)
+    for (const rules of [ctx.project.nuxt?.routeRules, manifest.resolvedRouteRules])
+      for (const [pattern, rule] of Object.entries(rules ?? {}))
+        if (rule && typeof rule === "object" && "appLayout" in rule) found.patterns.push(pattern);
+  return found;
+}
+
+/** Whether a route rule pattern may match some URL of a view's route, such as `/users/:id()`. */
+function mayMatch(pattern: string, route: string): boolean {
+  const want = pattern.split("/").filter(Boolean);
+  const have = route.split("/").filter(Boolean);
+  if (!route.startsWith("/") || have.some((segment) => /[:*([]/.test(segment))) return true;
+  for (const [index, segment] of want.entries()) {
+    if (segment.startsWith("**")) return true;
+    if (index >= have.length) return false;
+    if (segment !== "*" && !segment.startsWith(":") && segment !== have[index]) return false;
+  }
+  return want.length === have.length;
 }
 
 /** A layout a page names: a layout name, or `false` for none. */

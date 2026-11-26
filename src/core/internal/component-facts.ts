@@ -834,6 +834,7 @@ function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: Wa
     }
     if (CONDITIONAL_DIRECTIVES.has(prop.name)) conditional = true;
   }
+  if (mayHide(element)) conditional = true;
   for (const prop of element.props) {
     if (prop.type === TemplateNodeType.DIRECTIVE && prop.name === "slot" && prop.exp)
       childScope = [...childScope, ...identifiers(prop.exp.content)];
@@ -910,6 +911,32 @@ function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: Wa
       walkChild(walk, child, { ...childPlace, conditional: true });
     else walkChild(walk, child, childPlace);
   }
+}
+
+// Closed until the user opens them.
+const CLOSED_ELEMENTS = new Set(["dialog", "details"]);
+// `hidden`, `sr-only`, and variants such as `lg:hidden`, with Tailwind's `!` important marker.
+const HIDING_CLASS = /^!?(?:[^\s]+:)?(?:hidden|sr-only)!?$/;
+
+/**
+ * Whether an element or component usage may render without showing its content: a closed native
+ * element, a `hidden` or `popover` attribute, a hiding class, or a class or spread Doctor cannot read.
+ */
+function mayHide(element: TemplateElementNode): boolean {
+  if (element.tagType === 0 && CLOSED_ELEMENTS.has(element.tag.toLowerCase())) return true;
+  if (element.tagType !== 0 && elementKind(element) !== "component") return false;
+  return element.props.some((prop) => {
+    if (prop.type === TemplateNodeType.ATTRIBUTE) {
+      if (prop.name === "hidden" || prop.name === "popover") return true;
+      return (
+        prop.name === "class" &&
+        !!prop.value?.content.split(/\s+/).some((token) => HIDING_CLASS.test(token))
+      );
+    }
+    if (prop.name !== "bind") return false;
+    if (!prop.arg || !prop.arg.isStatic) return true;
+    return ["class", "hidden", "popover"].includes(prop.arg.content);
+  });
 }
 
 /** The slot a `<template v-slot>` fills: its static name, null when dynamic, undefined if none. */

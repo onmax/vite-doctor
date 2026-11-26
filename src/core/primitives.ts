@@ -839,9 +839,11 @@ export interface ComponentUsageFact {
   /** Whether this element or an ancestor has `v-for`. */
   inFor: boolean;
   /**
-   * Whether this element or an ancestor may not render: it has `v-if`, `v-else-if`, `v-else`, or
-   * `v-show`, sits in `<slot>` fallback content, or fills a built-in's named slot such as
-   * `<Suspense>`'s `#fallback`.
+   * Whether this element or an ancestor may not render or may render hidden: it has `v-if`,
+   * `v-else-if`, `v-else`, or `v-show`, sits in `<slot>` fallback content, fills a built-in's named
+   * slot such as `<Suspense>`'s `#fallback`, or sits in a native `<dialog>` or `<details>`, on an
+   * element with a `hidden` or `popover` attribute, a `hidden`, `sr-only`, or `<variant>:hidden`
+   * class, or a class or `v-bind` spread Doctor cannot read.
    */
   conditional: boolean;
   /**
