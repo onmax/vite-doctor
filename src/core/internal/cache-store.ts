@@ -26,7 +26,7 @@ import type { SourceInventoryMemo } from "./source-inventory.js";
 import { sha256 } from "./utils.js";
 
 export const CACHE_STORE_FILE = "store.json";
-const CACHE_STORE_VERSION = 5;
+const CACHE_STORE_VERSION = 6;
 // A file modified within one timestamp tick of when Doctor recorded its signature can change again
 // without changing its signature, so such a signature is not trusted. File systems that keep
 // whole-second times can tick every 2 s; others take times from a coarse clock that ticks in ms.

@@ -72,8 +72,9 @@ test("layout API mentions in text, comments and strings do not disable views", a
     await limitDiagnostics({
       "app/pages/index.vue": page(primary + primary),
       "app/pages/docs.vue": page(
-        "<p>Call setPageLayout() or use appLayout.</p>",
-        `const docs = "setPageLayout()"; // defineRouteRules({ appLayout: false })`,
+        `<p :title="'chooseLayout()'">Call setPageLayout() or use appLayout.</p>`,
+        `import { setPageLayout as chooseLayout } from '#imports';
+         const docs = "setPageLayout()"; // defineRouteRules({ appLayout: false })`,
       ),
       "nuxt.config.ts": `// Set appLayout in routeRules.\nexport default defineNuxtConfig({})`,
     }),
@@ -87,6 +88,30 @@ test("a layout switch in a template handler disables views", async () => {
       "app/pages/settings.vue": page(
         `<button @click="setPageLayout('plain')">Change layout</button>`,
       ),
+    }),
+  ).toEqual([]);
+});
+
+test.each<Record<string, string>>([
+  {
+    "app/middleware/select.global.ts": `export default defineNuxtRouteMiddleware(() => {
+      const selectLayout = setPageLayout;
+      selectLayout('plain');
+    });`,
+  },
+  {
+    "app/components/LayoutSelector.vue": page(
+      `<button @click="chooseLayout('plain')">Change layout</button>`,
+      `import { setPageLayout as chooseLayout } from '#imports'`,
+    ),
+  },
+])("layout API references can switch layouts through aliases: %j", async (files) => {
+  expect(
+    await limitDiagnostics({
+      ...files,
+      "app/layouts/default.vue": layout(primary),
+      "app/layouts/plain.vue": layout(),
+      "app/pages/index.vue": page(primary),
     }),
   ).toEqual([]);
 });
@@ -350,6 +375,23 @@ test("an omitted prop counts when the component's literal default matches", asyn
   expect(result).toHaveLength(1);
 });
 
+test.each(["buttonTone", "button-tone"])(
+  "uses the literal default for a prop declared as %s",
+  async (prop) => {
+    const component = appButton
+      .replace("variant?: string", `${JSON.stringify(prop)}?: string`)
+      .replace('variant: "secondary"', `${JSON.stringify(prop)}: "primary"`)
+      .replace("when: { variant:", 'when: { "button-tone":')
+      .replace(':class="variant"', "");
+    expect(
+      await limitDiagnostics({
+        "app/components/AppButton.vue": component,
+        "app/pages/index.vue": page('<AppButton button-tone="primary" /><AppButton />'),
+      }),
+    ).toHaveLength(1);
+  },
+);
+
 test("a config contract on Nuxt UI's UButton counts bare and solid primary buttons", async () => {
   const contracts = {
     UButton: {
@@ -427,6 +469,12 @@ test.each([
   ["a hidden attribute", `<div hidden>${primary}</div>`],
   ["a popover attribute", `<div popover>${primary}</div>`],
   ["a bound hidden attribute", `<div :hidden="collapsed">${primary}</div>`],
+  ["a forced hidden attribute with a false value", `<div :hidden.attr="false">${primary}</div>`],
+  [
+    "a spread that forces a hidden attribute",
+    `<div v-bind="{ '^hidden': false }">${primary}</div>`,
+  ],
+  ["a spread with hiding styles", `<div v-bind="{ style: { display: 'none' } }">${primary}</div>`],
 ])("does not count a usage under %s", async (_name, hidden) => {
   const result = await limitDiagnostics({
     "app/pages/index.vue": page(hidden + primary),

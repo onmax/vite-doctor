@@ -355,20 +355,24 @@ function readOption(options: AnyNode, name: string): "absent" | "unknown" | { va
   return "unknown" in result ? "unknown" : result.value ? { value: result.value } : "absent";
 }
 
-function findOption(options: AnyNode, name: string): { value?: AnyNode; unknown?: AnyNode } {
+function findOption(
+  options: AnyNode,
+  name: string,
+  normalizeKey?: (key: string) => string,
+): { value?: AnyNode; unknown?: AnyNode } {
   options = unwrapOptions(options);
   if (options?.type !== "ObjectExpression") return { unknown: options };
   let unknown: AnyNode;
   for (let index = options.properties.length - 1; index >= 0; index--) {
     const property = options.properties[index];
     if (property.type === "SpreadElement") {
-      const spread = findOption(property.argument, name);
+      const spread = findOption(property.argument, name, normalizeKey);
       if ("unknown" in spread) unknown ??= spread.unknown ?? property;
       if (spread.value) return unknown ? { value: spread.value, unknown } : { value: spread.value };
       continue;
     }
     const key = optionKey(property);
-    if (key === name)
+    if (key !== undefined && (normalizeKey ? normalizeKey(key) : key) === name)
       return unknown ? { value: property.value, unknown } : { value: property.value };
     if (property.computed && key === undefined) unknown ??= property;
   }
@@ -480,7 +484,7 @@ function readMacroCall(
     const defaults = call.arguments?.[1];
     if (defaults?.type === "ObjectExpression") {
       for (const prop of facts.props ?? []) {
-        const fallback = findOption(defaults, prop.name);
+        const fallback = findOption(defaults, prop.name, camelize);
         if (fallback.value)
           setDefault(prop, "unknown" in fallback ? undefined : stringLiteral(fallback.value));
         else if ("unknown" in fallback) delete prop.defaultValue;
@@ -922,24 +926,26 @@ const HIDING_CLASS = /^!?(?:[^\s]+:)?(?:hidden|sr-only)!?$/;
 
 /**
  * Whether an element or component usage may render without showing its content: a closed native
- * element, a `hidden` or `popover` attribute, a hiding class, or a class or spread Doctor cannot read.
+ * element, a `hidden` or `popover` attribute, inline style, or a potentially hiding class or spread.
  */
 function mayHide(element: TemplateElementNode): boolean {
   if (element.tagType === 0 && CLOSED_ELEMENTS.has(element.tag.toLowerCase())) return true;
   if (element.tagType !== 0 && elementKind(element) !== "component") return false;
   return element.props.some((prop) => {
     if (prop.type === TemplateNodeType.ATTRIBUTE) {
-      if (prop.name === "hidden" || prop.name === "popover") return true;
-      return prop.name === "class" && hidingClass(prop.value?.content ?? "");
+      const name = prop.name.toLowerCase();
+      if (name === "hidden" || name === "popover") return true;
+      if (name === "style") return Boolean(prop.value?.content.trim());
+      return name === "class" && hidingClass(prop.value?.content ?? "");
     }
     if (prop.name !== "bind") return false;
     if (!prop.arg) return objectMayBind(bindingExpression(prop.exp?.content), bindingMayHide);
     if (!prop.arg.isStatic) return true;
-    const name = prop.arg.content;
-    return (
-      ["class", "hidden", "popover"].includes(name) &&
-      bindingMayHide(name, bindingExpression(prop.exp?.content))
-    );
+    const modifiers = prop.modifiers.map((modifier) => modifier.content);
+    const arg = modifiers.includes("camel") ? camelize(prop.arg.content) : prop.arg.content;
+    const propKey = modifiers.includes("prop") ? `.${arg}` : arg;
+    const key = modifiers.includes("attr") ? `^${propKey}` : propKey;
+    return visibilityBinding(key) && bindingMayHide(key, bindingExpression(prop.exp?.content));
   });
 }
 
@@ -973,10 +979,22 @@ function knownFalsy(node: AnyNode): boolean {
   return node?.type === "Literal" && !node.regex && !node.value;
 }
 
-function bindingMayHide(name: string, value: AnyNode): boolean {
-  if (name === "hidden") return !knownFalsy(value) || value.value === "";
-  if (name === "popover") return value?.type !== "Literal" || value.value !== null;
+function visibilityKey(key: string): string {
+  return key.replace(/^[.^]+/, "").toLowerCase();
+}
+
+function visibilityBinding(key: string): boolean {
+  return ["class", "hidden", "popover", "style"].includes(visibilityKey(key));
+}
+
+function bindingMayHide(key: string, value: AnyNode): boolean {
+  const name = visibilityKey(key);
+  if (name === "hidden" && (key === "hidden" || key === ".hidden"))
+    return !knownFalsy(value) || value.value === "";
+  if (name === "hidden" || name === "popover" || name === "style")
+    return value?.type !== "Literal" || value.value !== null;
   if (name !== "class") return false;
+  if (key !== "class") return true;
   value = unwrapOptions(value);
   if (value?.type === "ArrayExpression")
     return value.elements.some((item: AnyNode) => item && bindingMayHide("class", item));

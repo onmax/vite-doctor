@@ -9,7 +9,8 @@ import type {
   SourceRange,
 } from "../../core/index.js";
 import { bindingMaySet, camelize } from "../../core/internal/component-facts.js";
-import { parseScript } from "../../core/internal/script.js";
+import { analyzeScriptProgram, type ScopeVariable } from "../../core/internal/script-scope.js";
+import { parseScript, parseScriptResult } from "../../core/internal/script.js";
 import { TemplateNodeType, walkTemplate } from "../../core/internal/template.js";
 import { walkScriptLocal } from "../../core/rule-authoring.js";
 import type { NuxtAppSource } from "../nuxt/rules/nuxt/file-classification.js";
@@ -232,11 +233,13 @@ interface RuntimeLayouts {
 }
 
 const SET_PAGE_LAYOUT = /\bsetPageLayout\b/;
+const LAYOUT_API = "setPageLayout";
+const LAYOUT_IMPORTS = new Set(["#imports", "#app", "nuxt", "nuxt/app", "#app/composables/router"]);
 const DEFINE_ROUTE_RULES = /\bdefineRouteRules\b/;
 const NUXT_CONFIGS = ["ts", "mts", "js", "mjs", "cjs", "cts"].map((ext) => `nuxt.config.${ext}`);
 
 /**
- * `setPageLayout()` can switch any route's layout, so a call in the app's sources, or in a file no
+ * `setPageLayout()` can switch any route's layout, so a reference in the app's sources, or in a file no
  * app owns, leaves the app without Views. An `appLayout` route rule removes the routes it may match
  * when Nuxt's manifest records the rules, and the whole app when only the config text shows it.
  */
@@ -258,8 +261,12 @@ async function runtimeLayouts(
     if (!text) continue;
     if (!SET_PAGE_LAYOUT.test(text) && !DEFINE_ROUTE_RULES.test(text)) continue;
     const sfc = file.endsWith(".vue") ? await readSfc(ctx, file) : undefined;
-    const script = file.endsWith(".vue") ? sfc?.script : parseScript(file, text);
-    let switches = callsApi(script, "setPageLayout");
+    const script = file.endsWith(".vue")
+      ? sfc?.script
+      : parseScriptResult(file, text, undefined, { astType: "ts", range: true }).ast;
+    const names = layoutApiNames(script);
+    const templateNames = new Set([LAYOUT_API, ...names]);
+    let switches = referencesLayoutApi(script);
     if (sfc?.template && !switches)
       walkTemplate(sfc.template, (node) => {
         if (switches) return;
@@ -269,8 +276,13 @@ async function runtimeLayouts(
             : node.type === TemplateNodeType.INTERPOLATION
               ? node.content.content
               : undefined;
-        if (expression && SET_PAGE_LAYOUT.test(expression))
-          switches = callsApi(parseScript("template.ts", expression), "setPageLayout");
+        if (expression && [...templateNames].some((name) => expression.includes(name))) {
+          const ast = parseScriptResult("template.ts", expression, "ts", {
+            astType: "ts",
+            range: true,
+          }).ast;
+          switches = referencesLayoutApi(ast, templateNames);
+        }
       });
     if (switches) return "everywhere";
     if (
@@ -297,6 +309,58 @@ async function runtimeLayouts(
       for (const [pattern, rule] of Object.entries(rules ?? {}))
         if (rule && typeof rule === "object" && "appLayout" in rule) found.patterns.push(pattern);
   return found;
+}
+
+function isLayoutImport(node: any, declaration: any): boolean {
+  return (
+    node.type === "ImportSpecifier" &&
+    node.importKind !== "type" &&
+    declaration?.importKind !== "type" &&
+    LAYOUT_IMPORTS.has(declaration?.source?.value) &&
+    (node.imported.name ?? node.imported.value) === LAYOUT_API
+  );
+}
+
+function layoutApiNames(ast: any): string[] {
+  const names: string[] = [];
+  for (const statement of ast?.body ?? []) {
+    if (statement.type !== "ImportDeclaration") continue;
+    for (const specifier of statement.specifiers)
+      if (isLayoutImport(specifier, statement)) names.push(specifier.local.name);
+  }
+  return names;
+}
+
+function layoutApiBinding(binding: ScopeVariable): boolean {
+  return binding.defs.some(
+    (def) => def.type === "ImportBinding" && isLayoutImport(def.node, def.parent),
+  );
+}
+
+function referencesLayoutApi(ast: any, globals = new Set([LAYOUT_API])): boolean {
+  if (!ast) return false;
+  try {
+    const scope = analyzeScriptProgram(ast, "module");
+    for (const { references } of scope.scopes)
+      for (const ref of references)
+        if (
+          ref.isValueReference &&
+          ref.isRead() &&
+          (ref.resolved ? layoutApiBinding(ref.resolved) : globals.has(ref.identifier.name))
+        )
+          return true;
+  } catch {
+    if (callsApi(ast, LAYOUT_API)) return true;
+  }
+  let member = false;
+  walkScriptLocal(ast, (node) => {
+    if (
+      node.type === "MemberExpression" &&
+      (node.computed ? node.property?.value : node.property?.name) === LAYOUT_API
+    )
+      member = true;
+  });
+  return member;
 }
 
 function hasProperty(ast: unknown, name: string): boolean {
