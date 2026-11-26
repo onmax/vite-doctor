@@ -21,6 +21,7 @@ import {
   type DoctorPresentation,
 } from "./core/internal/agent-runtime.js";
 import { applyDoctorOptions, stringFlag } from "./core/internal/cli.js";
+import { githubAnnotations } from "./core/internal/github-annotations.js";
 import { readViteConfigDoctor } from "./core/internal/vite-config-doctor.js";
 import { findViteConfigFile } from "./core/internal/vite-config-file.js";
 import type { DoctorProcessStatus } from "./doctor-process/client.js";
@@ -444,13 +445,14 @@ async function runDoctorCommand(
   options: DoctorRunOptions,
   format: DoctorReportFormat,
   configFile: string | undefined,
-  report: Pick<DoctorReportContext, "cwd" | "formatFlag" | "reader">,
+  report: Pick<DoctorReportContext, "formatFlag" | "reader"> & { cwd: string },
 ): Promise<number> {
   const { runViteDoctor, shouldFailDoctorRun } = await import("./doctor.js");
   const result = await runViteDoctor(options);
   process.stdout.write(
     createReport(result, format, { ...report, runOptions: options, configFile }),
   );
+  process.stdout.write(githubAnnotations(result, format, report.reader, report.cwd));
   if (reportStatus(result) === "incomplete") return 3;
   return shouldFailDoctorRun(result, options.maxWarnings) ? 1 : 0;
 }

@@ -27,7 +27,7 @@ for (const agent of catalog.agents) collect(agent.match);
  * Clears every agent marker detect-agent reads, then stubs `env`, so a test sees the same Report
  * Reader inside an agent, in CI, or in a terminal. Undo with `vi.unstubAllEnvs()`.
  */
-export function stubReaderEnv(env: Record<string, string>): void {
+export function stubReaderEnv(env: Record<string, string | undefined>): void {
   for (const name of markers) vi.stubEnv(name, undefined);
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
 }
