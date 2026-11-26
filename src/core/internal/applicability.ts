@@ -141,7 +141,13 @@ function evaluateWorkspacePackageActivation(
   }
 
   if (activation.packages?.length || activation.modules?.length) {
-    const moduleNames = new Set((project.nuxt?.modules ?? []).map((module) => module.name));
+    // A package that is not a Nuxt app sees the run owner's Nuxt inventory, and those
+    // modules are installed in the owner, not in this package.
+    const moduleNames = new Set(
+      workspacePackage.framework === "nuxt"
+        ? (project.nuxt?.modules ?? []).map((module) => module.name)
+        : [],
+    );
     const packageNames = new Set(Object.keys(workspacePackage.packages));
     const matched =
       activation.packages?.some((name) => moduleNames.has(name) || packageNames.has(name)) ||
