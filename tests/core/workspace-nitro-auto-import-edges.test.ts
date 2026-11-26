@@ -446,7 +446,7 @@ test("trusted analysis replays the scanner installed under Nitro, not Doctor's v
     {},
     async (root) => {
       const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
-      expect(manifest.nitroAutoImportScan?.version).toBe("6.5.0");
+      expect(manifest.nitroAutoImportScan?.version).toBe("6.4.0");
       const trusted = await analyze(root, true);
       expect(trusted.cycles).toHaveLength(1);
       expect(trusted.gaps).toEqual([]);
@@ -462,7 +462,7 @@ test("trusted analysis replays the scanner installed under Nitro, not Doctor's v
         expect.stringContaining("Nitro's auto-import scan inputs changed"),
       ]);
     },
-    { scannerVersion: "6.5.0" },
+    { scannerVersion: "6.4.0" },
   ));
 
 test("the Nuxt module records Nitro's resolved registry, which closes the server cycle", () =>
