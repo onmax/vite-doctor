@@ -252,7 +252,7 @@ test("a build report keeps to the Report Budget and names plugin options to see 
       expect(report).toBeDefined();
       expect(report!.length).toBeLessThanOrEqual(8000);
       expect(report).toContain(
-        "More: set rules or maxChars: Infinity in the Doctor plugin options",
+        "More: apply the group's options, or set maxChars: Infinity in the Doctor plugin options",
       );
       expect(report).toMatch(/^ {2}more: rules: "mcp\//m);
       expect(report).not.toContain("vite-doctor .");

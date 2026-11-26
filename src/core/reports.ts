@@ -1,4 +1,4 @@
-import { relative } from "pathe";
+import { isAbsolute, relative } from "pathe";
 import { isMcpHeaderName } from "../mcp/endpoint.js";
 import pc from "picocolors";
 import { formatDiagnostic } from "nostics";
@@ -63,8 +63,18 @@ interface ReportGroup {
   evidence: Array<{ item: DiagnosticEvidence; count: number }>;
 }
 
-/** Extra flags of a group's `more` hint, such as `--rules <ruleId> --full`. */
-type GroupHint = string[];
+type GroupHint = { rules: string; full: boolean } | "full";
+
+const FULL_PLUGIN_OPTIONS = { maxChars: "Infinity" } as const;
+
+function pluginHint(hint: GroupHint) {
+  if (hint === "full") return FULL_PLUGIN_OPTIONS;
+  return { rules: hint.rules, ...(hint.full ? FULL_PLUGIN_OPTIONS : {}) };
+}
+
+function cliHint(hint: Exclude<GroupHint, "full">) {
+  return ["--rules", hint.rules, ...(hint.full ? ["--full"] : [])];
+}
 
 interface ProgressiveLayout {
   /** Head, tail and the longest footer, which a plan can never cut. */
@@ -83,10 +93,7 @@ export function createTextReport(
   result: DoctorRunResult,
   context: DoctorReportContext = {},
 ): string {
-  return progressiveReport(result, context, "text", reportBudget(context), true).report.slice(
-    0,
-    -1,
-  );
+  return progressiveReport(result, context, "text", reportBudget(context), true, "").report;
 }
 
 /** One Diagnostic as the text report renders it, indented for a severity section. */
@@ -162,7 +169,13 @@ function groupDiagnostics(result: DoctorRunResult): ReportGroup[] {
     for (const diagnostic of group.diagnostics) {
       const seen = new Set<string>();
       for (const item of diagnostic.evidence ?? []) {
-        const key = `${item.kind}\0${item.summary}\0${item.file ?? ""}`;
+        const key = JSON.stringify([
+          item.kind,
+          item.summary,
+          item.file,
+          item.range && [item.range.start, item.range.end, item.range.line, item.range.column],
+          item.relatedId,
+        ]);
         if (seen.has(key)) continue;
         seen.add(key);
         const entry = evidence.get(key);
@@ -200,12 +213,21 @@ function progressiveReport(
   format: "text" | "agent",
   maxChars: number,
   withHints: boolean,
+  textEnding = "\n",
 ): ProgressiveOutcome {
   const groups = groupDiagnostics(result);
   const layout =
     format === "agent"
       ? agentLayout(result, context, groups, maxChars)
-      : textLayout(result, context, groups, maxChars);
+      : textLayout(result, context, groups, maxChars, textEnding);
+  const complete = layout.groups.map((group) => ({
+    header: true,
+    rows: group.rows.length,
+    detail: true,
+  }));
+  const fullReport = layout.render(complete, []);
+  if (fullReport.length <= maxChars) return { report: fullReport, groups, shown: complete };
+
   let units = planReportBudget(layout.fixed, layout.groups, maxChars);
   const reruns = new Map<string, ProgressiveOutcome>();
   for (;;) {
@@ -213,11 +235,13 @@ function progressiveReport(
     const hints = groups.map((group, index) => {
       const state = shown[index]!;
       if (!state.header || !groupHidden(group, state)) return undefined;
-      const full = ["--rules", group.ruleId, "--full"];
-      if (!withHints) return full;
-      return ruleRerunShowsMore(result, context, format, maxChars, group, state, reruns)
-        ? ["--rules", group.ruleId]
-        : full;
+      if (group.ruleId.startsWith("doctor/")) return "full";
+      return {
+        rules: group.ruleId,
+        full:
+          !withHints ||
+          !ruleRerunShowsMore(result, context, format, maxChars, group, state, reruns),
+      };
     });
     const report = layout.render(shown, hints);
     if (report.length <= maxChars || !units.length) return { report, groups, shown };
@@ -262,6 +286,7 @@ function textLayout(
   context: DoctorReportContext,
   groups: ReportGroup[],
   maxChars: number,
+  ending: string,
 ): ProgressiveLayout {
   const cost = (lines: string[]) => lines.reduce((total, line) => total + line.length + 1, 0);
   const head = textHead(result, groups);
@@ -269,7 +294,14 @@ function textLayout(
   const total = result.diagnostics.length;
   const codes = new Set(groups.map((group) => group.code)).size;
   const plugin = context.surface === "plugin";
-  const commandRoot = context.cwd ? relative(context.cwd, result.root) || "." : ".";
+  const projectPath = context.cwd ? relative(context.cwd, result.root) || "." : ".";
+  const commandRoot =
+    projectPath === "." ||
+    projectPath === ".." ||
+    projectPath.startsWith("../") ||
+    isAbsolute(projectPath)
+      ? projectPath
+      : `./${projectPath}`;
   const command = (options: Omit<RunCommand, "root" | "format">) =>
     runArguments(result, context, { ...options, root: commandRoot, format: context.formatFlag })
       .map(shellArgument)
@@ -291,17 +323,27 @@ function textLayout(
       first,
       ...(commands
         ? [`One group: ${commands.more} plus its "more:" flags`, `Everything: ${commands.full}`]
-        : ["More: set rules or maxChars: Infinity in the Doctor plugin options"]),
+        : [
+            "More: apply the group's options, or set maxChars: Infinity in the Doctor plugin options",
+          ]),
     ];
   };
   const worstFooter = Math.max(
     cost(footer({ groups: groups.length, rows: total, detail: total }, codes)),
     cost(footer({ groups: 0, rows: 0, detail: total }, 0)),
   );
-  const hintLine = (group: ReportGroup, hint: GroupHint) =>
-    plugin
-      ? `  more: rules: ${JSON.stringify(group.ruleId)}${hint.includes("--full") ? ", maxChars: Infinity" : ""}`
-      : `  more: ${hint.map(shellArgument).join(" ")}`;
+  const hintLine = (hint: GroupHint) => {
+    if (plugin) {
+      const options = pluginHint(hint);
+      const fields = [];
+      if ("rules" in options) fields.push(`rules: ${JSON.stringify(options.rules)}`);
+      if (options.maxChars) fields.push("maxChars: Infinity");
+      return `  more: ${fields.join(", ")}`;
+    }
+    return hint === "full"
+      ? "  more: use Everything below"
+      : `  more: ${cliHint(hint).map(shellArgument).join(" ")}`;
+  };
   const parts = groups.map((group, index) => {
     const tierStart = index === 0 || groups[index - 1]!.severity !== group.severity;
     const tierCount = groups
@@ -333,12 +375,12 @@ function textLayout(
           `  evidence: ${entry.item.kind}: ${entry.item.summary}${entry.count < count ? ` (${entry.count} of ${count})` : ""}`,
       ),
       `  rule: ${group.ruleId}${group.docs ? ` · see: ${group.docs}` : ""}`,
-      ...(hint ? [hintLine(group, hint)] : []),
+      ...(hint ? [hintLine(hint)] : []),
     ];
     const details = group.diagnostics.map((diagnostic, row) =>
       textDiagnosticBlock(labels[row]!, diagnostic),
     );
-    const worstTrailer = trailer(count, ["--rules", group.ruleId, "--full"]);
+    const worstTrailer = trailer(count, { rules: group.ruleId, full: true });
     const rowCosts = rows.map((row) => row.length + 1);
     return {
       heading,
@@ -356,7 +398,7 @@ function textLayout(
   });
   const budgetGroups = parts.map((part) => part.budget);
   return {
-    fixed: cost(head) + cost(tail) + worstFooter,
+    fixed: cost(head) + cost(tail) + worstFooter + ending.length - 1,
     groups: budgetGroups,
     render(shown, hints) {
       const body = parts.flatMap((part, index) => {
@@ -374,7 +416,7 @@ function textLayout(
       const hiddenCodes = [...new Set(groups.map((group) => group.code))].filter((code) =>
         groups.every((group, index) => group.code !== code || !shown[index]!.header),
       ).length;
-      return `${[...head, ...body, ...tail, ...footer(hidden, hiddenCodes)].join("\n")}\n`;
+      return [...head, ...body, ...tail, ...footer(hidden, hiddenCodes)].join("\n") + ending;
     },
   };
 }
@@ -535,23 +577,34 @@ function agentLayout(
   maxChars: number,
 ): ProgressiveLayout {
   const status = reportStatus(result);
-  const commandArgs = {
-    explain: [
-      "vite-doctor",
-      "explain",
-      "<code>",
-      "--framework",
-      agentFramework(result, context),
-      ...(context.configFile ? ["--config", context.configFile] : []),
-      ...(context.runOptions?.hostExtensions ? ["--host-extensions"] : []),
-      "--format",
-      "agent",
-    ],
-    verify: runArguments(result, context, { rules: "<rule>", format: "agent" }),
-    rerun: runArguments(result, context, { format: "agent" }),
-    more: runArguments(result, context, { rules: null, format: "agent" }),
-    full: runArguments(result, context, { full: true, format: "agent" }),
-  };
+  const plugin = context.surface === "plugin";
+  const commandArgs = plugin
+    ? undefined
+    : {
+        explain: [
+          "vite-doctor",
+          "explain",
+          "<code>",
+          "--framework",
+          agentFramework(result, context),
+          ...(context.configFile ? ["--config", context.configFile] : []),
+          ...(context.runOptions?.hostExtensions ? ["--host-extensions"] : []),
+          "--format",
+          "agent",
+        ],
+        verify: runArguments(result, context, { rules: "<rule>", format: "agent" }),
+        rerun: runArguments(result, context, { format: "agent" }),
+        more: runArguments(result, context, { rules: null, format: "agent" }),
+        full: runArguments(result, context, { full: true, format: "agent" }),
+      };
+  const commands =
+    commandArgs &&
+    Object.fromEntries(
+      Object.entries(commandArgs).map(([name, args]) => [name, args.map(shellArgument).join(" ")]),
+    );
+  const recovery = plugin
+    ? "Rerun the host with the group's more options or pluginOptions.full (use numeric Infinity for maxChars)."
+    : "To see what the Report Budget hid, append a group's more items to commandArgs.more, or use commandArgs.full when no more items are given.";
   const codes = codeIndex(groups);
   const total = result.diagnostics.length;
   const serialize = (budget: object | undefined, items: object[]) =>
@@ -572,13 +625,9 @@ function agentLayout(
       fixes: result.fixes,
       evidenceGaps: result.project.evidenceGaps,
       evidenceUsed: result.project.evidenceUsed,
-      commands: Object.fromEntries(
-        Object.entries(commandArgs).map(([name, args]) => [
-          name,
-          args.map(shellArgument).join(" "),
-        ]),
-      ),
+      commands,
       commandArgs,
+      pluginOptions: plugin && budget ? { full: FULL_PLUGIN_OPTIONS } : undefined,
       next:
         status === "clean"
           ? { action: "none" }
@@ -591,9 +640,7 @@ function agentLayout(
               }
             : {
                 action: "remediate",
-                instruction: budget
-                  ? "Apply the smallest remediation that resolves each owned diagnostic, run its focused verification, then rerun Doctor. To see what the Report Budget hid, append a group's more items to commandArgs.more."
-                  : "Apply the smallest remediation that resolves each owned diagnostic, run its focused verification, then rerun Doctor.",
+                instruction: `Apply the smallest remediation that resolves each owned diagnostic${plugin ? "" : ", run its focused verification"}, then rerun Doctor.${budget ? ` ${recovery}` : ""}`,
               },
     })}\n`;
   const budgetField = (hidden: BudgetHidden) => ({ maxChars, hidden });
@@ -614,7 +661,7 @@ function agentLayout(
             ...(entry.count < count ? { diagnostics: entry.count } : {}),
           }))
         : undefined,
-      more: hint,
+      more: hint && (plugin ? pluginHint(hint) : hint === "full" ? undefined : cliHint(hint)),
       rowsHidden: rowsHidden || undefined,
     });
     const rows = group.diagnostics.map((diagnostic) => agentRow(result, diagnostic));
@@ -627,7 +674,7 @@ function agentLayout(
       details,
       budget: {
         tier: SEVERITIES.indexOf(group.severity),
-        header: json({ ...head(["--rules", group.ruleId, "--full"], count), diagnostics: [] }),
+        header: json({ ...head({ rules: group.ruleId, full: true }, count), diagnostics: [] }),
         rows: rowCosts,
         detail:
           details.reduce((sum: number, detail) => sum + json(detail), 0) -
@@ -809,7 +856,7 @@ export function createReport(
   if (format === "json") return createJsonReport(result);
   if (format === "sarif") return createSarifReport(result);
   if (format === "agent") return createAgentReport(result, context);
-  return `${createTextReport(result, context)}\n`;
+  return progressiveReport(result, context, "text", reportBudget(context), true).report;
 }
 
 function sarifArtifactUri(root: string, file: string): string {

@@ -174,7 +174,7 @@ function report(
       confidence,
       evidence,
       subject: toolSubject(ctx, server, tool),
-      brief: briefRow(options.brief, findings, clients),
+      brief: briefRow(options.brief, findings),
       data: {
         server: {
           ...(name === undefined ? {} : { name }),
@@ -188,17 +188,29 @@ function report(
 }
 
 /** Such as "limit.minimum, offset.default dropped in Codex and VS Code". */
-function briefRow(participle: string, findings: McpFinding[], clients: string[]): string {
-  const fields = [
-    ...new Set(
-      findings.flatMap(({ pointer, affectedPointers }) =>
-        (affectedPointers ?? (pointer ? [pointer] : [])).map(pointerField),
-      ),
-    ),
-  ];
-  const shown = fields.length > 4 ? [...fields.slice(0, 3), `${fields.length - 3} more`] : fields;
+function briefRow(participle: string, findings: McpFinding[]): string {
+  const clientsByPointer = new Map<string, Set<string>>();
+  for (const { client, pointer, affectedPointers } of findings) {
+    const pointers = affectedPointers?.length ? affectedPointers : [pointer ?? ""];
+    for (const target of pointers) {
+      let clients = clientsByPointer.get(target);
+      if (!clients) clientsByPointer.set(target, (clients = new Set()));
+      clients.add(MCP_CLIENT_LABELS[client]);
+    }
+  }
+  const fieldsByClients = new Map<string, string[]>();
+  for (const [pointer, clients] of clientsByPointer) {
+    const label = list([...clients].sort());
+    let fields = fieldsByClients.get(label);
+    if (!fields) fieldsByClients.set(label, (fields = []));
+    if (pointer) fields.push(pointerField(pointer));
+  }
+  const clauses = [...fieldsByClients].map(([clients, fields]) => {
+    const shown = fields.length > 4 ? [...fields.slice(0, 3), `${fields.length - 3} more`] : fields;
+    return `${shown.length ? `${shown.join(", ")} ` : ""}${participle} in ${clients}`;
+  });
   const value = findings.length === 1 ? findings[0]!.measured : undefined;
-  return `${shown.length ? `${shown.join(", ")} ` : ""}${participle} in ${list(clients)}${value ? ` (${value.value} ${value.unit}, limit ${value.limit})` : ""}`;
+  return `${clauses.join("; ")}${value ? ` (${value.value} ${value.unit}, limit ${value.limit})` : ""}`;
 }
 
 /** `/inputSchema/properties/limit/minimum` as `limit.minimum`. */

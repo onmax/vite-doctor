@@ -10,6 +10,7 @@ import {
 } from "../../src/core/index.ts";
 import { expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
+import { FINGERPRINT_SCHEME } from "../../src/core/diagnostic-constants.ts";
 import { viteDoctorExtensions, viteDoctorRulePacks } from "../../src/doctor.ts";
 import { formatMigrationReport } from "../../src/migration.ts";
 import { doctor } from "../../src/plugin.ts";
@@ -910,6 +911,74 @@ test("agent commands retain an explicit auto override of configured strict mode"
       const replay = JSON.parse((await runCli(rerun.slice(1), root)).output);
       expect(replay.groups).not.toContainEqual(
         expect.objectContaining({ rule: "typescript/performance/no-array-filter-map" }),
+      );
+    },
+  );
+});
+
+test("text recovery replays a project named like a subcommand", async () => {
+  await withFixture(
+    Object.fromEntries(
+      Object.entries(viteErrorFixture()).map(([file, value]) => [`rules/${file}`, value]),
+    ),
+    async (root) => {
+      const original = await runCli(["./rules", "--format", "text", "--max-chars", "500"], root);
+      const full = /^Everything: vite-doctor (.*)$/m.exec(original.output)![1]!;
+      const more = /^One group: vite-doctor (.*) plus its/m.exec(original.output)![1]!;
+      for (const command of [full, more]) {
+        const replay = await runCli(command.split(" "), root);
+        expect(replay.output).toContain("VITE0005");
+        expect(replay.output).toContain("SECRET_KEY");
+      }
+    },
+  );
+});
+
+test("baseline recovery keeps the full Rule coverage that produced DOC0039", async () => {
+  await withFixture(
+    {
+      "package.json": "{}",
+      "src/main.ts": 'console.log("ready")',
+      "doctor.config.json": JSON.stringify({
+        rules: { "vite/env/prefer-direct-import-meta-env-access": "info" },
+      }),
+      "src/env.ts": Array.from(
+        { length: 20 },
+        (_, index) => `export const { MODE: mode${index} } = import.meta.env;`,
+      ).join("\n"),
+      "baseline.json": JSON.stringify({
+        version: 2,
+        fingerprintScheme: FINGERPRINT_SCHEME,
+        diagnostics: Array.from({ length: 15 }, (_, index) => ({
+          ruleId: "vite/env/no-client-secret-pattern",
+          file: "src/main.ts",
+          fingerprint: index.toString(16).padStart(64, "0"),
+        })),
+      }),
+    },
+    async (root) => {
+      const args = [".", "--framework", "vite", "--baseline", "baseline.json", "--new-only"];
+      const text = await runCli([...args, "--format", "text", "--max-chars", "3900"], root);
+      expect(text.output).toContain("more: use Everything below");
+      const full = /^Everything: vite-doctor (.*)$/m.exec(text.output)![1]!;
+      const textReplay = await runCli(full.split(" "), root);
+      expect(textReplay.output).toContain("DOC0039");
+      expect(textReplay.output).toContain("no longer reports fingerprint");
+
+      const original = JSON.parse(
+        (await runCli([...args, "--format", "agent", "--max-chars", "6500"], root)).output,
+      );
+      const group = original.groups.find((item: { code: string }) => item.code === "DOC0039");
+      expect(group.diagnostics[0].fingerprint).toBeUndefined();
+      expect(group.more).toBeUndefined();
+      const replay = JSON.parse((await runCli(original.commandArgs.full.slice(1), root)).output);
+      expect(replay.groups.find((item: { code: string }) => item.code === "DOC0039")).toMatchObject(
+        {
+          code: "DOC0039",
+          diagnostics: [
+            { evidence: expect.arrayContaining([expect.objectContaining({ kind: "manifest" })]) },
+          ],
+        },
       );
     },
   );

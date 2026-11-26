@@ -207,6 +207,25 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
   expect(byCode(again.diagnostics, "MCP0005", "lookup")!.fingerprint).toBe(remote.fingerprint);
 });
 
+test("compact schema briefs preserve which client drops each constraint", async () => {
+  const tool: McpTool = {
+    ...search,
+    inputSchema: {
+      type: "object",
+      properties: {
+        score: { type: "integer", exclusiveMinimum: 0 },
+        tags: { type: "array", items: { type: "string" }, minItems: 1 },
+      },
+    },
+  };
+  const { diagnostics } = await run(project(), {
+    extensions: contributing([{ name: "hub", tools: [tool] }]),
+  });
+  const stripped = byCode(diagnostics, "MCP0008", tool.name)!;
+  expect(stripped.brief).toContain("score.exclusiveMinimum dropped in Codex");
+  expect(stripped.brief).toContain("tags.minItems dropped in VS Code");
+});
+
 test("structured reports retain pointers omitted from the client-limit message", async () => {
   const names = ["first", "second", "third", "fourth", "fifth", "sixth"];
   const tool: McpTool = {

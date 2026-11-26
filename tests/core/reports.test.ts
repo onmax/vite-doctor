@@ -117,6 +117,50 @@ const docsDiagnostics = [
 
 const docsResult = createResult(docsProject, docsProject.root, docsDiagnostics, [], {});
 
+test.each(["text", "agent"] as const)(
+  "%s includes all detail when the full rendering fits exactly",
+  (format) => {
+    const full = createReport(docsResult, format, { runOptions: { maxChars: Infinity } });
+    expect(createReport(docsResult, format, { runOptions: { maxChars: full.length } })).toBe(full);
+  },
+);
+
+test("agent group evidence does not conflate ranges or related IDs", () => {
+  const original = docsDiagnostics[0]!;
+  const shared = { kind: "ast" as const, file: original.file, summary: "Shared evidence" };
+  const result = createResult(
+    docsProject,
+    docsProject.root,
+    [1, 2, 3].map((line) => ({
+      ...original,
+      evidence: [
+        shared,
+        {
+          ...shared,
+          summary: "Registration",
+          range: { start: line, end: line + 1, column: 1, line },
+        },
+        { ...shared, summary: "Tool", relatedId: `tool-${line}` },
+      ],
+    })),
+    [],
+    {},
+  );
+  const report = JSON.parse(createAgentReport(result, { runOptions: { maxChars: Infinity } }));
+  expect(report.groups[0].evidence).toEqual([
+    { kind: "ast", path: "override.ts", summary: "Shared evidence" },
+  ]);
+  expect(report.groups[0].diagnostics[1].evidence).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        summary: "Registration",
+        range: expect.objectContaining({ line: 2 }),
+      }),
+      expect.objectContaining({ summary: "Tool", relatedId: "tool-2" }),
+    ]),
+  );
+});
+
 test("JSON and agent reports preserve diagnostic docs metadata", () => {
   const json = JSON.parse(createJsonReport(docsResult));
   const agent = JSON.parse(createAgentReport(docsResult));

@@ -218,7 +218,7 @@ test("report commands drop mutating flags, redact header values, and name the ro
   expect(text).not.toContain("secret-token");
   const everything = /^Everything: (.*)$/m.exec(text)![1]!;
   expect(everything).toMatch(
-    new RegExp(`^vite-doctor ${root.split("/").at(-1)} .*--full --format text$`),
+    new RegExp(`^vite-doctor \\./${root.split("/").at(-1)} .*--full --format text$`),
   );
   expect(everything).not.toMatch(/--(fix|unsafe-fix|update-baseline|watch|max-chars)\b/);
 });
