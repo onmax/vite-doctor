@@ -222,3 +222,25 @@ test("report commands drop mutating flags, redact header values, and name the ro
   );
   expect(everything).not.toMatch(/--(fix|unsafe-fix|update-baseline|watch|max-chars)\b/);
 });
+
+test("CI reads the complete text report unless maxChars sets a budget", () => {
+  const ci = createReport(result, "text", { runOptions: options, reader: "ci" });
+  expect(ci).toBe(report("text", Infinity));
+  expect(ci).not.toMatch(/^ {2}more: /m);
+
+  const budgeted = createReport(result, "text", {
+    runOptions: { ...options, maxChars: 3000 },
+    reader: "ci",
+  });
+  expect(budgeted.length).toBeLessThanOrEqual(3000);
+  expect(budgeted).toMatch(/^Hidden: /m);
+  // A CI rerun of one Rule is complete, so its hint needs no --full.
+  expect(budgeted).toMatch(/^ {2}more: --rules \S+$/m);
+  expect(budgeted).not.toMatch(/^ {2}more: .*--full$/m);
+});
+
+test("an agent report in CI keeps the default Report Budget", () => {
+  const agent = createReport(result, "agent", { runOptions: options, reader: "ci" });
+  expect(agent.length).toBeLessThanOrEqual(8000);
+  expect(agent).toBe(report("agent"));
+});

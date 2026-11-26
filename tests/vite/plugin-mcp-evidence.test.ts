@@ -2,12 +2,13 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build, createServer, type InlineConfig, type Logger, type Plugin } from "vite";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readMcpServers } from "../../src/mcp/evidence.ts";
 import { doctor, type ViteDoctorSurfaceOptions } from "../../src/plugin.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import { defineDoctorExtension } from "../../src/extension.ts";
 import { mcpStubHandler, startMcpStub, stubTools } from "../mcp/mcp-stub.ts";
+import { stubReaderEnv } from "../report-reader-env.ts";
 
 type RunResult = Awaited<ReturnType<typeof runViteDoctor>>;
 const doctorRuns = vi.hoisted(() => [] as Array<Promise<RunResult>>);
@@ -22,6 +23,10 @@ vi.mock("../../src/doctor.ts", async (importOriginal) => {
       return run;
     },
   };
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 async function withProject(run: (root: string) => Promise<void>) {
@@ -232,6 +237,7 @@ test("dev refreshes project findings as Extension MCP evidence appears and disap
 });
 
 test("a build report keeps to the Report Budget and names plugin options to see more", async () => {
+  stubReaderEnv({ AI_AGENT: "test-agent" });
   const fixture = JSON.parse(
     await readFile(new URL("../fixtures/mcp/nuxt.json", import.meta.url), "utf8"),
   );
@@ -256,6 +262,35 @@ test("a build report keeps to the Report Budget and names plugin options to see 
       );
       expect(report).toMatch(/^ {2}more: rules: "mcp\//m);
       expect(report).not.toContain("vite-doctor .");
+    });
+  } finally {
+    await stub.close();
+  }
+});
+
+test("a CI build prints the complete report without pointing at more", async () => {
+  stubReaderEnv({ CI: "1" });
+  const fixture = JSON.parse(
+    await readFile(new URL("../fixtures/mcp/nuxt.json", import.meta.url), "utf8"),
+  );
+  const stub = await startMcpStub({ tools: fixture.tools });
+  try {
+    await withProject(async (root) => {
+      const { logger, warnings } = captureLogger();
+      await build({
+        ...config(root, logger, {
+          run: "build",
+          extends: ["auto", "mcp/strict"],
+          format: "text",
+          mcp: [{ url: stub.url }],
+        }),
+        build: { write: false, lib: { entry: "entry.ts", formats: ["es"] } },
+      });
+      const report = warnings.find((message) => message.includes("MCP0001"));
+      expect(report).toBeDefined();
+      expect(report!.length).toBeGreaterThan(8000);
+      expect(report).not.toContain("maxChars: Infinity");
+      expect(report).not.toMatch(/^ {2}more: /m);
     });
   } finally {
     await stub.close();

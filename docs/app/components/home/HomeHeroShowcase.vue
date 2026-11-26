@@ -36,25 +36,28 @@ const cliFindings = [
 ] as const;
 
 const agentReport = `{
-  "schema": "vite-doctor.agent/v1",
-  "truncated": true,
+  "schema": "vite-doctor.agent/v3",
   "status": "findings",
-  "summary": { "blocker": 0, "error": 19, "warn": 22, "info": 3, "fixable": 2 },
-  "diagnostics": [
+  "summary": { "blocker": 0, "error": 19, "warn": 23, "info": 3, "fixable": 1 },
+  "budget": { "maxChars": 8000, "hidden": { "groups": 28, "rows": 37, "detail": 45 } },
+  "groups": [
     {
       "code": "NUXT0029",
       "rule": "nuxt/hydration/no-browser-global-in-universal-code",
+      "title": "Avoid browser globals in universal code",
       "severity": "error",
-      "location": { "path": "app/components/IssuePanel.vue", "line": 14, "column": 15 },
-      "message": "window is browser-only and this file can run during SSR.",
-      "remediation": "Use <ClientOnly>, onMounted(), or a .client plugin for browser-only DOM work.",
-      "docs": "https://vite-doctor.onmax.me/diagnostics/NUXT0029"
+      "count": 3,
+      "docs": "https://vite-doctor.onmax.me/diagnostics/NUXT0029",
+      "more": ["--rules", "nuxt/hydration/no-browser-global-in-universal-code"],
+      "rowsHidden": 2,
+      "diagnostics": [
+        {
+          "location": { "path": "app/components/IssuePanel.vue", "line": 14, "column": 15 },
+          "message": "window is browser-only and this file can run during SSR."
+        }
+      ]
     }
-  ],
-  "next": {
-    "action": "remediate",
-    "instruction": "Apply the smallest remediation that resolves each owned diagnostic, run its focused verification, then rerun Doctor."
-  }
+  ]
 }`;
 
 type JsonToken = { text: string; kind: "key" | "string" | "number" | "punct" };

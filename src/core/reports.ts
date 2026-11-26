@@ -22,12 +22,12 @@ import { diagnosticMetadataByCode, diagnosticMetadataByRuleId } from "./diagnost
 import type { DoctorRunOptions } from "./config.js";
 import { shellArgument } from "./internal/utils.js";
 import { unresolvedRuntimeInventory } from "./internal/runtime-packages.js";
+import { defaultReportBudget, type ReportReader } from "./internal/agent-runtime.js";
 import { scoreDiagnostics } from "./internal/scoring.js";
 import {
   type BudgetGroup,
   type BudgetHidden,
   type GroupShown,
-  DEFAULT_REPORT_BUDGET,
   hasHidden,
   hiddenCounts,
   planReportBudget,
@@ -44,6 +44,8 @@ export interface DoctorReportContext {
   formatFlag?: DoctorReportFormat;
   /** Plugin reports point at plugin options instead of CLI commands. */
   surface?: "cli" | "plugin";
+  /** Who reads the report, which sets the Report Budget when `runOptions.maxChars` is unset. */
+  reader?: ReportReader;
 }
 
 const SEVERITIES = ["blocker", "error", "warn", "info"] as const;
@@ -96,7 +98,7 @@ export function createTextReport(
   result: DoctorRunResult,
   context: DoctorReportContext = {},
 ): string {
-  return progressiveReport(result, context, "text", reportBudget(context), true, "").report;
+  return progressiveReport(result, context, "text", reportBudget(context, "text"), true, "").report;
 }
 
 /** One Diagnostic as the text report renders it, indented for a severity section. */
@@ -131,8 +133,8 @@ function diagnosticLabel(root: string, diagnostic: Diagnostic): string {
     : diagnostic.subject;
 }
 
-function reportBudget(context: DoctorReportContext): number {
-  return context.runOptions?.maxChars ?? DEFAULT_REPORT_BUDGET;
+function reportBudget(context: DoctorReportContext, format: "text" | "agent"): number {
+  return context.runOptions?.maxChars ?? defaultReportBudget(context.reader ?? "pipe", format);
 }
 
 function groupDiagnostics(result: DoctorRunResult): ReportGroup[] {
@@ -269,7 +271,10 @@ function ruleRerunShowsMore(
       (diagnostic) => diagnostic.ruleId === group.ruleId,
     );
     // The CLI hint never repeats --max-chars; plugin options keep the configured maxChars.
-    const budget = context.surface === "plugin" ? maxChars : DEFAULT_REPORT_BUDGET;
+    const budget =
+      context.surface === "plugin"
+        ? maxChars
+        : defaultReportBudget(context.reader ?? "pipe", format);
     rerun = progressiveReport(
       { ...result, diagnostics, summary: scoreDiagnostics(diagnostics, {}).summary },
       { ...context, runOptions: { ...context.runOptions, rules: group.ruleId } },
@@ -576,7 +581,7 @@ export function createAgentReport(
   result: DoctorRunResult,
   context: DoctorReportContext = {},
 ): string {
-  return progressiveReport(result, context, "agent", reportBudget(context), true).report;
+  return progressiveReport(result, context, "agent", reportBudget(context, "agent"), true).report;
 }
 
 function agentLayout(
@@ -882,7 +887,7 @@ export function createReport(
   if (format === "json") return createJsonReport(result);
   if (format === "sarif") return createSarifReport(result);
   if (format === "agent") return createAgentReport(result, context);
-  return progressiveReport(result, context, "text", reportBudget(context), true).report;
+  return progressiveReport(result, context, "text", reportBudget(context, "text"), true).report;
 }
 
 function sarifArtifactUri(root: string, file: string): string {

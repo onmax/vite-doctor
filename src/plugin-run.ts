@@ -13,6 +13,7 @@ import type {
   DoctorRunResult,
   RuntimeFrameworkDiagnostic,
 } from "./core/index.js";
+import { selectDoctorPresentation } from "./core/internal/agent-runtime.js";
 import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
 import { hostImportResolvers, type HostImportResolver } from "./core/internal/host-imports.js";
 import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
@@ -77,9 +78,11 @@ export async function runSurfaceDoctor(
     surfaceDoctorOptions({ ...input, vite: { ...input.vite, evidence } }, extensions),
     true,
   );
+  const { reader } = await selectDoctorPresentation(input.options.format);
   const report = createReport(result, input.options.format, {
     surface: "plugin",
     runOptions: input.options,
+    reader,
   }).trimEnd();
   const shouldFail =
     reportStatus(result) === "incomplete" || shouldFailDoctorRun(result, input.options.maxWarnings);

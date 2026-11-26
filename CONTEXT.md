@@ -120,6 +120,10 @@ _Avoid_: truncation, pagination, verbosity
 A report that prints its head whole, then groups, rows, and detail until the Report Budget, and names the command that shows more.
 _Avoid_: compact mode, summary mode
 
+**Report Reader**:
+Who Doctor assumes reads a report when no `--format` is given: an agent, CI, a terminal, or a pipe. It changes the report format and the Report Budget, never the Doctor Run.
+_Avoid_: mode, audience
+
 **Agent Consumer**:
 An AI coding tool that runs Doctor or consumes Doctor reports and uses structured diagnostics to guide remediation.
 _Avoid_: Agent surface
@@ -157,6 +161,7 @@ _Avoid_: Agent surface
 - A **Diagnostic Reference** documents **Diagnostic Codes**.
 - An **Agent Consumer** runs Doctor or consumes Doctor reports; it is not a Doctor surface.
 - Text and agent reports are **Progressive Reports** under a **Report Budget**; JSON and SARIF reports are always complete, and a **Report Budget** never changes a **Doctor Run**.
+- The **Report Reader** picks the default format and **Report Budget**: an agent gets the agent report, CI gets the complete text report, and a terminal or pipe gets the budgeted text report.
 
 ## Example Dialogue
 
