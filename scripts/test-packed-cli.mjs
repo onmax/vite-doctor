@@ -127,7 +127,7 @@ try {
     "PKG0001",
     "vite",
   );
-  assert.deepEqual(packageReport.diagnostics.map((item) => item.code).sort(), [
+  assert.deepEqual(packageReport.groups.map((item) => item.code).sort(), [
     "PKG0001",
     "PKG0002",
     "PKG0003",
@@ -167,7 +167,7 @@ function verifyReport(result, label, expectedStatuses, expectedCode, expectedFra
   assert.doesNotMatch(result.stderr, /\n\s+at .+\(.+:\d+:\d+\)/);
   const reportLine = output
     .split("\n")
-    .find((line) => line.startsWith('{"schema":"vite-doctor.agent/v2"'));
+    .find((line) => line.startsWith('{"schema":"vite-doctor.agent/v3"'));
   if (!reportLine) throw new Error(`Doctor report missing from: ${output}`);
   const report = JSON.parse(reportLine);
   if (report.project?.framework !== expectedFramework) {
@@ -175,10 +175,10 @@ function verifyReport(result, label, expectedStatuses, expectedCode, expectedFra
   }
   if (expectedCode) {
     assert.equal(report.status, "findings");
-    assert.ok(report.diagnostics.some((diagnostic) => diagnostic.code === expectedCode));
+    assert.ok(expectedCode in report.codes);
   } else {
     assert.equal(report.status, "clean");
-    assert.deepEqual(report.diagnostics, []);
+    assert.deepEqual(report.groups, []);
   }
   return report;
 }

@@ -234,11 +234,13 @@ test("structured reports retain pointers omitted from the client-limit message",
       }),
     ]),
   };
-  for (const format of ["json", "agent"] as const) {
-    const report = JSON.parse(createReport(result, format)) as {
-      diagnostics: Array<{ fingerprint: string; data?: unknown }>;
-    };
-    const data = report.diagnostics.find((item) => item.fingerprint === stripped.fingerprint)?.data;
+  type Reported = Array<{ fingerprint: string; data?: unknown }>;
+  const json = JSON.parse(createReport(result, "json")) as { diagnostics: Reported };
+  const agent = JSON.parse(
+    createReport(result, "agent", { runOptions: { maxChars: Number.POSITIVE_INFINITY } }),
+  ) as { groups: Array<{ diagnostics: Reported }> };
+  for (const reported of [json.diagnostics, agent.groups.flatMap((group) => group.diagnostics)]) {
+    const data = reported.find((item) => item.fingerprint === stripped.fingerprint)?.data;
     expect(data).toMatchObject(expected);
     expect(data).toEqual(stripped.data);
   }

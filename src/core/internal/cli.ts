@@ -27,6 +27,8 @@ export function applyDoctorOptions(
   options.since = stringFlag(flags.since) ?? options.since;
   options.baseline = stringFlag(flags.baseline) ?? options.baseline;
   options.format = (stringFlag(flags.format) as DoctorRunOptions["format"]) ?? options.format;
+  if (flags.full) options.maxChars = Number.POSITIVE_INFINITY;
+  if (flags.maxChars !== undefined) options.maxChars = Number(flags.maxChars);
   options.mcp = parseMcpFlags(flags.mcpUrl, flags.mcpHeader) ?? options.mcp;
 }
 

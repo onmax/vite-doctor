@@ -669,6 +669,28 @@ test("CLI rejects repeated report formats without silently switching presentatio
   });
 });
 
+test.each([
+  [["--full", "--max-chars", "4000"], "agent", "--full cannot be combined with --max-chars."],
+  [
+    ["--max-chars", "4000"],
+    "json",
+    "--max-chars applies to text and agent reports; json reports are always complete.",
+  ],
+  [
+    ["--max-chars", "4000"],
+    "sarif",
+    "--max-chars applies to text and agent reports; sarif reports are always complete.",
+  ],
+  [["--max-chars", "0"], "agent", "--max-chars must be a positive integer."],
+  [["--max-chars", "12.5"], "agent", "--max-chars must be a positive integer."],
+])("CLI rejects the Report Budget flags %j with --format %s", async (flags, format, message) => {
+  const result = await runWithCapturedStdout(() =>
+    main([".", ...flags, "--format", format], findRepoRoot()),
+  );
+  expect(result.code).toBe(2);
+  expect(result.output).toContain(message);
+});
+
 test("CLI rejects repeated migration targets", async () => {
   const result = await runCli(
     ["migrate", ".", "--to", "nuxt@5", "--to", "nitro@3", "--format", "agent"],
@@ -886,7 +908,7 @@ test("agent commands retain an explicit auto override of configured strict mode"
         ]);
       }
       const replay = JSON.parse((await runCli(rerun.slice(1), root)).output);
-      expect(replay.diagnostics).not.toContainEqual(
+      expect(replay.groups).not.toContainEqual(
         expect.objectContaining({ rule: "typescript/performance/no-array-filter-map" }),
       );
     },
@@ -920,7 +942,7 @@ test("CLI returns structured failures for unknown Diagnostic Codes", async () =>
   );
   expect(result.code).toBe(2);
   expect(JSON.parse(result.output)).toMatchObject({
-    schema: "vite-doctor.agent/v2",
+    schema: "vite-doctor.agent/v3",
     status: "failed",
     next: { action: "correct-invocation" },
   });

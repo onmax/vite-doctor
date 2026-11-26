@@ -37,6 +37,11 @@ export interface DoctorRunOptions {
    */
   affectedFiles?: string[];
   format?: import("./primitives.js").DoctorReportFormat;
+  /**
+   * Report Budget of text and agent reports in characters, 8,000 when unset. `Infinity` prints
+   * the whole report. json and SARIF reports are always complete.
+   */
+  maxChars?: number;
   baseline?: string;
   updateBaseline?: boolean;
   newOnly?: boolean;

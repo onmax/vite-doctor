@@ -4,6 +4,8 @@ import { diagnostics } from "../diagnostics.js";
 import { annotationsEvidence, collectMcpTools, toolLabel } from "./shared.js";
 import { reportWireTool, wireToolLabel, wireTools } from "./wire.js";
 
+const SAFETY_BRIEF = "neither readOnlyHint nor destructiveHint is true";
+
 const UNDECLARED_FIX =
   "Add `readOnlyHint: true` to the annotations if the tool only reads, or `destructiveHint: true` if it changes or deletes data. Only you can tell which one is true.";
 
@@ -66,6 +68,7 @@ export const requireSafetyHint = createRule({
               range: (tool) =>
                 tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
               findings,
+              brief: SAFETY_BRIEF,
             },
           );
         }
@@ -99,6 +102,7 @@ export const requireSafetyHint = createRule({
               file: tool.file,
               range: annotations.state === "resolved" ? annotations.range : tool.callee,
               confidence: "heuristic-high",
+              brief: SAFETY_BRIEF,
               data: tool.name ? { tool: tool.name.value } : undefined,
               evidence: annotationsEvidence(tool),
             },

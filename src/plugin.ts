@@ -141,6 +141,11 @@ export interface ViteDoctorSurfaceOptions {
   cache?: boolean;
   format?: DoctorRunOptions["format"];
   /**
+   * Report Budget of the text or agent report in characters, 8,000 when unset. `Infinity` prints
+   * the whole report.
+   */
+  maxChars?: number;
+  /**
    * MCP servers whose `tools/list` the Doctor Run reads as Runtime Evidence. In dev, a path such
    * as `/mcp` resolves against this dev server once it listens. A build has no server to resolve
    * it against, and neither does Nuxt, which runs Vite in middleware mode: pass an absolute URL.
@@ -821,6 +826,7 @@ function surfaceRunInput(
       maxWarnings: options.maxWarnings,
       cache: options.cache ?? true,
       format: options.format,
+      maxChars: options.maxChars,
       mcp: options.mcp && surfaceMcpTargets(options.mcp, devServer),
     },
     vite: {

@@ -123,8 +123,8 @@ test("JSON and agent reports preserve diagnostic docs metadata", () => {
 
   expect(json.diagnostics[0].docs).toBe("https://example.test/override");
   expect(json.diagnostics[1]).not.toHaveProperty("docs");
-  expect(agent.diagnostics[0].docs).toBe("https://example.test/override");
-  expect(agent.diagnostics[1]).not.toHaveProperty("docs");
+  expect(agent.groups[0].docs).toBe("https://example.test/override");
+  expect(agent.groups[1]).not.toHaveProperty("docs");
 });
 
 test("SARIF reports preserve diagnostic docs metadata", () => {
@@ -141,12 +141,12 @@ test("SARIF reports preserve diagnostic docs metadata", () => {
 test("every report format renders a Diagnostic without confidence or evidence as having none", () => {
   const text = createReport(docsResult, "text");
   const json = JSON.parse(createJsonReport(docsResult)).diagnostics[0];
-  const agent = JSON.parse(createAgentReport(docsResult)).diagnostics[0];
+  const agent = JSON.parse(createAgentReport(docsResult)).groups[0];
   const sarif = JSON.parse(createSarifReport(docsResult)).runs[0];
 
   expect(text).not.toContain("confidence:");
   expect(text).toContain("Confidence mix: 0 proven, 0 probable, 0 source-only, 2 undeclared");
-  for (const diagnostic of [json, agent]) {
+  for (const diagnostic of [json, agent, agent.diagnostics[0]]) {
     expect(diagnostic).not.toHaveProperty("confidence");
     expect(diagnostic).not.toHaveProperty("evidence");
   }
@@ -172,7 +172,7 @@ test("every report format keeps the confidence and evidence a Rule gave", () => 
   );
   const text = createReport(result, "text");
   const json = JSON.parse(createJsonReport(result)).diagnostics[0];
-  const agent = JSON.parse(createAgentReport(result)).diagnostics[0];
+  const agent = JSON.parse(createAgentReport(result)).groups[0];
   const sarif = JSON.parse(createSarifReport(result)).runs[0].results[0];
 
   expect(text).toContain("confidence: manifest-backed");
@@ -183,6 +183,7 @@ test("every report format keeps the confidence and evidence a Rule gave", () => 
       { kind: "manifest", summary: "package.json lists nuxt 4.1.0" },
     ]);
   }
+  expect(agent.diagnostics[0].evidence).toEqual(agent.evidence);
   expect(sarif.properties).toMatchObject({
     confidence: "manifest-backed",
     evidenceKinds: ["manifest"],

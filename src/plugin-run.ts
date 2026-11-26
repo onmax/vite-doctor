@@ -77,7 +77,10 @@ export async function runSurfaceDoctor(
     surfaceDoctorOptions({ ...input, vite: { ...input.vite, evidence } }, extensions),
     true,
   );
-  const report = createReport(result, input.options.format).trimEnd();
+  const report = createReport(result, input.options.format, {
+    surface: "plugin",
+    runOptions: input.options,
+  }).trimEnd();
   const shouldFail =
     reportStatus(result) === "incomplete" || shouldFailDoctorRun(result, input.options.maxWarnings);
   const hasFindings =
