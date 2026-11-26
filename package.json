@@ -97,6 +97,7 @@
     "pathe": "catalog:prod",
     "picocolors": "catalog:prod",
     "picomatch": "catalog:prod",
+    "postcss": "catalog:analysis",
     "radix3": "catalog:prod",
     "semver": "catalog:prod",
     "std-env": "catalog:prod",

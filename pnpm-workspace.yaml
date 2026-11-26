@@ -17,6 +17,7 @@ catalogs:
     magic-string: ^1.1.0
     nostics: 1.4.0
     oxc-parser: ^0.159.0
+    postcss: ^8.5.33
     typescript: ^6.0.3
     vue-eslint-parser: ^10.4.1
     "@shadcn/lint": 0.2.5
