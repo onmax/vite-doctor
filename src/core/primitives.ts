@@ -923,8 +923,7 @@ export type DoctorComponentOption =
   | {
       range: SourceRange;
       unreadable: SourceRange;
-      /** `computed` when part of the value is not a literal; `overridden` when a later spread or computed key can replace it. */
-      cause: "computed" | "overridden";
+      cause: "computed" | "overridden" | "overridden-by-setup";
     };
 
 /** A component usage in an SFC template, resolved to the SFC it renders when Doctor can prove it. */

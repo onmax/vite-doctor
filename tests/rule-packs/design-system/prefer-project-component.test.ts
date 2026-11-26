@@ -1,6 +1,8 @@
 import { expect, test } from "vite-plus/test";
+import { nuxtAppInputSignature } from "../../../src/core/internal/nuxt-app-inputs.ts";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
 import { explainRule } from "../../../src/core/reports.ts";
+import { runViteDoctor } from "../../../src/doctor.ts";
 import {
   preferProjectComponent,
   unreadableContract,
@@ -8,7 +10,7 @@ import {
 import { nuxtUiRulePack } from "../../../src/rule-packs/nuxt/rules/nuxt-ui.ts";
 import { getDiagnosticDocuments } from "../../../docs/rules/source.ts";
 import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
-import { withFixture } from "../nuxt/nuxt-modern-rules-fixture.ts";
+import { withFixture, writeFileManifest } from "../nuxt/nuxt-modern-rules-fixture.ts";
 
 const NUXT_UI = { "@nuxt/ui": "^4.0.0" };
 
@@ -625,6 +627,115 @@ defineOptions({ doctor: { replaces: "button" }, ...options });
   expect(result.diagnostics).toHaveLength(1);
   expect(result.diagnostics[0]?.message).toContain("spread or computed key");
   expect(result.diagnostics[0]?.suggestion).toContain("before `doctor`");
+});
+
+test.each([
+  ["{ replaces: 'Button' }", "Set `replaces` to the lowercase HTML tag"],
+  ["{ replace: 'button' }", "correct the spelling using the supported keys: replaces"],
+])("DS0009 suggests a validation-specific fix for %s", async (value, remedy) => {
+  const result = await diagnose({
+    "src/BrandButton.vue": `<script setup>defineOptions({ doctor: ${value} })</script>`,
+  });
+  expect(result.diagnostics).toMatchObject([
+    { code: "DS0009", suggestion: expect.stringContaining(remedy) },
+  ]);
+});
+
+test.each(["shared", "{ ...shared }"])(
+  "DS0009 explains a cross-script override by %s",
+  async (arg) => {
+    const normal = `<script>export default { doctor: { replaces: 'button' } }</script>`;
+    const source = (options: string) => `${normal}
+<script setup>import shared from './options'; defineOptions(${options})</script>
+<template><button><slot /></button></template>`;
+    const files = {
+      "src/options.ts": `export default { name: 'Button' }`,
+      "src/BrandButton.vue": source(arg),
+      "src/App.vue": rawButton,
+    };
+    const result = await diagnose(files);
+    expect(result.diagnostics).toMatchObject([
+      {
+        code: "DS0009",
+        message: expect.stringContaining("override the normal script"),
+        suggestion: expect.stringContaining(
+          "Put the literal `doctor` option last in `defineOptions`",
+        ),
+      },
+    ]);
+    const repaired = await diagnose({
+      ...files,
+      "src/BrandButton.vue": source("{ ...shared, doctor: { replaces: 'button' } }"),
+    });
+    expect(repaired.diagnostics.map(({ code }) => code)).toEqual(["DS0007"]);
+  },
+);
+
+test.each(["current empty", "stale"])(
+  "wrapper roots use %s route evidence correctly",
+  async (state) => {
+    const current = state === "current empty";
+    const folder = current ? "pages" : "components";
+    await withFixture(
+      {
+        "nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'] })`,
+        [`app/${folder}/LikeButton.vue`]: rawButton,
+        "app/app.vue": `<script setup>import LikeButton from './${folder}/LikeButton.vue'</script>
+<template><div><LikeButton /><button>Save</button></div></template>`,
+      },
+      NUXT_UI,
+      async (root) => {
+        const inputs = {
+          directories: [{ directory: "app/pages", patterns: ["**/*.vue"] }],
+          files: [],
+          ignore: { patterns: [], roots: ["."] },
+        };
+        await writeFileManifest(root, [], {
+          generatedAt: new Date(Date.now() + 10_000).toISOString(),
+          pages: current ? [] : [{ path: "/old", file: `app/${folder}/LikeButton.vue` }],
+          resolvedApp: {
+            pagesResolved: true,
+            inputs: {
+              pages: {
+                ...inputs,
+                signature: current ? nuxtAppInputSignature(root, inputs) : "stale",
+              },
+            },
+          },
+        });
+        const result = await runViteDoctor({ root, framework: "nuxt", cache: false });
+        expect(result.diagnostics.filter(({ code }) => code === "DS0007")).toMatchObject([
+          { file: expect.stringContaining("app/app.vue") },
+        ]);
+      },
+    );
+  },
+);
+
+test("unprepared Nuxt UI uses the app's automatic layers in priority order", async () => {
+  const result = await diagnose(
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'] })`,
+      "layers/alpha/nuxt.config.ts": `export default defineNuxtConfig({ ui: { prefix: 'Alpha' } })`,
+      "layers/brand/nuxt.config.ts": `export default defineNuxtConfig({ ui: { prefix: 'Brand' } })`,
+      "app/pages/index.vue": rawButton,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(result.diagnostics).toMatchObject([
+    { code: "DS0007", suggestion: expect.stringContaining("<BrandButton>") },
+  ]);
+});
+
+test("unprepared Nuxt UI does not guess a prefix through unresolved extends", async () => {
+  const result = await diagnose(
+    {
+      "nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'], extends: ['./external'] })`,
+      "app/pages/index.vue": rawButton,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(result.diagnostics).toEqual([]);
 });
 
 test("an unreadable ui.prefix or a local component with Nuxt UI's name suggests nothing", async () => {

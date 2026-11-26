@@ -14,7 +14,10 @@ import { doctorInternalDiagnostics } from "../../../core/internal-diagnostic-han
 import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
 import { camelize } from "../../../core/internal/component-facts.js";
 import { loadVueCompilerSfc } from "../../../core/internal/lazy-parsers.js";
-import { readExportedNuxtOption } from "../../../core/internal/runtime-graph.js";
+import {
+  autoRegisteredNuxtLayers,
+  readExportedNuxtOption,
+} from "../../../core/internal/runtime-graph.js";
 import {
   SFC_TEMPLATE_PARSE_OPTIONS,
   startTagEnd,
@@ -323,24 +326,27 @@ function localBindingName(tag: string, bindings: ReadonlyMap<string, string | un
 
 function nuxtPageMatcher(ctx: RuleContext, appRoot: string, nuxt: NuxtProjectInfo | undefined) {
   if (!nuxt) return () => false;
-  const pages = new Set(
-    (nuxt.manifest?.pages ?? []).flatMap(({ file }) => (file ? [resolve(appRoot, file)] : [])),
-  );
-  const directories = nuxt.manifest?.resolvedAppCurrent?.pages
-    ? (nuxt.manifest.resolvedApp?.inputs?.pages?.directories ?? []).map(({ directory }) =>
-        resolve(appRoot, directory),
-      )
-    : [
-        resolve(
-          appRoot,
-          readLiteralNuxtOption(ctx, appRoot, "srcDir") ?? nuxt.appDir,
-          readLiteralNuxtOption(ctx, appRoot, "dir", "pages") ?? "pages",
-        ),
-        ...nuxt.layers.flatMap(({ root, srcDir }) =>
-          srcDir ? [resolve(appRoot, root, srcDir, "pages")] : [],
-        ),
-      ];
-  return (file: string) => pages.has(file) || directories.some((dir) => file.startsWith(`${dir}/`));
+  const manifest = nuxt.manifest;
+  if (manifest?.resolvedAppCurrent?.pages && manifest.resolvedApp?.pagesResolved) {
+    const pages = new Set(
+      (manifest.pages ?? []).flatMap(({ file }) => (file ? [resolve(appRoot, file)] : [])),
+    );
+    return (file: string) => pages.has(file);
+  }
+  const pages = readNuxtOption(ctx, appRoot, "pages");
+  if (pages !== undefined && (pages?.type !== "Literal" || pages.value !== true))
+    return () => false;
+  const layers = manifest?.isCurrent ? nuxt.layers : [];
+  const sources = new Map(layers.map(({ root, srcDir }) => [resolve(appRoot, root), srcDir]));
+  sources.set(appRoot, nuxt.appDir);
+  const directories = [...sources].flatMap(([root, fallback]) => {
+    const srcDir = readLiteralNuxtOption(ctx, root, "srcDir");
+    const pagesDir = readLiteralNuxtOption(ctx, root, "dir", "pages");
+    if (srcDir === null || pagesDir === null || (srcDir === undefined && fallback === undefined))
+      return [];
+    return [resolve(root, srcDir ?? fallback ?? ".", pagesDir ?? "pages")];
+  });
+  return (file: string) => directories.some((dir) => file.startsWith(`${dir}/`));
 }
 
 function selectCandidate(
@@ -428,16 +434,33 @@ function nuxtUiCandidates(
 }
 
 function nuxtUiPrefix(ctx: RuleContext, nuxt: NuxtProjectInfo | undefined, appRoot: string) {
-  if (!nuxt) return "U";
-  const layers = [...nuxt.layers].sort((a, b) => a.priority - b.priority);
-  for (const root of new Set([appRoot, ...layers.map(({ root }) => resolve(appRoot, root))])) {
+  const appPrefix = readLiteralNuxtOption(ctx, appRoot, "ui", "prefix");
+  if (appPrefix !== undefined) return appPrefix ?? undefined;
+  const prepared = nuxt?.manifest?.isCurrent;
+  if (!prepared && readNuxtOption(ctx, appRoot, "extends") !== undefined) return undefined;
+  const layers = prepared
+    ? [...nuxt.layers]
+        .sort((a, b) => a.priority - b.priority)
+        .map(({ root }) => resolve(appRoot, root))
+    : autoRegisteredNuxtLayers(appRoot, ctx.fs)
+        .sort((left, right) => right.localeCompare(left))
+        .map((name) => join(appRoot, "layers", name));
+  for (const root of new Set(layers)) {
+    if (root === appRoot) continue;
     const prefix = readLiteralNuxtOption(ctx, root, "ui", "prefix");
     if (prefix !== undefined) return prefix ?? undefined;
+    if (!prepared && readNuxtOption(ctx, root, "extends") !== undefined) return undefined;
   }
   return "U";
 }
 
 function readLiteralNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
+  const option = readNuxtOption(ctx, root, key, nested);
+  if (option === undefined) return undefined;
+  return option?.type === "Literal" && typeof option.value === "string" ? option.value : null;
+}
+
+function readNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
   for (const ext of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
     const file = join(root, `nuxt.config.${ext}`);
     const text = ctx.fs.readText(file);
@@ -445,9 +468,7 @@ function readLiteralNuxtOption(ctx: RuleContext, root: string, key: string, nest
       if (ctx.fs.exists(file)) return null;
       continue;
     }
-    const option = readExportedNuxtOption(file, text, key, nested);
-    if (option === undefined) return undefined;
-    return option?.type === "Literal" && typeof option.value === "string" ? option.value : null;
+    return readExportedNuxtOption(file, text, key, nested);
   }
 }
 

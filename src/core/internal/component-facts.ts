@@ -245,7 +245,11 @@ function readScriptDeclarations(
   if (declaredDoctor) {
     const range = rangeOf(declaredDoctor.start, declaredDoctor.end);
     facts.doctorOption = overwrite
-      ? { range, unreadable: rangeOf(overwrite.start, overwrite.end), cause: "overridden" }
+      ? {
+          range,
+          unreadable: rangeOf(overwrite.start, overwrite.end),
+          cause: setupDoctor.unknown && !setupDoctor.value ? "overridden-by-setup" : "overridden",
+        }
       : readDoctorOption(declaredDoctor, rangeOf);
   }
   const registered = option("components");

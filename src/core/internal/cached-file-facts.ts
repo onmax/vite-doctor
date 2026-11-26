@@ -113,7 +113,8 @@ function componentFacts(value: unknown): boolean {
         optionalRange(value.doctorOption.range) &&
         (value.doctorOption.unreadable === undefined ||
           value.doctorOption.cause === "computed" ||
-          value.doctorOption.cause === "overridden")))
+          value.doctorOption.cause === "overridden" ||
+          value.doctorOption.cause === "overridden-by-setup")))
   );
 }
 

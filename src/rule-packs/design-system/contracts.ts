@@ -51,26 +51,24 @@ export interface DeclaredContract {
 }
 
 /** A `doctor` option Doctor cannot turn into a Component Contract. */
-export interface UnreadableContract {
+export type UnreadableContract = {
   component: string;
   file: string;
   range: SourceRange;
   /** Why, as a sentence fragment that completes "Doctor cannot read it because …". */
   reason: string;
-  /**
-   * `computed` when part of the value is not a literal, `overridden` when a later spread or computed
-   * key in the same options object can replace it, `invalid` when the literal is not a Component
-   * Contract.
-   */
-  cause: "computed" | "overridden" | "invalid";
-}
+} & (
+  | { cause: "computed" | "overridden" | "overridden-by-setup" }
+  | { cause: "invalid"; remedy: string }
+);
 
 export interface ProjectContracts {
   contracts: DeclaredContract[];
   unreadable: UnreadableContract[];
 }
 
-type KeyReader<T> = (value: unknown) => { value: T } | { problem: string };
+type ContractProblem = { problem: string; remedy: string };
+type KeyReader<T> = (value: unknown) => { value: T } | ContractProblem;
 
 /**
  * How Doctor reads each key a Component Contract may set. A reader receives the key's literal
@@ -90,29 +88,34 @@ export function contractKeys(): string[] {
  * Turns one literal contract value into a Component Contract, or explains what is wrong with it.
  * Used for `defineOptions({ doctor })` values and for each entry of a Rule's `contracts` option.
  */
-export function parseContract(
-  value: unknown,
-): { contract: ComponentContract } | { problem: string } {
+export function parseContract(value: unknown): { contract: ComponentContract } | ContractProblem {
   const keys = contractKeys();
   if (!value || typeof value !== "object" || Array.isArray(value))
     return {
       problem: `it is not an object literal with Component Contract keys (${keys.join(", ")})`,
+      remedy:
+        "Replace the `doctor` value with an object literal using supported Component Contract keys.",
     };
   const unknown = Object.keys(value).filter((key) => !Object.hasOwn(CONTRACT_KEYS, key));
   if (unknown.length)
     return {
       problem: `it sets ${unknown.map((key) => `\`${key}\``).join(", ")}, which a Component Contract does not have (known keys: ${keys.join(", ")})`,
+      remedy: `Remove the unrecognized ${unknown.length === 1 ? "key" : "keys"} or correct the spelling using the supported keys: ${keys.join(", ")}.`,
     };
-  const contract: Record<string, unknown> = {};
-  for (const [key, read] of Object.entries(CONTRACT_KEYS) as Array<[string, KeyReader<unknown>]>) {
-    const result = read((value as Record<string, unknown>)[key]);
+  const contract: Partial<ComponentContract> = {};
+  function readKey<Key extends keyof ComponentContract>(key: Key) {
+    const result = CONTRACT_KEYS[key]((value as Record<string, unknown>)[key]);
     if ("problem" in result) return result;
     contract[key] = result.value;
   }
-  return { contract: contract as unknown as ComponentContract };
+  for (const key of keys as Array<keyof ComponentContract>) {
+    const problem = readKey(key);
+    if (problem) return problem;
+  }
+  return { contract: contract as ComponentContract };
 }
 
-function readReplaces(replaces: unknown = []): { value: string[] } | { problem: string } {
+function readReplaces(replaces: unknown = []): { value: string[] } | ContractProblem {
   const elements = typeof replaces === "string" ? [replaces] : replaces;
   if (
     !Array.isArray(elements) ||
@@ -120,6 +123,8 @@ function readReplaces(replaces: unknown = []): { value: string[] } | { problem: 
   )
     return {
       problem: '`replaces` is not a lowercase HTML tag name or an array of them, such as "button"',
+      remedy:
+        'Set `replaces` to the lowercase HTML tag you intend to replace, for example `"button"`, or list those tags in an array.',
     };
   return { value: [...new Set(elements as string[])] };
 }
@@ -167,7 +172,9 @@ export function projectContracts(
         reason:
           option.cause === "overridden"
             ? "a spread or computed key after it in the same options object can replace it at runtime"
-            : "part of it is computed at runtime instead of written as a literal",
+            : option.cause === "overridden-by-setup"
+              ? "the `defineOptions` argument can override the normal script’s `doctor` value at runtime"
+              : "part of it is computed at runtime instead of written as a literal",
         cause: option.cause,
       });
       continue;
@@ -180,6 +187,7 @@ export function projectContracts(
         range: option.range,
         reason: read.problem,
         cause: "invalid",
+        remedy: read.remedy,
       });
     else
       contracts.push({
