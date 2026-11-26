@@ -498,7 +498,25 @@ function readLiteralNuxtOption(ctx: RuleContext, root: string, key: string, nest
 }
 
 function readNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
-  if (ctx.fs.exists(join(root, ".nuxtrc"))) return null;
+  const main = readMainNuxtOption(ctx, root, key, nested);
+  if (main === null || (main?.type === "Literal" && typeof main.value === "string")) return main;
+  return nuxtRcMaySetOption(ctx, root, key, nested) ? null : main;
+}
+
+function nuxtRcMaySetOption(ctx: RuleContext, root: string, key: string, nested?: string) {
+  const file = join(root, ".nuxtrc");
+  const text = ctx.fs.readText(file);
+  if (text === undefined) return ctx.fs.exists(file);
+  const path = nested ? `${key}.${nested}` : key;
+  return text.split(/[\r\n]/).some((line) => {
+    const assignment = /^\s*([^\s=]+)\s*=/.exec(line)?.[1];
+    if (!assignment) return false;
+    const rcPath = assignment.replace(/\[\]$/, "");
+    return rcPath === key || rcPath === path || rcPath.startsWith(`${path}.`);
+  });
+}
+
+function readMainNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
   for (const ext of NUXT_CONFIG_SCRIPT_EXTENSIONS) {
     const file = join(root, `nuxt.config.${ext}`);
     const text = ctx.fs.readText(file);

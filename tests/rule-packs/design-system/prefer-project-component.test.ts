@@ -738,6 +738,7 @@ test.each([
 test.each([
   [".nuxtignore", "**/LikeButton.vue", ""],
   ["unused.txt", "", ", ignore: ['**/LikeButton.vue']"],
+  [".nuxtrc", "ignore[]=**/LikeButton.vue", ""],
 ])(
   "preserves the wrapper exemption with unprepared Nuxt ignore input %s",
   async (file, text, config) => {
@@ -757,6 +758,50 @@ test.each([
     ]);
   },
 );
+
+const telemetryRc = "telemetry.enabled=false\ntelemetry.consent=0\n";
+
+test("telemetry settings do not hide an imported Nuxt page's contract diagnostic", async () => {
+  const result = await diagnose(
+    {
+      ".nuxtrc": telemetryRc,
+      "nuxt.config.ts": `export default defineNuxtConfig({ pages: { enabled: true, pattern: ['**/*.vue'] } })`,
+      "app/components/LocalButton.vue": brandButton,
+      "app/pages/LikeButton.vue": rawButton,
+      "app/app.vue": `<script setup>import LikeButton from './pages/LikeButton.vue'</script>
+<template><LikeButton /></template>`,
+    },
+    { framework: "nuxt" },
+  );
+  expect(result.diagnostics).toMatchObject([
+    {
+      code: "DS0007",
+      file: expect.stringContaining("app/pages/LikeButton.vue"),
+      suggestion: expect.stringContaining("<LocalButton>"),
+      confidence: "proven",
+    },
+  ]);
+});
+
+test.each([
+  [telemetryRc, "{ prefix: 'Brand' }", "BrandButton"],
+  ["ui.prefix=Other\n", "{ prefix: 'Brand' }", "BrandButton"],
+  ["ui.colors.primary=blue\n", "{}", "UButton"],
+  ["ui.prefix=Other\n", "{}", undefined],
+  ['ui={"prefix":"Other"}\n', "{}", undefined],
+])("uses only relevant .nuxtrc evidence for ui: %s / %s", async (rc, ui, name) => {
+  const result = await diagnose(
+    {
+      ".nuxtrc": rc,
+      "nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'], ui: ${ui} })`,
+      "app/pages/index.vue": rawButton,
+    },
+    { framework: "nuxt", dependencies: NUXT_UI },
+  );
+  expect(result.diagnostics).toMatchObject(
+    name ? [{ code: "DS0007", suggestion: expect.stringContaining(`<${name}>`) }] : [],
+  );
+});
 
 test.each([
   [
