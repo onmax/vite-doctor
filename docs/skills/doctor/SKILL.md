@@ -98,7 +98,7 @@ In the reply that reports the setup, tell the person in one or two sentences tha
 - Use `vite-doctor` for Vite, Vue, Nitro, and Nuxt projects; do not invent framework-specific packages or binaries.
 - Treat Rule IDs as execution/filtering selectors.
 - Treat Diagnostic Codes as the stable remediation identity for docs, fixes, and user-facing explanations.
-- Diagnostic Codes with non-built-in prefixes (anything other than `DOC`, `NITRO`, `NUXT`, `PKG`, `SHAD`, `TS`, `VITE`, `VUE`) come from Doctor Extensions shipped by libraries or the project. Use the `docs` URL in the Diagnostic; do not look for them in the Doctor Diagnostic Reference.
+- Diagnostic Codes with non-built-in prefixes (anything other than `DOC`, `DS`, `MCP`, `NITRO`, `NUXT`, `PINIA`, `PKG`, `TS`, `VITE`, `VUE`) come from Doctor Extensions shipped by libraries or the project. Use the `docs` URL in the Diagnostic; do not look for them in the Doctor Diagnostic Reference.
 - In Nuxt projects, Nuxt modules can register Doctor Extensions. `nuxt doctor` loads them; with the direct CLI, add `--host-extensions` to see the same Diagnostics. Keep that flag in `commandArgs` reruns.
 - To write or test custom Rules, follow https://vite-doctor.onmax.me/extending (`vite-doctor/extension`, `vite-doctor/testkit`).
 - When you will run Doctor several times in one project, set `VITE_DOCTOR_SERVER=1` for those commands. Later runs reuse a long-lived Doctor process and print the same report; `vite-doctor server stop` ends it.

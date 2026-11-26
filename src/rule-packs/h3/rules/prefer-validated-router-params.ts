@@ -1,0 +1,15 @@
+import { createValidatedInputRule } from "./request-helpers.js";
+
+export const preferValidatedRouterParams = createValidatedInputRule({
+  id: "h3/request/prefer-validated-router-params",
+  title: "Use getValidatedRouterParams for validated route params",
+  description:
+    "When an h3 handler validates the whole route params object, read and validate it through the H3 utility.",
+  rawUtilities: ["getRouterParams"],
+  confidence: "heuristic-medium",
+  validatedUtility: "getValidatedRouterParams",
+  docsUrl: "https://h3.dev/utils/request#getvalidatedrouterparamsevent-validate",
+  message: "These route params are read raw and validated separately.",
+  suggestion:
+    "Use getValidatedRouterParams(event, validator) so route param parsing and validation stay coupled.",
+});

@@ -1,18 +1,20 @@
 import {
+  methodChecks,
+  singleMethodCheck,
+  type MethodCheck,
+} from "../../h3/rules/request-helpers.js";
+import {
   type AnyNode,
   createRule,
+  isNitroRouteFile,
   nearestFunctionOrProgram,
   report,
   walkScriptLocal,
 } from "./shared.js";
 import {
-  isNitroRouteFile,
   isInIfStatementTest,
-  methodChecks,
   routeMethodSuffix,
   routePathWithMethodSuffix,
-  singleMethodCheck,
-  type MethodCheck,
 } from "./request-helpers.js";
 
 const RULE_ID = "nitro/request/prefer-route-method-suffix";

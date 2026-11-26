@@ -5,12 +5,12 @@ Diagnostics identical.
 
 The lab runs a built `dist/cli.mjs` against pinned public corpora:
 
-| Corpus     | Project                                                             | Why                               |
-| ---------- | ------------------------------------------------------------------- | --------------------------------- |
-| `small`    | [vitesse-lite](https://github.com/antfu-collective/vitesse-lite)    | Vite + Vue starter                |
-| `tailwind` | [nuxt-ui-templates/saas](https://github.com/nuxt-ui-templates/saas) | Nuxt + Tailwind, shadcn Rule Pack |
-| `medium`   | [npmx.dev](https://github.com/npmx-dev/npmx.dev)                    | Real Nuxt app, ~800 source files  |
-| `large`    | [vitehub](https://github.com/vite-hub/vitehub)                      | Monorepo, ~1,500 source files     |
+| Corpus     | Project                                                             | Why                                      |
+| ---------- | ------------------------------------------------------------------- | ---------------------------------------- |
+| `small`    | [vitesse-lite](https://github.com/antfu-collective/vitesse-lite)    | Vite + Vue starter                       |
+| `tailwind` | [nuxt-ui-templates/saas](https://github.com/nuxt-ui-templates/saas) | Nuxt + Tailwind, design-system Rule Pack |
+| `medium`   | [npmx.dev](https://github.com/npmx-dev/npmx.dev)                    | Real Nuxt app, ~800 source files         |
+| `large`    | [vitehub](https://github.com/vite-hub/vitehub)                      | Monorepo, ~1,500 source files            |
 
 Corpora are cloned without `node_modules`, so Runtime Evidence that depends on installed packages
 reports as unknown. That keeps runs deterministic; use `--corpus-path` to measure an installed local

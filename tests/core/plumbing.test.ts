@@ -386,6 +386,34 @@ const optionRule = createRule({
   },
 });
 
+const fixRepeatsWhyRule = createRule({
+  meta: {
+    id: "test/fix-repeats-why-rule",
+    title: "Fix repeats why rule",
+    category: "architecture",
+    severity: "warn",
+    requires: { script: true },
+  },
+  create(ctx) {
+    return {
+      Program() {
+        ctx.report(
+          allDiagnostics.DOC9999({
+            why: "Inline style sets color.",
+            fix: "Inline style sets color.",
+          }),
+          {
+            ruleId: "test/fix-repeats-why-rule",
+            severity: "warn",
+            category: "architecture",
+            file: ctx.file.path,
+          },
+        );
+      },
+    };
+  },
+});
+
 const missingFixRule = createRule({
   meta: {
     id: "test/missing-fix-rule",
@@ -932,6 +960,18 @@ test("rule diagnostics must include actionable fix text", async () => {
         extensions: [pluginWith(missingFixRule)],
       }),
     ).rejects.toMatchObject({ name: "DOC0021" });
+  });
+});
+
+test("rule diagnostics must not repeat the why as the fix", async () => {
+  await withFixture({ "src/app.ts": "const ok = true" }, async (root) => {
+    await expect(
+      runDoctor({
+        root,
+        framework: "vue",
+        extensions: [pluginWith(fixRepeatsWhyRule)],
+      }),
+    ).rejects.toMatchObject({ name: "DOC0041" });
   });
 });
 

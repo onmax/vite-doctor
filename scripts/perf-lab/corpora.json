@@ -8,7 +8,7 @@
   },
   {
     "name": "tailwind",
-    "description": "Nuxt UI + Tailwind app, activates the shadcn Rule Pack",
+    "description": "Nuxt UI + Tailwind app, activates the design-system Rule Pack",
     "repo": "https://github.com/nuxt-ui-templates/saas",
     "sha": "66ee9866047cbe2050a08756d9e98316a3ed131e",
     "changeFile": "app/utils/links.ts"

@@ -8,7 +8,7 @@ export interface RuleDocumentationMetadata {
 }
 
 export const ruleDocumentationMetadata = {
-  "shadcn/no-restyle": {
+  "design-system/no-restyle": {
     description: "Keep component-owned visual styles inside the component contract.",
     why: "Appearance classes at a component call site can override the variants and sizes owned by the design system. The Rule checks recognized components against the configured class policy.",
     recommendedReplacement:
@@ -24,7 +24,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-raw-colors": {
+  "design-system/no-raw-colors": {
     description: "Prefer theme colors over raw color values.",
     why: "Raw palette colors and literal SVG colors bypass the project's theme. Checking undeclared color tokens and suggesting theme replacements requires a readable theme; without one, those checks are unavailable.",
     recommendedReplacement:
@@ -38,7 +38,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-arbitrary-values": {
+  "design-system/no-arbitrary-values": {
     description: "Use the design system's existing values instead of arbitrary utilities.",
     why: "Arbitrary utility values bypass theme tokens and scale values, making appearance harder to change consistently. Exceptions follow the configured class policy.",
     recommendedReplacement:
@@ -52,7 +52,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-inline-styles": {
+  "design-system/no-inline-styles": {
     description: "Keep styling in the design system rather than component call sites.",
     why: "Ordinary inline properties bypass class-based styling. The Rule checks JSX elements, unreadable style objects, hardcoded colors in custom properties, and style elements.",
     recommendedReplacement:
@@ -66,7 +66,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/require-static-classes": {
+  "design-system/require-static-classes": {
     description: "Use class values that the design-system analyzer can resolve.",
     why: "Unreadable class values on recognized components prevent other design-system Rules from checking those classes. Complete static strings and conditional choices between them remain analyzable.",
     recommendedReplacement:
@@ -82,7 +82,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-unknown-classes": {
+  "design-system/no-unknown-classes": {
     description: "Avoid classes that are not declared by the project's Tailwind theme.",
     why: "Misspelled or unsupported class names generate no CSS. Without a resolvable Tailwind theme, the Rule uses a reduced fallback that includes bundled utility names plus discovered @utility names and CSS class selectors, as in the example below. That fallback cannot validate theme tokens or provide spelling suggestions.",
     recommendedReplacement:
@@ -226,9 +226,9 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/request/prefer-assert-method": {
+  "h3/request/prefer-assert-method": {
     description:
-      "Finds Nitro request code that should use the supported assert method pattern instead.",
+      "Finds single-method H3 handlers that check the request method by hand instead of using assertMethod().",
     why: "Manual method checks can drift from H3 response behavior. assertMethod() applies the framework's method validation and 405 handling consistently.",
     recommendedReplacement: "Use assertMethod(event, method) at the top of single-method handlers.",
     examples: [
@@ -241,20 +241,20 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/request/prefer-get-request-ip": {
+  "h3/request/prefer-get-request-ip": {
     description:
-      "Finds Nitro request code that should use the supported get request IP pattern instead.",
-    why: "Reading x-forwarded-for directly trusts raw proxy input and may return a spoofed or comma-separated value instead of the client address.",
+      "Finds request-sensitive H3 code, such as rate limiting, that reads a forwarded client IP header directly.",
+    why: "Reading x-forwarded-for directly trusts raw proxy input and may return a spoofed or comma-separated value instead of the client address. On H3 v2, srvx's trustProxy option decides which proxies may set the client address, and getRequestIP(event) and event.req.ip read the result.",
     recommendedReplacement:
-      "Use getRequestIP(event) and configure trusted proxy handling centrally.",
+      "Use getRequestIP(event) and configure trusted proxies centrally: srvx's trustProxy option on H3 v2.",
     examples: [
       {
         title: "Use getRequestIP",
         language: "ts",
         invalid:
-          "export default defineEventHandler((event) => {\n  return getHeader(event, 'x-forwarded-for')\n})",
+          "export default defineEventHandler((event) => {\n  return rateLimit(event.req.headers.get('x-forwarded-for'))\n})",
         valid:
-          "export default defineEventHandler((event) => {\n  return getRequestIP(event, { xForwardedFor: true })\n})",
+          '// serve(app, { trustProxy: "loopback" })\nexport default defineEventHandler((event) => {\n  return rateLimit(getRequestIP(event))\n})',
       },
     ],
   },
@@ -483,21 +483,30 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/h3/no-removed-send": {
-    description: "Flags send() and sendError(), which H3 v2 removes.",
-    why: "H3 v2 handlers return Web API response values and throw HTTPError instances instead of using imperative send helpers.",
+  "h3/migration/no-removed-exports": {
+    description:
+      "Flags imports, re-exports, and h3 namespace reads of the 19 values and 38 types H3 1.15 exported and H3 v2 removed, such as send(), sendError(), MIMES, and the App type.",
+    why: "H3 v2 no longer exports these names. Importing a removed value fails when the module loads, and importing a removed type fails the typecheck.",
     recommendedReplacement:
-      "Return the response value from the handler, or throw an HTTPError for an error response.",
+      "Use the replacement the H3 migration guide names, which each diagnostic repeats: return the value instead of send(), throw an HTTPError instead of sendError(), and type the app as H3 instead of App.",
     examples: [
       {
         title: "Return the response body",
         language: "ts",
-        invalid: 'export default defineHandler((event) => {\n  return send(event, "ready")\n})',
-        valid: 'export default defineHandler(() => {\n  return "ready"\n})',
+        invalid:
+          'import { defineHandler, send } from "h3"\n\nexport default defineHandler((event) => {\n  return send(event, "ready")\n})',
+        valid:
+          'import { defineHandler } from "h3"\n\nexport default defineHandler(() => {\n  return "ready"\n})',
+      },
+      {
+        title: "Type the app as H3",
+        language: "ts",
+        invalid: 'import type { App } from "h3"\n\nexport function mount(app: App) {}',
+        valid: 'import type { H3 } from "h3"\n\nexport function mount(app: H3) {}',
       },
     ],
   },
-  "nitro/h3/prefer-redirect-response": {
+  "h3/migration/prefer-redirect-response": {
     description: "Flags the H3 v2 sendRedirect compatibility utility.",
     why: "H3 v2 models redirects as returned Web API response values, while sendRedirect remains a compatibility wrapper around the older event-first API.",
     recommendedReplacement:
@@ -512,7 +521,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/h3/prefer-with-base": {
+  "h3/migration/prefer-with-base": {
     description: "Flags the H3 v2 useBase compatibility alias.",
     why: "H3 v2 renamed the path-prefix handler wrapper to withBase, so using the current name keeps source aligned with the documented API.",
     recommendedReplacement:
@@ -523,6 +532,181 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: 'const handler = useBase("/api", app.handler)',
         valid: 'const handler = withBase("/api", app.handler)',
+      },
+    ],
+  },
+  "h3/response/no-event-first-arg": {
+    description:
+      "Flags redirect(), noContent(), html(), and iterable() called with the event as their first argument.",
+    why: 'H3 v2 response helpers build a response value and no longer take the event. Passing it shifts every argument: redirect(event, "/login") uses the event as the location, and html(event, markup) renders the event instead of the markup.',
+    recommendedReplacement:
+      'Drop the event argument and return the helper\'s result, such as return redirect("/login").',
+    examples: [
+      {
+        title: "Return the helper without the event",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  return redirect(event, "/login")\n})',
+        valid: 'export default defineHandler(() => {\n  return redirect("/login")\n})',
+      },
+    ],
+  },
+  "h3/response/no-discarded-response": {
+    description:
+      "Flags H3 v2 response helpers such as redirect(), html(), and noContent() whose result is never returned from the handler.",
+    why: "In H3 v2 these helpers only build a response value. A call whose result is dropped sends nothing, so the handler falls through and responds with whatever it returns next.",
+    recommendedReplacement:
+      'Return the helper\'s result from the handler, such as return redirect("/login").',
+    examples: [
+      {
+        title: "Return the redirect",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  if (!event.context.user) redirect("/login")\n  return "dashboard"\n})',
+        valid:
+          'export default defineHandler((event) => {\n  if (!event.context.user) return redirect("/login")\n  return "dashboard"\n})',
+      },
+    ],
+  },
+  "h3/response/no-prepared-status-with-response": {
+    description:
+      "Flags a status set through event.res.status or setResponseStatus() in a handler that returns a Response.",
+    why: "H3 v2 applies a prepared event.res.status only to plain return values. A returned Response keeps its own status, so the prepared status is silently ignored and the client gets 200.",
+    recommendedReplacement:
+      "Pass the status to the Response, such as new Response(body, { status: 201 }), or return a plain value instead.",
+    examples: [
+      {
+        title: "Set the status on the Response",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  event.res.status = 201\n  return new Response("created")\n})',
+        valid:
+          'export default defineHandler(() => {\n  return new Response("created", { status: 201 })\n})',
+      },
+    ],
+  },
+  "h3/response/no-html-plain-string": {
+    description: "Flags html() called with a plain string that contains markup.",
+    why: "Since H3 2.0.1-rc.26, html() escapes a plain string argument, so markup passed as a string is rendered as text. Only the html`` tagged template and raw() keep trusted markup.",
+    recommendedReplacement:
+      "Use the tagged template html`<h1>${title}</h1>`, which escapes interpolated values, or wrap trusted markup with raw().",
+    examples: [
+      {
+        title: "Use the html tagged template",
+        language: "ts",
+        invalid: 'export default defineHandler(() => {\n  return html("<h1>Hello</h1>")\n})',
+        valid: "export default defineHandler(() => {\n  return html`<h1>Hello</h1>`\n})",
+      },
+    ],
+  },
+  "h3/errors/no-numeric-create-error": {
+    description: "Flags createError() called with a bare status code, such as createError(404).",
+    why: "createError() reads the status from an object or a message string. A number is neither, so createError(404) builds a 500 error in both H3 v1 and v2, and clients get a server error instead of the intended status.",
+    recommendedReplacement:
+      "Pass the status in an object, such as createError({ status: 404 }), or use HTTPError.status(404) in H3 v2.",
+    examples: [
+      {
+        title: "Pass the status in an object",
+        language: "ts",
+        invalid: "export default defineHandler(() => {\n  throw createError(404)\n})",
+        valid:
+          'export default defineHandler(() => {\n  throw createError({ status: 404, message: "Not found" })\n})',
+      },
+    ],
+  },
+  "h3/errors/no-throw-plain-object": {
+    description:
+      "Flags throw statements in H3 handlers that throw an object literal such as { statusCode: 404 }.",
+    why: "H3 v2 turns a thrown value that is not an Error into an unhandled 500 and drops its fields. H3 v1 passed it through createError(), so code migrated from v1 that throws { statusCode } now answers every such error with 500.",
+    recommendedReplacement:
+      'Throw an HTTPError, such as throw new HTTPError({ status: 404, message: "Not found" }) or throw HTTPError.status(404).',
+    examples: [
+      {
+        title: "Throw an HTTPError",
+        language: "ts",
+        invalid:
+          'export default defineHandler(() => {\n  throw { statusCode: 404, message: "Not found" }\n})',
+        valid:
+          'export default defineHandler(() => {\n  throw new HTTPError({ status: 404, message: "Not found" })\n})',
+      },
+    ],
+  },
+  "h3/body/no-double-body-read": {
+    description:
+      "Flags a handler that reads the request body twice, or reads it and then proxies the request.",
+    why: "H3 v2 uses the Web Request stream. If a body is present and the first read consumes it, a second read can fail and the original stream can no longer be forwarded by a proxy.",
+    recommendedReplacement:
+      "Read the body once and reuse it, or read from a clone before forwarding the original stream to a proxy.",
+    examples: [
+      {
+        title: "Read the body once",
+        language: "ts",
+        invalid:
+          "export default defineHandler(async (event) => {\n  await audit(await readBody(event))\n  return save(await readBody(event))\n})",
+        valid:
+          "export default defineHandler(async (event) => {\n  const body = await readBody(event)\n  await audit(body)\n  return save(body)\n})",
+      },
+    ],
+  },
+  "h3/security/session-password-too-short": {
+    description:
+      "Flags a literal password shorter than 32 characters in session calls that can seal a session.",
+    why: 'When H3 seals a session, iron-webcrypto rejects short passwords with "Password string too short". Reading an existing session does not necessarily seal it.',
+    recommendedReplacement:
+      "Read a secret of at least 32 characters from runtime configuration or an environment variable instead of a literal.",
+    examples: [
+      {
+        title: "Read the session password from the environment",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  return useSession(event, { password: "dev-secret" })\n})',
+        valid:
+          "export default defineHandler((event) => {\n  return useSession(event, { password: process.env.SESSION_PASSWORD })\n})",
+      },
+    ],
+  },
+  "h3/migration/no-ignored-hooks": {
+    description:
+      "Flags onRequest and onBeforeResponse on handler objects, and onBeforeResponse and onAfterResponse in app options, which H3 v2 never calls.",
+    why: "H3 v2 replaced handler-object hooks with a middleware array and kept only onRequest, onResponse, and onError as app hooks. The old keys are copied onto the handler or config but never run, so authentication, logging, or header logic in them silently stops.",
+    recommendedReplacement:
+      "Move handler hooks into middleware, such as defineHandler({ middleware: [auth], handler }), and move onBeforeResponse or onAfterResponse app logic to onResponse.",
+    examples: [
+      {
+        title: "Move handler hooks into middleware",
+        language: "ts",
+        invalid: 'export default defineHandler({\n  onRequest: [auth],\n  handler: () => "ok",\n})',
+        valid: 'export default defineHandler({\n  middleware: [auth],\n  handler: () => "ok",\n})',
+      },
+    ],
+  },
+  "h3/migration/no-removed-router-api": {
+    description:
+      "Flags router.add(), router.resolve(), app.stack, lazy handlers registered with { lazy: true }, and array route paths, which H3 v2 removed.",
+    why: "H3 v2 merged the router into the app. The removed members are undefined at runtime, so a call throws when the route module loads and the server fails to start.",
+    recommendedReplacement:
+      "Register routes with app.on(method, path, handler) or app.get(path, handler), register each path separately, and wrap lazy handlers with defineLazyEventHandler().",
+    examples: [
+      {
+        title: "Register routes on the app",
+        language: "ts",
+        invalid: 'const router = createRouter()\nrouter.add("/items", listItems)\napp.use(router)',
+        valid: 'app.get("/items", listItems)',
+      },
+    ],
+  },
+  "h3/middleware/no-exact-path-use": {
+    description:
+      'Flags app.use("/path", middleware) with a path that has no wildcard. Mounting a sub-app with app.use("/path", app) still matches nested paths and is not flagged.',
+    why: 'In H3 v1, app.use("/api", fn) ran for every path under /api. In H3 v2 a middleware path is a route pattern, so "/api" matches only /api itself and the middleware skips every nested route.',
+    recommendedReplacement:
+      'Add a wildcard, such as app.use("/api/**", fn), or keep the exact path when the middleware is meant for that one route.',
+    examples: [
+      {
+        title: "Match nested paths with a wildcard",
+        language: "ts",
+        invalid: 'app.use("/api", auth)',
+        valid: 'app.use("/api/**", auth)',
       },
     ],
   },
