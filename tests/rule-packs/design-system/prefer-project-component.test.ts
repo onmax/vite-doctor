@@ -735,33 +735,77 @@ test.each([
   );
 });
 
-test("unprepared Nuxt UI does not guess precedence between conflicting layers", async () => {
-  await withFixture(
+test.each([
+  [".nuxtignore", "**/LikeButton.vue", ""],
+  ["unused.txt", "", ", ignore: ['**/LikeButton.vue']"],
+])(
+  "preserves the wrapper exemption with unprepared Nuxt ignore input %s",
+  async (file, text, config) => {
+    const result = await diagnose(
+      {
+        [file]: text,
+        "nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'], pages: { pattern: ['**/*.vue'] }${config} })`,
+        "app/pages/LikeButton.vue": rawButton,
+        "app/pages/index.vue": rawButton,
+        "app/app.vue": `<script setup>import LikeButton from './pages/LikeButton.vue'</script>
+<template><LikeButton /></template>`,
+      },
+      { framework: "nuxt", dependencies: NUXT_UI },
+    );
+    expect(result.diagnostics).toMatchObject([
+      { code: "DS0007", file: expect.stringContaining("app/pages/index.vue") },
+    ]);
+  },
+);
+
+test.each([
+  [
+    "conflicting layers",
     {
-      "nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'] })`,
       "layers/brand/nuxt.config.ts": `export default defineNuxtConfig({ ui: { prefix: 'Brand' } })`,
       "layers/brand-admin/nuxt.config.ts": `export default defineNuxtConfig({ ui: { prefix: 'Admin' } })`,
-      "app/pages/index.vue": rawButton,
     },
-    NUXT_UI,
-    async (root) => {
-      const run = () => runViteDoctor({ root, framework: "nuxt", cache: false });
-      expect((await run()).diagnostics.filter(({ code }) => code === "DS0007")).toEqual([]);
-      await writeFileManifest(root, [], {
-        generatedAt: new Date(Date.now() + 10_000).toISOString(),
-        autoRegisteredLayers: ["brand", "brand-admin"],
-        appRegistrationIgnore: { patterns: [], layerRoots: [], fileHash: null },
-        appRegistration: { components: { files: [], directories: [] } },
-        resolvedComponents: [
-          { name: "BrandButton", file: "node_modules/@nuxt/ui/dist/runtime/components/Button.vue" },
-        ],
-      });
-      expect((await run()).diagnostics.filter(({ code }) => code === "DS0007")).toMatchObject([
-        { suggestion: expect.stringContaining("<BrandButton>"), confidence: "manifest-backed" },
-      ]);
+    ["brand", "brand-admin"],
+  ],
+  [
+    "alternate layer config",
+    {
+      "layers/brand/.config/nuxt.ts": `export default defineNuxtConfig({ ui: { prefix: 'Brand' } })`,
     },
-  );
-});
+    ["brand"],
+  ],
+] as const)(
+  "uses registration instead of guessing a Nuxt UI prefix with %s",
+  async (_case, files, layers) => {
+    await withFixture(
+      {
+        "nuxt.config.ts": `export default defineNuxtConfig({ modules: ['@nuxt/ui'] })`,
+        ...files,
+        "app/pages/index.vue": rawButton,
+      },
+      NUXT_UI,
+      async (root) => {
+        const run = () => runViteDoctor({ root, framework: "nuxt", cache: false });
+        expect((await run()).diagnostics.filter(({ code }) => code === "DS0007")).toEqual([]);
+        await writeFileManifest(root, [], {
+          generatedAt: new Date(Date.now() + 10_000).toISOString(),
+          autoRegisteredLayers: [...layers],
+          appRegistrationIgnore: { patterns: [], layerRoots: [], fileHash: null },
+          appRegistration: { components: { files: [], directories: [] } },
+          resolvedComponents: [
+            {
+              name: "BrandButton",
+              file: "node_modules/@nuxt/ui/dist/runtime/components/Button.vue",
+            },
+          ],
+        });
+        expect((await run()).diagnostics.filter(({ code }) => code === "DS0007")).toMatchObject([
+          { suggestion: expect.stringContaining("<BrandButton>"), confidence: "manifest-backed" },
+        ]);
+      },
+    );
+  },
+);
 
 test.each([
   ["layers/.preview", "{}", "UButton"],

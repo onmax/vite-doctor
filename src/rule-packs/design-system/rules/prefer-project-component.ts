@@ -50,6 +50,8 @@ const NUXT_UI: Record<string, string> = {
   select: "Select",
 };
 const INFERRED_NAMES = new Set(["Button", "Input", "Textarea", "Select", "Label"]);
+const NUXT_CONFIG_SCRIPT_EXTENSIONS = ["js", "ts", "mjs", "cjs", "mts", "cts"];
+const NUXT_CONFIG_DATA_EXTENSIONS = ["json", "jsonc", "json5", "yaml", "yml", "toml"];
 
 /** A component that replaces a raw element, and how Doctor learned it. */
 interface Candidate {
@@ -333,30 +335,32 @@ function nuxtPageMatcher(ctx: RuleContext, appRoot: string, nuxt: NuxtProjectInf
     );
     return (file: string) => pages.has(file);
   }
+  if (
+    ctx.fs.exists(join(appRoot, ".nuxtignore")) ||
+    appNuxtLayerNames(ctx, appRoot).length > 0 ||
+    hasUnresolvedNuxtLayers(ctx, appRoot) ||
+    ["ignore", "ignorePrefix", "hooks"].some(
+      (key) => readNuxtOption(ctx, appRoot, key) !== undefined,
+    )
+  )
+    return () => false;
   const patterns = nuxtPagePatterns(ctx, appRoot);
   if (patterns === null) return () => false;
-  const layers = manifest?.isCurrent ? nuxt.layers : [];
-  const sources = new Map(layers.map(({ root, srcDir }) => [resolve(appRoot, root), srcDir]));
-  sources.set(appRoot, nuxt.appDir);
-  const directories = [...sources].flatMap(([root, fallback]) => {
-    const srcDir = readLiteralNuxtOption(ctx, root, "srcDir");
-    const pagesDir = readLiteralNuxtOption(ctx, root, "dir", "pages");
-    if (srcDir === null || pagesDir === null || (srcDir === undefined && fallback === undefined))
-      return [];
-    return [resolve(root, srcDir ?? fallback ?? ".", pagesDir ?? "pages")];
-  });
+  const srcDir = readLiteralNuxtOption(ctx, appRoot, "srcDir");
+  const source = srcDir === undefined ? nuxt.appDir : srcDir;
+  const pagesDir = readLiteralNuxtOption(ctx, appRoot, "dir", "pages");
+  if (source == null || pagesDir === null) return () => false;
+  const directory = resolve(appRoot, source, pagesDir ?? "pages");
   if (patterns !== undefined) {
     const isExclusion = (pattern: string) => pattern.startsWith("!") && !pattern.startsWith("!(");
     const exclude = patterns.filter(isExclusion).map((pattern) => pattern.slice(1));
     const include = patterns.filter((pattern) => !isExclusion(pattern));
     const pages = new Set(
-      directories.flatMap((cwd) =>
-        include.flatMap((pattern) => ctx.fs.glob(pattern, { cwd, exclude })),
-      ),
+      include.flatMap((pattern) => ctx.fs.glob(pattern, { cwd: directory, exclude })),
     );
     return (file: string) => pages.has(file);
   }
-  return (file: string) => directories.some((dir) => file.startsWith(`${dir}/`));
+  return (file: string) => file.startsWith(`${directory}/`);
 }
 
 function nuxtPagePatterns(ctx: RuleContext, root: string): string[] | null | undefined {
@@ -466,8 +470,7 @@ function nuxtUiPrefix(ctx: RuleContext, appRoot: string) {
   if (appPrefix !== undefined) return appPrefix ?? undefined;
   if (hasUnresolvedNuxtLayers(ctx, appRoot)) return undefined;
   let prefix: string | undefined;
-  for (const name of autoRegisteredNuxtLayers(appRoot, ctx.fs)) {
-    if (name.startsWith(".")) continue;
+  for (const name of appNuxtLayerNames(ctx, appRoot)) {
     const root = join(appRoot, "layers", name);
     if (hasUnresolvedNuxtLayers(ctx, root)) return undefined;
     const layerPrefix = readLiteralNuxtOption(ctx, root, "ui", "prefix");
@@ -476,6 +479,10 @@ function nuxtUiPrefix(ctx: RuleContext, appRoot: string) {
     prefix = layerPrefix;
   }
   return prefix ?? "U";
+}
+
+function appNuxtLayerNames(ctx: RuleContext, appRoot: string) {
+  return autoRegisteredNuxtLayers(appRoot, ctx.fs).filter((name) => !name.startsWith("."));
 }
 
 function hasUnresolvedNuxtLayers(ctx: RuleContext, root: string) {
@@ -491,7 +498,8 @@ function readLiteralNuxtOption(ctx: RuleContext, root: string, key: string, nest
 }
 
 function readNuxtOption(ctx: RuleContext, root: string, key: string, nested?: string) {
-  for (const ext of ["ts", "mts", "js", "mjs", "cjs", "cts"]) {
+  if (ctx.fs.exists(join(root, ".nuxtrc"))) return null;
+  for (const ext of NUXT_CONFIG_SCRIPT_EXTENSIONS) {
     const file = join(root, `nuxt.config.${ext}`);
     const text = ctx.fs.readText(file);
     if (text === undefined) {
@@ -500,6 +508,13 @@ function readNuxtOption(ctx: RuleContext, root: string, key: string, nested?: st
     }
     return readExportedNuxtOption(file, text, key, nested);
   }
+  if (
+    NUXT_CONFIG_DATA_EXTENSIONS.some((ext) => ctx.fs.exists(join(root, `nuxt.config.${ext}`))) ||
+    ctx.fs
+      .readDir(join(root, ".config"))
+      ?.some(({ name }) => /^nuxt(?:\.config)?(?:\.|$)/.test(name))
+  )
+    return null;
 }
 
 /**
