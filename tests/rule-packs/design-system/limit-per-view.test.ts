@@ -113,6 +113,35 @@ test.each([
   },
 );
 
+test.each([
+  `const { useRuntimeConfig: config, ['useNuxtApp']: app } = api; config(); app();`,
+  `let config; ({ useRuntimeConfig: config } = api); config();`,
+])("known non-layout namespace destructuring preserves views: %s", async (script) => {
+  expect(
+    await limitDiagnostics({
+      "app/layouts/default.vue": layout(primary),
+      "app/pages/index.vue": page(primary),
+      "app/pages/docs.vue": page("", `import * as api from '#imports'; ${script}`),
+    }),
+  ).toMatchObject([{ data: { routes: ["/"] } }]);
+});
+
+test.each([
+  `const { setPageLayout: select } = api; select('plain');`,
+  `const key = 'setPageLayout'; const { [key]: select } = api; select('plain');`,
+  `const { useRuntimeConfig, ...rest } = api; rest.setPageLayout('plain');`,
+  `const { useRuntimeConfig = setPageLayout('plain') } = api;`,
+  `let useRuntimeConfig; const alias = ({ useRuntimeConfig } = api); alias.setPageLayout('plain');`,
+])("keeps layout uncertainty for namespace destructuring: %s", async (script) => {
+  expect(
+    await limitDiagnostics({
+      "app/layouts/default.vue": layout(primary),
+      "app/pages/index.vue": page(primary),
+      "app/pages/docs.vue": page("", `import * as api from '#imports'; ${script}`),
+    }),
+  ).toEqual([]);
+});
+
 test.each<Record<string, string>>([
   {
     "app/middleware/select.global.ts": `export default defineNuxtRouteMiddleware(() => {

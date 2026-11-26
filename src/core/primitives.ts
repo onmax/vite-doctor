@@ -890,6 +890,8 @@ export interface ComponentPropFact {
   default: boolean;
   /** The default value when the declaration writes it as a string literal. */
   defaultValue?: string;
+  /** Whether a local destructuring binding applies a fallback independently of the prop default. */
+  localFallback?: boolean;
   range?: SourceRange;
 }
 

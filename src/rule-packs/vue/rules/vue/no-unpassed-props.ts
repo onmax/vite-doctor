@@ -48,11 +48,17 @@ export const noUnpassedProps = createRule({
           const callerFiles = [...new Set(node.callers.map((edge) => edge.from))];
           for (const prop of props) {
             if (passed.has(prop.name)) continue;
-            const value = prop.default ? "its default value" : "undefined";
+            const value = prop.localFallback
+              ? prop.default
+                ? "its default value (or its local destructuring fallback if the default is undefined)"
+                : "its local destructuring fallback"
+              : prop.default
+                ? "its default value"
+                : "undefined";
             ctx.report(
               diagnostics.VUE0039({
                 why: `No caller passes prop "${prop.name}" to ${name}: Doctor resolved ${node.callers.length} ${node.callers.length === 1 ? "usage" : "usages"} in ${callerFiles.length} ${callerFiles.length === 1 ? "file" : "files"}, none of which binds it or spreads props into ${name}. Every instance renders with ${value}, so the prop is contract surface and branching that no caller exercises.`,
-                fix: `Remove "${prop.name}" from ${name}'s defineProps and use ${prop.default ? "the default value directly" : "the value it always has"} in the component, or pass it from the caller that needs it. Keep it if ${name} is rendered from code Doctor cannot see, such as another package or a render function.`,
+                fix: `Remove "${prop.name}" from ${name}'s defineProps and use ${prop.default && !prop.localFallback ? "the default value directly" : "the value it always has"} in the component, or pass it from the caller that needs it. Keep it if ${name} is rendered from code Doctor cannot see, such as another package or a render function.`,
               }),
               {
                 file: node.file,

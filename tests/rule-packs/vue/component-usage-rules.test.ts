@@ -177,6 +177,28 @@ import ActionButton from '../components/ActionButton.vue'
   expect(result.diagnostics[0]!.related).toHaveLength(2);
 });
 
+test("local withDefaults destructuring fallbacks change relay behavior", async () => {
+  const files = {
+    "src/components/Panel.vue": relayChild,
+    "src/components/PanelWrapper.vue": `<script setup lang="ts">
+import Panel from './Panel.vue'
+const { title, subtitle: caption = 'None' } = withDefaults(
+  defineProps<{ title?: string; subtitle?: string }>(), {},
+)
+</script>
+<template><Panel :title="title" :subtitle="caption" /></template>`,
+    "src/pages/Home.vue": `<script setup>
+import PanelWrapper from '../components/PanelWrapper.vue'
+</script>
+<template><PanelWrapper title="Hello" /></template>`,
+  };
+  expect((await runRuleFixture({ rule: noPropRelay, files })).diagnostics).toEqual([]);
+  const { diagnostics } = await runRuleFixture({ rule: noUnpassedProps, files });
+  expect(diagnostics.find(({ file }) => file.endsWith("/PanelWrapper.vue"))?.why).toContain(
+    "renders with its local destructuring fallback",
+  );
+});
+
 test("VUE0039 accounts for implicit v-model modifier props", async () => {
   const result = await runRuleFixture({
     rule: noUnpassedProps,

@@ -52,7 +52,10 @@ function componentFacts(value: unknown): boolean {
       facts(
         value.props,
         (item) =>
-          named(item) && typeof item.default === "boolean" && optionalString(item.defaultValue),
+          named(item) &&
+          typeof item.default === "boolean" &&
+          optionalString(item.defaultValue) &&
+          (item.localFallback === undefined || typeof item.localFallback === "boolean"),
       )) &&
     optionalString(value.propsBinding) &&
     (value.propAliases === undefined || record(value.propAliases)) &&

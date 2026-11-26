@@ -411,11 +411,33 @@ function referencesLayoutApi(
     }
   if (!namespaces.size) return false;
   walkScriptLocal(ast, (node) => {
-    if (node.type !== "MemberExpression") return;
-    const member = propertyName({ key: node.property, computed: node.computed });
-    if (member !== null && member !== LAYOUT_API) namespaces.delete(unwrap(node.object));
+    if (node.type === "MemberExpression") {
+      const member = propertyName({ key: node.property, computed: node.computed });
+      if (member !== null && member !== LAYOUT_API) namespaces.delete(unwrap(node.object));
+    } else if (node.type === "VariableDeclarator") {
+      clearDestructure(node.id, node.init);
+    } else if (node.type === "ExpressionStatement") {
+      const expression = unwrap(node.expression);
+      if (expression?.type === "AssignmentExpression" && expression.operator === "=")
+        clearDestructure(expression.left, expression.right);
+    }
   });
   return namespaces.size > 0;
+
+  function clearDestructure(pattern: unknown, source: unknown) {
+    const read = unwrap(source);
+    if (!namespaces.has(read)) return;
+    const target = unwrap(pattern);
+    if (
+      target?.type === "ObjectPattern" &&
+      target.properties.every((property: { type: string }) => {
+        if (property.type !== "Property") return false;
+        const member = propertyName(property);
+        return member !== null && member !== LAYOUT_API;
+      })
+    )
+      namespaces.delete(read);
+  }
 }
 
 function hasProperty(ast: unknown, name: string): boolean {
