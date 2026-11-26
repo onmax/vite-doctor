@@ -45,18 +45,20 @@ export function hydrationEvidence(
   const nuxt = hydrationNuxtApp(ctx, relativePath);
   if (!nuxt) return vueSsrEvidence(ctx, relativePath);
   const manifest = nuxt.manifest;
-  const nitroRules =
-    manifest?.routeRulePagesCurrent === false
-      ? (manifest.prePageRouteRules ?? manifest.resolvedRouteRules)
-      : manifest?.resolvedRouteRules;
   if (
     nuxt.hydrationSsr !== true ||
     appsWithPossibleInlineSsrOptOut.has(nuxt) ||
     !routeRulesKeepSsr(nuxt.routeRules) ||
-    (manifest?.isCurrent && !routeRulesKeepSsr(nitroRules))
+    (manifest?.isCurrent && !nitroRulesSupportSsr(manifest))
   )
     return undefined;
   return "the Nuxt app enables SSR and has no known route-level SSR opt-out";
+}
+
+function nitroRulesSupportSsr(manifest: NonNullable<NuxtProjectInfo["manifest"]>): boolean {
+  if ((manifest.routeRulePageScriptsCurrent ?? manifest.routeRulePagesCurrent) !== false)
+    return routeRulesKeepSsr(manifest.resolvedRouteRules);
+  return routeRulesKeepSsr(manifest.prePageRouteRules ?? manifest.resolvedRouteRules);
 }
 
 export function hydrationNuxtApp(

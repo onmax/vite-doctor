@@ -343,6 +343,7 @@ export interface NuxtProjectInfo {
     resolvedRouteRules?: Record<string, unknown>;
     prePageRouteRules?: NuxtDoctorManifest["prePageRouteRules"];
     routeRulePagesCurrent?: boolean;
+    routeRulePageScriptsCurrent?: boolean;
     nitroPreset?: string;
     resolvedApp?: NuxtDoctorManifest["resolvedApp"];
     resolvedAppCurrent?: Record<NuxtAppInventoryKind, boolean>;
@@ -528,6 +529,7 @@ export interface NuxtDoctorManifest {
   /** Nitro's resolved rules before Nuxt merges enabled inline page rules. */
   prePageRouteRules?: Record<string, unknown>;
   routeRulePageMtimes?: Record<string, number | null>;
+  routeRulePageScriptHashes?: Record<string, string | null>;
   routeRulePageInventory?: Record<string, string[]>;
   nitroPreset?: string;
   ssr?: boolean;

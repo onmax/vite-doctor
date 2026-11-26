@@ -147,12 +147,14 @@ test.each<Record<string, string>>([
   expect(result.diagnostics).toEqual([]);
 });
 
-test.each(["inline page", "Nitro config", "late Nitro hook"] as const)(
-  "VUE0052 handles stale page inputs with an SSR opt-out from %s",
+test.each(["inline page", "Nitro config", "late Nitro hook", "overwritten Nitro hook"] as const)(
+  "VUE0052 handles stale page inputs with route rules from %s",
   async (source) => {
     const root = mkdtempSync(join(tmpdir(), "doctor-hydration-routes-"));
     const page = caller(["Card"], "<p><Card /></p>", "../components");
     const pagePath = join(root, "app/pages/index.vue");
+    const lateHook = source === "late Nitro hook" || source === "overwritten Nitro hook";
+    const diagnostic = [["VUE0052", "app/pages/index.vue", 5]];
     try {
       symlinkSync(
         fileURLToPath(new URL("../../../node_modules", import.meta.url)),
@@ -172,7 +174,7 @@ test.each(["inline page", "Nitro config", "late Nitro hook"] as const)(
         })`,
       );
       writeFileSync(join(root, "app/components/Card.vue"), component("<div />"));
-      if (source === "late Nitro hook") {
+      if (lateHook) {
         writeFileSync(
           join(root, "late-route-rules.ts"),
           `export default (_options, nuxt) => {
@@ -182,20 +184,19 @@ test.each(["inline page", "Nitro config", "late Nitro hook"] as const)(
           }`,
         );
       }
-      writeFileSync(
-        pagePath,
+      const initialPage =
         source === "late Nitro hook"
-          ? page.replace("<template>", "<template><!-- initial page -->")
-          : page.replace("</script>", "defineRouteRules({ ssr: false })\n</script>"),
-      );
+          ? page
+          : page.replace(
+              "</script>",
+              `defineRouteRules({ ${source === "overwritten Nitro hook" ? "prerender: false" : "ssr: false"} })\n</script>`,
+            );
+      writeFileSync(pagePath, initialPage);
       const nuxt = await loadNuxt({
         cwd: root,
         overrides: {
           _prepare: true,
-          modules: [
-            nuxtDoctorModule,
-            ...(source === "late Nitro hook" ? ["./late-route-rules.ts"] : []),
-          ],
+          modules: [nuxtDoctorModule, ...(lateHook ? ["./late-route-rules.ts"] : [])],
           telemetry: false,
         },
       });
@@ -212,11 +213,16 @@ test.each(["inline page", "Nitro config", "late Nitro hook"] as const)(
           rules: noInvalidRootNesting.meta.id,
           extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
         });
-      expect(located(await scan())).toEqual([]);
-      writeFileSync(pagePath, page);
-      expect(located(await scan())).toEqual(
-        source === "inline page" ? [["VUE0052", "app/pages/index.vue", 5]] : [],
+      const initialDiagnostics =
+        source === "overwritten Nitro hook" ? [["VUE0052", "app/pages/index.vue", 6]] : [];
+      expect(located(await scan())).toEqual(initialDiagnostics);
+      writeFileSync(
+        pagePath,
+        initialPage.replace("<template>", "<template><!-- template edit -->"),
       );
+      expect(located(await scan())).toEqual(initialDiagnostics);
+      writeFileSync(pagePath, page);
+      expect(located(await scan())).toEqual(source === "inline page" ? diagnostic : []);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
