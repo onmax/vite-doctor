@@ -60,7 +60,6 @@ export async function detectProject(
   const framework = requested === "auto" ? workspaceFramework(workspacePackages) : requested;
   const detectedOwner = nuxtInventoryOwner(workspacePackages);
   const graphPackage = runtimeGraphPackage(workspacePackages, framework);
-  if (requested !== "auto") workspacePackages[0]!.framework = requested;
   // An explicit Nuxt run with several nested Nuxt apps treats the workspace root as the owner.
   const nuxtOwnerRoot =
     framework !== "nuxt"
@@ -103,6 +102,7 @@ export async function detectProject(
             ),
         )
       : [];
+  if (requested !== "auto") workspacePackages[0]!.framework = requested;
   const nuxtRenders = new Map(
     [...(owner ? [owner] : []), ...workspaceNuxt].map((item) => [item.root, item.nuxt.ssr]),
   );

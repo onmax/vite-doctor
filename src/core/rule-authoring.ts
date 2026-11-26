@@ -8,8 +8,10 @@ export {
   templateDirectiveBindings,
   templateExpressionReferences,
   TemplateNodeType,
+  templateRoots,
   walkTemplate,
   type TemplateExpressionReference,
+  type TemplateRoot,
 } from "./internal/template.js";
 
 export type AnyNode = any;

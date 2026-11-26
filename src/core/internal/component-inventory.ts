@@ -1,10 +1,12 @@
 import { isAbsolute, resolve } from "pathe";
 import type {
   ComponentNode,
+  ComponentFacts,
   ComponentUsageEdge,
   ComponentUsageGraph,
   FileFacts,
   ImportFact,
+  NuxtProjectInfo,
 } from "../primitives.js";
 import { camelize } from "./component-facts.js";
 import { sourceFacts } from "./facts.js";
@@ -31,11 +33,14 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
   const components = new Map<string, ComponentNode>();
   for (const fact of facts) {
     if (!fact.component) continue;
+    const nuxt = session.handlesByPath.get(fact.path)?.project.nuxt;
     components.set(fact.path, {
       file: fact.path,
       relativePath: fact.relativePath,
       sourceKind: fact.sourceKind,
-      facts: fact.component,
+      facts: readsNuxtAttrs(fact.component, nuxt)
+        ? { ...fact.component, readsAttrs: true }
+        : fact.component,
       renders: [],
       callers: [],
       indirectImporters: [],
@@ -78,6 +83,19 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
     }
   }
   return { components, unresolved };
+}
+
+function readsNuxtAttrs(facts: ComponentFacts, nuxt: NuxtProjectInfo | undefined): boolean {
+  if (facts.readsAttrs || !nuxt?.autoImportsAuthoritative) return false;
+  return facts.nuxtAttrsReferences.some(({ name, explicit }) => {
+    if (!explicit && !nuxt.autoImportEnabled) return false;
+    const entry = nuxt.autoImports.get(name);
+    return (
+      entry?.from === "vue" &&
+      !entry.type &&
+      (entry.name === "useAttrs" || entry.name === "getCurrentInstance")
+    );
+  });
 }
 
 function resolveImportedSfc(

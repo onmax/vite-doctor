@@ -1,7 +1,11 @@
 import { createRule } from "../../../core/index.js";
+import { declaredHintFix } from "../../../mcp/clients/claude-directory.js";
 import { diagnostics } from "../diagnostics.js";
 import { annotationsEvidence, collectMcpTools, toolLabel } from "./shared.js";
 import { reportWireTool, wireToolLabel, wireTools } from "./wire.js";
+
+const UNDECLARED_FIX =
+  "Add `readOnlyHint: true` to the annotations if the tool only reads, or `destructiveHint: true` if it changes or deletes data. Only you can tell which one is true.";
 
 export const requireSafetyHint = createRule({
   meta: {
@@ -55,7 +59,7 @@ export const requireSafetyHint = createRule({
             wire,
             diagnostics.MCP0002({
               why: `MCP tool ${wireToolLabel(wire)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true in its tools/list entry. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.${chatgpt ? " ChatGPT also treats it as a write action that needs the user's confirmation by default, because it has no `readOnlyHint`." : ""}`,
-              fix: "Add `readOnlyHint: true` to the annotations if the tool only reads, or `destructiveHint: true` if it changes or deletes data. Only you can tell which one is true.",
+              fix: declaredHintFix(wire.tool.annotations ?? {}) ?? UNDECLARED_FIX,
             }),
             {
               ruleId: "mcp/tools/require-safety-hint",
@@ -82,7 +86,11 @@ export const requireSafetyHint = createRule({
           ctx.report(
             diagnostics.MCP0002({
               why: `MCP tool ${toolLabel(tool)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.`,
-              fix: "Add `readOnlyHint: true` to the annotations if the tool only reads, or `destructiveHint: true` if it changes or deletes data. Only you can tell which one is true.",
+              fix:
+                declaredHintFix({
+                  readOnlyHint: hints[0]?.state === "resolved" ? hints[0].value : undefined,
+                  destructiveHint: hints[1]?.state === "resolved" ? hints[1].value : undefined,
+                }) ?? UNDECLARED_FIX,
             }),
             {
               ruleId: "mcp/tools/require-safety-hint",

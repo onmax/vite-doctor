@@ -66,6 +66,20 @@ function componentFacts(value: unknown): boolean {
     typeof value.ownLogic === "boolean" &&
     typeof value.ownMarkup === "boolean" &&
     integer(value.rootNodes) &&
+    Array.isArray(value.roots) &&
+    value.roots.every(
+      (root) =>
+        record(root) &&
+        facts(
+          root.branches,
+          (branch) =>
+            ["element", "component", "slot", "fragment", "text"].includes(branch.kind as string) &&
+            optionalString(branch.tag),
+        ),
+    ) &&
+    (value.inheritAttrs === undefined || typeof value.inheritAttrs === "boolean") &&
+    typeof value.readsAttrs === "boolean" &&
+    facts(value.nuxtAttrsReferences, (item) => named(item) && typeof item.explicit === "boolean") &&
     Array.isArray(value.comparisons) &&
     value.comparisons.every(
       (item) => record(item) && typeof item.left === "string" && typeof item.right === "string",
@@ -75,12 +89,22 @@ function componentFacts(value: unknown): boolean {
       (item) =>
         typeof item.tag === "string" &&
         Array.isArray(item.attributes) &&
-        Array.isArray(item.bindings) &&
+        facts(
+          item.bindings,
+          (binding) => typeof binding.vnodeKey === "string" && optionalString(binding.modifiersKey),
+        ) &&
         Array.isArray(item.spreads) &&
-        Array.isArray(item.listeners) &&
+        facts(
+          item.listeners,
+          (listener) => typeof listener.vnodeKey === "string" && strings(listener.modifiers),
+        ) &&
         strings(item.directives) &&
         strings(item.scope) &&
-        typeof item.inFor === "boolean",
+        typeof item.inFor === "boolean" &&
+        (item.parent === undefined ||
+          (record(item.parent) &&
+            typeof item.parent.tag === "string" &&
+            typeof item.parent.element === "boolean")),
     ) &&
     strings(value.bindingReferences)
   );

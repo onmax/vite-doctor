@@ -47,6 +47,7 @@ export { noUselessTemplateAttributes } from "./no-useless-template-attributes.js
 export { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
 export { requireExplicitEmits } from "./require-explicit-emits.js";
 export { noExternalSharedStateMutation } from "./no-external-shared-state-mutation.js";
+export { noMultiRootFallthrough } from "./no-multi-root-fallthrough.js";
 export { noShallowRefDeepMutation } from "./no-shallow-ref-deep-mutation.js";
 export { noPropertyReadWatchSource } from "./no-property-read-watch-source.js";
 export { noRedirectCycle } from "./no-redirect-cycle.js";
@@ -100,6 +101,7 @@ import { noUselessTemplateAttributes } from "./no-useless-template-attributes.js
 import { requireToggleInsideTransition } from "./require-toggle-inside-transition.js";
 import { requireExplicitEmits } from "./require-explicit-emits.js";
 import { noExternalSharedStateMutation } from "./no-external-shared-state-mutation.js";
+import { noMultiRootFallthrough } from "./no-multi-root-fallthrough.js";
 import { noShallowRefDeepMutation } from "./no-shallow-ref-deep-mutation.js";
 import { noPropertyReadWatchSource } from "./no-property-read-watch-source.js";
 import { noRedirectCycle } from "./no-redirect-cycle.js";
@@ -157,6 +159,7 @@ const rules = [
   requireToggleInsideTransition,
   requireExplicitEmits,
   noExternalSharedStateMutation,
+  noMultiRootFallthrough,
   noShallowRefDeepMutation,
   noPropertyReadWatchSource,
   noRedirectCycle,
@@ -184,6 +187,7 @@ const strictOnlyRules = [
   preferStableListProps,
   requireExplicitEmits,
   noExternalSharedStateMutation,
+  noMultiRootFallthrough,
 ];
 
 const vueRulePack = defineRulePack({
