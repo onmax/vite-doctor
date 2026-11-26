@@ -61,8 +61,27 @@ test("errors and warnings become workflow commands relative to GITHUB_WORKSPACE"
 });
 
 test("falls back to the CLI's cwd without GITHUB_WORKSPACE", () => {
-  stubReaderEnv({ CI: "true", GITHUB_ACTIONS: "true" });
+  stubReaderEnv({ CI: "true", GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: undefined });
   expect(annotate([finding("warn")])).toMatch(/^::warning title=DOC9999,file=src\/app\.ts::/);
+});
+
+test.each([
+  { name: "multiline", source: "first\nsecond\nthird", end: 8, location: "line=1,endLine=2" },
+  { name: "final CRLF", source: "first\r\nsecond\r\n", end: 15, location: "line=1,endLine=2" },
+  {
+    name: "single line including its newline",
+    source: "first\nsecond",
+    end: 6,
+    location: "line=1,col=2,endLine=1,endColumn=6",
+  },
+])("annotates only the lines covered by the range ($name)", ({ source, end, location }) => {
+  inGitHubActions();
+  const file = join(root, "src/range-end.ts");
+  writeFileSync(file, source);
+  const output = annotate([
+    finding("warn", { file, range: { start: 1, end, line: 1, column: 2 } }),
+  ]);
+  expect(output).toContain(`,file=app/src/range-end.ts,${location}::`);
 });
 
 test("escapes data and property values", () => {

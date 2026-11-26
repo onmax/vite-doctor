@@ -45,9 +45,13 @@ function annotation(command: string, diagnostic: Diagnostic, file: string): stri
   if (file) properties.push(["file", file]);
   if (diagnostic.range) {
     const { line, column } = diagnostic.range;
-    properties.push(["line", line], ["col", column]);
+    properties.push(["line", line]);
     const end = rangeEnd(diagnostic);
-    if (end) properties.push(["endLine", end.line], ["endColumn", end.column]);
+    if (!end || end.line === line) properties.push(["col", column]);
+    if (end) {
+      properties.push(["endLine", end.line]);
+      if (end.line === line) properties.push(["endColumn", end.column]);
+    }
   }
   const message = diagnostic.brief ?? diagnostic.message;
   return `::${command} ${properties
@@ -67,7 +71,8 @@ function rangeEnd(diagnostic: Diagnostic): { line: number; column: number } | un
   // The end is only an offset; trust it only when the start offset lands on the reported start.
   const start = lineColumnAt(source, range.start);
   if (start.line !== range.line || start.column !== range.column) return undefined;
-  return lineColumnAt(source, range.end);
+  const end = lineColumnAt(source, range.end);
+  return end.column === 1 ? lineColumnAt(source, range.end - 1) : end;
 }
 
 function escapeData(value: string): string {
