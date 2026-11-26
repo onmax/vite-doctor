@@ -243,6 +243,24 @@ defineProps<{ title: string }>()
   }
 });
 
+test("withDefaults looks up the raw declaration key through spreads", async () => {
+  const { rule, graph } = captureGraph();
+  await runProjectFixture({
+    rules: [rule],
+    files: {
+      "src/Button.vue": `<script setup lang="ts">
+withDefaults(defineProps<{ buttonTone?: string; label?: string }>(), { label: 'Save', ...{ 'button-tone': 'primary' } });
+</script><template><button /></template>`,
+    },
+  });
+  const facts = [...graph().components.values()][0]!.facts;
+  expect(facts.props).toMatchObject([
+    { name: "buttonTone", default: false },
+    { name: "label", default: true, defaultValue: "Save" },
+  ]);
+  expect(facts.props?.[0]).not.toHaveProperty("defaultValue");
+});
+
 test("component facts record where each usage and slot outlet renders", async () => {
   const { rule, graph } = captureGraph();
   const result = await runProjectFixture({

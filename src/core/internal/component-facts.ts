@@ -355,24 +355,20 @@ function readOption(options: AnyNode, name: string): "absent" | "unknown" | { va
   return "unknown" in result ? "unknown" : result.value ? { value: result.value } : "absent";
 }
 
-function findOption(
-  options: AnyNode,
-  name: string,
-  normalizeKey?: (key: string) => string,
-): { value?: AnyNode; unknown?: AnyNode } {
+function findOption(options: AnyNode, name: string): { value?: AnyNode; unknown?: AnyNode } {
   options = unwrapOptions(options);
   if (options?.type !== "ObjectExpression") return { unknown: options };
   let unknown: AnyNode;
   for (let index = options.properties.length - 1; index >= 0; index--) {
     const property = options.properties[index];
     if (property.type === "SpreadElement") {
-      const spread = findOption(property.argument, name, normalizeKey);
+      const spread = findOption(property.argument, name);
       if ("unknown" in spread) unknown ??= spread.unknown ?? property;
       if (spread.value) return unknown ? { value: spread.value, unknown } : { value: spread.value };
       continue;
     }
     const key = optionKey(property);
-    if (key !== undefined && (normalizeKey ? normalizeKey(key) : key) === name)
+    if (key === name)
       return unknown ? { value: property.value, unknown } : { value: property.value };
     if (property.computed && key === undefined) unknown ??= property;
   }
@@ -480,16 +476,9 @@ function readMacroCall(
   if (name === "withDefaults") {
     const inner = call.arguments?.[0];
     if (inner?.callee?.name !== "defineProps") return false;
-    readProps(facts, inner, id, types, rangeOf);
     const defaults = call.arguments?.[1];
-    if (defaults?.type === "ObjectExpression") {
-      for (const prop of facts.props ?? []) {
-        const fallback = findOption(defaults, prop.name, camelize);
-        if (fallback.value)
-          setDefault(prop, "unknown" in fallback ? undefined : stringLiteral(fallback.value));
-        else if ("unknown" in fallback) delete prop.defaultValue;
-      }
-    } else if (defaults) facts.props = undefined;
+    readProps(facts, inner, id, types, rangeOf, defaults);
+    if (defaults && defaults.type !== "ObjectExpression") facts.props = undefined;
     return true;
   }
   if (name === "defineProps") {
@@ -524,10 +513,11 @@ function readProps(
   id: AnyNode,
   types: Map<string, AnyNode>,
   rangeOf: RangeOf,
+  defaults?: AnyNode,
 ): void {
   const typeArgument = (call.typeArguments ?? call.typeParameters)?.params?.[0];
   const props = typeArgument
-    ? propsFromType(typeArgument, types, rangeOf)
+    ? propsFromType(typeArgument, types, rangeOf, defaults)
     : propsFromRuntime(call.arguments?.[0], rangeOf);
   facts.props = props;
   if (id?.type === "Identifier") {
@@ -593,9 +583,9 @@ function propsFromType(
   type: AnyNode,
   types: Map<string, AnyNode>,
   rangeOf: RangeOf,
-  seen = new Set<string>(),
+  defaults?: AnyNode,
 ): ComponentPropFact[] | undefined {
-  const members = typeMembers(type, types, seen);
+  const members = typeMembers(type, types, new Set<string>());
   if (!members) return undefined;
   const props: ComponentPropFact[] = [];
   for (const member of members) {
@@ -603,7 +593,17 @@ function propsFromType(
       return undefined;
     const key = !member.computed ? propertyKey(member) : undefined;
     if (!key) return undefined;
-    props.push({ name: camelize(key), default: false, range: rangeOf(member.start, member.end) });
+    const prop: ComponentPropFact = {
+      name: camelize(key),
+      default: false,
+      range: rangeOf(member.start, member.end),
+    };
+    if (defaults) {
+      const fallback = findOption(defaults, key);
+      if (fallback.value)
+        setDefault(prop, "unknown" in fallback ? undefined : stringLiteral(fallback.value));
+    }
+    props.push(prop);
   }
   return props;
 }

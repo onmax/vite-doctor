@@ -92,6 +92,22 @@ test("a layout switch in a template handler disables views", async () => {
   ).toEqual([]);
 });
 
+test.each([
+  [`{{ setPageLayout }}`, `const setPageLayout = 'documentation'`],
+  [`{{ examples.setPageLayout }}`, `const examples = { setPageLayout: 'documentation' }`],
+  [`<div v-for="setPageLayout in examples">{{ setPageLayout }}</div>`, `const examples = []`],
+])(
+  "layout API names used as local template data do not disable views: %s",
+  async (body, script) => {
+    expect(
+      await limitDiagnostics({
+        "app/pages/index.vue": page(primary + primary),
+        "app/pages/docs.vue": page(body, script),
+      }),
+    ).toMatchObject([{ data: { routes: ["/"] } }]);
+  },
+);
+
 test.each<Record<string, string>>([
   {
     "app/middleware/select.global.ts": `export default defineNuxtRouteMiddleware(() => {
@@ -103,6 +119,12 @@ test.each<Record<string, string>>([
     "app/components/LayoutSelector.vue": page(
       `<button @click="chooseLayout('plain')">Change layout</button>`,
       `import { setPageLayout as chooseLayout } from '#imports'`,
+    ),
+  },
+  {
+    "app/components/LayoutSelector.vue": page(
+      `<button @click="nuxt['setPageLayout']('plain')">Change layout</button>`,
+      `import * as nuxt from '#imports'`,
     ),
   },
 ])("layout API references can switch layouts through aliases: %j", async (files) => {
@@ -132,6 +154,20 @@ test.each([
     await limitDiagnostics({
       "app/components/AppButton.vue": appButton.replace(/^withDefaults.*;$/m, `${props};`),
       "app/pages/index.vue": page(primary + `<AppButton />`),
+    }),
+  ).toEqual([]);
+});
+
+test("does not count a default declared under a different raw prop key", async () => {
+  expect(
+    await limitDiagnostics({
+      "app/components/AppButton.vue": appButton
+        .replace(
+          /^withDefaults.*;$/m,
+          `withDefaults(defineProps<{ buttonTone?: string }>(), { buttonTone: 'secondary', 'button-tone': 'primary' });`,
+        )
+        .replace('when: { variant: "primary" }', 'when: { buttonTone: "primary" }'),
+      "app/pages/index.vue": page(`<AppButton button-tone="primary" /><AppButton />`),
     }),
   ).toEqual([]);
 });
