@@ -6,6 +6,7 @@ import type {
   Confidence,
   Diagnostic,
   DiagnosticEvidence,
+  DiagnosticOrigin,
   DoctorReportFormat,
   DoctorRunResult,
   DoctorSeverity,
@@ -117,6 +118,7 @@ function textDiagnosticBlock(
     `    rule: ${diagnostic.ruleId}`,
     `    source: ${source}`,
     ...(diagnostic.confidence ? [`    confidence: ${diagnostic.confidence}`] : []),
+    ...(diagnostic.origin ? [`    origin: ${originSummary(diagnostic.origin)}`] : []),
     ...(diagnostic.evidence ?? [])
       .filter((item) => !shared.has(evidenceKey(item)))
       .map((item) => `    evidence: ${item.kind}: ${item.summary}`),
@@ -127,6 +129,26 @@ function textDiagnosticBlock(
 export function diagnosticLocation(root: string, diagnostic: Diagnostic): string {
   const path = relative(root, diagnostic.file) || ".";
   return diagnostic.range ? `${path}:${diagnostic.range.line}:${diagnostic.range.column}` : path;
+}
+
+type OriginTag = "code" | "code+live" | "live";
+
+/** Whether the source, a live target such as a deployed server, or both showed the Diagnostic. */
+function originTag(diagnostic: Diagnostic): OriginTag {
+  if (!diagnostic.origin?.live?.length) return "code";
+  return diagnostic.origin.code === "found" ? "code+live" : "live";
+}
+
+const SOURCE_STATES: Record<DiagnosticOrigin["code"], string> = {
+  found: "the source has it too",
+  passes: "the source already passes, so redeploy instead of editing",
+  "not-checked": "only the live target can show it",
+  "no-definition": "no definition in source",
+};
+
+function originSummary(origin: DiagnosticOrigin): string {
+  const live = origin.live?.map((target) => target.target).join(", ");
+  return live ? `live at ${live}; ${SOURCE_STATES[origin.code]}` : SOURCE_STATES[origin.code];
 }
 
 function isLocated(root: string, diagnostic: Diagnostic): boolean {
@@ -331,6 +353,8 @@ function textLayout(
     : { more: command({ rules: null }), full: command({ full: true }) };
   const plural = (count: number, noun: string) =>
     `${count.toLocaleString("en-US")} ${noun}${count === 1 ? "" : "s"}`;
+  // A run that only read source looks as it always did; a tag column appears once origins mix.
+  const tagged = new Set(result.diagnostics.map(originTag)).size > 1;
   const footer = (hidden: BudgetHidden, hiddenCodes: number): string[] => {
     if (!hasHidden(hidden)) return [];
     const limit = `(limit ${plural(maxChars, "character")}).`;
@@ -385,11 +409,13 @@ function textLayout(
     const width = Math.min(48, Math.max(...labels.map((label) => label.length)));
     const rows = group.diagnostics.map((diagnostic, row) => {
       const safety = diagnostic.fix ? ` · ${fixSafetyLabel(diagnostic.fix.kind)}` : "";
+      const redeploy = diagnostic.origin?.code === "passes" ? " · redeploy" : "";
+      const tag = tagged ? `${originTag(diagnostic).padEnd(9)}  ` : "";
       const text = (diagnostic.brief ?? diagnostic.why).replaceAll(
         "\n",
-        `\n${" ".repeat(width + 4)}`,
+        `\n${" ".repeat(tag.length + width + 4)}`,
       );
-      return `  ${labels[row]!.padEnd(width)}  ${text}${safety}`;
+      return `  ${tag}${labels[row]!.padEnd(width)}  ${text}${redeploy}${safety}`;
     });
     const trailer = (hiddenRows: number, hint: GroupHint | undefined) => [
       ...(hiddenRows ? [`  (${plural(hiddenRows, "more row")})`] : []),
@@ -659,6 +685,9 @@ function agentLayout(
     : "To see what the Report Budget hid, append a group's more items to commandArgs.more, or use commandArgs.full when no more items are given.";
   const codes = codeIndex(groups);
   const total = result.diagnostics.length;
+  const live = result.diagnostics.some((diagnostic) => diagnostic.origin?.live?.length)
+    ? ` A Diagnostic with a live origin clears only after the fix is deployed to its target; when its origin.code is "passes", the source is already fixed, so redeploy instead of editing.`
+    : "";
   const serialize = (budget: object | undefined, items: object[]) =>
     `${JSON.stringify({
       schema: "vite-doctor.agent/v3",
@@ -696,7 +725,7 @@ function agentLayout(
               }
             : {
                 action: "remediate",
-                instruction: `Apply the smallest remediation that resolves each owned diagnostic${plugin ? "" : ", run its focused verification"}, then rerun Doctor.${budget ? ` ${recovery}` : ""}`,
+                instruction: `Apply the smallest remediation that resolves each owned diagnostic${plugin ? "" : ", run its focused verification"}, then rerun Doctor.${live}${budget ? ` ${recovery}` : ""}`,
               },
     })}\n`;
   const budgetField = (hidden: BudgetHidden) => ({ maxChars, hidden });
@@ -792,6 +821,7 @@ function agentRow(result: DoctorRunResult, diagnostic: Diagnostic) {
         ? agentLocation(result, diagnostic)
         : undefined,
     subject: diagnostic.subject,
+    origin: diagnostic.origin,
     ...(diagnostic.brief ? { brief: diagnostic.brief } : { message: diagnostic.why }),
     fixSafety: diagnostic.fix?.kind,
   };
@@ -802,6 +832,7 @@ function agentDetail(result: DoctorRunResult, diagnostic: Diagnostic) {
     fingerprint: diagnostic.fingerprint,
     location: agentLocation(result, diagnostic),
     subject: diagnostic.subject,
+    origin: diagnostic.origin,
     brief: diagnostic.brief,
     message: diagnostic.why,
     fixSafety: diagnostic.fix?.kind,
@@ -888,10 +919,16 @@ export function createSarifReport(result: DoctorRunResult): string {
                 ? diagnostic.evidence.map((item) => item.kind)
                 : undefined,
               analysisPhase: diagnostic.analysisPhase,
+              origin: diagnostic.origin,
               data: diagnostic.data,
             },
             locations: [
               {
+                // What a live target sent, such as an MCP tool, named beside where to fix it.
+                logicalLocations:
+                  diagnostic.origin?.live?.length && diagnostic.subject
+                    ? [{ name: diagnostic.subject, kind: "resource" }]
+                    : undefined,
                 physicalLocation: {
                   artifactLocation: { uri: sarifArtifactUri(result.root, diagnostic.file) },
                   region: diagnostic.range
