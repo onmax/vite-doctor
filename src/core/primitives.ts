@@ -134,9 +134,10 @@ export interface Diagnostic {
  */
 export interface DiagnosticOrigin {
   /**
-   * What the source shows: `found` when it has the problem, `passes` when it doesn't (the live
-   * target runs other code, so redeploy), `not-checked` when only a live target can show the
-   * problem, and `no-definition` when no source defines what the Diagnostic is about.
+   * What the source shows: `found` when the matched definition has the problem, `passes` when
+   * it doesn't (without inferring why the live target differs), `not-checked` when the source
+   * wasn't checked or couldn't establish the answer, and `no-definition` when no unique
+   * definition was matched.
    */
   code: "found" | "passes" | "not-checked" | "no-definition";
   /** The live targets that showed the problem during this Doctor Run. */

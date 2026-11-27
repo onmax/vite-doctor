@@ -7,7 +7,7 @@ import {
   toolLabel,
   type McpToolDefinition,
 } from "./shared.js";
-import { definedToolFingerprint, reportWireTool, wireTools } from "./wire.js";
+import { definedToolFingerprint, reportWireTools, wireTools } from "./wire.js";
 
 const SAFETY_BRIEF = "neither readOnlyHint nor destructiveHint is true";
 
@@ -58,14 +58,13 @@ export const requireSafetyHint = createRule({
     return {
       async onWorkspaceEnd() {
         const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent)
-          reportWireTool(ctx, wire, "MCP0002", {
-            ruleId: "mcp/tools/require-safety-hint",
-            diagnostic: diagnostics.MCP0002,
-            range: (tool) =>
-              tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
-            source: missingSafetyHint,
-          });
+        reportWireTools(ctx, sent, "MCP0002", {
+          ruleId: "mcp/tools/require-safety-hint",
+          diagnostic: diagnostics.MCP0002,
+          range: (tool) =>
+            tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
+          source: missingSafetyHint,
+        });
         for (const tool of sourceOnly) {
           if (missingSafetyHint(tool) !== true) continue;
           const { annotations } = tool;

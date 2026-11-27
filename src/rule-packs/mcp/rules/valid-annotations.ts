@@ -1,7 +1,7 @@
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { collectMcpTools } from "./shared.js";
-import { reportWireTool, wireTools } from "./wire.js";
+import { reportWireTools, wireTools } from "./wire.js";
 
 export const validAnnotations = createRule({
   meta: {
@@ -40,13 +40,12 @@ export const validAnnotations = createRule({
     return {
       async onWorkspaceEnd() {
         const { tools } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of tools)
-          reportWireTool(ctx, wire, "MCP0010", {
-            ruleId: "mcp/tools/valid-annotations",
-            diagnostic: diagnostics.MCP0010,
-            range: (tool) =>
-              tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
-          });
+        reportWireTools(ctx, tools, "MCP0010", {
+          ruleId: "mcp/tools/valid-annotations",
+          diagnostic: diagnostics.MCP0010,
+          range: (tool) =>
+            tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
+        });
       },
     };
   },

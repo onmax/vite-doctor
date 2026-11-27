@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { McpTool } from "@loadsheet/mcp";
 import { join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
 import type { Diagnostic, DoctorRunOptions } from "../../src/core/index.ts";
+import { createDiagnosticFingerprint } from "../../src/core/internal/diagnostics.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 
 const cleanups: Array<() => void> = [];
@@ -32,14 +33,17 @@ function project(annotations = "{ readOnlyHint: true }") {
   return root;
 }
 
-function server(tools: McpTool[]): NonNullable<DoctorRunOptions["extensions"]> {
+function server(
+  tools: McpTool[],
+  urls = ["https://mcp.example.com/mcp"],
+): NonNullable<DoctorRunOptions["extensions"]> {
   return [
     {
       name: "fixture/server",
       setup(api) {
         api.registerRuntimeEvidenceContributor({
           name: "server",
-          contribute: () => ({ mcpServers: [{ url: "https://mcp.example.com/mcp", tools }] }),
+          contribute: () => ({ mcpServers: urls.map((url) => ({ url, tools })) }),
         });
       },
     },
@@ -74,9 +78,24 @@ test("a finding the source and the server share keeps its fingerprint when the s
   expect(both?.origin).toEqual({ code: "found", live });
   expect(both?.fingerprint).toBe(code?.fingerprint);
   expect(both?.file).toBe(code?.file);
+
+  const confirmed = (
+    await run(root, {
+      extensions: server(
+        [sent({ readOnlyHint: true })],
+        ["https://second.example.com/mcp", "https://mcp.example.com/mcp"],
+      ),
+    })
+  ).filter((diagnostic) => diagnostic.code === "MCP0001");
+  expect(confirmed).toHaveLength(1);
+  expect(confirmed[0]?.fingerprint).toBe(code?.fingerprint);
+  expect(confirmed[0]?.origin).toEqual({
+    code: "found",
+    live: [{ source: "mcp", target: "https://second.example.com" }, ...live],
+  });
 });
 
-test("a server that lags a fixed source reports the definition as passing", async () => {
+test("a wire finding absent from the source reports the definition as passing", async () => {
   const root = project("{ title: 'List drops', readOnlyHint: true }");
   expect(byCode(await run(root), "MCP0001")).toBeUndefined();
   const stale = byCode(
@@ -85,6 +104,52 @@ test("a server that lags a fixed source reports the definition as passing", asyn
   );
   expect(stale?.origin).toEqual({ code: "passes", live });
   expect(stale?.file).toBe(join(root, "server/mcp/tools/list_drops.ts"));
+});
+
+test.each(["MCP0001", "MCP0010"])("%s baselines identify each live-only endpoint", async (code) => {
+  const root = project("{ title: 'List drops', readOnlyHint: true }");
+  const first = "https://mcp.example.com/first";
+  const second = "https://mcp.example.com/second";
+  const tools = [sent(code === "MCP0001" ? { readOnlyHint: true } : { title: false })];
+  const baseline = "baseline.json";
+  const findings = async (urls: string[], options: Partial<DoctorRunOptions> = {}) =>
+    (await run(root, { extensions: server(tools, urls), ...options }))
+      .filter((item) => item.code === code)
+      .map((item) => item.fingerprint);
+
+  const known = await findings([first], { baseline, updateBaseline: true });
+  const other = await findings([second]);
+  expect(known).toHaveLength(1);
+  expect(other).toHaveLength(1);
+  expect(await findings([second, first], { baseline, newOnly: true })).toEqual(other);
+  expect(await findings([second], { baseline, newOnly: true })).toEqual(other);
+  expect(other).not.toEqual(known);
+});
+
+test("a scheme-4 baseline warns about a changed static MCP fingerprint", async () => {
+  const root = project();
+  const finding = byCode(await run(root), "MCP0001")!;
+  const legacy = createDiagnosticFingerprint(root, finding, readFileSync(finding.file, "utf8"));
+  writeFileSync(
+    join(root, "baseline.json"),
+    JSON.stringify({ version: 2, fingerprintScheme: 4, diagnostics: [{ fingerprint: legacy }] }),
+  );
+  const result = await runViteDoctor({ root, baseline: "baseline.json", newOnly: true });
+  expect(result.diagnostics.map((item) => item.code)).toEqual(
+    expect.arrayContaining(["DOC0032", "MCP0001"]),
+  );
+});
+
+test("affected-file runs keep only live findings located in the affected files", async () => {
+  const root = project();
+  const extensions = server([sent({ readOnlyHint: true })]);
+  expect(await run(root, { affectedFiles: ["server/other.ts"], extensions })).toEqual([]);
+  expect(
+    byCode(
+      await run(root, { affectedFiles: ["server/mcp/tools/list_drops.ts"], extensions }),
+      "MCP0001",
+    )?.origin,
+  ).toEqual({ code: "found", live });
 });
 
 test("a tool only the server sends has no definition", async () => {

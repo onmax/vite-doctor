@@ -141,7 +141,7 @@ function originTag(diagnostic: Diagnostic): OriginTag {
 
 const SOURCE_STATES: Record<DiagnosticOrigin["code"], string> = {
   found: "the source has it too",
-  passes: "the source already passes, so redeploy instead of editing",
+  passes: "the source passes the static check; check the deployment and runtime configuration",
   "not-checked": "the source was not verified",
   "no-definition": "no definition in source",
 };
@@ -408,13 +408,13 @@ function textLayout(
     const width = Math.min(48, Math.max(...labels.map((label) => label.length)));
     const rows = group.diagnostics.map((diagnostic, row) => {
       const safety = diagnostic.fix ? ` · ${fixSafetyLabel(diagnostic.fix.kind)}` : "";
-      const redeploy = diagnostic.origin?.code === "passes" ? " · redeploy" : "";
+      const deployment = diagnostic.origin?.code === "passes" ? " · check deployment" : "";
       const tag = tagged ? `${originTag(diagnostic).padEnd(9)}  ` : "";
       const text = (diagnostic.brief ?? diagnostic.why).replaceAll(
         "\n",
         `\n${" ".repeat(tag.length + width + 4)}`,
       );
-      return `  ${tag}${labels[row]!.padEnd(width)}  ${text}${redeploy}${safety}`;
+      return `  ${tag}${labels[row]!.padEnd(width)}  ${text}${deployment}${safety}`;
     });
     const trailer = (hiddenRows: number, hint: GroupHint | undefined) => [
       ...(hiddenRows ? [`  (${plural(hiddenRows, "more row")})`] : []),
@@ -686,8 +686,8 @@ function agentLayout(
   const total = result.diagnostics.length;
   const live = result.diagnostics.filter((diagnostic) => diagnostic.origin?.live?.length);
   const verifyLive = live.length ? " Verify live findings against the same target." : "";
-  const redeploy = live.some((diagnostic) => diagnostic.origin?.code === "passes")
-    ? ' When origin.code is "passes", the source already passes, so redeploy to the target instead of editing.'
+  const deployment = live.some((diagnostic) => diagnostic.origin?.code === "passes")
+    ? ' When origin.code is "passes", check the deployed version and runtime configuration before editing source or redeploying.'
     : "";
   const serialize = (budget: object | undefined, items: object[]) =>
     `${JSON.stringify({
@@ -726,7 +726,7 @@ function agentLayout(
               }
             : {
                 action: "remediate",
-                instruction: `Apply the smallest remediation that resolves each owned diagnostic${plugin ? "" : ", run its focused verification"}, then rerun Doctor.${verifyLive}${redeploy}${budget ? ` ${recovery}` : ""}`,
+                instruction: `Apply the smallest remediation that resolves each owned diagnostic${plugin ? "" : ", run its focused verification"}, then rerun Doctor.${verifyLive}${deployment}${budget ? ` ${recovery}` : ""}`,
               },
     })}\n`;
   const budgetField = (hidden: BudgetHidden) => ({ maxChars, hidden });

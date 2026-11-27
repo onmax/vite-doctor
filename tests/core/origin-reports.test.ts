@@ -42,20 +42,22 @@ test("text rows of a code-only run carry no origin tag", () => {
   expect(report).not.toContain("code+live");
 });
 
-test("text rows tag each origin once origins mix, and a stale deployment says redeploy", () => {
+test("text rows tag each origin once origins mix, and passing source prompts a deployment check", () => {
   const result = resultFor(
     finding("src/a.ts"),
     finding("src/b.ts", { code: "found", live }),
     finding("src/c.ts", { code: "passes", live }),
   );
-  const rows = createTextReport(result, { runOptions: { maxChars: 780 } });
+  const rows = createTextReport(result, { runOptions: { maxChars: 800 } });
   expect(rows).toMatch(/^ {2}code {7}src\/a\.ts:1:1 {2}Problem in src\/a\.ts\.$/m);
   expect(rows).toMatch(/^ {2}code\+live {2}src\/b\.ts:1:1 {2}Problem in src\/b\.ts\.$/m);
-  expect(rows).toMatch(/^ {2}live {7}src\/c\.ts:1:1 {2}Problem in src\/c\.ts\. · redeploy$/m);
+  expect(rows).toMatch(
+    /^ {2}live {7}src\/c\.ts:1:1 {2}Problem in src\/c\.ts\. · check deployment$/m,
+  );
 
   const detail = createTextReport(result);
   expect(detail).toContain(
-    "    origin: live at https://mcp.example.com; the source already passes, so redeploy instead of editing",
+    "    origin: live at https://mcp.example.com; the source passes the static check; check the deployment and runtime configuration",
   );
   expect(detail).toContain("    origin: live at https://mcp.example.com; the source has it too");
 });
@@ -78,14 +80,16 @@ test("text details say when Doctor did not verify the source", () => {
   );
 });
 
-test("the agent report carries origin and reserves redeploy guidance for passing source", () => {
+test("the agent report carries origin and reserves deployment guidance for passing source", () => {
   const report = JSON.parse(
     createAgentReport(resultFor(finding("src/c.ts", { code: "passes", live }))),
   );
   expect(report.groups[0].diagnostics[0].origin).toEqual({ code: "passes", live });
   expect(report.next.instruction).toContain("Verify live findings against the same target.");
   expect(report.next.instruction).toContain('When origin.code is "passes",');
-  expect(report.next.instruction).toContain("redeploy to the target instead of editing");
+  expect(report.next.instruction).toContain(
+    "check the deployed version and runtime configuration before editing source or redeploying",
+  );
 
   const unchecked = JSON.parse(
     createAgentReport(resultFor(finding("src/a.ts", { code: "not-checked", live }))),
