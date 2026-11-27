@@ -142,7 +142,7 @@ function originTag(diagnostic: Diagnostic): OriginTag {
 const SOURCE_STATES: Record<DiagnosticOrigin["code"], string> = {
   found: "the source has it too",
   passes: "the source already passes, so redeploy instead of editing",
-  "not-checked": "only the live target can show it",
+  "not-checked": "the source was not verified",
   "no-definition": "no definition in source",
 };
 
@@ -353,8 +353,7 @@ function textLayout(
     : { more: command({ rules: null }), full: command({ full: true }) };
   const plural = (count: number, noun: string) =>
     `${count.toLocaleString("en-US")} ${noun}${count === 1 ? "" : "s"}`;
-  // A run that only read source looks as it always did; a tag column appears once origins mix.
-  const tagged = new Set(result.diagnostics.map(originTag)).size > 1;
+  const tagged = result.diagnostics.some((diagnostic) => diagnostic.origin?.live?.length);
   const footer = (hidden: BudgetHidden, hiddenCodes: number): string[] => {
     if (!hasHidden(hidden)) return [];
     const limit = `(limit ${plural(maxChars, "character")}).`;
@@ -685,8 +684,10 @@ function agentLayout(
     : "To see what the Report Budget hid, append a group's more items to commandArgs.more, or use commandArgs.full when no more items are given.";
   const codes = codeIndex(groups);
   const total = result.diagnostics.length;
-  const live = result.diagnostics.some((diagnostic) => diagnostic.origin?.live?.length)
-    ? ` A Diagnostic with a live origin clears only after the fix is deployed to its target; when its origin.code is "passes", the source is already fixed, so redeploy instead of editing.`
+  const live = result.diagnostics.filter((diagnostic) => diagnostic.origin?.live?.length);
+  const verifyLive = live.length ? " Verify live findings against the same target." : "";
+  const redeploy = live.some((diagnostic) => diagnostic.origin?.code === "passes")
+    ? ' When origin.code is "passes", the source already passes, so redeploy to the target instead of editing.'
     : "";
   const serialize = (budget: object | undefined, items: object[]) =>
     `${JSON.stringify({
@@ -725,7 +726,7 @@ function agentLayout(
               }
             : {
                 action: "remediate",
-                instruction: `Apply the smallest remediation that resolves each owned diagnostic${plugin ? "" : ", run its focused verification"}, then rerun Doctor.${live}${budget ? ` ${recovery}` : ""}`,
+                instruction: `Apply the smallest remediation that resolves each owned diagnostic${plugin ? "" : ", run its focused verification"}, then rerun Doctor.${verifyLive}${redeploy}${budget ? ` ${recovery}` : ""}`,
               },
     })}\n`;
   const budgetField = (hidden: BudgetHidden) => ({ maxChars, hidden });

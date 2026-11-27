@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import { tmpdir } from "node:os";
 import { expect, test } from "vite-plus/test";
 import {
   allDiagnostics,
@@ -10,7 +9,7 @@ import {
 } from "../../src/core/index.ts";
 import { createResult, normalizeDiagnostic } from "../../src/core/internal/diagnostics.ts";
 
-const root = resolve(tmpdir(), "doctor-origin-reports");
+const root = resolve("/doctor-origin-reports");
 const live = [{ source: "mcp", target: "https://mcp.example.com" }];
 
 function finding(file: string, origin?: DiagnosticOrigin, subject?: string) {
@@ -38,7 +37,7 @@ function resultFor(...diagnostics: ReturnType<typeof finding>[]) {
 
 test("text rows of a code-only run carry no origin tag", () => {
   const result = resultFor(finding("src/a.ts"), finding("src/b.ts"), finding("src/c.ts"));
-  const report = createTextReport(result, { runOptions: { maxChars: 680 } });
+  const report = createTextReport(result, { runOptions: { maxChars: 730 } });
   expect(report).toMatch(/^ {2}src\/a\.ts:1:1 {2}Problem/m);
   expect(report).not.toContain("code+live");
 });
@@ -49,7 +48,7 @@ test("text rows tag each origin once origins mix, and a stale deployment says re
     finding("src/b.ts", { code: "found", live }),
     finding("src/c.ts", { code: "passes", live }),
   );
-  const rows = createTextReport(result, { runOptions: { maxChars: 760 } });
+  const rows = createTextReport(result, { runOptions: { maxChars: 780 } });
   expect(rows).toMatch(/^ {2}code {7}src\/a\.ts:1:1 {2}Problem in src\/a\.ts\.$/m);
   expect(rows).toMatch(/^ {2}code\+live {2}src\/b\.ts:1:1 {2}Problem in src\/b\.ts\.$/m);
   expect(rows).toMatch(/^ {2}live {7}src\/c\.ts:1:1 {2}Problem in src\/c\.ts\. · redeploy$/m);
@@ -61,16 +60,42 @@ test("text rows tag each origin once origins mix, and a stale deployment says re
   expect(detail).toContain("    origin: live at https://mcp.example.com; the source has it too");
 });
 
-test("the agent report carries origin and tells the agent a live finding clears after a deploy", () => {
+test.each([
+  ["found", "code+live"],
+  ["not-checked", "live"],
+] as const)("text rows show provenance even if every finding is %s", (code, tag) => {
+  const result = resultFor(
+    ...["a", "b", "c", "d", "e"].map((name) => finding(`src/${name}.ts`, { code, live })),
+  );
+  const rows = createTextReport(result, { runOptions: { maxChars: 1000 } });
+  expect(rows).toContain(`  ${tag.padEnd(9)}  src/a.ts:1:1  Problem`);
+});
+
+test("text details say when Doctor did not verify the source", () => {
+  const detail = createTextReport(resultFor(finding("src/a.ts", { code: "not-checked", live })));
+  expect(detail).toContain(
+    "    origin: live at https://mcp.example.com; the source was not verified",
+  );
+});
+
+test("the agent report carries origin and reserves redeploy guidance for passing source", () => {
   const report = JSON.parse(
     createAgentReport(resultFor(finding("src/c.ts", { code: "passes", live }))),
   );
   expect(report.groups[0].diagnostics[0].origin).toEqual({ code: "passes", live });
-  expect(report.next.instruction).toContain("clears only after the fix is deployed");
+  expect(report.next.instruction).toContain("Verify live findings against the same target.");
+  expect(report.next.instruction).toContain('When origin.code is "passes",');
+  expect(report.next.instruction).toContain("redeploy to the target instead of editing");
+
+  const unchecked = JSON.parse(
+    createAgentReport(resultFor(finding("src/a.ts", { code: "not-checked", live }))),
+  );
+  expect(unchecked.next.instruction).toContain("Verify live findings against the same target.");
+  expect(unchecked.next.instruction).not.toMatch(/deploy/i);
 
   const code = JSON.parse(createAgentReport(resultFor(finding("src/a.ts"))));
   expect(code.groups[0].diagnostics[0].origin).toBeUndefined();
-  expect(code.next.instruction).not.toContain("deployed");
+  expect(code.next.instruction).not.toMatch(/live|deploy/i);
 });
 
 test("SARIF names the live subject as a logical location next to where to fix it", () => {
