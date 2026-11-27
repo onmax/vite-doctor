@@ -1,6 +1,71 @@
 {
   "suppressions": [
     {
+      "ruleId": "design-system/no-raw-colors",
+      "file": "docs/app/components/RuleExplorer.vue",
+      "reason": "Severity badges use fixed status colors in the Rule explorer."
+    },
+    {
+      "ruleId": "design-system/no-raw-colors",
+      "file": "docs/app/components/home/HomeCopyCommand.vue",
+      "reason": "The homepage copy control uses fixed success and focus colors."
+    },
+    {
+      "ruleId": "design-system/no-raw-colors",
+      "file": "docs/app/components/home/HomeHeroShowcase.vue",
+      "reason": "The showcase reproduces syntax highlighting and diagnostic status colors."
+    },
+    {
+      "ruleId": "design-system/no-raw-colors",
+      "file": "docs/app/components/home/HomeQuickStart.vue",
+      "reason": "The quick-start tabs and copy control use fixed selection and success colors."
+    },
+    {
+      "ruleId": "design-system/no-raw-colors",
+      "file": "docs/app/pages/index.vue",
+      "reason": "The homepage uses fixed diagnostic severity colors in its product illustrations."
+    },
+    {
+      "ruleId": "design-system/no-arbitrary-values",
+      "file": "docs/app/components/RuleExplorer.vue",
+      "reason": "The existing explorer layout sizes the rule tree and filters outside the default scale."
+    },
+    {
+      "ruleId": "design-system/no-arbitrary-values",
+      "file": "docs/app/components/home/HomeCopyCommand.vue",
+      "reason": "The homepage copy control matches the bespoke sizing of the command preview."
+    },
+    {
+      "ruleId": "design-system/no-arbitrary-values",
+      "file": "docs/app/components/home/HomeHeroShowcase.vue",
+      "reason": "The showcase aligns the code and terminal examples with bespoke typography and spacing."
+    },
+    {
+      "ruleId": "design-system/no-arbitrary-values",
+      "file": "docs/app/components/home/HomeQuickStart.vue",
+      "reason": "The quick-start controls match the bespoke sizing of the command preview."
+    },
+    {
+      "ruleId": "design-system/no-arbitrary-values",
+      "file": "docs/app/pages/diagnostics/[code].vue",
+      "reason": "The diagnostic detail layout sizes its columns to the content."
+    },
+    {
+      "ruleId": "design-system/no-arbitrary-values",
+      "file": "docs/app/pages/index.vue",
+      "reason": "The existing homepage layouts use bespoke type, spacing, and sizing."
+    },
+    {
+      "ruleId": "design-system/no-inline-styles",
+      "file": "docs/app/components/RuleExplorer.vue",
+      "reason": "The rule explorer translates the toggle handle based on its checked state."
+    },
+    {
+      "ruleId": "design-system/no-inline-styles",
+      "file": "docs/app/components/home/HomeHeroShowcase.vue",
+      "reason": "The showcase calculates code indentation from the displayed example."
+    },
+    {
       "ruleId": "typescript/evidence/no-chained-type-assertions",
       "file": "docs/rules/source.ts",
       "reason": "The generated catalog narrows a known object shape after Object.fromEntries()."

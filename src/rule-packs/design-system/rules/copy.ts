@@ -14,10 +14,9 @@ const suggestion = "suggestion";
 
 export type MessageCopy = FindingCopy | typeof suggestion;
 
-const fixedColor: FindingCopy = {
-  consequence:
-    "The color stays the same when the theme or dark mode changes, so it can clash with the rest of the interface or lose contrast.",
-};
+export const fixedColorConsequence =
+  "The color stays the same when the theme or dark mode changes, so it can clash with the rest of the interface or lose contrast.";
+const fixedColor: FindingCopy = { consequence: fixedColorConsequence };
 const missingColor =
   "Tailwind generates no CSS for an undeclared color, so the element renders without it.";
 const offScale =
@@ -187,19 +186,33 @@ export function designSystemCopy(
 ): { why: string; fix: string } {
   const id = message.messageId;
   const copy = id ? designSystemMessageCopy[rule]?.[id] : undefined;
-  const template = id ? templates[id] : undefined;
-  const parsed = template === undefined ? undefined : parseTemplate(template);
-  const match = parsed?.matcher.exec(message.message);
+  const parsed = findingData(message, templates);
   // A custom `message` option or settings note drops the messageId, so the rendered text is opaque.
-  if (!copy || copy === suggestion || !parsed || !match) return customCopy(message, docsUrl);
+  if (!copy || copy === suggestion || !parsed) return customCopy(message, docsUrl);
+  const { template, data } = parsed;
+  return {
+    why: `${interpolate(template.problem, data)} ${copy.consequence}`,
+    fix: copy.fix?.(data) ?? interpolate(template.remedy, data),
+  };
+}
+
+/**
+ * The data ESLint interpolated into an upstream message, such as its `className`, or undefined
+ * when a custom message replaced the upstream text.
+ */
+export function findingData(
+  message: Linter.LintMessage,
+  templates: Record<string, string>,
+): { template: ParsedTemplate; data: MessageData } | undefined {
+  const text = message.messageId ? templates[message.messageId] : undefined;
+  const template = text === undefined ? undefined : parseTemplate(text);
+  const match = template?.matcher.exec(message.message);
+  if (!template || !match) return undefined;
   const data: MessageData = { ...match.groups };
   // ESLint keeps a suggestion's data on the message, though its types omit it.
   const suggested = message.suggestions?.[0] as { data?: Record<string, unknown> } | undefined;
   for (const [key, value] of Object.entries(suggested?.data ?? {})) data[key] ??= String(value);
-  return {
-    why: `${interpolate(parsed.problem, data)} ${copy.consequence}`,
-    fix: copy.fix?.(data) ?? interpolate(parsed.remedy, data),
-  };
+  return { template, data };
 }
 
 function customCopy(message: Linter.LintMessage, docsUrl: string): { why: string; fix: string } {

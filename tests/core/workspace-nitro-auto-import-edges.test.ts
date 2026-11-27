@@ -446,7 +446,7 @@ test("trusted analysis replays the scanner installed under Nitro, not Doctor's v
     {},
     async (root) => {
       const manifest = JSON.parse(readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"));
-      expect(manifest.nitroAutoImportScan?.version).toBe("6.4.0");
+      expect(manifest.nitroAutoImportScan?.version).toBe("6.3.0");
       const trusted = await analyze(root, true);
       expect(trusted.cycles).toHaveLength(1);
       expect(trusted.gaps).toEqual([]);
@@ -462,7 +462,7 @@ test("trusted analysis replays the scanner installed under Nitro, not Doctor's v
         expect.stringContaining("Nitro's auto-import scan inputs changed"),
       ]);
     },
-    { scannerVersion: "6.4.0" },
+    { scannerVersion: "6.3.0" },
   ));
 
 test("the Nuxt module records Nitro's resolved registry, which closes the server cycle", () =>
@@ -475,12 +475,13 @@ test("the Nuxt module records Nitro's resolved registry, which closes the server
           `${entry.as ?? entry.name} ${relative(root, entry.from)}${entry.type ? " type" : ""}`,
       ),
     ).toEqual(["useServerA server/utils/a", "useA server/utils/a.ts", "useB server/utils/b.ts"]);
-    const { autoImportEdges, cycles } = await analyze(root);
+    const { autoImportEdges, cycles, gaps } = await analyze(root);
     expect(autoImportEdges).toEqual([
       "server/utils/a.ts -useB-> server/utils/b.ts",
       "server/utils/b.ts -useA-> server/utils/a.ts",
     ]);
     expect(cycles).toHaveLength(1);
+    expect(gaps).toEqual([]);
   }));
 
 test("Nitro injection works independently of disabled app auto-imports", () =>
