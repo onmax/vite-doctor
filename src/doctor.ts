@@ -32,12 +32,14 @@ import { mcpRulePack } from "./rule-packs/mcp/index.js";
 import { viteDoctorVersion } from "./version.js";
 
 export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
-  const registry = await collectRulePacks([
-    ...(options.config?.extensions ?? []),
-    ...(await viteDoctorExtensions(options)),
-    ...(options.extensions ?? []),
-    ...(await hostDoctorExtensions(options)),
-  ]);
+  const registry = await collectRulePacks(
+    [
+      ...(await viteDoctorExtensions(options)),
+      ...(options.extensions ?? []),
+      ...(await hostDoctorExtensions(options)),
+    ],
+    options.config?.extensions,
+  );
   return registry.packs;
 }
 

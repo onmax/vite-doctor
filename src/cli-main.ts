@@ -24,6 +24,7 @@ import { applyDoctorOptions, stringFlag } from "./core/internal/cli.js";
 import { githubAnnotations } from "./core/internal/github-annotations.js";
 import { readViteConfigDoctor } from "./core/internal/vite-config-doctor.js";
 import { findViteConfigFile } from "./core/internal/vite-config-file.js";
+import { RemovedRuntimeEvidenceActivationError } from "./core/primitives.js";
 import type { DoctorProcessStatus } from "./doctor-process/client.js";
 import { DOCTOR_PROCESS_ENV } from "./doctor-process/protocol.js";
 import { viteDoctorVersion } from "./version.js";
@@ -112,9 +113,8 @@ export async function main(
       applyDoctorOptions(runOptions, options);
       applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
-      runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
-      const { viteDoctorRulePacks } = await import("./doctor.js");
-      process.stdout.write(createRulesReport(await viteDoctorRulePacks(runOptions), format));
+      const packs = await loadCliRulePacks(cwd, stringFlag(options.config), runOptions);
+      process.stdout.write(createRulesReport(packs, format));
     });
   cli
     .command("explain <diagnostic>", "Explain a Doctor Diagnostic Code or Rule.")
@@ -128,9 +128,8 @@ export async function main(
       applyDoctorOptions(runOptions, options);
       applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
-      runOptions.config = await loadCliConfig(cwd, stringFlag(options.config));
-      const { viteDoctorRulePacks } = await import("./doctor.js");
-      const report = explainRule(await viteDoctorRulePacks(runOptions), diagnostic, format);
+      const packs = await loadCliRulePacks(cwd, stringFlag(options.config), runOptions);
+      const report = explainRule(packs, diagnostic, format);
       if (!report) {
         await writeCliError(`Unknown Diagnostic Code or Rule: ${diagnostic}`, format);
         exitCode = 2;
@@ -460,6 +459,27 @@ async function loadCliConfig(
   return declarativeConfig(root)?.config;
 }
 
+async function loadCliRulePacks(
+  root: string,
+  explicitConfig: string | undefined,
+  options: DoctorRunOptions,
+) {
+  options.config = await loadCliConfig(root, explicitConfig);
+  const { viteDoctorRulePacks } = await import("./doctor.js");
+  try {
+    return await viteDoctorRulePacks(options);
+  } catch (error) {
+    if (
+      explicitConfig &&
+      error instanceof RemovedRuntimeEvidenceActivationError &&
+      error.fromConfig
+    ) {
+      throw createCliConfigError(resolve(root, explicitConfig), error);
+    }
+    throw error;
+  }
+}
+
 /**
  * Config the CLI reads without running project code: `doctor.config.json`, or the literal `doctor`
  * key of `vite.config.*`. Defining both is ambiguous, so the CLI refuses to pick one.
@@ -655,6 +675,7 @@ function errorCode(error: unknown): string | undefined {
 }
 
 function isLoadedConfigValidationError(error: unknown, options: DoctorRunOptions): boolean {
+  if (error instanceof RemovedRuntimeEvidenceActivationError) return error.fromConfig;
   if (!(error instanceof Error)) return false;
   if ("doctorConfigOverride" in error && error.doctorConfigOverride === true) return true;
   if (error.name === "DOC0019" || error.name === "DOC0020" || error.name === "DOC0035") return true;

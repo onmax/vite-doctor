@@ -1558,9 +1558,19 @@ export function createRule(rule: DoctorRule): DoctorRule {
   return rule;
 }
 
+export class RemovedRuntimeEvidenceActivationError extends Error {
+  constructor(
+    message: string,
+    readonly fromConfig = false,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+
 export function defineRulePack(pack: RulePack): RulePack {
   if (pack.activation && "runtimeEvidence" in pack.activation) {
-    throw new Error(
+    throw new RemovedRuntimeEvidenceActivationError(
       `Rule Pack "${pack.name}" uses the removed activation.runtimeEvidence hook. Use Project Inventory activation (such as packages or runtimes) or set activation: false and select a Preset explicitly. To check a running MCP server, run npx loadsheet mcp <url>.`,
     );
   }

@@ -4,6 +4,7 @@ import { relative, resolve } from "pathe";
 import type { DoctorConfig, DoctorRunOptions } from "../config.js";
 import {
   defineRulePack,
+  RemovedRuntimeEvidenceActivationError,
   type Diagnostic,
   type DoctorRuleConfig,
   type FileFacts,
@@ -154,8 +155,11 @@ export async function createScanSession(options: DoctorRunOptions): Promise<Scan
     : await detectProject(root, options.framework ?? "auto", options.runtimeTarget);
   config = resolveProjectDoctorConfig(project, options.config);
   sessionBase.config = config;
-  const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
-  const registry = await collectRulePacks(extensions);
+  const fromConfig = config.extensions === options.config?.extensions;
+  const registry = await collectRulePacks(
+    [...(fromConfig ? [] : (config.extensions ?? [])), ...(options.extensions ?? [])],
+    fromConfig ? config.extensions : undefined,
+  );
   await applyProjectContributions(project, registry);
   const registeredRules = new Map(registry.rules.map((rule) => [rule.meta.id, rule]));
   const ruleConfigs = resolveRuleConfigs(registeredRules, config.rules);
@@ -347,54 +351,82 @@ export function resolveProjectDoctorConfig(
 export async function resolveDoctorExtensions(
   inputs: readonly DoctorExtensionInput[],
 ): Promise<DoctorExtension[]> {
+  return (await resolveExtensionRegistrations(inputs, [])).map(({ extension }) => extension);
+}
+
+async function resolveExtensionRegistrations(
+  inputs: readonly DoctorExtensionInput[],
+  configInputs: readonly DoctorExtensionInput[],
+) {
   const loaded = await Promise.all(
-    inputs.map(async (input) => {
-      if (typeof input !== "function") return input;
-      const value = await input();
-      return "default" in value ? value.default : value;
+    [...configInputs, ...inputs].map(async (input, index) => {
+      const fromConfig = index < configInputs.length;
+      try {
+        if (typeof input !== "function") return { extension: input, fromConfig };
+        const value = await input();
+        return { extension: "default" in value ? value.default : value, fromConfig };
+      } catch (error) {
+        throw attributePackError(error, fromConfig);
+      }
     }),
   );
   const names = new Set<string>();
-  return loaded.filter((extension) => {
+  return loaded.filter(({ extension }) => {
     if (names.has(extension.name)) return false;
     names.add(extension.name);
     return true;
   });
 }
 
-export async function collectRulePacks(inputs: readonly DoctorExtensionInput[]): Promise<{
-  packs: RulePack[];
-  rules: DoctorRule[];
-  inventoryContributors: ProjectInventoryContributor[];
-  runtimeEvidenceContributors: RuntimeEvidenceContributor[];
-}> {
-  const extensions = await resolveDoctorExtensions(inputs);
-  const registeredPacks: RulePack[] = [];
+function attributePackError(error: unknown, fromConfig: boolean): unknown {
+  return fromConfig && error instanceof RemovedRuntimeEvidenceActivationError
+    ? new RemovedRuntimeEvidenceActivationError(error.message, true, { cause: error })
+    : error;
+}
+
+export async function collectRulePacks(
+  inputs: readonly DoctorExtensionInput[],
+  configInputs: readonly DoctorExtensionInput[] = [],
+): Promise<RuleRegistry> {
+  const extensions = await resolveExtensionRegistrations(inputs, configInputs);
+  const registeredPacks: Array<{ pack: RulePack; fromConfig: boolean }> = [];
   const inventoryContributors: ProjectInventoryContributor[] = [];
   const runtimeEvidenceContributors: RuntimeEvidenceContributor[] = [];
-  for (const extension of extensions) {
-    await extension.setup?.({
-      registerRulePack(pack) {
-        registeredPacks.push(pack);
-      },
-      registerProjectInventoryContributor(contributor) {
-        inventoryContributors.push({
-          name: contributor.name,
-          contribute: contributor.contribute.bind(contributor),
-        });
-      },
-      registerRuntimeEvidenceContributor(contributor) {
-        runtimeEvidenceContributors.push({
-          name: contributor.name,
-          contribute: contributor.contribute.bind(contributor),
-        });
-      },
-    });
+  for (const { extension, fromConfig } of extensions) {
+    try {
+      await extension.setup?.({
+        registerRulePack(pack) {
+          registeredPacks.push({ pack, fromConfig });
+        },
+        registerProjectInventoryContributor(contributor) {
+          inventoryContributors.push({
+            name: contributor.name,
+            contribute: contributor.contribute.bind(contributor),
+          });
+        },
+        registerRuntimeEvidenceContributor(contributor) {
+          runtimeEvidenceContributors.push({
+            name: contributor.name,
+            contribute: contributor.contribute.bind(contributor),
+          });
+        },
+      });
+    } catch (error) {
+      throw attributePackError(error, fromConfig);
+    }
   }
   const packs = [
-    ...extensions.flatMap((extension) => extension.rulePacks ?? []),
+    ...extensions.flatMap(({ extension, fromConfig }) =>
+      (extension.rulePacks ?? []).map((pack) => ({ pack, fromConfig })),
+    ),
     ...registeredPacks,
-  ].map((pack) => defineRulePack(pack));
+  ].map(({ pack, fromConfig }) => {
+    try {
+      return defineRulePack(pack);
+    } catch (error) {
+      throw attributePackError(error, fromConfig);
+    }
+  });
   const names = new Set<string>();
   const codes = new Set<string>();
   for (const pack of packs) {
