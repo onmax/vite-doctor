@@ -31,6 +31,24 @@ async function report(root: string, format: string, args: string[] = []) {
   return JSON.parse(output);
 }
 
+test.each(["mcp/clients/no-excluded-tool", "mcp/clients/*"])(
+  "rejects retired MCP Rules selected by %s",
+  async (rule) => {
+    const output = await report(fixture(), "json", ["--rules", rule]);
+    expect(output.status).toBe("failed");
+    expect(output.error.message).toContain(rule);
+    expect(output.error.message).toContain("loadsheet mcp <url>");
+  },
+);
+
+test("fails a configuration that enables a retired MCP Rule", async () => {
+  const rule = "mcp/tools/valid-annotations";
+  const output = await report(fixture(JSON.stringify({ rules: { [rule]: "error" } })), "json");
+  expect(output.error).toMatchObject({ kind: "config", code: "DOC0020" });
+  expect(output.error.message).toContain(rule);
+  expect(output.error.message).toContain("loadsheet mcp <url>");
+});
+
 for (const format of ["json", "agent", "sarif"]) {
   test(`${format} retains a Diagnostic Code for an invalid invocation`, async () => {
     const output = await report(fixture(), format, ["--extends", "missing/recommended"]);

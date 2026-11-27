@@ -35,6 +35,11 @@ async function installFixtureVue(root: string) {
   await writeFile(join(root, "node_modules/vue/index.js"), "module.exports = {};");
 }
 
+test("rejects the retired MCP option from an untyped Vite config", () => {
+  const options = { mode: "error" as const, mcp: [{ url: "http://localhost:3000/mcp" }] };
+  expect(() => doctor(options)).toThrow(/loadsheet mcp <url>/);
+});
+
 test("a reused Plugin Surface diagnoses each resolved Vite build", async () => {
   await withProject(async (root) => {
     const plugin = doctor({ rules: "vite/env/no-client-secret-pattern", cache: false });

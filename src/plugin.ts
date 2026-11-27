@@ -162,6 +162,11 @@ declare module "vite" {
 }
 
 export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
+  if ("mcp" in options) {
+    throw new Error(
+      "The Vite Doctor plugin's mcp option was removed. Remove it from doctor() and run `npx loadsheet mcp <url>` to check a running MCP server.",
+    );
+  }
   let config: ResolvedConfig | undefined;
   let ran = false;
   let serveRun: ServeDoctorRun | undefined;

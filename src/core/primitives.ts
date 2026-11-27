@@ -1559,6 +1559,11 @@ export function createRule(rule: DoctorRule): DoctorRule {
 }
 
 export function defineRulePack(pack: RulePack): RulePack {
+  if (pack.activation && "runtimeEvidence" in pack.activation) {
+    throw new Error(
+      `Rule Pack "${pack.name}" uses the removed activation.runtimeEvidence hook. Use Project Inventory activation (such as packages or runtimes) or set activation: false and select a Preset explicitly. To check a running MCP server, run npx loadsheet mcp <url>.`,
+    );
+  }
   if (!pack.presets?.recommended?.length) {
     throw doctorInternalDiagnostics.DOC0015({ pack: pack.name });
   }

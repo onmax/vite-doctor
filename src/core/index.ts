@@ -1,5 +1,5 @@
 import type { DoctorRunOptions } from "./config.js";
-import type { DoctorRunResult, ProjectInfo } from "./primitives.js";
+import type { DoctorRunResult } from "./primitives.js";
 import { parseSourceFiles } from "./internal/facts.js";
 import {
   buildGraphPhase,

@@ -43,6 +43,7 @@ import {
 import { nativeMatch, sha256 } from "./utils.js";
 import { owningWorkspacePackage, packageFrameworks } from "./workspace-packages.js";
 import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
+import { RETIRED_DIAGNOSTIC_CODES } from "../diagnostic-constants.js";
 import { reportedDoctorRuleIds } from "../diagnostic-registry.js";
 import {
   activatingWorkspacePackages,
@@ -54,6 +55,9 @@ import {
 const DEFAULT_CONFIG: DoctorConfig = {
   cache: { dir: ".vite-doctor/cache" },
 };
+
+const retiredRuleIds = new Set(Object.values(RETIRED_DIAGNOSTIC_CODES).map(({ ruleId }) => ruleId));
+const retiredRuleReason = "the retired MCP Rules moved to `npx loadsheet mcp <url>`";
 
 interface RuleRegistry {
   packs: RulePack[];
@@ -462,6 +466,15 @@ function selectRules(
     ?.split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+  for (const pattern of wanted ?? []) {
+    if (
+      retiredRuleIds.has(pattern) ||
+      (Array.from(retiredRuleIds).some((ruleId) => nativeMatch(ruleId, pattern)) &&
+        !registry.rules.some((rule) => nativeMatch(rule.meta.id, pattern)))
+    ) {
+      throw new Error(`Cannot select Rules with "${pattern}": ${retiredRuleReason}.`);
+    }
+  }
 
   const workspaceRoots = projectWorkspacePackages(project).map((item) => item.root);
   const explicitFramework = options.framework !== undefined && options.framework !== "auto";
@@ -726,6 +739,8 @@ function resolveRuleConfigs(
       resolved.set(ruleId, { enabled: false });
       continue;
     }
+    if (retiredRuleIds.has(ruleId))
+      throw doctorInternalDiagnostics.DOC0020({ ruleId, reason: retiredRuleReason });
     if (isSeverity(value)) {
       registeredRules.get(ruleId)?.validateOptions?.(undefined);
       resolved.set(ruleId, { enabled: true, severity: value });
