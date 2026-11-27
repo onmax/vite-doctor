@@ -6,7 +6,6 @@ import {
   toolLabel,
   type McpToolDefinition,
 } from "./shared.js";
-import { reportWireTool, wireTools } from "./wire.js";
 
 export const requireAnnotationTitle = createRule({
   meta: {
@@ -36,20 +35,13 @@ export const requireAnnotationTitle = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast", "runtime"],
+    consumesEvidence: ["ast"],
     cost: "medium",
   },
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent)
-          reportWireTool(ctx, wire, "MCP0001", {
-            ruleId: "mcp/tools/require-annotation-title",
-            diagnostic: diagnostics.MCP0001,
-            range: annotationsRange,
-          });
-        for (const tool of sourceOnly) {
+        for (const tool of await collectMcpTools(ctx)) {
           const { annotations } = tool;
           if (annotations.state === "partial") continue;
           const title =

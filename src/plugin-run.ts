@@ -18,7 +18,6 @@ import { diagnosticOccurrenceKey } from "./core/internal/diagnostic-policy.js";
 import { hostImportResolvers, type HostImportResolver } from "./core/internal/host-imports.js";
 import { createScanSession, fileRuleConfig } from "./core/internal/scan-session.js";
 import { runViteDoctor, shouldFailDoctorRun, viteDoctorRunOptions } from "./doctor.js";
-import { readMcpServers } from "./mcp/evidence.js";
 import type { SurfaceDiagnostic, SurfaceEvidenceGap } from "./plugin-delta.js";
 import {
   BUILD_EVIDENCE_RULE,
@@ -47,7 +46,6 @@ export interface SurfaceRunOutcome {
   /** The reported Diagnostics, so a serve-mode Plugin Surface can log what changed between runs. */
   diagnostics: SurfaceDiagnostic[];
   evidenceGaps: SurfaceEvidenceGap[];
-  hasMcpEvidence: boolean;
   needsHostImportResolution: boolean;
   /** The run is `incomplete` for a reason other than its evidence gaps, such as an unresolved runtime. */
   runtimeIncomplete: boolean;
@@ -80,7 +78,6 @@ export async function runSurfaceDoctor(
   );
   const result = await runViteDoctor(
     surfaceDoctorOptions({ ...input, vite: { ...input.vite, evidence } }, extensions),
-    true,
   );
   const { format, reader } = input.presentation;
   const report = createReport(result, format, {
@@ -114,7 +111,6 @@ export async function runSurfaceDoctor(
         gap.instanceKey ? [gap.source, gap.instanceKey] : [gap.source, gap.message, gap.files],
       ),
     })),
-    hasMcpEvidence: readMcpServers(result.project.runtimeEvidence).length > 0,
     needsHostImportResolution,
     runtimeIncomplete:
       reportStatus({ ...result, project: { ...result.project, evidenceGaps: undefined } }) ===
@@ -136,7 +132,7 @@ export async function hasEnabledBuildEvidenceCandidate(
   if (!evidence) return false;
   const options = surfaceDoctorOptions(input, extensions);
   const session = await createScanSession(
-    await viteDoctorRunOptions({ ...options, rules: BUILD_EVIDENCE_RULE, mcp: undefined }),
+    await viteDoctorRunOptions({ ...options, rules: BUILD_EVIDENCE_RULE }),
   );
   if (!session.enabledRules.some((rule) => rule.meta.id === BUILD_EVIDENCE_RULE)) return false;
   const files = new Map(session.files.map((file) => [file.path, file]));
@@ -166,7 +162,7 @@ export async function runBuildEvidenceDoctor(
   extensions: DoctorExtensionInput[],
 ): Promise<SurfaceRunOutcome> {
   return runSurfaceDoctor(
-    { ...input, options: { ...input.options, rules: BUILD_EVIDENCE_RULE, mcp: undefined } },
+    { ...input, options: { ...input.options, rules: BUILD_EVIDENCE_RULE } },
     extensions,
   );
 }

@@ -26,7 +26,6 @@ import { readViteConfigDoctor } from "./core/internal/vite-config-doctor.js";
 import { findViteConfigFile } from "./core/internal/vite-config-file.js";
 import type { DoctorProcessStatus } from "./doctor-process/client.js";
 import { DOCTOR_PROCESS_ENV } from "./doctor-process/protocol.js";
-import { assertAbsoluteMcpUrl } from "./mcp/evidence.js";
 import { viteDoctorVersion } from "./version.js";
 
 type MetadataReportFormat = Exclude<DoctorReportFormat, "sarif">;
@@ -43,9 +42,6 @@ const frameworks = new Set<NonNullable<DoctorRunOptions["framework"]>>([
 ]);
 const severities = new Set<NonNullable<DoctorRunOptions["severity"]>>(["error", "warn", "info"]);
 const analyses = new Set(["dead-code", "graph", "dupes", "health"]);
-// cac's `type: [String]` fills an absent array option with "undefined" once another one is set.
-const repeatableOptions = new Set(["mcpUrl", "mcpHeader"]);
-
 class CliConfigError extends Error {
   constructor(
     readonly file: string,
@@ -290,7 +286,7 @@ function applyHostExtensions(
 
 function validateSingleValueOptions(cli: ReturnType<typeof cac>): void {
   for (const option of [...cli.globalCommand.options, ...(cli.matchedCommand?.options ?? [])]) {
-    if (option.isBoolean || option.config.type || repeatableOptions.has(option.name)) continue;
+    if (option.isBoolean || option.config.type) continue;
     if (!option.names.some((name) => Array.isArray(cli.options[name]))) continue;
     const flag = option.name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
     throw new Error(`Option --${flag} may only be provided once.`);
@@ -334,14 +330,6 @@ function addDoctorRunCommand(
     .option("--full", "Print the whole text or agent report, without a Report Budget.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
     .option("--host-extensions", hostExtensionsHelp)
-    .option(
-      "--mcp-url <url>",
-      "Read tools/list from this MCP server as Runtime Evidence. Repeatable.",
-    )
-    .option(
-      "--mcp-header <header>",
-      'Request header for every --mcp-url, as "Name: value". Repeatable.',
-    )
     .option("--watch", "Rerun Doctor when project files change.")
     .option(
       "--server",
@@ -618,7 +606,6 @@ function validateReportBudget(flags: Record<string, unknown>, format: DoctorRepo
 }
 
 function validateCliRunOptions(options: DoctorRunOptions): void {
-  for (const target of options.mcp ?? []) assertAbsoluteMcpUrl(target.url);
   if (options.updateBaseline && !options.baseline)
     throw new Error("--update-baseline requires --baseline <file>.");
   if (options.framework && !frameworks.has(options.framework)) {

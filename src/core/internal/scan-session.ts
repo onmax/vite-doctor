@@ -46,7 +46,6 @@ import { doctorInternalDiagnostics } from "../internal-diagnostic-handles.js";
 import { reportedDoctorRuleIds } from "../diagnostic-registry.js";
 import {
   activatingWorkspacePackages,
-  runtimeEvidenceActivation,
   evaluateRuleApplicability,
   packageRunsRuntime,
   projectWorkspacePackages,
@@ -134,10 +133,7 @@ export interface ResolvedRuleOverride {
   selects: ReadonlySet<string>;
 }
 
-export async function createScanSession(
-  options: DoctorRunOptions,
-  fullRunWhen?: (project: ProjectInfo) => boolean,
-): Promise<ScanSession> {
+export async function createScanSession(options: DoctorRunOptions): Promise<ScanSession> {
   const root = resolve(options.root ?? options.project?.root ?? process.cwd());
   const timings: Record<string, number> = {};
   const phases: Record<string, number> = {};
@@ -157,10 +153,6 @@ export async function createScanSession(
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
-  if (options.affectedFiles && fullRunWhen?.(project)) {
-    options = { ...options, affectedFiles: undefined };
-    sessionBase.options = options;
-  }
   const registeredRules = new Map(registry.rules.map((rule) => [rule.meta.id, rule]));
   const ruleConfigs = resolveRuleConfigs(registeredRules, config.rules);
   const activations = resolveRulePackActivations(registry.packs, project);
@@ -225,7 +217,7 @@ export async function createScanSession(
       .map((pack) => ({
         name: pack.name,
         selected: selection.packs.has(pack),
-        activatedBy: reportedActivation(pack, project, activations.get(pack) ?? []),
+        activatedBy: activations.get(pack) ?? [],
       }))
       .filter((pack) => pack.selected || pack.activatedBy.length),
     ruleConfigs,
@@ -579,27 +571,7 @@ function resolveRulePackActivations(
   packs: readonly RulePack[],
   project: ProjectInfo,
 ): Map<RulePack, string[]> {
-  const activations = new Map(
-    packs.map((pack) => [pack, activatingWorkspacePackages(pack, project)]),
-  );
-  if (!project.noProject) return activations;
-  // Without a project, Runtime Evidence such as an MCP server's tools/list is what the run checks,
-  // so the fallback framework's Rule Packs do not activate beside it.
-  const byEvidence = packs.filter((pack) => runtimeEvidenceActivation(pack, project));
-  if (!byEvidence.length) return activations;
-  for (const pack of packs) if (!byEvidence.includes(pack)) activations.set(pack, []);
-  return activations;
-}
-
-/**
- * What a report names as having activated `pack`. Activation stays keyed by workspace root, since
- * Rule scopes come from it, but a run without a project has no root worth naming: the Runtime
- * Evidence that activated the pack, such as an MCP server's origin, is the honest source.
- */
-function reportedActivation(pack: RulePack, project: ProjectInfo, roots: string[]): string[] {
-  if (!project.noProject || !roots.length) return roots;
-  const sources = runtimeEvidenceActivation(pack, project);
-  return sources?.length ? [...sources] : roots;
+  return new Map(packs.map((pack) => [pack, activatingWorkspacePackages(pack, project)]));
 }
 
 function workspacePackageActivations(

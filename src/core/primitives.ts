@@ -106,14 +106,13 @@ export interface Diagnostic {
   confidence?: Confidence;
   evidence?: DiagnosticEvidence[];
   /**
-   * Plain JSON the Rule attaches for agents, such as the MCP tool and the client findings behind
-   * the message. The Rule owns its shape and its Diagnostic Code docs describe it. Reports emit it
+   * Plain JSON the Rule attaches for agents, such as the MCP tool behind the message. The Rule owns its shape and its Diagnostic Code docs describe it. Reports emit it
    * as is, and the cache stores it as JSON. `ctx.report` validates and copies the payload.
    */
   data?: Record<string, unknown>;
   /**
-   * What the Diagnostic is about when it has no source location, such as the MCP tool a server
-   * sent. Reports show it in place of the project root.
+   * What the Diagnostic is about when it has no source location. Reports show it in place of the
+   * project root.
    */
   subject?: string;
   /** The Rule's one-line summary of this Diagnostic, shown on its row in a Progressive Report. */
@@ -567,12 +566,6 @@ export interface ProjectInfo {
   framework: DoctorFramework;
   /** Explicit framework selection, as distinct from the detected primary framework. */
   requestedFramework?: DoctorFramework;
-  /**
-   * The run root has no package.json, workspace, framework config, TypeScript config, or source,
-   * and no framework was requested, so `framework` is Doctor's fallback. When Runtime
-   * Evidence activates a Rule Pack, that evidence is what the run checks.
-   */
-  noProject?: true;
   ssr: boolean;
   vueVersion: string;
   nuxtVersion?: string;
@@ -599,7 +592,7 @@ export interface ProjectInfo {
   runtimeGraph?: RuntimeGraph;
   nuxtCompatibility?: NuxtCompatibilityInfo;
   evidenceGaps?: Array<{ source: string; message: string; files: string[]; instanceKey?: string }>;
-  /** Runtime Evidence the run read, such as each MCP server's `tools/list`, so a clean report shows what it covered. */
+  /** Runtime Evidence the run read, so a clean report shows what it covered. */
   evidenceUsed?: Array<{ source: string; message: string }>;
   inventory?: Record<string, unknown>;
   runtimeEvidence?: Record<string, unknown>;
@@ -678,8 +671,7 @@ export interface WorkspacePackageRuntime {
 
 /**
  * A Rule Pack in a Doctor Run: whether Config Extends selected its Presets, and the roots of the
- * workspace packages whose Project Inventory activates it. In a run without a project, it lists
- * what in the Runtime Evidence activated it instead, such as an MCP server's origin.
+ * workspace packages whose Project Inventory activates it.
  */
 export interface RulePackActivation {
   name: string;
@@ -1465,14 +1457,6 @@ export interface RulePack {
          */
         runtimes?: RuntimePackageName[];
         nuxt?: string;
-        /**
-         * Activates the Rule Pack for every workspace package when this returns true or a non-empty
-         * list for the Doctor Run's Runtime Evidence, whatever the other conditions say. A list
-         * names what in the evidence activated it, and a run without a project reports those names
-         * as the Rule Pack's `activatedBy`. The MCP Rule Pack returns the servers it reads, so a
-         * configured MCP server is checked in a project without an MCP package.
-         */
-        runtimeEvidence?: (runtimeEvidence: Record<string, unknown>) => boolean | readonly string[];
       };
 }
 

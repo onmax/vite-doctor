@@ -2,7 +2,6 @@ import { nameProblems } from "@loadsheet/mcp";
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { collectMcpTools } from "./shared.js";
-import { reportWireTool, wireTools } from "./wire.js";
 
 export const validName = createRule({
   meta: {
@@ -31,20 +30,13 @@ export const validName = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast", "runtime"],
+    consumesEvidence: ["ast"],
     cost: "medium",
   },
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent)
-          reportWireTool(ctx, wire, "MCP0003", {
-            ruleId: "mcp/tools/valid-name",
-            diagnostic: diagnostics.MCP0003,
-            range: (tool) => tool.name?.range ?? tool.callee,
-          });
-        for (const tool of sourceOnly) {
+        for (const tool of await collectMcpTools(ctx)) {
           const name = tool.name;
           if (!name) continue;
           const problems = nameProblems(name.value);

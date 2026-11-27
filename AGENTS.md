@@ -23,7 +23,7 @@ Quick glossary:
 
 Doctor's value is not generic linting. Anyone can run oxlint. Our value is framework-specific diagnosis: knowing that a Vite env variable ends up in the client bundle, or that a Nuxt auto-import shadows another one. Rule Packs should read like the framework maintainers wrote them.
 
-If doing this right means parsing SFCs ourselves or collecting Runtime Evidence from a live dev server, do it. Don't settle for a pattern match when real evidence is available.
+If doing this right means parsing SFCs ourselves or collecting Runtime Evidence from inside the developer's own Vite or Nuxt process, do it. Doctor always needs the repository and never takes a URL; checking a running server is loadsheet's job. Don't settle for a pattern match when real evidence is available.
 
 ### Let their agents do the fixing
 

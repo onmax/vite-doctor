@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { vi } from "vite-plus/test";
@@ -32,22 +32,26 @@ export function stubReaderEnv(env: Record<string, string | undefined>): void {
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
 }
 
-export const reportReaderMcpUrl = "https://example.test/mcp";
-
-export function mockReportReaderMcp() {
-  const fixture = JSON.parse(
-    readFileSync(new URL("./fixtures/mcp/nuxt.json", import.meta.url), "utf8"),
+/**
+ * Writes an MCP server project whose tools break every source MCP Rule, so a run reports enough
+ * Diagnostics that the default Report Budget has to hide some.
+ */
+export function writeMcpToolProject(root: string, tools = 30): void {
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({
+      name: "app",
+      type: "module",
+      dependencies: { "nitro-mcp-toolkit": "^0.4.0", h3: "^2.0.0" },
+    }),
   );
-  return vi.spyOn(globalThis, "fetch").mockImplementation(async (url, request) => {
-    if (!(url instanceof URL) || url.href !== reportReaderMcpUrl)
-      throw new Error("Unexpected MCP endpoint");
-    if (typeof request?.body !== "string") throw new Error("Expected a JSON request body");
-    const { id, method } = JSON.parse(request.body);
-    if (method === "notifications/initialized") return new Response(null, { status: 202 });
-    const result =
-      method === "initialize"
-        ? { protocolVersion: "2025-11-25", capabilities: { tools: {} } }
-        : { tools: fixture.tools };
-    return Response.json({ jsonrpc: "2.0", id, result });
-  });
+  const dir = join(root, "server/mcp/tools");
+  mkdirSync(dir, { recursive: true });
+  for (let index = 0; index < tools; index++) {
+    const output = index % 2 ? "JSON.stringify({ index }, null, 2)" : "'ok'";
+    writeFileSync(
+      join(dir, `tool-${index}.ts`),
+      `import { defineMcpTool } from 'nitro-mcp-toolkit'\nexport default defineMcpTool({ name: 'tool ${index} with spaces', handler: () => ${output} })\n`,
+    );
+  }
 }

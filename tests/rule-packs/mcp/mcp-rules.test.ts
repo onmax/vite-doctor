@@ -646,12 +646,9 @@ describe("MCP tool output", () => {
 });
 
 describe("MCP Rule Pack", () => {
-  test("activates on MCP server libraries and recommends the source Rules and lost-tool client limits", () => {
+  test("activates on MCP server libraries and recommends every source Rule", () => {
     expect(mcpRulePack.name).toBe("vite-doctor/mcp");
-    expect(mcpRulePack.activation).toEqual({
-      packages: expect.any(Array),
-      runtimeEvidence: expect.any(Function),
-    });
+    expect(mcpRulePack.activation).toEqual({ packages: expect.any(Array) });
     const { packages } = mcpRulePack.activation || {};
     expect(packages?.toSorted()).toEqual([
       "@modelcontextprotocol/sdk",
@@ -664,12 +661,7 @@ describe("MCP Rule Pack", () => {
       "vite-hub",
     ]);
     expect(mcpRulePack.presets.recommended.toSorted()).toEqual(
-      [
-        ...rules.map((rule) => rule.meta.id),
-        "mcp/tools/valid-annotations",
-        "mcp/clients/no-excluded-tool",
-        "mcp/clients/no-truncated-text",
-      ].toSorted(),
+      rules.map((rule) => rule.meta.id).toSorted(),
     );
     expect(mcpRulePack.presets.strict).toHaveLength(mcpRulePack.rules.length);
   });

@@ -2,11 +2,10 @@ import { checkMcpToolList } from "@loadsheet/mcp";
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { annotationsEvidence, collectMcpTools, toolLabel } from "./shared.js";
-import { reportWireTool, wireTools } from "./wire.js";
 
 const SAFETY_BRIEF = "neither readOnlyHint nor destructiveHint is true";
 
-/** The fix `@loadsheet/mcp` gives a tool on the wire with the same hints, so both paths agree. */
+/** The fix `@loadsheet/mcp` gives a served tool with the same hints, so Doctor and loadsheet agree. */
 function hintFix(readOnlyHint: unknown, destructiveHint: unknown): string {
   const [found] = checkMcpToolList(
     [{ name: "tool", annotations: { readOnlyHint, destructiveHint } }],
@@ -46,21 +45,13 @@ export const requireSafetyHint = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast", "runtime"],
+    consumesEvidence: ["ast"],
     cost: "medium",
   },
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent)
-          reportWireTool(ctx, wire, "MCP0002", {
-            ruleId: "mcp/tools/require-safety-hint",
-            diagnostic: diagnostics.MCP0002,
-            range: (tool) =>
-              tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
-          });
-        for (const tool of sourceOnly) {
+        for (const tool of await collectMcpTools(ctx)) {
           const { annotations } = tool;
           if (annotations.state === "partial") continue;
           const hints =

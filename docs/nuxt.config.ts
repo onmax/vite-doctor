@@ -5,6 +5,7 @@ import { readdirSync, rmSync } from "node:fs";
 import { kill } from "node:process";
 import { fileURLToPath } from "node:url";
 import doctorPackage from "../package.json" with { type: "json" };
+import { RETIRED_DIAGNOSTIC_CODES } from "../src/core/diagnostic-constants.js";
 import { getDiagnosticDocuments, getRuleDocuments } from "./rules/source.js";
 
 const tempDir = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
@@ -18,6 +19,17 @@ const ruleIndexRoutes = frameworks.map((framework) => `/${framework}/rules`);
 const legacyRuleIndexRoutes = frameworks.map((framework) => `/rules/${framework}`);
 const ruleDetailRoutes = getRuleDocuments().map((rule) => rule.path);
 const diagnosticRoutes = getDiagnosticDocuments().map((diagnostic) => diagnostic.path);
+// A retired code's diagnostic and rule pages point to the tool that checks it now.
+const retiredRedirects = Object.entries(RETIRED_DIAGNOSTIC_CODES).flatMap(
+  ([code, { ruleId, movedTo }]) => {
+    const [framework, ...rule] = ruleId.split("/");
+    const redirect = { redirect: { to: movedTo, statusCode: 301 } };
+    return [
+      [`/diagnostics/${code}`, redirect],
+      [`/${framework}/rules/${rule.join("/")}`, redirect],
+    ] as const;
+  },
+);
 const contentDumpRoutes = [
   "/__nuxt_content/diagnostics/sql_dump.txt",
   "/__nuxt_content/docs/sql_dump.txt",
@@ -127,6 +139,7 @@ export default defineNuxtConfig({
     ...Object.fromEntries(frameworkRoutes.map((route) => [route, { prerender: true }])),
     ...Object.fromEntries(ruleIndexRoutes.map((route) => [route, { prerender: true }])),
     ...Object.fromEntries(legacyRuleIndexRoutes.map((route) => [route, { prerender: true }])),
+    ...Object.fromEntries(retiredRedirects),
     "/_nuxt/**": {
       headers: { "cache-control": "public, max-age=31536000, immutable" },
     },

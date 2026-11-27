@@ -33,7 +33,6 @@ export default defineConfig({
     "src/rule-packs/design-system/index.ts",
     "src/rule-packs/pinia/index.ts",
     "src/rule-packs/mcp/index.ts",
-    "src/mcp/index.ts",
   ],
   exports: {
     exclude: ["bin", "nuxt-cli", "plugin-worker", "doctor-process"],
