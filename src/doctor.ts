@@ -36,6 +36,7 @@ import { mcpRulePack } from "./rule-packs/mcp/index.js";
 import {
   mcpEvidenceSource,
   mcpEvidenceUsed,
+  mcpServerLabels,
   readMcpServers,
   uncheckedMcpEvidenceGap,
   unreadMcpServerGaps,
@@ -128,6 +129,16 @@ export async function runViteDoctor(options: DoctorRunOptions, fullRunForMcpEvid
   const gaps = [...unreadMcpServerGaps(result.project), ...(unchecked ? [unchecked] : [])];
   if (gaps.length) result.project.evidenceGaps = [...(result.project.evidenceGaps ?? []), ...gaps];
   if (used.length) result.project.evidenceUsed = [...(result.project.evidenceUsed ?? []), ...used];
+  if (result.project.noProject) {
+    const { name, label } = mcpEvidenceSource;
+    const sourceTargets = new Set(
+      result.evidenceSources?.find((source) => source.name === name)?.targets,
+    );
+    const targets = mcpServerLabels(result.project.runtimeEvidence).filter(
+      (target) => !sourceTargets.has(target),
+    );
+    if (targets.length) result.contributedLiveTargets = [{ name, label, targets }];
+  }
   return { ...result, version: viteDoctorVersion };
 }
 

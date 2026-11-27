@@ -83,12 +83,11 @@ export async function collectEvidenceSources(
   project: ProjectInfo,
   sources: readonly EvidenceSource[],
   options: Pick<DoctorRunOptions, "sources" | "fetch">,
+  contributeRuntimeEvidence: () => Promise<void>,
 ): Promise<EvidenceSourceRun[]> {
   const byName = new Map(sources.map((source) => [source.name, source]));
-  const requested = Object.entries(options.sources ?? {}).filter(
-    ([, input]) => input !== undefined,
-  );
-  for (const [name, input] of requested) {
+  const requested = Object.entries(options.sources ?? {}).flatMap(([name, input]) => {
+    if (input === undefined) return [];
     const source = byName.get(name);
     if (!source) {
       const known = [...byName.keys()];
@@ -97,12 +96,12 @@ export async function collectEvidenceSources(
       );
     }
     source.validate?.(input);
-  }
+    return [{ source, input }];
+  });
   const fetch: typeof globalThis.fetch =
     options.fetch ?? ((input, init) => globalThis.fetch(input, init));
-  const runs: EvidenceSourceRun[] = [];
-  for (const [name, input] of requested) {
-    const source = byName.get(name)!;
+  async function collect(source: EvidenceSource, input: unknown): Promise<EvidenceSourceRun> {
+    const { name } = source;
     const result = await source.collect(input, { project, fetch });
     project.runtimeEvidence = { ...project.runtimeEvidence, [name]: result.evidence };
     if (result.gaps?.length) {
@@ -111,12 +110,21 @@ export async function collectEvidenceSources(
         ...result.gaps.map((gap) => ({ source: name, files: [], ...gap })),
       ];
     }
-    runs.push({
+    return {
       name,
       label: source.label,
       targets: result.targets ?? [],
       args: sourceArgs(source, input),
-    });
+    };
+  }
+  const earlyRuns = new Map<string, EvidenceSourceRun>();
+  for (const { source, input } of requested) {
+    if (source.beforeRuntimeEvidence) earlyRuns.set(source.name, await collect(source, input));
+  }
+  await contributeRuntimeEvidence();
+  const runs: EvidenceSourceRun[] = [];
+  for (const { source, input } of requested) {
+    runs.push(earlyRuns.get(source.name) ?? (await collect(source, input)));
   }
   return runs;
 }

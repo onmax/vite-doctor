@@ -170,8 +170,10 @@ export async function createScanSession(
     ],
     "Runtime Evidence",
   );
-  await applyProjectContributions(project, registry);
-  const evidenceSources = await collectEvidenceSources(project, registry.sources, options);
+  await applyProjectInventory(project, registry);
+  const evidenceSources = await collectEvidenceSources(project, registry.sources, options, () =>
+    applyRuntimeEvidence(project, registry),
+  );
   if (options.affectedFiles && fullRunWhen?.(project)) {
     options = { ...options, affectedFiles: undefined };
     sessionBase.options = options;
@@ -452,14 +454,14 @@ function assertUniqueContributors(
   }
 }
 
-async function applyProjectContributions(
-  project: ProjectInfo,
-  registry: RuleRegistry,
-): Promise<void> {
+async function applyProjectInventory(project: ProjectInfo, registry: RuleRegistry): Promise<void> {
   for (const contributor of registry.inventoryContributors) {
     const contribution = await contributor.contribute(project);
     project.inventory = { ...project.inventory, [contributor.name]: contribution };
   }
+}
+
+async function applyRuntimeEvidence(project: ProjectInfo, registry: RuleRegistry): Promise<void> {
   for (const contributor of registry.runtimeEvidenceContributors) {
     const contribution = await contributor.contribute(project);
     project.runtimeEvidence = { ...project.runtimeEvidence, [contributor.name]: contribution };

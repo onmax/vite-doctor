@@ -9,7 +9,7 @@ import type {
   DoctorReportFormat,
   DoctorRunResult,
   DoctorSeverity,
-  EvidenceSourceRun,
+  LiveTargetGroup,
   FixSafety,
   RulePack,
 } from "./primitives.js";
@@ -219,16 +219,27 @@ function evidenceKey(item: DiagnosticEvidence): string {
 }
 
 /**
- * The live targets a Doctor Run without a project checked through Evidence Sources. Without a
- * project they are the run's subject, so reports name them instead of a fallback framework.
+ * Without a project, the live targets are the run's subject rather than a fallback framework.
  */
-function liveSubject(result: DoctorRunResult): EvidenceSourceRun[] | undefined {
+function liveSubject(result: DoctorRunResult): LiveTargetGroup[] | undefined {
   if (!result.project.noProject) return undefined;
-  const sources = (result.evidenceSources ?? []).filter((source) => source.targets.length);
-  return sources.length ? sources : undefined;
+  const groups = new Map<string, LiveTargetGroup>();
+  for (const { name, label, targets } of [
+    ...(result.evidenceSources ?? []),
+    ...(result.contributedLiveTargets ?? []),
+  ]) {
+    if (!targets.length) continue;
+    const group = groups.get(name);
+    groups.set(name, {
+      name,
+      label: group?.label ?? label,
+      targets: [...new Set([...(group?.targets ?? []), ...targets])],
+    });
+  }
+  return groups.size ? [...groups.values()] : undefined;
 }
 
-function subjectTargets(subject: EvidenceSourceRun[]) {
+function subjectTargets(subject: LiveTargetGroup[]) {
   return {
     live: subject.flatMap(({ name, targets }) =>
       targets.map((target) => ({ source: name, target })),

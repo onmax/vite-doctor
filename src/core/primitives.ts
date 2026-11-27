@@ -1602,6 +1602,8 @@ export interface DoctorRunResult {
   rulePacks?: RulePackActivation[];
   /** Evidence Sources the run read because it was given an input for them. */
   evidenceSources?: EvidenceSourceRun[];
+  /** Live targets supplied by contributors rather than read through Evidence Sources. */
+  contributedLiveTargets?: LiveTargetGroup[];
   graph?: {
     files: number;
     importEdges: number;
@@ -1638,6 +1640,8 @@ export interface EvidenceSource<Input = any> {
   name: string;
   /** What a target is, such as "MCP server". */
   label: string;
+  /** Collect after Project Inventory but before Runtime Evidence contributors. Defaults to false. */
+  beforeRuntimeEvidence?: boolean;
   /** CLI flags, keyed by option name in camelCase. */
   options?: Record<string, EvidenceSourceOption>;
   /** Builds the input from CLI flag values, keyed by option name. Throws on a value it can't use. */
@@ -1681,11 +1685,15 @@ export interface EvidenceSourceResult {
   gaps?: Array<{ message: string; instanceKey?: string }>;
 }
 
-/** An Evidence Source a Doctor Run read. */
-export interface EvidenceSourceRun {
+/** Live targets grouped by the name and display label of their source. */
+export interface LiveTargetGroup {
   name: string;
   label: string;
   targets: string[];
+}
+
+/** An Evidence Source a Doctor Run read. */
+export interface EvidenceSourceRun extends LiveTargetGroup {
   /** CLI arguments that read the source again, with secret values redacted. */
   args: string[];
 }

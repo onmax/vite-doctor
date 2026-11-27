@@ -110,6 +110,7 @@ const PUBLIC_MCP_PATHS = new Set(["/", "/mcp", "/sse", "/v1/sse", "/github-copil
 export const mcpEvidenceSource: EvidenceSource<McpServerTarget[]> = {
   name: MCP_EVIDENCE,
   label: "MCP server",
+  beforeRuntimeEvidence: true,
   options: {
     url: {
       help: "Read tools/list from this MCP server as Runtime Evidence. Repeatable.",

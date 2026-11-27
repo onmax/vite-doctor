@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
 import { createReport, reportStatus, runDoctor } from "../../src/core/index.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
-import { createRule, defineRulePack } from "../../src/extension.ts";
+import { createRule, defineDoctorExtension, defineRulePack } from "../../src/extension.ts";
 import { readMcpServers } from "../../src/mcp/evidence.ts";
 import { viteDoctorVersion } from "../../src/version.ts";
 import { startMcpStub, stubTools, type StubRequest } from "./mcp-stub.ts";
@@ -32,6 +32,30 @@ async function stub(options: Parameters<typeof startMcpStub>[0] = {}) {
 }
 
 const mcpServerPackage = { "@modelcontextprotocol/sdk": "^1.32.0" };
+
+test("Runtime Evidence contributors can read the collected MCP tools", async () => {
+  const url = mockToolPages([[{ name: "search" }]]);
+  const result = await runViteDoctor({
+    root: project(mcpServerPackage),
+    cache: false,
+    sources: { mcp: [{ url }] },
+    extensions: [
+      defineDoctorExtension({
+        name: "fixture/tool-count",
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({
+            name: "tool-count",
+            contribute: ({ runtimeEvidence }) => {
+              const [server] = readMcpServers(runtimeEvidence);
+              return { count: server && "tools" in server ? server.tools.length : 0 };
+            },
+          });
+        },
+      }),
+    ],
+  });
+  expect(result.project.runtimeEvidence?.["tool-count"]).toEqual({ count: 1 });
+});
 
 test("a Doctor Run reads an MCP server's tools/list as Runtime Evidence", async () => {
   const server = await stub();
@@ -605,6 +629,67 @@ test("an MCP server checked from an empty directory is the report's subject, not
   expect(text.output).toContain(`Checked: MCP server ${origin}\n`);
   expect(text.output).toContain(`Project: none, ${root} has no package.json\n`);
   expect(text.output).not.toMatch(/Detected:|Vite/);
+});
+
+test("a contributor's MCP targets are the live subject and rerun from another directory", async () => {
+  const root = emptyDirectory();
+  const config = join(emptyDirectory(), "doctor.config.mjs");
+  const target = "https://example.test";
+  writeFileSync(
+    config,
+    `export default { extensions: [{
+    name: "fixture/contributed-mcp",
+    setup(api) {
+      api.registerRuntimeEvidenceContributor({
+        name: "mcp",
+        contribute: () => ({ mcpServers: [{ url: "${target}/private", tools: [{ name: "search" }] }] }),
+      });
+    },
+  }] };`,
+  );
+  const args = ["--no-cache", "--config", config];
+  const subject = { live: [{ source: "mcp", target }] };
+  const json = await cli(root, [...args, "--format", "json"]);
+  expect(JSON.parse(json.output)).toMatchObject({ subject, framework: null });
+  const agent = await cli(root, [...args, "--format", "agent"]);
+  const report = JSON.parse(agent.output);
+  expect(report).toMatchObject({ subject, project: null });
+  expect(report.commandArgs.rerun).toEqual([
+    "vite-doctor",
+    root,
+    "--config",
+    config,
+    "--no-cache",
+    "--format",
+    "agent",
+  ]);
+  const rerun = await cli(project(), report.commandArgs.rerun.slice(1));
+  expect(JSON.parse(rerun.output)).toMatchObject({
+    subject,
+    project: null,
+    rulePacks: report.rulePacks,
+  });
+  const text = await cli(root, [...args, "--format", "text"]);
+  expect(text.output).toContain(`Checked: MCP server ${target}\n`);
+});
+
+test("malformed builtin source flags fail before executable config loads", async () => {
+  const root = emptyDirectory();
+  const config = "doctor.config.mjs";
+  writeFileSync(join(root, config), 'throw new Error("config should not load");');
+  const { code, output } = await cli(root, [
+    "--format",
+    "json",
+    "--config",
+    config,
+    "--mcp-url",
+    "/mcp",
+  ]);
+  expect(code).toBe(2);
+  expect(JSON.parse(output).error).toMatchObject({
+    kind: "invocation",
+    message: expect.stringContaining("is not an absolute http(s) URL"),
+  });
 });
 
 async function rerunArgs(urls: string[]) {

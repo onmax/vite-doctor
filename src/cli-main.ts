@@ -300,9 +300,8 @@ function validateSingleValueOptions(cli: ReturnType<typeof cac>): void {
 }
 
 /**
- * Reads Evidence Source flags into run inputs. Flags no command option claims belong to the
- * sources of config Doctor Extensions, which load only here; any other unclaimed flag is rejected
- * as cac would.
+ * Reads flags contributed by config Doctor Extensions. Other unclaimed flags are rejected as cac
+ * would.
  */
 async function applyEvidenceSourceFlags(
   cli: ReturnType<typeof cac>,
@@ -313,17 +312,29 @@ async function applyEvidenceSourceFlags(
   const unclaimed = Object.keys(flags).filter(
     (name) => name !== "--" && !command?.hasOption(name) && !cli.globalCommand.hasOption(name),
   );
-  let sources = builtinEvidenceSources;
-  if (unclaimed.length) {
-    const { viteDoctorEvidenceSources } = await import("./doctor.js");
-    sources = await viteDoctorEvidenceSources(options);
-  }
+  if (!unclaimed.length) return;
+  const { viteDoctorEvidenceSources } = await import("./doctor.js");
+  const sources = (await viteDoctorEvidenceSources(options)).filter(
+    (source) => !builtinEvidenceSources.includes(source),
+  );
   const known = new Set(evidenceSourceFlags(sources).map((flag) => flag.key));
   const unknown = unclaimed.find((name) => !known.has(name));
   if (unknown) {
     const flag = unknown.length > 1 ? `--${kebabFlag(unknown)}` : `-${unknown}`;
     throw new Error(`Unknown option \`${flag}\``);
   }
+  setEvidenceSourceInputs(
+    options,
+    sources,
+    Object.fromEntries(unclaimed.map((name) => [name, flags[name]])),
+  );
+}
+
+function setEvidenceSourceInputs(
+  options: DoctorRunOptions,
+  sources: typeof builtinEvidenceSources,
+  flags: Record<string, unknown>,
+): void {
   const inputs = evidenceSourceInputs(sources, flags);
   if (!inputs) return;
   for (const source of sources) if (source.name in inputs) source.validate?.(inputs[source.name]);
@@ -401,6 +412,7 @@ function addDoctorRunCommand(
       applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
       validateReportBudget(options, format);
+      setEvidenceSourceInputs(runOptions, builtinEvidenceSources, options);
       const report = {
         cwd,
         formatFlag: stringFlag(options.format) as DoctorReportFormat,
