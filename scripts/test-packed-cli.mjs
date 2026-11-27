@@ -266,7 +266,7 @@ function verifyViteConfigTypes(archive) {
   const vitePlus = JSON.parse(
     readFileSync(join(root, "node_modules/vite-plus/package.json"), "utf8"),
   );
-  const core = `npm:@voidzero-dev/vite-plus-core@${vitePlus.version}`;
+  const core = vitePlus.dependencies.vite;
   const layouts = [
     // vite-plus's defineConfig is typed against its own copy of Vite. When that copy is only
     // installed under the alias `vite` inside vite-plus, no package can augment it.

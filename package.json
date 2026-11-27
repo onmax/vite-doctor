@@ -108,6 +108,7 @@
     "typescript": "catalog:analysis",
     "unimport": "catalog:prod",
     "unimport-nitro-v6": "catalog:prod",
+    "unimport-nitro-v65": "catalog:prod",
     "vue-eslint-parser": "catalog:analysis",
     "yaml": "catalog:prod"
   },

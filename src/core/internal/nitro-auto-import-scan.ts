@@ -31,9 +31,11 @@ export async function loadNitroScanner(entry: string): Promise<Scanner | undefin
   }
 }
 
-async function loadBundledScanner(version: string): Promise<Scanner> {
+async function loadBundledScanner(version: string): Promise<Scanner | undefined> {
+  if (version === "6.4.0") return import("unimport-nitro-v6");
+  if (version === "6.5.0") return import("unimport-nitro-v65");
   const scanner = await import("unimport");
-  return scanner.version === version ? scanner : import("unimport-nitro-v6");
+  return scanner.version === version ? scanner : undefined;
 }
 
 function fingerprint(entries: unknown) {
