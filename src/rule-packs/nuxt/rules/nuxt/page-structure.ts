@@ -580,6 +580,7 @@ function isShutdownHook(property: AnyNode): boolean {
   const handler = unwrap(property.value);
   return (
     property.type === "Property" &&
+    property.kind === "init" &&
     !!name &&
     shutdownHooks.has(name) &&
     (handler?.type === "FunctionExpression" || handler?.type === "ArrowFunctionExpression")
