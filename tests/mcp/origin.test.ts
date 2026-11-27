@@ -6,6 +6,7 @@ import { join } from "pathe";
 import { afterEach, expect, test } from "vite-plus/test";
 import type { Diagnostic, DoctorRunOptions } from "../../src/core/index.ts";
 import { createDiagnosticFingerprint } from "../../src/core/internal/diagnostics.ts";
+import { createReport } from "../../src/core/reports.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 
 const cleanups: Array<() => void> = [];
@@ -37,13 +38,19 @@ function server(
   tools: McpTool[],
   urls = ["https://mcp.example.com/mcp"],
 ): NonNullable<DoctorRunOptions["extensions"]> {
+  return servers(urls.map((url) => ({ url, tools })));
+}
+
+function servers(
+  mcpServers: Array<{ url: string; tools: McpTool[] }>,
+): NonNullable<DoctorRunOptions["extensions"]> {
   return [
     {
       name: "fixture/server",
       setup(api) {
         api.registerRuntimeEvidenceContributor({
           name: "server",
-          contribute: () => ({ mcpServers: urls.map((url) => ({ url, tools })) }),
+          contribute: () => ({ mcpServers }),
         });
       },
     },
@@ -91,7 +98,7 @@ test("a finding the source and the server share keeps its fingerprint when the s
   expect(confirmed[0]?.fingerprint).toBe(code?.fingerprint);
   expect(confirmed[0]?.origin).toEqual({
     code: "found",
-    live: [{ source: "mcp", target: "https://second.example.com" }, ...live],
+    live: [...live, { source: "mcp", target: "https://second.example.com" }],
   });
 });
 
@@ -104,6 +111,79 @@ test("a wire finding absent from the source reports the definition as passing", 
   );
   expect(stale?.origin).toEqual({ code: "passes", live });
   expect(stale?.file).toBe(join(root, "server/mcp/tools/list_drops.ts"));
+});
+
+test.each([
+  {
+    code: "MCP0001",
+    annotations: "{ readOnlyHint: true }",
+    staging: { ...sent({ readOnlyHint: true }), title: "List staging drops" },
+    production: { ...sent({ readOnlyHint: true }), title: "List production drops" },
+  },
+  {
+    code: "MCP0002",
+    annotations: "{ title: 'List drops', readOnlyHint: false, destructiveHint: false }",
+    staging: sent({ title: "List drops", readOnlyHint: false, destructiveHint: false }),
+    production: sent({ title: "List drops" }),
+  },
+])("$code preserves shared source advice and each endpoint's evidence", async (fixture) => {
+  const { code, annotations, staging, production } = fixture;
+  const root = project(annotations);
+  const endpoints = [
+    { url: "https://staging.example.com/mcp", tools: [staging] },
+    { url: "https://production.example.com/mcp", tools: [production] },
+  ];
+  const source = byCode(await run(root), code)!;
+  const findings = async (order: typeof endpoints) => {
+    const result = await runViteDoctor({ root, cache: false, extensions: servers(order) });
+    const report = JSON.parse(createReport(result, "json")) as {
+      diagnostics: Array<
+        { code: string; message: string; remediation: string } & Pick<
+          Diagnostic,
+          "fingerprint" | "origin" | "data" | "evidence"
+        >
+      >;
+    };
+    return report.diagnostics.filter((item) => item.code === code);
+  };
+  const forward = await findings(endpoints);
+  const reverse = await findings(endpoints.toReversed());
+  expect(forward).toHaveLength(1);
+  expect(reverse).toHaveLength(1);
+  expect(forward).toEqual(reverse);
+  expect(forward[0]).toMatchObject({
+    message: source.why,
+    remediation: source.diagnostic.fix,
+    fingerprint: source.fingerprint,
+  });
+  const observations = forward[0]?.data?.observations;
+  if (code === "MCP0001") {
+    expect(observations).toMatchObject([
+      {
+        server: { url: "https://production.example.com" },
+        fix: expect.stringContaining("List production drops"),
+      },
+      {
+        server: { url: "https://staging.example.com" },
+        fix: expect.stringContaining("List staging drops"),
+      },
+    ]);
+  } else {
+    expect(observations).toMatchObject([
+      {
+        server: { url: "https://production.example.com" },
+        findings: expect.arrayContaining([expect.objectContaining({ client: "chatgpt" })]),
+      },
+      {
+        server: { url: "https://staging.example.com" },
+        fix: source.diagnostic.fix,
+        findings: [expect.objectContaining({ client: "claude-directory" })],
+      },
+    ]);
+    expect(forward[0]?.evidence?.map((item) => item.summary)).toEqual(
+      expect.arrayContaining([expect.stringContaining("ChatGPT")]),
+    );
+  }
 });
 
 test.each(["MCP0001", "MCP0010"])("%s baselines identify each live-only endpoint", async (code) => {

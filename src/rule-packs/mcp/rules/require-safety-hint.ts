@@ -63,57 +63,52 @@ export const requireSafetyHint = createRule({
           diagnostic: diagnostics.MCP0002,
           range: (tool) =>
             tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
-          source: missingSafetyHint,
+          source: sourceAdvice,
         });
         for (const tool of sourceOnly) {
-          if (missingSafetyHint(tool) !== true) continue;
+          const advice = sourceAdvice(tool);
+          if (!advice) continue;
           const { annotations } = tool;
-          const hints = safetyHints(tool);
-          ctx.report(
-            diagnostics.MCP0002({
-              why: `MCP tool ${toolLabel(tool)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.`,
-              fix: hintFix(
-                hints[0]?.state === "resolved" ? hints[0].value : undefined,
-                hints[1]?.state === "resolved" ? hints[1].value : undefined,
-              ),
-            }),
-            {
-              ruleId: "mcp/tools/require-safety-hint",
-              severity: ctx.severity,
-              category: "tools",
-              file: tool.file,
-              range: annotations.state === "resolved" ? annotations.range : tool.callee,
-              confidence: "heuristic-high",
-              fingerprint: tool.name
-                ? definedToolFingerprint(
-                    ctx,
-                    "mcp/tools/require-safety-hint",
-                    tool.file,
-                    tool.name.value,
-                  )
-                : undefined,
-              brief: SAFETY_BRIEF,
-              data: tool.name ? { tool: tool.name.value } : undefined,
-              evidence: annotationsEvidence(tool),
-            },
-          );
+          ctx.report(diagnostics.MCP0002({ why: advice.why, fix: advice.fix }), {
+            ruleId: "mcp/tools/require-safety-hint",
+            severity: ctx.severity,
+            category: "tools",
+            file: tool.file,
+            range: annotations.state === "resolved" ? annotations.range : tool.callee,
+            confidence: "heuristic-high",
+            fingerprint: tool.name
+              ? definedToolFingerprint(
+                  ctx,
+                  "mcp/tools/require-safety-hint",
+                  tool.file,
+                  tool.name.value,
+                )
+              : undefined,
+            brief: advice.brief,
+            data: tool.name ? { tool: tool.name.value } : undefined,
+            evidence: annotationsEvidence(tool),
+          });
         }
       },
     };
   },
 });
 
-function safetyHints(tool: McpToolDefinition) {
+function sourceAdvice(tool: McpToolDefinition) {
   const { annotations } = tool;
-  return annotations.state === "resolved"
-    ? [annotations.values.get("readOnlyHint"), annotations.values.get("destructiveHint")]
-    : [];
-}
-
-/** Whether no safety hint is true; `undefined` when Doctor can't resolve one. */
-function missingSafetyHint(tool: McpToolDefinition): boolean | undefined {
-  if (tool.annotations.state === "partial") return undefined;
-  const hints = safetyHints(tool);
+  if (annotations.state === "partial") return undefined;
+  const hints =
+    annotations.state === "resolved"
+      ? [annotations.values.get("readOnlyHint"), annotations.values.get("destructiveHint")]
+      : [];
   if (hints.some((hint) => hint?.state === "resolved" && hint.value === true)) return false;
-  return hints.some((hint) => hint?.state === "unknown") ? undefined : true;
+  if (hints.some((hint) => hint?.state === "unknown")) return undefined;
+  return {
+    why: `MCP tool ${toolLabel(tool)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.`,
+    fix: hintFix(
+      hints[0]?.state === "resolved" ? hints[0].value : undefined,
+      hints[1]?.state === "resolved" ? hints[1].value : undefined,
+    ),
+    brief: SAFETY_BRIEF,
+  };
 }
