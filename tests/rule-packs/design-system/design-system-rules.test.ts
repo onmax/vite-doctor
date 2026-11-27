@@ -109,7 +109,7 @@ test("design-system Rules share one ESLint verify per file when they run file by
     scriptAst: { type: "Program" },
   }));
   const lint = async (order: Array<[DoctorRule, (typeof files)[number]]>) => {
-    const project = {};
+    const project = { root: "/project" };
     const reports: unknown[] = [];
     const report: RuleContext["report"] = (diagnostic, metadata) =>
       reports.push({ diagnostic, ...metadata });
@@ -119,6 +119,7 @@ test("design-system Rules share one ESLint verify per file when they run file by
         project,
         options: undefined,
         severity: "warn",
+        cache: new Map(),
         report,
       } as unknown as RuleContext);
     return reports;
@@ -136,6 +137,67 @@ test("design-system Rules share one ESLint verify per file when they run file by
   expect(verify).toHaveBeenCalledTimes(fileRules.length + files.length - 1);
   expect(fileMajor).toHaveLength(ruleMajor.length);
   expect(fileMajor).toEqual(expect.arrayContaining(ruleMajor));
+});
+
+test("design-system Rules skip the ESLint parse for files that cannot hold a class, style, or helper call", async () => {
+  const verify = vi.spyOn(Linter.prototype, "verify");
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: designSystemRules,
+    config: {
+      rules: { "design-system/no-raw-colors": ["warn", { settings: { mergeFunctions: "tw" } }] },
+    },
+    files: {
+      "src/server.ts": "export const handler = () => new Response('ok');\n",
+      "src/math.tsx": "export const sum = (a: number, b: number) => a + b;\n",
+      "src/Plain.vue": "<template>\n  <p>Hello</p>\n</template>\n",
+      // Plain TypeScript has no JSX, so only class helpers count, including configured ones.
+      "src/names.ts": "export const className = 'text-red-500';\n",
+      "src/variants.ts": "export const card = tw('bg-red-500');\n",
+      "src/Card.tsx": 'export const Card = () => <div className="bg-red-500" />;\n',
+      "src/Card.vue": '<template>\n  <div class="bg-red-500" />\n</template>\n',
+    },
+  });
+
+  const parsed = verify.mock.calls.map(([, , options]) =>
+    typeof options === "string" ? options : options?.filename,
+  );
+  expect(new Set(parsed)).toEqual(new Set(["src/variants.ts", "src/Card.tsx", "src/Card.vue"]));
+  expect(
+    result.diagnostics
+      .filter((d) => d.ruleId === "design-system/no-raw-colors")
+      .map((d) => d.file.slice(d.file.indexOf("src/")))
+      .sort(),
+  ).toEqual(["src/Card.tsx", "src/Card.vue", "src/variants.ts"]);
+});
+
+test("design-system Rules parse files whose escapes or character references spell a class site", async () => {
+  const result = await runProjectFixture({
+    framework: "vue",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: designSystemRules,
+    files: {
+      "src/Spread.tsx":
+        "export const Box = () => <div {...{ ['st\\u0079le']: { width: 100 } }} />;\n",
+      "src/Bound.vue":
+        "<template>\n  <div v-bind=\"{ ['st&#121;le']: { width: 100 } }\" />\n</template>\n",
+      "src/helper.ts": [
+        "declare function c\\u006e(...items: string[]): string;",
+        "export const className = c\\u006e('bg-red-500', 'p-[13px]');",
+        "",
+      ].join("\n"),
+    },
+  });
+
+  expect(
+    result.diagnostics.map((d) => `${d.file.slice(d.file.indexOf("src/"))} ${d.code}`).toSorted(),
+  ).toEqual([
+    "src/Bound.vue DS0004",
+    "src/Spread.tsx DS0004",
+    "src/helper.ts DS0002",
+    "src/helper.ts DS0003",
+  ]);
 });
 
 test("uses Tailwind and Nuxt UI package activation and composed presets", () => {
@@ -369,4 +431,111 @@ test("warns when a baseline predates the Design System rename", async () => {
     run: { baseline: "baseline.json", newOnly: true },
   });
   expect(result.diagnostics.map(({ code }) => code)).toContain("DOC0032");
+});
+
+test("Nuxt UI tokens do not exempt a restyled design-system component", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0", "@nuxt/ui": "^4.0.0" },
+    rules: designSystemRules,
+    files: {
+      "src/styles.css": '@import "tailwindcss";\n@theme { --color-primary: #3b82f6; }\n',
+      "src/components/ui/button.tsx": scriptFiles["src/components/ui/button.tsx"],
+      "src/Card.tsx": [
+        'import { Button } from "@/components/ui/button";',
+        "export const Card = () => (",
+        "  <>",
+        '    <Button className="text-primary" />',
+        '    <Button className="bg-muted" />',
+        "  </>",
+        ");",
+      ].join("\n"),
+    },
+  });
+  expect(result.diagnostics.filter((d) => d.code === "DS0001").map((d) => d.range?.line)).toEqual([
+    4, 5,
+  ]);
+});
+
+test("reports JSX colors after a self-closing SVG mask", async () => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: designSystemRules,
+    files: {
+      "src/styles.css": '@import "tailwindcss";\n@theme { --color-primary: #3b82f6; }\n',
+      "src/Icon.tsx": [
+        "export const Icon = () => (",
+        "  <svg>",
+        '    <mask id="a"><path fill="#ffffff" /></mask>',
+        '    <mask id="b" />',
+        '    <path fill="#123456" />',
+        "  </svg>",
+        ");",
+      ].join("\n"),
+    },
+  });
+  expect(result.diagnostics.filter((d) => d.code === "DS0002").map((d) => d.range?.line)).toEqual([
+    5,
+  ]);
+});
+
+test.each([
+  ["", []],
+  [`<path fill="url( '#fade' )" />`, [4]],
+  ['<linearGradient id="paint" xlinkHref="#fade" /><path fill="url(#paint)" />', [4]],
+])("only exempts a provably mask-only JSX gradient (%s)", async (paint, lines) => {
+  const result = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: designSystemRules,
+    files: {
+      "src/styles.css": '@import "tailwindcss";\n',
+      "src/Icon.tsx": [
+        "export const Icon = () => (",
+        "  <svg>",
+        "    <defs>",
+        '      <linearGradient id="fade"><stop stopColor="#123456" /></linearGradient>',
+        `      <mask id="clip"><rect fill="url( '#fade' )" /></mask>`,
+        "    </defs>",
+        paint,
+        "  </svg>",
+        ");",
+      ].join("\n"),
+    },
+  });
+  expect(
+    result.diagnostics
+      .filter((finding) => finding.code === "DS0002")
+      .map((finding) => finding.range?.line),
+  ).toEqual(lines);
+});
+
+test("skips Next.js image routes only in a Next.js app", async () => {
+  const route = 'export default function Image() { return <div style={{ color: "#21201c" }} /> }\n';
+  const files = {
+    "src/styles.css": '@import "tailwindcss";\n@theme { --color-primary: #3b82f6; }\n',
+    "app/opengraph-image.tsx": route,
+    "src/components/opengraph-image.tsx": route,
+  };
+  const vite = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0" },
+    rules: [noInlineStyles],
+    files,
+  });
+  expect(
+    vite.diagnostics
+      .map((d) => d.file.slice(d.file.lastIndexOf("/", d.file.lastIndexOf("/") - 1) + 1))
+      .toSorted(),
+  ).toEqual(["app/opengraph-image.tsx", "components/opengraph-image.tsx"]);
+  const next = await runProjectFixture({
+    framework: "vite",
+    dependencies: { tailwindcss: "^4.0.0", next: "^16.0.0" },
+    rules: [noInlineStyles],
+    files,
+  });
+  expect(next.diagnostics.map((d) => d.file.slice(d.file.indexOf("/src/") + 1))).toEqual([
+    "src/components/opengraph-image.tsx",
+  ]);
 });
