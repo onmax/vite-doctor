@@ -6,7 +6,7 @@ import {
   toolLabel,
   type McpToolDefinition,
 } from "./shared.js";
-import { definedToolFingerprint, reportWireTool, wireTools } from "./wire.js";
+import { definedToolFingerprint, reportWireTools, wireTools } from "./wire.js";
 
 export const requireAnnotationTitle = createRule({
   meta: {
@@ -43,13 +43,12 @@ export const requireAnnotationTitle = createRule({
     return {
       async onWorkspaceEnd() {
         const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent)
-          reportWireTool(ctx, wire, "MCP0001", {
-            ruleId: "mcp/tools/require-annotation-title",
-            diagnostic: diagnostics.MCP0001,
-            range: annotationsRange,
-            source: missingTitle,
-          });
+        reportWireTools(ctx, sent, "MCP0001", {
+          ruleId: "mcp/tools/require-annotation-title",
+          diagnostic: diagnostics.MCP0001,
+          range: annotationsRange,
+          source: missingTitle,
+        });
         for (const tool of sourceOnly) {
           if (missingTitle(tool) !== true) continue;
           const { annotations } = tool;

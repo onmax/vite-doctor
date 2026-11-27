@@ -197,15 +197,13 @@ export function liveOrigin(server: McpServerToolsEvidence): DiagnosticLiveOrigin
 }
 
 /**
- * Reports a tool's `code` finding when the server sent one, at its source definition when one
- * matches and at the project root otherwise. `source` says whether the definition has the same
- * problem, which tells a stale deployment from a problem still in the code. A finding without a
- * definition keys its fingerprint on the endpoint, not its URL, so it stays stable when only the
- * port or host changes.
+ * Reports findings at a matching definition, or at the project root. When the source also
+ * has the problem, report it once with all the live observations. Live-only findings keep
+ * separate identities for each endpoint, independent of which endpoints the run reads.
  */
-export function reportWireTool(
+export function reportWireTools(
   ctx: RuleContext,
-  wire: WireTool,
+  tools: WireTool[],
   code: McpCode,
   options: {
     ruleId: string;
@@ -215,17 +213,43 @@ export function reportWireTool(
     source?: (definition: McpToolDefinition) => boolean | undefined;
   },
 ): void {
-  const found = wire.diagnostics.find((diagnostic) => diagnostic.code === code);
-  if (!found) return;
+  const groups = new Map<string, WireFinding[]>();
+  for (const wire of tools) {
+    const found = wire.diagnostics.find((diagnostic) => diagnostic.code === code);
+    if (!found) continue;
+    const { server, tool, definition } = wire;
+    const inSource = definition && options.source?.(definition);
+    const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
+    const fingerprint =
+      definition && inSource === true
+        ? definedToolFingerprint(ctx, options.ruleId, definition.file, tool.name)
+        : sha256(
+            JSON.stringify([options.ruleId, server.name ?? null, endpointId ?? null, tool.name]),
+          );
+    const finding = { wire, found, inSource };
+    const group = groups.get(fingerprint);
+    if (group) group.push(finding);
+    else groups.set(fingerprint, [finding]);
+  }
+  for (const [fingerprint, group] of groups) reportWireFinding(ctx, fingerprint, group, options);
+}
+
+interface WireFinding {
+  wire: WireTool;
+  found: McpDiagnostic;
+  inSource: boolean | undefined;
+}
+
+function reportWireFinding(
+  ctx: RuleContext,
+  fingerprint: string,
+  group: WireFinding[],
+  options: Parameters<typeof reportWireTools>[3],
+): void {
+  const { wire, found, inSource } = group[0]!;
   const { server, tool, definition } = wire;
   const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
-  const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
-  const label = server.name ?? endpoint ?? "an MCP server";
   const range = definition ? options.range(definition) : undefined;
-  const fingerprint = definition
-    ? definedToolFingerprint(ctx, options.ruleId, definition.file, tool.name)
-    : sha256(JSON.stringify([options.ruleId, server.name ?? null, endpointId ?? null, tool.name]));
-  const inSource = definition && options.source?.(definition);
   const origin: DiagnosticOrigin = {
     code: !definition
       ? "no-definition"
@@ -234,13 +258,17 @@ export function reportWireTool(
         : inSource === false
           ? "passes"
           : "not-checked",
-    live: [liveOrigin(server)],
+    live: group.map(({ wire }) => liveOrigin(wire.server)),
   };
   const evidence: DiagnosticEvidence[] = [
-    {
-      kind: "runtime",
-      summary: `Read from the tools/list of MCP server ${JSON.stringify(label)}${endpoint ? ` at ${endpoint}` : ""} during this Doctor Run.`,
-    },
+    ...group.map(({ wire: { server } }) => {
+      const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
+      const label = server.name ?? endpoint ?? "an MCP server";
+      return {
+        kind: "runtime" as const,
+        summary: `Read from the tools/list of MCP server ${JSON.stringify(label)}${endpoint ? ` at ${endpoint}` : ""} during this Doctor Run.`,
+      };
+    }),
     ...citations(found.findings),
     ...(definition && range
       ? [
@@ -261,7 +289,7 @@ export function reportWireTool(
     projectLevel: !definition,
     range,
     fingerprint,
-    instanceKey: definition ? endpointId : endpointId && fingerprint,
+    instanceKey: fingerprint,
     confidence: "runtime-backed",
     origin,
     evidence,
