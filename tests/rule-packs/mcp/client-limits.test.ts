@@ -5,10 +5,9 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { createReport, type Diagnostic, type DoctorRunOptions } from "../../../src/core/index.ts";
 import { writeBaseline } from "../../../src/core/internal/diagnostic-policy.ts";
 import { runViteDoctor } from "../../../src/doctor.ts";
-import { mcpClientRules } from "../../../src/mcp/index.ts";
+import { MCP_CLIENT_LABELS, mcpClientRules } from "../../../src/mcp/index.ts";
 import type { McpServerEvidence } from "../../../src/mcp/evidence.ts";
-import type { McpTool } from "../../../src/mcp/types.ts";
-import { MCP_CLIENT_LABELS } from "../../../src/rule-packs/mcp/rules/wire.ts";
+import type { McpTool } from "@loadsheet/mcp";
 import { startMcpStub } from "../../mcp/mcp-stub.ts";
 
 const cleanups: Array<() => unknown> = [];
@@ -20,7 +19,7 @@ afterEach(async () => {
 
 const annotated = { annotations: { title: "T", readOnlyHint: true } };
 
-// Root anyOf, `$ref`, and a numeric `exclusiveMinimum`.
+// Root anyOf without `type: "object"`, `$ref`, and a numeric `exclusiveMinimum`.
 const search: McpTool = {
   name: "search",
   description: "Search drops.",
@@ -165,13 +164,13 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
   expect(summary(root, diagnostics)).toEqual([
     "MCP0005 error .",
     "MCP0005 error server/mcp/tools/search.ts:3",
-    "MCP0007 warn server/mcp/tools/search.ts:3",
     "MCP0008 warn server/mcp/tools/search.ts:3",
   ]);
 
   const excluded = byCode(diagnostics, "MCP0005", "search")!;
   expect(excluded.why).toContain('Tool `search` of MCP server "hub" is left out');
-  expect(excluded.why).toContain("in Copilot Studio.");
+  expect(excluded.why).toContain("in Claude Code and Copilot Studio.");
+  expect(excluded.why).toContain("none of them load");
   expect(excluded.why).toContain("System.FormatException");
   expect(excluded.why).toContain("uses `$ref`");
   expect(excluded.confidence).toBe("runtime-backed");
@@ -311,7 +310,6 @@ test("without a package that depends on an MCP library, every tool is reported a
   expect(summary(root, diagnostics)).toEqual([
     "MCP0005 error .",
     "MCP0005 error .",
-    "MCP0007 warn .",
     "MCP0008 warn .",
   ]);
 });
@@ -325,7 +323,6 @@ test("tools read from a running server through the mcp option are checked", asyn
   expect(summary(root, diagnostics)).toEqual([
     "MCP0005 error .",
     "MCP0005 error .",
-    "MCP0007 warn .",
     "MCP0008 warn .",
     "MCP0009 info .",
   ]);
@@ -695,7 +692,7 @@ export default defineMcpTool({
   });
   const hint = asWritten.all.find((item) => item.code === "MCP0002")!;
   expect(hint.why).toContain(
-    "ChatGPT also treats it as a write action that needs the user's confirmation by default",
+    "ChatGPT doesn't treat it as read-only because it has no `readOnlyHint`, so users who set the plugin's permissions to \"Allow read-only tools\" must confirm every call.",
   );
   expect(hint.evidence?.map((item) => item.summary).join("\n")).toContain(
     "https://developers.openai.com/api/docs/guides/developer-mode",

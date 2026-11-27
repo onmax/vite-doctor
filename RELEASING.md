@@ -8,7 +8,7 @@ Before merging the first release PR:
 
 1. In the repository's **Settings → Actions → General → Workflow permissions**, enable **Allow GitHub Actions to create and approve pull requests**.
 2. Create a GitHub environment named `npm`. Restrict its deployment tags to `v*`.
-3. In the existing `vite-doctor` package's npm access settings, configure a GitHub Actions trusted publisher with owner `onmax`, repository `vite-doctor`, workflow `release.yml`, and environment `npm`. Enable the `npm publish` permission.
+3. In the existing `vite-doctor` package's npm access settings, configure a GitHub Actions trusted publisher with owner `loadsheet`, repository `vite-doctor`, workflow `release.yml`, and environment `npm`. Enable the `npm publish` permission.
 
 The workflow uses `GITHUB_TOKEN` and npm OIDC trusted publishing. It does not need an npm token secret.
 
@@ -41,7 +41,7 @@ If verification fails before tagging, fix the failure before retrying. If the fi
 If the tag exists but packing or publishing failed, dispatch the Release workflow on that exact tag:
 
 ```sh
-gh workflow run release.yml --repo onmax/vite-doctor --ref vX.Y.Z
+gh workflow run release.yml --repo loadsheet/vite-doctor --ref vX.Y.Z
 ```
 
 Dispatching on a branch does not publish. Dispatching on a version tag reruns all release checks before packing. Pushing a tag alone no longer starts a release.

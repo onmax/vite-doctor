@@ -184,6 +184,45 @@ test("Nuxt inventory is rooted at the workspace package selecting Nuxt", async (
   expect(project.nuxt?.modules).toContainEqual({ name: "@nuxt/image", version: "1.0.0" });
 });
 
+test.each(["auto", "nuxt"] as const)(
+  "a Nuxt app's modules activate Rule Packs for that app only (%s)",
+  async (framework) => {
+    const card =
+      'export const Card = () => <div className="w-[311px]" style={{ color: "red" }} />;';
+    const root = nitroRootMonorepo({
+      "packages/lib/src/Card.tsx": card,
+      "packages/site/package.json": JSON.stringify({
+        name: "@workspace/site",
+        dependencies: { nuxt: "^4.0.0" },
+      }),
+      "packages/site/nuxt.config.ts":
+        "export default defineNuxtConfig({ modules: ['@nuxt/ui'] })\n",
+      "packages/site/app/app.vue": button,
+      "packages/site/app/Card.tsx": card,
+      "packages/site/.nuxt/doctor.manifest.json": JSON.stringify({
+        nuxtVersion: "4.0.0",
+        appDir: "app",
+        modules: [{ name: "@nuxt/ui", version: "4.0.0" }],
+      }),
+    });
+
+    const result = await runViteDoctor({ root, framework, cache: false });
+
+    expect(
+      result.workspacePackages
+        ?.filter((item) => item.rulePacks.includes("vite-doctor/design-system"))
+        .map((item) => item.root),
+    ).toEqual(["packages/site"]);
+    for (const rule of ["no-arbitrary-values", "no-inline-styles"]) {
+      expect(
+        result.diagnostics
+          .filter((diagnostic) => diagnostic.ruleId === `design-system/${rule}`)
+          .map((diagnostic) => diagnostic.file.slice(root.length + 1)),
+      ).toEqual(["packages/site/app/Card.tsx"]);
+    }
+  },
+);
+
 test("an explicit framework still selects exactly that framework's Rule Packs", async () => {
   const root = nitroRootMonorepo();
   const result = await runViteDoctor({ root, framework: "nitro", cache: false });

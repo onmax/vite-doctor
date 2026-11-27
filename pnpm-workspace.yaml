@@ -17,6 +17,7 @@ catalogs:
     magic-string: ^1.1.0
     nostics: 1.4.0
     oxc-parser: ^0.159.0
+    postcss: ^8.5.33
     typescript: ^6.0.3
     vue-eslint-parser: ^10.4.1
     "@shadcn/lint": 0.2.5
@@ -57,7 +58,6 @@ catalogs:
     vue: ^3.5.40
   prod:
     "@jridgewell/trace-mapping": ^0.3.31
-    ajv: ^8.20.0
     yaml: ^2.9.0
     c12: 4.0.0-rc.4
     cac: ^7.0.0
@@ -71,7 +71,8 @@ catalogs:
     radix3: ^1.1.2
     semver: ^7.8.5
     std-env: ^4.2.0
-    unimport: 6.4.0
+    unimport: 7.0.3
+    unimport-nitro-v6: npm:unimport@6.4.0
     zod: ^4.4.3
     zod-to-json-schema: ^3.25.2
   release:
@@ -110,6 +111,7 @@ allowBuilds:
   vue-demi: true
   workerd: true
 minimumReleaseAgeExclude:
+  - "@loadsheet/mcp"
   - "@cloudflare/workers-types@5.20260804.1"
   - nostics@1.2.0
   - "@shadcn/lint@0.1.0"

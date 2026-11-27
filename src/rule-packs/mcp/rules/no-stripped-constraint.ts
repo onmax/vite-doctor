@@ -39,10 +39,8 @@ export const noStrippedConstraint = createRule({
   create(ctx) {
     return clientLimitsVisitor(ctx, {
       ruleId: "mcp/clients/no-stripped-constraint",
+      code: "MCP0008",
       diagnostic: diagnostics.MCP0008,
-      effect: "stripped",
-      outcome: "loses part of its input schema",
-      brief: "dropped",
     });
   },
 });

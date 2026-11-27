@@ -289,14 +289,17 @@ function verifyViteConfigTypes(archive) {
         },
       }),
     );
-    if (layout.overrides) {
-      writeFileSync(
-        join(consumer, "pnpm-workspace.yaml"),
-        `overrides:\n${Object.entries(layout.overrides)
-          .map(([name, spec]) => `  ${name}: ${JSON.stringify(spec)}\n`)
-          .join("")}`,
-      );
-    }
+    // Without its own pnpm-workspace.yaml, pnpm installs the consumer into the workspace that
+    // pnpm creates in `temporary` when it adds a freshly published dependency to
+    // minimumReleaseAgeExclude, and the consumer ends up with no node_modules.
+    writeFileSync(
+      join(consumer, "pnpm-workspace.yaml"),
+      layout.overrides
+        ? `overrides:\n${Object.entries(layout.overrides)
+            .map(([name, spec]) => `  ${name}: ${JSON.stringify(spec)}\n`)
+            .join("")}`
+        : "",
+    );
     execFileSync(pnpmCommand, pnpmArgs(["install", "--ignore-scripts", "--prefer-offline"]), {
       cwd: consumer,
       env,

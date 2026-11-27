@@ -121,7 +121,7 @@ const externalNavLinks = [
   {
     id: "github",
     label: "GitHub",
-    href: "https://github.com/onmax/vite-doctor",
+    href: "https://github.com/loadsheet/vite-doctor",
     icon: "i-simple-icons-github",
     ariaLabel: "GitHub repository",
   },
@@ -240,7 +240,7 @@ const focusRing =
               <UIcon name="i-lucide-arrow-right" class="size-4" aria-hidden="true" />
             </NuxtLink>
             <a
-              href="https://github.com/onmax/vite-doctor"
+              href="https://github.com/loadsheet/vite-doctor"
               target="_blank"
               rel="noopener noreferrer"
               class="inline-flex items-center gap-2 rounded-[0.375rem] text-sm font-medium text-neutral-950 hover:text-neutral-600 dark:text-neutral-50 dark:hover:text-neutral-300"
