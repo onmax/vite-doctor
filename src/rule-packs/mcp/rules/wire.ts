@@ -196,6 +196,8 @@ export function liveOrigin(server: McpServerToolsEvidence): DiagnosticLiveOrigin
   };
 }
 
+type WireAdvice = { why: string; fix: string; brief: string };
+
 /**
  * Reports findings at a matching definition, or at the project root. When the source also
  * has the problem, report it once with all the live observations. Live-only findings keep
@@ -209,8 +211,8 @@ export function reportWireTools(
     ruleId: string;
     diagnostic: DoctorDiagnosticHandle;
     range: (definition: McpToolDefinition) => SourceRange;
-    /** Whether the definition has the problem; `undefined` when the source can't tell. */
-    source?: (definition: McpToolDefinition) => boolean | undefined;
+    /** Advice when the source fails, `false` when it passes, or `undefined` if unknown. */
+    source?: (definition: McpToolDefinition) => WireAdvice | false | undefined;
   },
 ): void {
   const groups = new Map<string, WireFinding[]>();
@@ -221,12 +223,24 @@ export function reportWireTools(
     const inSource = definition && options.source?.(definition);
     const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
     const fingerprint =
-      definition && inSource === true
+      definition && inSource
         ? definedToolFingerprint(ctx, options.ruleId, definition.file, tool.name)
         : sha256(
             JSON.stringify([options.ruleId, server.name ?? null, endpointId ?? null, tool.name]),
           );
-    const finding = { wire, found, inSource };
+    const endpoint = liveOrigin(server);
+    const observation = {
+      server: {
+        ...(server.name === undefined ? {} : { name: server.name }),
+        ...(server.url === undefined ? {} : { url: endpoint.target }),
+      },
+      ...(typeof endpointId === "string" ? { endpointId: sha256(endpointId) } : {}),
+      message: found.message,
+      fix: found.fix,
+      brief: found.brief,
+      findings: found.findings,
+    };
+    const finding = { wire, inSource, endpoint, observation, order: JSON.stringify(observation) };
     const group = groups.get(fingerprint);
     if (group) group.push(finding);
     else groups.set(fingerprint, [finding]);
@@ -236,8 +250,13 @@ export function reportWireTools(
 
 interface WireFinding {
   wire: WireTool;
-  found: McpDiagnostic;
-  inSource: boolean | undefined;
+  inSource: WireAdvice | false | undefined;
+  endpoint: DiagnosticLiveOrigin;
+  observation: Pick<McpDiagnostic, "message" | "fix" | "brief" | "findings"> & {
+    server: { name?: string; url?: string };
+    endpointId?: string;
+  };
+  order: string;
 }
 
 function reportWireFinding(
@@ -246,19 +265,31 @@ function reportWireFinding(
   group: WireFinding[],
   options: Parameters<typeof reportWireTools>[3],
 ): void {
-  const { wire, found, inSource } = group[0]!;
+  group.sort((left, right) => (left.order < right.order ? -1 : left.order > right.order ? 1 : 0));
+  const { wire, inSource, observation } = group[0]!;
   const { server, tool, definition } = wire;
-  const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
+  const advice = inSource || {
+    why: observation.message,
+    fix: observation.fix,
+    brief: observation.brief,
+  };
+  const findings = [
+    ...new Map(
+      group.flatMap(({ observation }) =>
+        observation.findings.map((finding) => [JSON.stringify(finding), finding] as const),
+      ),
+    ).values(),
+  ];
   const range = definition ? options.range(definition) : undefined;
   const origin: DiagnosticOrigin = {
     code: !definition
       ? "no-definition"
-      : inSource === true
+      : inSource
         ? "found"
         : inSource === false
           ? "passes"
           : "not-checked",
-    live: group.map(({ wire }) => liveOrigin(wire.server)),
+    live: group.map(({ endpoint }) => endpoint),
   };
   const evidence: DiagnosticEvidence[] = [
     ...group.map(({ wire: { server } }) => {
@@ -269,7 +300,7 @@ function reportWireFinding(
         summary: `Read from the tools/list of MCP server ${JSON.stringify(label)}${endpoint ? ` at ${endpoint}` : ""} during this Doctor Run.`,
       };
     }),
-    ...citations(found.findings),
+    ...citations(findings),
     ...(definition && range
       ? [
           {
@@ -281,7 +312,7 @@ function reportWireFinding(
         ]
       : []),
   ];
-  ctx.report(options.diagnostic({ why: found.message, fix: found.fix }), {
+  ctx.report(options.diagnostic({ why: advice.why, fix: advice.fix }), {
     ruleId: options.ruleId,
     severity: ctx.severity,
     category: "tools",
@@ -293,15 +324,15 @@ function reportWireFinding(
     confidence: "runtime-backed",
     origin,
     evidence,
-    subject: toolSubject(ctx, server, tool.name),
-    brief: found.brief,
+    subject: group.length > 1 ? tool.name : toolSubject(ctx, server, tool.name),
+    brief: advice.brief,
     data: {
-      server: {
-        ...(server.name === undefined ? {} : { name: server.name }),
-        ...(endpoint === undefined ? {} : { url: endpoint }),
-      },
+      ...(group.length === 1 ? { server: observation.server } : {}),
       tool: tool.name,
-      findings: found.findings,
+      findings,
+      ...(inSource || group.length > 1
+        ? { observations: group.map(({ observation }) => observation) }
+        : {}),
     },
   });
 }

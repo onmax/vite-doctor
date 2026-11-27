@@ -691,9 +691,14 @@ export default defineMcpTool({
     findings: [{ rule: "claude-directory/missing-title" }],
   });
   const hint = asWritten.all.find((item) => item.code === "MCP0002")!;
-  expect(hint.why).toContain(
-    "ChatGPT doesn't treat it as read-only because it has no `readOnlyHint`, so users who set the plugin's permissions to \"Allow read-only tools\" must confirm every call.",
-  );
+  expect(hint.data?.observations).toMatchObject([
+    {
+      server: { name: "hub" },
+      message: expect.stringContaining(
+        "ChatGPT doesn't treat it as read-only because it has no `readOnlyHint`, so users who set the plugin's permissions to \"Allow read-only tools\" must confirm every call.",
+      ),
+    },
+  ]);
   expect(hint.evidence?.map((item) => item.summary).join("\n")).toContain(
     "https://developers.openai.com/api/docs/guides/developer-mode",
   );
