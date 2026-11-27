@@ -177,6 +177,55 @@ import ActionButton from '../components/ActionButton.vue'
   expect(result.diagnostics[0]!.related).toHaveLength(2);
 });
 
+test("local withDefaults destructuring fallbacks change relay behavior", async () => {
+  const files = {
+    "src/components/Panel.vue": relayChild,
+    "src/components/PanelWrapper.vue": `<script setup lang="ts">
+import Panel from './Panel.vue'
+const { title, subtitle: caption = 'None' } = withDefaults(
+  defineProps<{ title?: string; subtitle?: string }>(), {},
+)
+</script>
+<template><Panel :title="title" :subtitle="caption" /></template>`,
+    "src/pages/Home.vue": `<script setup>
+import PanelWrapper from '../components/PanelWrapper.vue'
+</script>
+<template><PanelWrapper title="Hello" /></template>`,
+  };
+  expect((await runRuleFixture({ rule: noPropRelay, files })).diagnostics).toEqual([]);
+  const { diagnostics } = await runRuleFixture({ rule: noUnpassedProps, files });
+  expect(diagnostics.find(({ file }) => file.endsWith("/PanelWrapper.vue"))?.why).toContain(
+    'No caller passes prop "subtitle"',
+  );
+});
+
+test.each(["{}", "{ enabled: undefined }"])(
+  "VUE0039 does not infer an omitted Boolean's local value with defaults %s",
+  async (defaults) => {
+    const { diagnostics } = await runRuleFixture({
+      rule: noUnpassedProps,
+      files: {
+        "src/components/ActionButton.vue": `<script setup lang="ts">
+const { enabled = true } = withDefaults(defineProps<{ enabled?: boolean }>(), ${defaults})
+</script>
+<template><button :disabled="!enabled">Save</button></template>`,
+        "src/App.vue": `<script setup>
+import ActionButton from './components/ActionButton.vue'
+</script>
+<template><ActionButton /></template>`,
+      },
+    });
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({ code: "VUE0039" });
+    expect(diagnostics[0]!.why).toContain('No caller passes prop "enabled"');
+    expect(diagnostics[0]!.why).not.toContain("renders with");
+    expect(diagnostics[0]!.diagnostic.fix).toContain(
+      'Verify how ActionButton behaves when "enabled" is omitted',
+    );
+  },
+);
+
 test("VUE0039 accounts for implicit v-model modifier props", async () => {
   const result = await runRuleFixture({
     rule: noUnpassedProps,

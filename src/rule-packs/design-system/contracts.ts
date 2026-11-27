@@ -7,6 +7,7 @@ import type {
   SourceRange,
 } from "../../core/index.js";
 import { projectWorkspacePackages } from "../../core/internal/applicability.js";
+import { camelize } from "../../core/internal/component-facts.js";
 
 /**
  * A Component Contract as a component author writes it, in `<script setup>`:
@@ -26,6 +27,37 @@ import { projectWorkspacePackages } from "../../core/internal/applicability.js";
 export interface ComponentContractInput {
   /** The raw HTML element, or elements, that call sites should render this component instead of. */
   replaces?: string | string[];
+  /** How many matching usages one view may render, such as at most one primary button. */
+  limits?: ComponentLimitInput[];
+}
+
+/**
+ * A limit on how many usages of a component one view renders.
+ *
+ * ```ts
+ * { when: { variant: ["solid", null] }, max: 1, why: "…", fix: "…" }
+ * ```
+ */
+export interface ComponentLimitInput {
+  /**
+   * The props a usage must pass to count, each with the value or values that match. `null` matches
+   * a usage that does not pass the prop. Omit `when` to count every usage.
+   */
+  when?: Record<string, string | (string | null)[]>;
+  /** How many matching usages one view may render. */
+  max: number;
+  /** What goes wrong for the app's users when a view renders more, as a sentence. */
+  why: string;
+  /** What to change at the extra call sites, as a sentence. */
+  fix: string;
+}
+
+/** A Component Contract limit after Doctor read it: every `when` value is a list. */
+export interface ComponentLimit {
+  when: Record<string, (string | null)[]>;
+  max: number;
+  why: string;
+  fix: string;
 }
 
 /**
@@ -35,6 +67,8 @@ export interface ComponentContractInput {
 export interface ComponentContract {
   /** Lowercase HTML tag names, such as `["input", "textarea"]`. Empty when the contract sets none. */
   replaces: string[];
+  /** Limits on matching usages per view. Empty when the contract sets none. */
+  limits: ComponentLimit[];
 }
 
 /** A Component Contract and the component that declares it. */
@@ -74,8 +108,10 @@ type KeyReader<T> = (value: unknown) => { value: T } | ContractProblem;
  * How Doctor reads each key a Component Contract may set. A reader receives the key's literal
  * value, `undefined` when the contract omits it, and returns its normalized form or what is wrong.
  */
-const CONTRACT_KEYS: { [Key in keyof ComponentContract]-?: KeyReader<ComponentContract[Key]> } = {
+type ContractReaders = { [Key in keyof ComponentContract]: KeyReader<ComponentContract[Key]> };
+const CONTRACT_KEYS: ContractReaders = {
   replaces: readReplaces,
+  limits: readLimits,
 };
 const TAG = /^[a-z][a-z0-9-]*$/;
 
@@ -127,6 +163,83 @@ function readReplaces(replaces: unknown = []): { value: string[] } | ContractPro
         'Set `replaces` to the lowercase HTML tag you intend to replace, for example `"button"`, or list those tags in an array.',
     };
   return { value: [...new Set(elements as string[])] };
+}
+
+const LIMIT_KEYS = new Set(["when", "max", "why", "fix"]);
+const LIMIT_EXAMPLE =
+  '{ when: { variant: "primary" }, max: 1, why: "Two primary actions compete.", fix: "Use variant=\\"secondary\\" for the others." }';
+
+function readLimits(limits: unknown = []): { value: ComponentLimit[] } | ContractProblem {
+  if (!Array.isArray(limits))
+    return {
+      problem: `\`limits\` is not an array of limits such as [${LIMIT_EXAMPLE}]`,
+      remedy: `Set \`limits\` to an array of limits, for example [${LIMIT_EXAMPLE}].`,
+    };
+  const value: ComponentLimit[] = [];
+  for (const [index, limit] of limits.entries()) {
+    const read = readLimit(limit);
+    if ("problem" in read)
+      return {
+        problem: `\`limits[${index}]\` ${read.problem}`,
+        remedy: `In \`limits[${index}]\`, ${read.remedy}`,
+      };
+    value.push(read.value);
+  }
+  return { value };
+}
+
+function readLimit(limit: unknown): { value: ComponentLimit } | ContractProblem {
+  if (!limit || typeof limit !== "object" || Array.isArray(limit))
+    return {
+      problem: `is not an object such as ${LIMIT_EXAMPLE}`,
+      remedy: `replace the entry with an object such as ${LIMIT_EXAMPLE}.`,
+    };
+  const { when = {}, max, why, fix } = limit as Record<string, unknown>;
+  const unknown = Object.keys(limit).filter((key) => !LIMIT_KEYS.has(key));
+  if (unknown.length)
+    return {
+      problem: `sets ${unknown.map((key) => `\`${key}\``).join(", ")}, which a limit does not have (known keys: when, max, why, fix)`,
+      remedy: `remove the unrecognized ${unknown.length === 1 ? "key" : "keys"} or correct the spelling using when, max, why, and fix.`,
+    };
+  if (typeof max !== "number" || !Number.isSafeInteger(max) || max < 0)
+    return {
+      problem: "needs `max`, a whole number of usages one view may render, such as 1",
+      remedy: "set `max` to the number of matching usages one view may render, such as `max: 1`.",
+    };
+  if (typeof why !== "string" || !why.trim() || typeof fix !== "string" || !fix.trim())
+    return {
+      problem:
+        "needs `why`, what goes wrong for users when a view renders more, and `fix`, what to change at the extra call sites, both as non-empty strings",
+      remedy:
+        "set `why` to what goes wrong for users when a view renders more, and `fix` to what to change at the extra call sites.",
+    };
+  if (why.replace(/\s+/g, " ").trim() === fix.replace(/\s+/g, " ").trim())
+    return {
+      problem: "repeats `why` as `fix`; `fix` must say what to change at the call site",
+      remedy:
+        'rewrite `fix` as the change to make at the extra call sites, such as `Give the others variant="secondary".`',
+    };
+  if (!when || typeof when !== "object" || Array.isArray(when))
+    return {
+      problem: "has a `when` that is not an object mapping prop names to values",
+      remedy:
+        'set `when` to an object mapping prop names to values, such as `{ variant: "primary" }`, or remove it to count every usage.',
+    };
+  const props: Record<string, (string | null)[]> = {};
+  for (const [prop, values] of Object.entries(when)) {
+    const list = typeof values === "string" ? [values] : values;
+    if (
+      !Array.isArray(list) ||
+      !list.length ||
+      !list.every((item) => item === null || typeof item === "string")
+    )
+      return {
+        problem: `has \`when.${prop}\` that is not a string or a non-empty array of strings and null, such as ["solid", null]`,
+        remedy: `set \`when.${prop}\` to a string, or to an array of strings and null such as ["solid", null], where null matches a usage that omits the prop.`,
+      };
+    props[camelize(prop)] = [...new Set(list as (string | null)[])];
+  }
+  return { value: { when: props, max, why: why.trim(), fix: fix.trim() } };
 }
 
 /**

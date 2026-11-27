@@ -94,7 +94,10 @@ function findRelay(
   const usage = child.usage;
   if (usage.attributes.length || usage.directives.some((directive) => directive !== "slot"))
     return undefined;
-  if (facts.props.some((prop) => prop.default) || facts.models.some((model) => model.default))
+  if (
+    facts.props.some((prop) => prop.default || prop.localFallback) ||
+    facts.models.some((model) => model.default)
+  )
     return undefined;
   const declared = [
     ...facts.props.map((prop) => prop.name),

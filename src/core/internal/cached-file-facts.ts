@@ -49,7 +49,14 @@ function componentFacts(value: unknown): boolean {
   return (
     record(value) &&
     (value.props === undefined ||
-      facts(value.props, (item) => named(item) && typeof item.default === "boolean")) &&
+      facts(
+        value.props,
+        (item) =>
+          named(item) &&
+          typeof item.default === "boolean" &&
+          optionalString(item.defaultValue) &&
+          (item.localFallback === undefined || typeof item.localFallback === "boolean"),
+      )) &&
     optionalString(value.propsBinding) &&
     (value.propAliases === undefined || record(value.propAliases)) &&
     (value.emits === undefined || strings(value.emits)) &&
@@ -64,6 +71,7 @@ function componentFacts(value: unknown): boolean {
         typeof item.source === "string",
     ) &&
     strings(value.registeredComponentNames) &&
+    strings(value.setupBindings) &&
     typeof value.ownLogic === "boolean" &&
     typeof value.ownMarkup === "boolean" &&
     integer(value.rootNodes) &&
@@ -100,12 +108,17 @@ function componentFacts(value: unknown): boolean {
           (listener) => typeof listener.vnodeKey === "string" && strings(listener.modifiers),
         ) &&
         strings(item.directives) &&
+        typeof item.hasSlotContent === "boolean" &&
         strings(item.scope) &&
-        typeof item.inFor === "boolean" &&
+        placement(item) &&
         (item.parent === undefined ||
           (record(item.parent) &&
             typeof item.parent.tag === "string" &&
             typeof item.parent.element === "boolean")),
+    ) &&
+    facts(
+      value.slotOutlets,
+      (item) => (item.name === null || typeof item.name === "string") && placement(item),
     ) &&
     strings(value.bindingReferences) &&
     (value.doctorOption === undefined ||
@@ -115,6 +128,18 @@ function componentFacts(value: unknown): boolean {
           value.doctorOption.cause === "computed" ||
           value.doctorOption.cause === "overridden" ||
           value.doctorOption.cause === "overridden-by-setup")))
+  );
+}
+
+function placement(item: Record<string, unknown>): boolean {
+  return (
+    typeof item.inFor === "boolean" &&
+    typeof item.conditional === "boolean" &&
+    strings(item.builtInHosts) &&
+    (item.host === undefined ||
+      (record(item.host) &&
+        integer(item.host.usage) &&
+        (item.host.slot === null || typeof item.host.slot === "string")))
   );
 }
 

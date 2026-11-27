@@ -4,12 +4,14 @@ import {
   noInlineStyles,
   noRawColors,
   designSystemRules,
+  limitPerView,
   preferProjectComponent,
   unreadableContract,
 } from "./rules/index.js";
 
 export * from "./rules/index.js";
 export * from "./contracts.js";
+export * from "./views.js";
 export { diagnostics, designSystemDiagnosticRegistry } from "./diagnostics.js";
 
 const designSystemRulePack = defineRulePack({
@@ -23,6 +25,7 @@ const designSystemRulePack = defineRulePack({
       noArbitraryValues,
       noInlineStyles,
       preferProjectComponent,
+      limitPerView,
       unreadableContract,
     ].map((rule) => rule.meta.id),
     strict: designSystemRules.map((rule) => rule.meta.id),

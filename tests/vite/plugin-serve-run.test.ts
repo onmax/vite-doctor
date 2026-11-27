@@ -6,6 +6,7 @@ import { expect, test, vi } from "vite-plus/test";
 import type { DoctorExtension } from "../../src/extension.ts";
 import { doctor, type ViteDoctorSurfaceOptions } from "../../src/plugin.ts";
 import { stubReaderEnv } from "../report-reader-env.ts";
+import { withFixture } from "../rule-packs/nuxt/nuxt-modern-rules-fixture.ts";
 
 const doctorRuns = vi.hoisted(() => [] as Promise<unknown>[]);
 
@@ -128,6 +129,62 @@ test("a serve-mode Doctor Run starts after the dev server listens and logs Diagn
       await server.close();
     }
   });
+});
+
+test("a save that fixes a computed Nuxt layout restores DS0008 evidence", async () => {
+  const pageSource = (layout: string) =>
+    `<script setup>definePageMeta({ layout: ${layout} })</script><template><main /></template>`;
+  await withFixture(
+    {
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "app/app.vue": "<template><NuxtPage /></template>",
+      "app/pages/index.vue": pageSource("name"),
+    },
+    {},
+    async (root) => {
+      const { logger, logs } = captureLogger();
+      const messages = () => [...logs.info, ...logs.warn, ...logs.error].join("\n");
+      const page = join(root, "app/pages/index.vue");
+      const server = await createServer(
+        serveConfig(
+          root,
+          logger,
+          {
+            framework: "nuxt",
+            rules: "design-system/limit-per-view",
+            config: {
+              rules: {
+                "design-system/limit-per-view": [
+                  "warn",
+                  {
+                    contracts: {
+                      AppButton: {
+                        limits: [{ max: 1, why: "Limit clutter", fix: "Remove a button" }],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          { server: { middlewareMode: true, ws: false, watch: null } },
+        ),
+      );
+      try {
+        await vi.waitFor(() => expect(messages()).toContain("DS0008 did not count"), {
+          timeout: 15_000,
+        });
+        await writeFile(page, pageSource('"default"'));
+        server.watcher.emit("change", page);
+        await vi.waitFor(() => expect(messages()).toContain("Evidence restored:"), {
+          timeout: 3_000,
+        });
+        expect(messages()).toMatch(/^Now: .*\b0 info$/m);
+      } finally {
+        await server.close();
+      }
+    },
+  );
 });
 
 test.each([true, false])(
