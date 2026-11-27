@@ -11,6 +11,8 @@ import {
 import { relative } from "pathe";
 import type {
   DiagnosticEvidence,
+  DiagnosticLiveOrigin,
+  DiagnosticOrigin,
   ProjectInfo,
   RuleContext,
   SourceRange,
@@ -173,9 +175,33 @@ export function wireTools(ctx: RuleContext, sources: McpToolDefinition[]) {
 }
 
 /**
+ * The fingerprint of a Rule's finding on a tool the source defines. The Rule's source check and
+ * its check of a server's `tools/list` share it, so passing or dropping `--mcp-url` keeps the
+ * finding's identity in baselines.
+ */
+export function definedToolFingerprint(
+  ctx: RuleContext,
+  ruleId: string,
+  file: string,
+  tool: string,
+): string {
+  return sha256(JSON.stringify([ruleId, relative(ctx.project.root, file), tool]));
+}
+
+/** The server a finding came from, named by its endpoint origin as the rest of the report does. */
+export function liveOrigin(server: McpServerToolsEvidence): DiagnosticLiveOrigin {
+  return {
+    source: "mcp",
+    target: server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server"),
+  };
+}
+
+/**
  * Reports a tool's `code` finding when the server sent one, at its source definition when one
- * matches and at the project root otherwise. The fingerprint uses the endpoint, not its URL, so
- * it stays stable when only the port or host changes.
+ * matches and at the project root otherwise. `source` says whether the definition has the same
+ * problem, which tells a stale deployment from a problem still in the code. A finding without a
+ * definition keys its fingerprint on the endpoint, not its URL, so it stays stable when only the
+ * port or host changes.
  */
 export function reportWireTool(
   ctx: RuleContext,
@@ -185,6 +211,8 @@ export function reportWireTool(
     ruleId: string;
     diagnostic: DoctorDiagnosticHandle;
     range: (definition: McpToolDefinition) => SourceRange;
+    /** Whether the definition has the problem; `undefined` when the source can't tell. */
+    source?: (definition: McpToolDefinition) => boolean | undefined;
   },
 ): void {
   const found = wire.diagnostics.find((diagnostic) => diagnostic.code === code);
@@ -194,10 +222,20 @@ export function reportWireTool(
   const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
   const label = server.name ?? endpoint ?? "an MCP server";
   const range = definition ? options.range(definition) : undefined;
-  const anchor = endpointId ?? (definition ? relative(ctx.project.root, definition.file) : null);
-  const fingerprint = sha256(
-    JSON.stringify([options.ruleId, server.name ?? null, anchor, tool.name]),
-  );
+  const fingerprint = definition
+    ? definedToolFingerprint(ctx, options.ruleId, definition.file, tool.name)
+    : sha256(JSON.stringify([options.ruleId, server.name ?? null, endpointId ?? null, tool.name]));
+  const inSource = definition && options.source?.(definition);
+  const origin: DiagnosticOrigin = {
+    code: !definition
+      ? "no-definition"
+      : inSource === true
+        ? "found"
+        : inSource === false
+          ? "passes"
+          : "not-checked",
+    live: [liveOrigin(server)],
+  };
   const evidence: DiagnosticEvidence[] = [
     {
       kind: "runtime",
@@ -223,8 +261,9 @@ export function reportWireTool(
     projectLevel: !definition,
     range,
     fingerprint,
-    instanceKey: endpointId ? fingerprint : undefined,
+    instanceKey: definition ? endpointId : endpointId && fingerprint,
     confidence: "runtime-backed",
+    origin,
     evidence,
     subject: toolSubject(ctx, server, tool.name),
     brief: found.brief,

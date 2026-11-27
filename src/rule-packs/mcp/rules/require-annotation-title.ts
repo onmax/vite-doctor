@@ -6,7 +6,7 @@ import {
   toolLabel,
   type McpToolDefinition,
 } from "./shared.js";
-import { reportWireTool, wireTools } from "./wire.js";
+import { definedToolFingerprint, reportWireTool, wireTools } from "./wire.js";
 
 export const requireAnnotationTitle = createRule({
   meta: {
@@ -48,19 +48,11 @@ export const requireAnnotationTitle = createRule({
             ruleId: "mcp/tools/require-annotation-title",
             diagnostic: diagnostics.MCP0001,
             range: annotationsRange,
+            source: missingTitle,
           });
         for (const tool of sourceOnly) {
+          if (missingTitle(tool) !== true) continue;
           const { annotations } = tool;
-          if (annotations.state === "partial") continue;
-          const title =
-            annotations.state === "resolved" ? annotations.values.get("title") : undefined;
-          if (
-            title?.state === "unknown" ||
-            (title?.state === "resolved" &&
-              typeof title.value === "string" &&
-              title.value.trim().length > 0)
-          )
-            continue;
           const label = toolLabel(tool);
           const topLevel = tool.title
             ? tool.title.source === "file"
@@ -83,6 +75,14 @@ export const requireAnnotationTitle = createRule({
               file: tool.file,
               range: annotationsRange(tool),
               confidence: "heuristic-high",
+              fingerprint: tool.name
+                ? definedToolFingerprint(
+                    ctx,
+                    "mcp/tools/require-annotation-title",
+                    tool.file,
+                    tool.name.value,
+                  )
+                : undefined,
               brief: `no annotations.title; add title: ${JSON.stringify(suggested)}`,
               data: tool.name ? { tool: tool.name.value } : undefined,
               evidence: annotationsEvidence(tool),
@@ -93,6 +93,19 @@ export const requireAnnotationTitle = createRule({
     };
   },
 });
+
+/** Whether the definition has no `annotations.title`; `undefined` when Doctor can't resolve it. */
+function missingTitle(tool: McpToolDefinition): boolean | undefined {
+  const { annotations } = tool;
+  if (annotations.state === "partial") return undefined;
+  const title = annotations.state === "resolved" ? annotations.values.get("title") : undefined;
+  if (title?.state === "unknown") return undefined;
+  return !(
+    title?.state === "resolved" &&
+    typeof title.value === "string" &&
+    title.value.trim().length > 0
+  );
+}
 
 function annotationsRange(tool: McpToolDefinition) {
   return tool.annotations.state === "absent" ? tool.callee : tool.annotations.range;

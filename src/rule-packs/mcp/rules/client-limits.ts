@@ -17,6 +17,7 @@ import type { McpServerToolsEvidence } from "../../../mcp/evidence.js";
 import { collectMcpTools, MCP_PACKAGES, type McpToolDefinition } from "./shared.js";
 import {
   citations,
+  liveOrigin,
   markChecked,
   mcpServers,
   serverDiagnostics,
@@ -130,6 +131,10 @@ function report(
     fingerprint,
     instanceKey: endpointId ? fingerprint : undefined,
     confidence: found.confidence === "medium" ? "heuristic-medium" : "runtime-backed",
+    origin: {
+      code: definition && range ? "not-checked" : "no-definition",
+      live: [liveOrigin(server)],
+    },
     evidence,
     subject: toolSubject(ctx, server, tool),
     brief: found.brief,

@@ -1,8 +1,13 @@
 import { checkMcpToolList } from "@loadsheet/mcp";
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
-import { annotationsEvidence, collectMcpTools, toolLabel } from "./shared.js";
-import { reportWireTool, wireTools } from "./wire.js";
+import {
+  annotationsEvidence,
+  collectMcpTools,
+  toolLabel,
+  type McpToolDefinition,
+} from "./shared.js";
+import { definedToolFingerprint, reportWireTool, wireTools } from "./wire.js";
 
 const SAFETY_BRIEF = "neither readOnlyHint nor destructiveHint is true";
 
@@ -59,21 +64,12 @@ export const requireSafetyHint = createRule({
             diagnostic: diagnostics.MCP0002,
             range: (tool) =>
               tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
+            source: missingSafetyHint,
           });
         for (const tool of sourceOnly) {
+          if (missingSafetyHint(tool) !== true) continue;
           const { annotations } = tool;
-          if (annotations.state === "partial") continue;
-          const hints =
-            annotations.state === "resolved"
-              ? [annotations.values.get("readOnlyHint"), annotations.values.get("destructiveHint")]
-              : [];
-          if (
-            hints.some(
-              (hint) =>
-                hint?.state === "unknown" || (hint?.state === "resolved" && hint.value === true),
-            )
-          )
-            continue;
+          const hints = safetyHints(tool);
           ctx.report(
             diagnostics.MCP0002({
               why: `MCP tool ${toolLabel(tool)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.`,
@@ -89,6 +85,14 @@ export const requireSafetyHint = createRule({
               file: tool.file,
               range: annotations.state === "resolved" ? annotations.range : tool.callee,
               confidence: "heuristic-high",
+              fingerprint: tool.name
+                ? definedToolFingerprint(
+                    ctx,
+                    "mcp/tools/require-safety-hint",
+                    tool.file,
+                    tool.name.value,
+                  )
+                : undefined,
               brief: SAFETY_BRIEF,
               data: tool.name ? { tool: tool.name.value } : undefined,
               evidence: annotationsEvidence(tool),
@@ -99,3 +103,18 @@ export const requireSafetyHint = createRule({
     };
   },
 });
+
+function safetyHints(tool: McpToolDefinition) {
+  const { annotations } = tool;
+  return annotations.state === "resolved"
+    ? [annotations.values.get("readOnlyHint"), annotations.values.get("destructiveHint")]
+    : [];
+}
+
+/** Whether no safety hint is true; `undefined` when Doctor can't resolve one. */
+function missingSafetyHint(tool: McpToolDefinition): boolean | undefined {
+  if (tool.annotations.state === "partial") return undefined;
+  const hints = safetyHints(tool);
+  if (hints.some((hint) => hint?.state === "resolved" && hint.value === true)) return false;
+  return hints.some((hint) => hint?.state === "unknown") ? undefined : true;
+}

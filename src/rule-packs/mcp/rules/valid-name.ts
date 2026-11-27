@@ -2,7 +2,7 @@ import { nameProblems } from "@loadsheet/mcp";
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
 import { collectMcpTools } from "./shared.js";
-import { reportWireTool, wireTools } from "./wire.js";
+import { definedToolFingerprint, reportWireTool, wireTools } from "./wire.js";
 
 export const validName = createRule({
   meta: {
@@ -43,6 +43,7 @@ export const validName = createRule({
             ruleId: "mcp/tools/valid-name",
             diagnostic: diagnostics.MCP0003,
             range: (tool) => tool.name?.range ?? tool.callee,
+            source: (tool) => (tool.name ? nameProblems(tool.name.value).length > 0 : undefined),
           });
         for (const tool of sourceOnly) {
           const name = tool.name;
@@ -67,6 +68,12 @@ export const validName = createRule({
               file: tool.file,
               range: name.range,
               confidence: name.source === "file" ? "heuristic-medium" : "heuristic-high",
+              fingerprint: definedToolFingerprint(
+                ctx,
+                "mcp/tools/valid-name",
+                tool.file,
+                name.value,
+              ),
               brief: `name ${problems.join(" and ")}`,
               data: { tool: name.value },
               evidence: [
