@@ -146,19 +146,20 @@ test("a source the run reads can't share its name with a Runtime Evidence contri
   ).rejects.toThrow('"status" was registered more than once');
 });
 
-function configWithSource(root: string) {
+function configWithSource(root: string, name = "status") {
   writeFileSync(
     join(root, "doctor.config.mjs"),
     `export default { extensions: [{ name: "fixture/status", sources: [{
-      name: "status",
+      name: ${JSON.stringify(name)},
       label: "status page",
       options: {
         url: { help: "Read this status page.", value: "url", repeatable: true },
         token: { help: "Bearer token.", requires: "url", secret: true },
+        revision: { help: "Revision." },
       },
-      fromOptions: ({ url = [], token }) => ({ urls: url, token: token?.[0] }),
-      toOptions: ({ urls, token }) => ({ url: urls, ...(token ? { token: [token] } : {}) }),
-      collect: (input) => ({ evidence: { input }, targets: input.urls }),
+      fromOptions: ({ url = [], token, revision = [] }) => ({ urls: url, token: token?.[0], revision }),
+      toOptions: ({ urls, token, revision }) => ({ url: urls, revision, ...(token ? { token: [token] } : {}) }),
+      collect: (input) => ({ evidence: { input }, targets: [...input.urls, ...input.revision] }),
     }] }] };\n`,
   );
 }
@@ -206,8 +207,11 @@ test("the CLI reads a config Extension's source flags once the config loads", as
 
 test.each([
   [["--status-typo", "x"], "Unknown option `--status-typo`"],
+  [["--status-url.extra", "x"], "Unknown option `--status-url.extra`"],
   [["--status-token", "x"], "--status-token requires --status-url <url>."],
   [["--status-url"], "--status-url requires a value."],
+  [["--status-url="], "--status-url requires a value."],
+  [["--status-revision", "one", "--status-revision=two"], "may only be provided once"],
 ])("the CLI rejects %j", async (flags, message) => {
   const root = project();
   configWithSource(root);
@@ -221,6 +225,95 @@ test.each([
   ]);
   expect(code).toBe(2);
   expect(output).toContain(message);
+});
+
+test.each(["status-v2", "no-cache-probe"])(
+  "%s flags preserve spelling and round-trip values",
+  async (name) => {
+    const root = project();
+    configWithSource(root, name);
+    const first = await cli(root, [
+      ".",
+      "--config",
+      "doctor.config.mjs",
+      "--format",
+      "agent",
+      `--${name}-url`,
+      "00123",
+      `--${name}-url=1e4`,
+      `--${name}-revision=-rc1`,
+    ]);
+    expect(first.code).toBe(0);
+    const { commandArgs } = JSON.parse(first.output);
+    expect(commandArgs.rerun).toContain(`--${name}-revision=-rc1`);
+    const rerun = await cli(root, [...commandArgs.rerun.slice(1, -2), "--format", "json"]);
+    expect(rerun.code).toBe(0);
+    expect(JSON.parse(rerun.output).sources[0].targets).toEqual(["00123", "1e4", "-rc1"]);
+  },
+);
+
+test.each([
+  ["status", "apiKey", "status-api", "key", "--status-api-key", "declared more than once"],
+  ["status", "url", "max", "warnings", "--max-warnings", "declares built-in option"],
+])(
+  "colliding source declarations fail before input construction",
+  async (name, option, otherName, otherOption, flag, message) => {
+    const root = project();
+    writeFileSync(
+      join(root, "doctor.config.mjs"),
+      `
+    const unexpected = () => { throw new Error("source should not run"); };
+    export default { extensions: [
+      { name: "fixture/first", sources: [{ name: ${JSON.stringify(name)}, label: "first",
+        options: { ${option}: { help: "Value", secret: true } }, fromOptions: unexpected, collect: unexpected }] },
+      { name: "fixture/second", sources: [{ name: ${JSON.stringify(otherName)}, label: "second",
+        options: { ${otherOption}: { help: "Value" } }, fromOptions: unexpected, collect: unexpected }] },
+    ] };
+  `,
+    );
+    const { code, output } = await cli(root, [
+      ".",
+      "--config",
+      "doctor.config.mjs",
+      "--format",
+      "json",
+    ]);
+    expect(code).toBe(2);
+    expect(JSON.parse(output).error.message).toContain(flag);
+    expect(JSON.parse(output).error.message).toContain(message);
+  },
+);
+
+test("async validation finishes before sources or Runtime Evidence contributors run", async () => {
+  const collected: StatusInput[] = [];
+  const contribute = vi.fn(() => ({}));
+  const validate = vi.fn(async () => {
+    await Promise.resolve();
+    throw new Error("Invalid async source input");
+  });
+  const collect = vi.fn(() => ({ evidence: {} }));
+  await expect(
+    runViteDoctor({
+      root: project(),
+      cache: false,
+      extensions: [
+        extension(statusSource(collected)),
+        {
+          name: "fixture/async",
+          sources: [{ name: "async-source", label: "async", validate, collect }],
+          setup(api) {
+            api.registerRuntimeEvidenceContributor({ name: "external", contribute });
+          },
+        },
+      ],
+      sources: { status: { urls: ["https://status.example.test/"] }, "async-source": {} },
+      fetch: fetchStatus(200),
+    }),
+  ).rejects.toThrow("Invalid async source input");
+  expect(validate).toHaveBeenCalledOnce();
+  expect(collected).toEqual([]);
+  expect(collect).not.toHaveBeenCalled();
+  expect(contribute).not.toHaveBeenCalled();
 });
 
 test("an unknown flag stays an error without a config", async () => {

@@ -673,6 +673,34 @@ test("a contributor's MCP targets are the live subject and rerun from another di
   expect(text.output).toContain(`Checked: MCP server ${target}\n`);
 });
 
+test("builtin and extension source flags share the same string-preserving parser", async () => {
+  const url = mockToolPages([stubTools]);
+  const root = emptyDirectory();
+  const config = "doctor.config.mjs";
+  writeFileSync(
+    join(root, config),
+    `export default { extensions: [{ name: "fixture/status", sources: [{
+      name: "status", label: "Status page", options: { revision: { help: "Revision." } },
+      fromOptions: ({ revision }) => revision[0],
+      collect: (revision) => ({ evidence: {}, targets: [revision] }),
+    }] }] };`,
+  );
+  const { code, output } = await cli(root, [
+    "--mcp-url",
+    url,
+    "--status-revision=00123",
+    "--config",
+    config,
+    "--format",
+    "json",
+  ]);
+  expect(code).toBe(0);
+  expect(JSON.parse(output).sources).toEqual([
+    expect.objectContaining({ name: "mcp", targets: [new URL(url).origin] }),
+    expect.objectContaining({ name: "status", targets: ["00123"] }),
+  ]);
+});
+
 test("malformed builtin source flags fail before executable config loads", async () => {
   const root = emptyDirectory();
   const config = "doctor.config.mjs";
