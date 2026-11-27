@@ -496,6 +496,32 @@ test("accepts arbitrary grid track lists and transition properties, which have n
   );
 });
 
+test("treats a reordered transition list as custom, since durations pair with it by index", async () => {
+  const colors =
+    "color,background-color,border-color,outline-color,text-decoration-color,fill,stroke," +
+    "--tw-gradient-from,--tw-gradient-via,--tw-gradient-to";
+  const swapped = colors.replace("color,background-color", "background-color,color");
+  const source = [
+    "<template>",
+    `  <button class="transition-[${colors}]" />`,
+    `  <a class="transition-[${swapped}]" />`,
+    "</template>",
+    "<style scoped>",
+    "a { transition-duration: 1s, 200ms; }",
+    "</style>",
+    "",
+  ].join("\n");
+  const result = await runProjectFixture({
+    framework: "vue",
+    dependencies: tailwind,
+    rules: [noArbitraryValues],
+    files: { "src/styles.css": theme, "src/Link.vue": source },
+  });
+  expect(result.diagnostics.map((d) => [d.code, d.why.split(" ")[0]])).toEqual([
+    ["DS0003", `"transition-[${colors}]"`],
+  ]);
+});
+
 test.each([
   { deny: ["transition-*", "grid-cols-*"] },
   { options: { deny: ["transition-*", "grid-cols-*"] }, settings: { note: "See DESIGN.md." } },

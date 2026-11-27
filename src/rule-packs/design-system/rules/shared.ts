@@ -606,10 +606,8 @@ function isCustomArbitraryUtility(token: string): boolean {
       !properties.every((property) => /^(?:--[\w-]+|-?[a-z][\w-]*)$/i.test(property))
     )
       return false;
-    const list = new Set(properties);
-    return !namedTransitionLists.some(
-      (named) => named.size === list.size && [...list].every((property) => named.has(property)),
-    );
+    // `transition-duration` and the other transition lists pair with these entries by index.
+    return !namedTransitionLists.includes(properties.join(" "));
   }
   let tracks = value;
   while (/\([^()]*\)/.test(tracks)) tracks = tracks.replace(/\([^()]*\)/g, "");
@@ -620,13 +618,13 @@ const colorTransition =
   "color background-color border-color outline-color text-decoration-color fill stroke " +
   "--tw-gradient-from --tw-gradient-via --tw-gradient-to";
 const transformTransition = "transform translate scale rotate";
-// The property lists Tailwind's named `transition-*` utilities emit.
+// The property lists Tailwind's named `transition-*` utilities emit, in their order.
 const namedTransitionLists = [
   `${colorTransition} opacity box-shadow ${transformTransition} filter -webkit-backdrop-filter ` +
     "backdrop-filter display content-visibility overlay pointer-events",
   colorTransition,
   transformTransition,
-].map((list) => new Set(list.split(" ")));
+];
 
 function hasVocabularyPolicy(options: unknown): boolean {
   const { ruleOptions } = unwrapRuleOptions(options);
