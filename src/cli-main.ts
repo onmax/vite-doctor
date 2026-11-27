@@ -232,14 +232,18 @@ export async function main(
     if (typeof result === "number") exitCode = result;
     return exitCode;
   } catch (error) {
-    const format = await requestedPresentation(args);
-    await writeCliError(error instanceof Error ? error.message : String(error), format, {
-      kind: error instanceof CliConfigError ? "config" : "invocation",
-      file: error instanceof CliConfigError ? error.file : undefined,
-      code: errorCode(error),
-    });
-    return 2;
+    return reportCliError(args, error);
   }
+}
+
+async function reportCliError(args: string[], error: unknown): Promise<number> {
+  const format = await requestedPresentation(args);
+  await writeCliError(error instanceof Error ? error.message : String(error), format, {
+    kind: error instanceof CliConfigError ? "config" : "invocation",
+    file: error instanceof CliConfigError ? error.file : undefined,
+    code: errorCode(error),
+  });
+  return 2;
 }
 
 function formatCacheStatus(status: CacheStatus, format: MetadataReportFormat): string {
@@ -363,13 +367,13 @@ function unknownOption(flag: string): Error {
   return new Error(`Unknown option \`${flag}\``);
 }
 
-async function applyEvidenceSourceFlags(
+async function prepareEvidenceSourceRun(
   options: DoctorRunOptions,
   { reserved, source }: EvidenceArgs,
-): Promise<void> {
+): Promise<DoctorRunOptions | undefined> {
   if (!source.size && !options.config?.extensions?.length && !options.hostExtensions) return;
-  const { viteDoctorEvidenceSources } = await import("./doctor.js");
-  const sources = await viteDoctorEvidenceSources(options);
+  const { prepareViteDoctorEvidenceSources } = await import("./doctor.js");
+  const { sources, runOptions } = await prepareViteDoctorEvidenceSources(options);
   const declarations = evidenceSourceFlags(sources);
   const known = new Set<string>();
   for (const { flag, source: owner } of declarations) {
@@ -384,7 +388,8 @@ async function applyEvidenceSourceFlags(
     declarations.filter(({ source }) => !builtinEvidenceSources.includes(source)),
     source,
   );
-  if (inputs) options.sources = { ...options.sources, ...inputs };
+  if (inputs) runOptions.sources = { ...runOptions.sources, ...inputs };
+  return runOptions;
 }
 
 function kebabFlag(name: string): string {
@@ -476,19 +481,23 @@ function addDoctorRunCommand(
       if (declarative?.file === resolve(root, "doctor.config.json")) {
         runOptions.declarativeConfigFile = declarative.file;
       }
-      await applyEvidenceSourceFlags(runOptions, evidenceArgs());
+      const prepared = await prepareEvidenceSourceRun(runOptions, evidenceArgs());
+      const run = async () => {
+        try {
+          return await runDoctorCommand(runOptions, format, explicitConfig, report, prepared);
+        } catch (error) {
+          if (configFile && isLoadedConfigValidationError(error, runOptions)) {
+            throw createCliConfigError(configFile, error);
+          }
+          throw error;
+        }
+      };
       if (options.watch) {
-        setExitCode(await watchDoctorCommand(args, cwd, surface, root, runOptions));
+        const initialRun = () => run().catch((error: unknown) => reportCliError(args, error));
+        setExitCode(await watchDoctorCommand(args, cwd, surface, root, runOptions, initialRun));
         return;
       }
-      try {
-        setExitCode(await runDoctorCommand(runOptions, format, explicitConfig, report));
-      } catch (error) {
-        if (configFile && isLoadedConfigValidationError(error, runOptions)) {
-          throw createCliConfigError(configFile, error);
-        }
-        throw error;
-      }
+      setExitCode(await run());
     });
   // cac defaults negated flags to true, which renders as `(default: true)` on `--no-cache`
   // and makes every run look like an explicit `--cache` in rerun commands.
@@ -503,6 +512,7 @@ async function watchDoctorCommand(
   surface: CliSurfaceOptions,
   root: string,
   options: DoctorRunOptions,
+  initialRun: () => Promise<number>,
 ): Promise<number> {
   if (options.fix || options.unsafeFix || options.updateBaseline) {
     throw new Error("--watch cannot be combined with --fix, --unsafe-fix, or --update-baseline.");
@@ -521,11 +531,16 @@ async function watchDoctorCommand(
   const abort = () => controller.abort();
   process.once("SIGINT", abort);
   process.once("SIGTERM", abort);
+  let run = initialRun;
   try {
     return await watchDoctorRuns({
       root,
       ignore: [dirname(cache.path)],
-      run: () => main(runArgs, cwd, surface),
+      run: () => {
+        const next = run;
+        run = () => main(runArgs, cwd, surface);
+        return next();
+      },
       signal: controller.signal,
       onRerun: (changed) =>
         process.stderr.write(`\n[vite-doctor] ${relative(root, changed)} changed, rerunning\n`),
@@ -541,9 +556,10 @@ async function runDoctorCommand(
   format: DoctorReportFormat,
   configFile: string | undefined,
   report: Pick<DoctorReportContext, "formatFlag" | "reader"> & { cwd: string },
+  prepared?: DoctorRunOptions,
 ): Promise<number> {
-  const { runViteDoctor, shouldFailDoctorRun } = await import("./doctor.js");
-  const result = await runViteDoctor(options);
+  const { runPreparedViteDoctor, runViteDoctor, shouldFailDoctorRun } = await import("./doctor.js");
+  const result = prepared ? await runPreparedViteDoctor(prepared) : await runViteDoctor(options);
   process.stdout.write(
     createReport(result, format, { ...report, runOptions: options, configFile }),
   );

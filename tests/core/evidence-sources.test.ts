@@ -205,6 +205,38 @@ test("the CLI reads a config Extension's source flags once the config loads", as
   ]);
 });
 
+test.each([false, true])(
+  "the CLI invokes a config loader once (source flags: %s)",
+  async (flags) => {
+    const root = project();
+    writeFileSync(
+      join(root, "doctor.config.mjs"),
+      `
+    let calls = 0;
+    export default { extensions: [async () => {
+      if (++calls !== 1) throw new Error("Extension loader called twice");
+      return { default: { name: "fixture/loader", sources: ${flags} ? [{
+        name: "status", label: "status page", options: { url: { help: "Read a URL." } },
+        fromOptions: ({ url }) => url,
+        collect: (urls) => ({ evidence: {}, targets: urls }),
+      }] : [] } };
+    }] };
+  `,
+    );
+    const { code, output } = await cli(root, [
+      ".",
+      "--config",
+      "doctor.config.mjs",
+      "--format",
+      "json",
+      ...(flags ? ["--status-url", "https://status.example.test/"] : []),
+    ]);
+    expect(code, output).toBe(0);
+    if (flags)
+      expect(JSON.parse(output).sources[0].targets).toEqual(["https://status.example.test/"]);
+  },
+);
+
 test.each([
   [["--status-typo", "x"], "Unknown option `--status-typo`"],
   [["--status-url.extra", "x"], "Unknown option `--status-url.extra`"],
