@@ -107,6 +107,7 @@
     "tinyglobby": "^0.2.17",
     "typescript": "catalog:analysis",
     "unimport": "catalog:prod",
+    "unimport-nitro-v6": "catalog:prod",
     "vue-eslint-parser": "catalog:analysis",
     "yaml": "catalog:prod"
   },
