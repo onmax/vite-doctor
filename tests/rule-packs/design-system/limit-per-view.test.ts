@@ -777,6 +777,23 @@ test.each(["false", "{ enabled: false }"])(
 );
 
 test.each(["false", "{ enabled: false }"])(
+  "keeps the empty route list when the only Nuxt hook runs at shutdown: pages: %s",
+  async (pages) => {
+    const config = (hooks: string) =>
+      `export default defineNuxtConfig({\n  pages: ${pages},\n  hooks: { ${hooks} },\n});`;
+    const close = "close() { console.log('Closing Nuxt') }";
+    expect(await limitGaps({ "nuxt.config.ts": config(close) })).toEqual([]);
+    expect(
+      await limitGaps({
+        "nuxt.config.ts": config(`${close}, 'modules:before': () => {}`),
+      }),
+    ).toEqual([
+      expect.objectContaining({ message: expect.stringMatching(/cannot list the routes/) }),
+    ]);
+  },
+);
+
+test.each(["false", "{ enabled: false }"])(
   "requires prepared routes when a Nuxt hook may override pages: %s",
   async (pages) => {
     await withFixture(

@@ -566,9 +566,24 @@ function staticPagesDisable(ctx: RuleContext, layer: NuxtAppSource): boolean | "
   const hooks = properties.findLast((property: AnyNode) => propertyName(property) === "hooks");
   if (hooks) {
     const value = unwrap(hooks.value);
-    if (value?.type !== "ObjectExpression" || value.properties.length) return "unknown";
+    if (value?.type !== "ObjectExpression" || !value.properties.every(isShutdownHook))
+      return "unknown";
   }
   return true;
+}
+
+// Nuxt calls these from `nuxt.close()`, after the pages module has registered its routes.
+const shutdownHooks = new Set(["close"]);
+
+function isShutdownHook(property: AnyNode): boolean {
+  const name = propertyName(property);
+  const handler = unwrap(property.value);
+  return (
+    property.type === "Property" &&
+    !!name &&
+    shutdownHooks.has(name) &&
+    (handler?.type === "FunctionExpression" || handler?.type === "ArrowFunctionExpression")
+  );
 }
 
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
