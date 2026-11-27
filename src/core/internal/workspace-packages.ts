@@ -361,7 +361,7 @@ function shipsNuxtModule(
   return isRecord(exports) && "./nuxt" in exports;
 }
 
-function hasConfig(directory: string, basename: string): boolean {
+export function hasConfig(directory: string, basename: string): boolean {
   return [".ts", ".mts", ".js", ".mjs", ".cjs"].some((extension) =>
     existsSync(join(directory, basename + extension)),
   );

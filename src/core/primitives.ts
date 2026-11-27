@@ -567,6 +567,12 @@ export interface ProjectInfo {
   framework: DoctorFramework;
   /** Explicit framework selection, as distinct from the detected primary framework. */
   requestedFramework?: DoctorFramework;
+  /**
+   * The run root has no package.json, workspace, framework config, TypeScript config, or source,
+   * and no framework was requested, so `framework` is Doctor's fallback. When Runtime
+   * Evidence activates a Rule Pack, that evidence is what the run checks.
+   */
+  noProject?: true;
   ssr: boolean;
   vueVersion: string;
   nuxtVersion?: string;
@@ -672,7 +678,8 @@ export interface WorkspacePackageRuntime {
 
 /**
  * A Rule Pack in a Doctor Run: whether Config Extends selected its Presets, and the roots of the
- * workspace packages whose Project Inventory activates it.
+ * workspace packages whose Project Inventory activates it. In a run without a project, it lists
+ * what in the Runtime Evidence activated it instead, such as an MCP server's origin.
  */
 export interface RulePackActivation {
   name: string;
@@ -1459,11 +1466,13 @@ export interface RulePack {
         runtimes?: RuntimePackageName[];
         nuxt?: string;
         /**
-         * Activates the Rule Pack for every workspace package when this returns true for the
-         * Doctor Run's Runtime Evidence, whatever the other conditions say. The MCP Rule Pack uses
-         * it so a configured MCP server is checked in a project without an MCP package.
+         * Activates the Rule Pack for every workspace package when this returns true or a non-empty
+         * list for the Doctor Run's Runtime Evidence, whatever the other conditions say. A list
+         * names what in the evidence activated it, and a run without a project reports those names
+         * as the Rule Pack's `activatedBy`. The MCP Rule Pack returns the servers it reads, so a
+         * configured MCP server is checked in a project without an MCP package.
          */
-        runtimeEvidence?: (runtimeEvidence: Record<string, unknown>) => boolean;
+        runtimeEvidence?: (runtimeEvidence: Record<string, unknown>) => boolean | readonly string[];
       };
 }
 

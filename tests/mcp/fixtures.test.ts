@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
-import { checkMcpToolList } from "../../src/mcp/index.ts";
+import { checkMcpClientLimits } from "../../src/mcp/index.ts";
 
 const fixtures = { nuxt: "nuxt", deepwiki: "deepwiki", context7: "context7" };
 
@@ -9,7 +9,7 @@ for (const [fixture, serverName] of Object.entries(fixtures)) {
     const list: unknown = JSON.parse(
       readFileSync(new URL(`../fixtures/mcp/${fixture}.json`, import.meta.url), "utf8"),
     );
-    const findings = checkMcpToolList(list, { serverName }).map(
+    const findings = checkMcpClientLimits(list, { serverName }).map(
       ({ client, rule, severity, confidence, tool, pointer, message, measured }) => ({
         client,
         rule,

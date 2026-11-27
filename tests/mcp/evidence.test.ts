@@ -7,6 +7,7 @@ import { createReport, reportStatus, runDoctor } from "../../src/core/index.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import { createRule, defineRulePack } from "../../src/extension.ts";
 import { readMcpServers } from "../../src/mcp/evidence.ts";
+import { viteDoctorVersion } from "../../src/version.ts";
 import { startMcpStub, stubTools, type StubRequest } from "./mcp-stub.ts";
 
 const cleanups: Array<() => unknown> = [];
@@ -112,7 +113,9 @@ test("malformed tool lists leave a gap without exposing the request URL", async 
   const report = createReport(result, "agent", {
     runOptions: { root, mcp: [{ url, headers: { "invalid fake-secret": "value" } }] },
   });
-  expect(report).toContain("<mcp-url>");
+  expect(JSON.parse(report).commandArgs.rerun).toEqual(
+    expect.arrayContaining(["--mcp-url", "https://<redacted>@example.test/<redacted>?<redacted>"]),
+  );
   expect(report).not.toMatch(/path-secret|query-secret|fragment-secret|password|fake-secret/);
   expect(JSON.stringify(result.project.runtimeEvidence)).not.toMatch(
     /path-secret|query-secret|fragment-secret|password/,
@@ -359,13 +362,16 @@ test("readMcpServers collects mcpServers from every contributor and skips malfor
 
 async function cli(root: string, args: string[]) {
   let output = "";
-  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+  const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
     output += String(chunk);
     return true;
   });
-  const code = await main(args, root);
-  vi.restoreAllMocks();
-  return { code, output };
+  try {
+    const code = await main(args, root);
+    return { code, output };
+  } finally {
+    stdout.mockRestore();
+  }
 }
 
 test("--mcp-url and --mcp-header repeat, and every header goes to every URL", async () => {
@@ -402,11 +408,273 @@ test("--mcp-url and --mcp-header repeat, and every header goes to every URL", as
     expect(request.headers.authorization).toBe("Bearer secret");
     expect(request.headers["x-team"]).toBe("drops");
   }
-  expect(output).not.toContain("secret");
-  const report = JSON.parse(output) as { commandArgs: { rerun: string[] } };
-  expect(report.commandArgs.rerun).toEqual(expect.arrayContaining(["--mcp-url", "<mcp-url>"]));
-  expect(report.commandArgs.rerun.filter((arg) => arg === "<mcp-url>")).toHaveLength(2);
-  expect(report.commandArgs.rerun).toContain("Authorization: <value>");
+  expect(output).not.toMatch(/path-secret|query-secret|Bearer secret|X-Team: drops/);
+  const report = JSON.parse(output) as {
+    commandArgs: { rerun: string[] };
+    placeholders: Record<string, string>;
+  };
+  expect(report.commandArgs.rerun).toEqual([
+    "vite-doctor",
+    ".",
+    "--framework",
+    "vite",
+    "--mcp-url",
+    `${new URL(first.url).origin}/<redacted>?<redacted>`,
+    "--mcp-url",
+    second.url,
+    "--mcp-header",
+    "Authorization: <redacted>",
+    "--mcp-header",
+    "X-Team: <redacted>",
+    "--no-cache",
+    "--format",
+    "agent",
+  ]);
+  expect(report.placeholders["<redacted>"]).toContain("--mcp-header values");
+});
+
+test("--mcp-url checks a server from an empty directory, naming Doctor as the client", async () => {
+  const requests: StubRequest[] = [];
+  const server = await stub({ requests, tools: [{ name: "search" }] });
+  const root = mkdtempSync(join(tmpdir(), "doctor-mcp-empty-"));
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  const { code, output } = await cli(root, [
+    "--no-cache",
+    "--format",
+    "json",
+    "--mcp-url",
+    server.url,
+  ]);
+
+  expect(code).toBe(0);
+  expect(requests.find((request) => request.method === "initialize")?.clientInfo).toEqual({
+    name: "vite-doctor",
+    version: viteDoctorVersion,
+  });
+  const report = JSON.parse(output) as {
+    status: string;
+    subject: unknown;
+    framework: unknown;
+    rulePacks: Array<{ name: string }>;
+    diagnostics: Array<{ code: string }>;
+  };
+  expect(report.status).toBe("findings");
+  expect(report.subject).toEqual({ mcpServers: [new URL(server.url).origin] });
+  expect(report.framework).toBeNull();
+  expect(report).not.toHaveProperty("project");
+  expect(report.rulePacks.map((pack) => pack.name)).toEqual(["vite-doctor/mcp"]);
+  expect(report.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["MCP0001", "MCP0002"]);
+});
+
+function emptyDirectory() {
+  const root = mkdtempSync(join(tmpdir(), "doctor-mcp-empty-"));
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+
+function mockToolPages(pages: Array<typeof stubTools>) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    const message = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+    if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
+    const page = Number(message.params?.cursor ?? 0);
+    return Response.json({
+      id: message.id,
+      result:
+        message.method === "initialize"
+          ? { protocolVersion: "2025-11-25" }
+          : {
+              tools: pages[page],
+              ...(page + 1 < pages.length ? { nextCursor: String(page + 1) } : {}),
+            },
+    });
+  });
+  return "https://example.test/mcp";
+}
+
+test("--mcp-url preserves TypeScript diagnostics without a package.json", async () => {
+  const url = mockToolPages([stubTools]);
+  const root = emptyDirectory();
+  writeFileSync(
+    join(root, "index.ts"),
+    "declare const input: number;\nexport const result = input as unknown as { name: string };\n",
+  );
+  const args = ["--no-cache", "--format", "json"];
+  const source = await cli(root, args);
+  expect(JSON.parse(source.output).diagnostics).toContainEqual(
+    expect.objectContaining({ code: "TS0001" }),
+  );
+  const combined = await cli(root, [...args, "--mcp-url", url]);
+  const report = JSON.parse(combined.output);
+  expect(report.diagnostics).toContainEqual(expect.objectContaining({ code: "TS0001" }));
+  expect(report).not.toHaveProperty("subject");
+});
+
+test("MCP-only reruns load root-local config even when invoked from another directory", async () => {
+  const url = mockToolPages([[{ name: "search", annotations: { readOnlyHint: true } }]]);
+  const cwd = emptyDirectory();
+  const root = join(cwd, "source");
+  mkdirSync(root);
+  writeFileSync(
+    join(root, "doctor.config.json"),
+    JSON.stringify({ rules: { "mcp/tools/require-annotation-title": "off" } }),
+  );
+  const args = ["--no-cache", "--format", "agent", "--mcp-url", url];
+  const unconfigured = await cli(cwd, args);
+  expect(JSON.parse(unconfigured.output).codes).toHaveProperty("MCP0001");
+
+  const original = await cli(cwd, ["./source", ...args]);
+  const report = JSON.parse(original.output);
+  expect(report.project).toBeNull();
+  expect(report.codes).not.toHaveProperty("MCP0001");
+
+  const replay = await cli(emptyDirectory(), report.commandArgs.rerun.slice(1));
+  const replayReport = JSON.parse(replay.output);
+  expect(replayReport.project).toBeNull();
+  expect(replayReport.codes).toEqual(report.codes);
+});
+
+test("Doctor reads all 50 pages of an MCP tool list", async () => {
+  const tools = Array.from({ length: 50 }, (_, index) => ({ name: `tool_${index}` }));
+  const url = mockToolPages(tools.map((tool) => [tool]));
+  const result = await runViteDoctor({
+    root: emptyDirectory(),
+    cache: false,
+    mcp: [{ url }],
+  });
+  expect(readMcpServers(result.project.runtimeEvidence)).toEqual([
+    expect.objectContaining({ tools }),
+  ]);
+  expect(result.project.evidenceGaps ?? []).toEqual([]);
+});
+
+test("an MCP server checked from an empty directory is the report's subject, not a project", async () => {
+  const url = mockToolPages([[{ name: "search" }, { name: "fetch" }]]);
+  const { origin } = new URL(url);
+  const root = emptyDirectory();
+  const agent = await cli(root, ["--no-cache", "--format", "agent", "--mcp-url", url]);
+  const report = JSON.parse(agent.output) as {
+    subject: unknown;
+    project: unknown;
+    rulePacks: unknown[];
+    commandArgs: Record<string, string[]>;
+  };
+  expect(report.subject).toEqual({ mcpServers: [origin] });
+  expect(report.project).toBeNull();
+  expect(report.rulePacks).toEqual([
+    { name: "vite-doctor/mcp", selected: true, activatedBy: [origin] },
+  ]);
+  expect(report.commandArgs.rerun).toEqual([
+    "vite-doctor",
+    root,
+    "--mcp-url",
+    url,
+    "--no-cache",
+    "--format",
+    "agent",
+  ]);
+  expect(report.commandArgs.explain).toEqual([
+    "vite-doctor",
+    "explain",
+    "<code>",
+    "--format",
+    "agent",
+  ]);
+  expect(report).not.toHaveProperty("placeholders");
+
+  const text = await cli(root, ["--no-cache", "--format", "text", "--full", "--mcp-url", url]);
+  expect(text.output).toContain(`Checked: MCP server ${origin}\n`);
+  expect(text.output).toContain(`Project: none, ${root} has no package.json\n`);
+  expect(text.output).not.toMatch(/Detected:|Vite/);
+});
+
+async function rerunArgs(urls: string[]) {
+  const args = urls.flatMap((url) => ["--mcp-url", url]);
+  const root = emptyDirectory();
+  const { output } = await cli(root, ["--no-cache", "--format", "agent", ...args]);
+  const report = JSON.parse(output) as { commandArgs: { rerun: string[] }; placeholders?: object };
+  return { root, report };
+}
+
+test("rerun commands redact custom --mcp-url paths and entire query strings", async () => {
+  const server = await stub();
+  const { origin } = new URL(server.url);
+  const zapier = "ZDk0YjM2NzQtNDU1Mi00ZmRhLWI3NTEtOGQ3ZTk1ZjM0YzQx";
+  const hex = "9f86d081884c7d659a2feaa0c55ad015";
+  const { root, report } = await rerunArgs([
+    `${origin}/api/mcp/s/${zapier}/mcp`,
+    `${origin}/servers/${hex}/sse`,
+    `${origin}/api/mcp/s/short-secret/mcp?query-name-secret`,
+  ]);
+
+  expect(report.commandArgs.rerun).toEqual([
+    "vite-doctor",
+    root,
+    "--mcp-url",
+    `${origin}/<redacted>`,
+    "--mcp-url",
+    `${origin}/<redacted>`,
+    "--mcp-url",
+    `${origin}/<redacted>?<redacted>`,
+    "--no-cache",
+    "--format",
+    "agent",
+  ]);
+  expect(JSON.stringify(report)).not.toMatch(
+    new RegExp(`${zapier}|${hex}|short-secret|query-name-secret`),
+  );
+  expect(report.placeholders).toEqual({
+    "<redacted>": expect.stringContaining("custom paths of an --mcp-url"),
+  });
+});
+
+test("rerun commands keep an ordinary --mcp-url path", async () => {
+  const server = await stub();
+  const { origin } = new URL(server.url);
+  const urls = [`${origin}/mcp`, `${origin}/v1/sse`, `${origin}/github-copilot/mcp`];
+  const { root, report } = await rerunArgs(urls);
+
+  expect(report.commandArgs.rerun).toEqual([
+    "vite-doctor",
+    root,
+    ...urls.flatMap((url) => ["--mcp-url", url]),
+    "--no-cache",
+    "--format",
+    "agent",
+  ]);
+  expect(report).not.toHaveProperty("placeholders");
+});
+
+test("the text report prints evidence every Diagnostic of a group shares once", async () => {
+  const server = await stub({ tools: [{ name: "search" }, { name: "fetch" }, { name: "list" }] });
+  const { output } = await cli(emptyDirectory(), [
+    "--no-cache",
+    "--format",
+    "text",
+    "--full",
+    "--mcp-url",
+    server.url,
+  ]);
+  const group = output.slice(output.indexOf("MCP0001  "), output.indexOf("MCP0002  "));
+  const read = `evidence: runtime: Read from the tools/list of MCP server "stub" at ${new URL(server.url).origin} during this Doctor Run.`;
+  expect(group.split(read)).toHaveLength(2);
+  expect(group.indexOf(read)).toBeLessThan(group.indexOf("[MCP0001]"));
+  for (const tool of ["search", "fetch", "list"]) expect(group).toContain(`source: ${tool}\n`);
+});
+
+test("an MCP server that answers 401 from an empty directory reports missing MCP server evidence", async () => {
+  const server = await stub({ token: "secret" });
+  const { code, output } = await cli(emptyDirectory(), [
+    "--no-cache",
+    "--format",
+    "text",
+    "--mcp-url",
+    server.url,
+  ]);
+  expect(code).toBe(3);
+  expect(output).toContain("Status: incomplete, required MCP server evidence is missing\n");
+  expect(output).toMatch(
+    /Evidence missing: .*HTTP 401.*--mcp-header "Authorization: Bearer <token>"\.\n/,
+  );
 });
 
 test.each([
