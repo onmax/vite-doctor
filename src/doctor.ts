@@ -53,13 +53,22 @@ export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
   return registry.packs;
 }
 
-/** The Evidence Sources of every Doctor Extension a Doctor Run with these options loads. */
-export async function viteDoctorEvidenceSources(options: DoctorRunOptions = {}) {
+export async function prepareViteDoctorEvidenceSources(options: DoctorRunOptions) {
+  const runOptions = await viteDoctorRunOptions(options);
   const extensions = await resolveDoctorExtensions([
-    ...(options.config?.extensions ?? []),
-    ...(await viteDoctorRunOptions(options)).extensions!,
+    ...(runOptions.config?.extensions ?? []),
+    ...(runOptions.extensions ?? []),
   ]);
-  return extensions.flatMap((extension) => extension.sources ?? []);
+  return {
+    sources: extensions.flatMap((extension) => extension.sources ?? []),
+    runOptions: {
+      ...runOptions,
+      config: runOptions.config?.extensions
+        ? { ...runOptions.config, extensions: [] }
+        : runOptions.config,
+      extensions,
+    },
+  };
 }
 
 export async function viteDoctorExtensions(
@@ -109,8 +118,15 @@ export async function viteDoctorExtensions(
 }
 
 export async function runViteDoctor(options: DoctorRunOptions, fullRunForMcpEvidence = false) {
+  return runPreparedViteDoctor(await viteDoctorRunOptions(options), fullRunForMcpEvidence);
+}
+
+export async function runPreparedViteDoctor(
+  options: DoctorRunOptions,
+  fullRunForMcpEvidence = false,
+) {
   const result = await runDoctor(
-    await viteDoctorRunOptions(options),
+    options,
     fullRunForMcpEvidence
       ? (project) => readMcpServers(project.runtimeEvidence).length > 0
       : undefined,
