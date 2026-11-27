@@ -3,7 +3,7 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/onmax/vite-doctor.git",
+    "url": "git+https://github.com/loadsheet/vite-doctor.git",
     "directory": "docs"
   },
   "type": "module",

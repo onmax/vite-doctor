@@ -8,7 +8,7 @@ export const noIndentedJsonOutput = createRule({
     title: "Return compact JSON from MCP tools",
     description:
       "Report MCP tools that return `JSON.stringify(value, replacer, indent)` with an indent as their text.",
-    why: "The model reads a tool's text result as tokens in its context window. Indentation adds a newline and spaces before every key and item, which carries no data: in the Quiver Portal MCP it was about a third of each answer's characters. Claude Code flags a result over 10,000 tokens, and replaces one over 25,000 tokens or 50,000 characters with the path of a file that holds it, so padding pushes a large answer past those limits sooner.",
+    why: "The model reads a tool's text result as tokens in its context window. Indentation adds a newline and spaces before every key and item, which carries no data: in the Quiver Portal MCP it was about a third of each answer's characters. Claude Code replaces a result over 50,000 characters with the path of a file that holds it, so padding pushes a large answer past that limit sooner.",
     recommendedReplacement:
       "Remove only the third argument of `JSON.stringify(value, replacer, indent)`; keep the replacer.",
     examples: [

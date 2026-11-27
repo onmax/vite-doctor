@@ -1,9 +1,15 @@
+import {
+  fetchMcpToolList,
+  McpFetchError,
+  mcpEndpointLabel,
+  parseMcpEndpoint,
+  type McpInitializeResult,
+  type McpTool,
+} from "@loadsheet/mcp";
 import type { DoctorExtension, ProjectInfo } from "../core/primitives.js";
 import { sha256 } from "../core/internal/utils.js";
-import { mcpEndpointId, mcpEndpointLabel, parseMcpEndpoint } from "./endpoint.js";
-import { fetchMcpToolList, McpFetchError } from "./fetch.js";
-import { isMcpTool } from "./input.js";
-import type { McpInitializeResult, McpTool } from "./types.js";
+import { viteDoctorVersion } from "../version.js";
+import { mcpEndpointId } from "./endpoint.js";
 
 /** The name of Doctor's own Runtime Evidence contributor for MCP servers. */
 export const MCP_EVIDENCE = "mcp";
@@ -60,6 +66,20 @@ export function readMcpServers(
   });
 }
 
+/**
+ * The MCP servers in a Doctor Run's Runtime Evidence by endpoint origin, or by name when an
+ * Extension reported no URL. Reports never show more of the endpoint than this.
+ */
+export function mcpServerLabels(runtimeEvidence: Record<string, unknown> | undefined): string[] {
+  return [
+    ...new Set(
+      readMcpServers(runtimeEvidence).map((server) =>
+        server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server"),
+      ),
+    ),
+  ];
+}
+
 // A read that failed has no tools, whatever else an Extension put beside its error.
 function withoutFailedTools(server: McpServerEvidence): McpServerEvidence {
   if (typeof (server as { error?: unknown }).error !== "string" || !("tools" in server))
@@ -74,6 +94,10 @@ function isMcpServerEvidence(value: unknown): value is McpServerEvidence {
   const server = value as Partial<McpServerToolsEvidence & McpServerErrorEvidence>;
   if (typeof server.error === "string") return typeof server.url === "string";
   return Array.isArray(server.tools) && server.tools.every(isMcpTool);
+}
+
+function isMcpTool(tool: unknown): tool is McpTool {
+  return !!tool && typeof tool === "object" && typeof (tool as McpTool).name === "string";
 }
 
 /**
@@ -121,7 +145,12 @@ async function readServer(
   const label = mcpEndpointLabel(url);
   const endpointId = mcpEndpointId(url);
   try {
-    const list = await fetchMcpToolList(url, { headers, ...options });
+    const list = await fetchMcpToolList(url, {
+      headers,
+      maxPages: 50,
+      clientInfo: { name: "vite-doctor", version: viteDoctorVersion },
+      ...options,
+    });
     const name = serverName ?? list.initialize?.serverInfo?.name;
     return {
       ...(name ? { name } : {}),

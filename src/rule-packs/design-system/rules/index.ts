@@ -19,6 +19,7 @@ export const noRawColors = createDesignSystemRule({
   rule: "no-raw-colors",
   confidence: "heuristic-medium",
   docsUrl: "https://github.com/shadcn-ui/lint/blob/main/docs/rules/no-raw-colors.md",
+  styleBlocks: true,
 });
 export const noArbitraryValues = createDesignSystemRule({
   id: "design-system/no-arbitrary-values",

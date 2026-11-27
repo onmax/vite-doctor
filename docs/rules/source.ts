@@ -1535,7 +1535,7 @@ function trimCode(value: unknown) {
 }
 
 function githubSourceUrl(source: string) {
-  return `https://github.com/onmax/vite-doctor/blob/main/${source}`;
+  return `https://github.com/loadsheet/vite-doctor/blob/main/${source}`;
 }
 
 function toCatalogRule(rule: RuleDocument) {

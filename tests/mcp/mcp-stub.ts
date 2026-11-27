@@ -1,6 +1,6 @@
 import { createServer, type IncomingHttpHeaders, type RequestListener } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { McpTool } from "../../src/mcp/types.ts";
+import type { McpTool } from "@loadsheet/mcp";
 
 export const stubTools: McpTool[] = [
   {
@@ -22,6 +22,8 @@ export interface StubRequest {
   path: string;
   method: string;
   headers: IncomingHttpHeaders;
+  /** The client an `initialize` request names. */
+  clientInfo?: unknown;
 }
 
 /**
@@ -34,11 +36,16 @@ export function mcpStubHandler(options: StubOptions = {}): RequestListener {
     let body = "";
     request.on("data", (chunk) => (body += chunk));
     request.on("end", () => {
-      const message = JSON.parse(body || "{}") as { id?: number; method?: string };
+      const message = JSON.parse(body || "{}") as {
+        id?: number;
+        method?: string;
+        params?: { clientInfo?: unknown };
+      };
       options.requests?.push({
         path: request.url ?? "",
         method: request.method === "DELETE" ? "DELETE" : (message.method ?? ""),
         headers: request.headers,
+        ...(message.method === "initialize" ? { clientInfo: message.params?.clientInfo } : {}),
       });
       if (options.token && request.headers.authorization !== `Bearer ${options.token}`) {
         response.writeHead(401).end();

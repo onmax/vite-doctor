@@ -37,10 +37,8 @@ export const noReducedContext = createRule({
   create(ctx) {
     return clientLimitsVisitor(ctx, {
       ruleId: "mcp/clients/no-reduced-context",
+      code: "MCP0009",
       diagnostic: diagnostics.MCP0009,
-      effect: "context",
-      outcome: "reaches the model with less context",
-      brief: "reduced",
     });
   },
 });

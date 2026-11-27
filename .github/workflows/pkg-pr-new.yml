@@ -43,5 +43,7 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm pack --pack-destination "$RUNNER_TEMP/preview"
-      - run: pnpm exec pkg-pr-new publish "$RUNNER_TEMP"/preview/*.tgz --pnpm --bin --packageManager=pnpm
+      - name: Pack preview tarball
+        run: pnpm pack --pack-destination "$RUNNER_TEMP/vite-doctor-preview"
+      - name: Publish preview tarball
+        run: pnpm exec pkg-pr-new publish "$RUNNER_TEMP/vite-doctor-preview/"*.tgz --pnpm --bin --packageManager=pnpm

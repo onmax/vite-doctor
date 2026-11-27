@@ -1,6 +1,7 @@
+import type { McpCode, McpDiagnostic } from "@loadsheet/mcp";
+import { mcpEndpointLabel } from "@loadsheet/mcp";
 import { relative, resolve } from "pathe";
 import type {
-  Confidence,
   DiagnosticEvidence,
   DoctorSeverity,
   RuleContext,
@@ -11,69 +12,53 @@ import type { DoctorDiagnosticHandle } from "../../../core/diagnostics.js";
 import { canReportFromWorkspace } from "../../../core/internal/rule-execution.js";
 import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
 import { sha256 } from "../../../core/internal/utils.js";
-import { mcpEndpointId, mcpEndpointLabel } from "../../../mcp/endpoint.js";
+import { mcpEndpointId } from "../../../mcp/endpoint.js";
 import type { McpServerToolsEvidence } from "../../../mcp/evidence.js";
-import type { McpEffect, McpFinding } from "../../../mcp/types.js";
 import { collectMcpTools, MCP_PACKAGES, type McpToolDefinition } from "./shared.js";
-import { nameProblems } from "./valid-name.js";
 import {
   citations,
-  MCP_CLIENT_LABELS,
   markChecked,
-  serverFindings,
+  mcpServers,
+  serverDiagnostics,
   staticTool,
   toolSubject,
 } from "./wire.js";
 
 export interface ClientLimitOptions {
   ruleId: string;
+  code: McpCode;
   diagnostic: DoctorDiagnosticHandle;
-  effect: McpEffect;
-  /** Completes "Tool `x` of MCP server "y" …" and "MCP server "y" …", such as "is left out". */
-  outcome: string;
-  /** Completes "`limit.minimum` … in Codex" on the Diagnostic's row, such as "dropped". */
-  brief: string;
 }
 
-const SEVERITY_RANK: Record<McpFinding["severity"], number> = { info: 0, warn: 1, error: 2 };
-
 /**
- * Reports, for each MCP server and tool, one Diagnostic listing every client that applies the
- * given effect to it. The Diagnostic takes the worst severity and the lowest confidence of its
- * findings, so neither overstates what a client does.
+ * Reports, for each MCP server and tool, `@loadsheet/mcp`'s finding for `code`: one Diagnostic
+ * listing every client that applies the code's effect to it, with the worst severity and the
+ * lowest confidence of its client findings, so neither overstates what a client does.
  */
 export function clientLimitsVisitor(ctx: RuleContext, options: ClientLimitOptions): RuleVisitor {
   return {
     async onWorkspaceEnd() {
-      const checked = serverFindings(ctx);
+      const checked = mcpServers(ctx);
       if (canReportFromWorkspace(ctx)) checked.projectWide = checked.clientLimits = true;
-      const groups = checked.servers.flatMap(({ server, findings }) =>
-        groupByTool(
-          server,
-          findings.filter((finding) => finding.effect === options.effect),
-        ),
+      const found = checked.servers.some((server) =>
+        serverDiagnostics(server).some((diagnostic) => diagnostic.code === options.code),
       );
-      if (!groups.length && (checked.projectWide || !checked.servers.length)) return;
+      if (!found && (checked.projectWide || !checked.servers.length)) return;
       const tools = mcpPackageTools(ctx, await collectMcpTools(ctx));
       markChecked(ctx, tools);
-      for (const group of groups) {
-        const definition = group.tool === undefined ? undefined : staticTool(tools, group.tool);
-        const name = definition?.name?.value;
-        const findings =
-          name === undefined
-            ? group.findings
-            : group.findings.filter((finding) => !repeatsValidName(finding, name));
-        if (findings.length) report(ctx, options, group.server, group.tool, findings, definition);
+      const definedTools = tools.flatMap((tool) =>
+        tool.name && staticTool(tools, tool.name.value) ? [tool.name.value] : [],
+      );
+      for (const server of checked.servers) {
+        for (const diagnostic of serverDiagnostics(server, { definedTools })) {
+          if (diagnostic.code !== options.code) continue;
+          const definition =
+            diagnostic.tool === undefined ? undefined : staticTool(tools, diagnostic.tool);
+          report(ctx, options, server, diagnostic, definition);
+        }
       }
     },
   };
-}
-
-function groupByTool(server: McpServerToolsEvidence, findings: McpFinding[]) {
-  const byTool = new Map<string | undefined, McpFinding[]>();
-  for (const finding of findings)
-    byTool.set(finding.tool, [...(byTool.get(finding.tool) ?? []), finding]);
-  return [...byTool].map(([tool, grouped]) => ({ server, tool, findings: grouped }));
 }
 
 /**
@@ -95,22 +80,14 @@ function mcpPackageTools(ctx: RuleContext, tools: McpToolDefinition[]): McpToolD
   });
 }
 
-// MCP0003 already asks to rename a tool whose name breaks MCP's rules; a client renaming that
-// same name says nothing the fix doesn't cover.
-function repeatsValidName(finding: McpFinding, name: string): boolean {
-  return (
-    finding.effect === "rewritten" && finding.pointer === "/name" && nameProblems(name).length > 0
-  );
-}
-
 function report(
   ctx: RuleContext,
   options: ClientLimitOptions,
   server: McpServerToolsEvidence,
-  tool: string | undefined,
-  findings: McpFinding[],
+  found: McpDiagnostic,
   definition: McpToolDefinition | undefined,
 ): void {
+  const { tool, findings } = found;
   const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
   const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
   const name = server.name ?? server.initialize?.serverInfo?.name;
@@ -125,20 +102,6 @@ function report(
     JSON.stringify([options.ruleId, name ?? null, anchor, tool ?? null, [...locations].sort()]),
   );
   const label = name ?? endpoint ?? "an MCP server";
-  const subject =
-    tool === undefined
-      ? `MCP server ${JSON.stringify(label)}`
-      : `Tool \`${tool}\` of MCP server ${JSON.stringify(label)}`;
-  const clients = [...new Set(findings.map((finding) => MCP_CLIENT_LABELS[finding.client]))];
-  const details = findings.map((finding) => `${finding.message}${measured(finding)}`).join(" ");
-  const severity = findings.reduce<McpFinding["severity"]>(
-    (worst, finding) =>
-      SEVERITY_RANK[finding.severity] > SEVERITY_RANK[worst] ? finding.severity : worst,
-    "info",
-  );
-  const confidence: Confidence = findings.some((finding) => finding.confidence === "medium")
-    ? "heuristic-medium"
-    : "runtime-backed";
   const range: SourceRange | undefined = definition?.name?.range;
   const evidence: DiagnosticEvidence[] = [
     {
@@ -157,80 +120,26 @@ function report(
         ]
       : []),
   ];
-  ctx.report(
-    options.diagnostic({
-      why: `${subject} ${options.outcome} in ${list(clients)}. ${details}`,
-      fix: [...new Set(findings.map((finding) => finding.fix))].join(" "),
-    }),
-    {
-      ruleId: options.ruleId,
-      severity: severity satisfies DoctorSeverity,
-      category: "clients",
-      file: definition && range ? definition.file : undefined,
-      projectLevel: !definition || !range,
-      range: definition && range ? range : undefined,
-      fingerprint,
-      instanceKey: endpointId ? fingerprint : undefined,
-      confidence,
-      evidence,
-      subject: toolSubject(ctx, server, tool),
-      brief: briefRow(options.brief, findings),
-      data: {
-        server: {
-          ...(name === undefined ? {} : { name }),
-          ...(endpoint === undefined ? {} : { url: endpoint }),
-        },
-        ...(tool === undefined ? {} : { tool }),
-        findings,
+  ctx.report(options.diagnostic({ why: found.message, fix: found.fix }), {
+    ruleId: options.ruleId,
+    severity: found.severity satisfies DoctorSeverity,
+    category: "clients",
+    file: definition && range ? definition.file : undefined,
+    projectLevel: !definition || !range,
+    range: definition && range ? range : undefined,
+    fingerprint,
+    instanceKey: endpointId ? fingerprint : undefined,
+    confidence: found.confidence === "medium" ? "heuristic-medium" : "runtime-backed",
+    evidence,
+    subject: toolSubject(ctx, server, tool),
+    brief: found.brief,
+    data: {
+      server: {
+        ...(name === undefined ? {} : { name }),
+        ...(endpoint === undefined ? {} : { url: endpoint }),
       },
+      ...(tool === undefined ? {} : { tool }),
+      findings,
     },
-  );
-}
-
-/** Such as "limit.minimum, offset.default dropped in Codex and VS Code". */
-function briefRow(participle: string, findings: McpFinding[]): string {
-  const clientsByPointer = new Map<string, Set<string>>();
-  for (const { client, pointer, affectedPointers } of findings) {
-    const pointers = affectedPointers?.length ? affectedPointers : [pointer ?? ""];
-    for (const target of pointers) {
-      let clients = clientsByPointer.get(target);
-      if (!clients) clientsByPointer.set(target, (clients = new Set()));
-      clients.add(MCP_CLIENT_LABELS[client]);
-    }
-  }
-  const fieldsByClients = new Map<string, string[]>();
-  for (const [pointer, clients] of clientsByPointer) {
-    const label = list([...clients].sort());
-    let fields = fieldsByClients.get(label);
-    if (!fields) fieldsByClients.set(label, (fields = []));
-    if (pointer) fields.push(pointerField(pointer));
-  }
-  const clauses = [...fieldsByClients].map(([clients, fields]) => {
-    const shown = fields.length > 4 ? [...fields.slice(0, 3), `${fields.length - 3} more`] : fields;
-    return `${shown.length ? `${shown.join(", ")} ` : ""}${participle} in ${clients}`;
   });
-  const value = findings.length === 1 ? findings[0]!.measured : undefined;
-  return `${clauses.join("; ")}${value ? ` (${value.value} ${value.unit}, limit ${value.limit})` : ""}`;
-}
-
-/** `/inputSchema/properties/limit/minimum` as `limit.minimum`. */
-function pointerField(pointer: string): string {
-  return pointer
-    .replace(/^\/inputSchema\/properties\//, "/")
-    .replace(/^\/initialize\//, "/")
-    .replaceAll("/properties/", "/")
-    .slice(1)
-    .split("/")
-    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))
-    .join(".");
-}
-
-function measured(finding: McpFinding): string {
-  const value = finding.measured;
-  return value ? ` Measured: ${value.value} ${value.unit}, limit ${value.limit}.` : "";
-}
-
-function list(items: string[]): string {
-  if (items.length < 3) return items.join(" and ");
-  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
 }
