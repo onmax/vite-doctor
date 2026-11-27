@@ -26,7 +26,11 @@ import {
   type WorkspacePackageActivation,
 } from "../primitives.js";
 import { detectProject } from "./project.js";
-import { assertEvidenceSourceNames, collectEvidenceSources } from "./evidence-sources.js";
+import {
+  assertEvidenceSourceNames,
+  collectEvidenceSources,
+  validateEvidenceSources,
+} from "./evidence-sources.js";
 import { workspaceProjectView, workspaceViewRoots } from "./workspace-nuxt.js";
 import {
   GitChangeUnavailableError,
@@ -161,8 +165,9 @@ export async function createScanSession(
   sessionBase.config = config;
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
+  const requestedSources = await validateEvidenceSources(registry.sources, options.sources);
   await applyProjectContributions(project, registry);
-  const evidenceSources = await collectEvidenceSources(project, registry.sources, options);
+  const evidenceSources = await collectEvidenceSources(project, requestedSources, options.fetch);
   if (options.affectedFiles && fullRunWhen?.(project)) {
     options = { ...options, affectedFiles: undefined };
     sessionBase.options = options;

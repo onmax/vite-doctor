@@ -46,6 +46,7 @@ const severities = new Set<NonNullable<DoctorRunOptions["severity"]>>(["error", 
 const analyses = new Set(["dead-code", "graph", "dupes", "health"]);
 // cac's `type: [String]` fills an absent array option with "undefined" once another one is set.
 const repeatableOptions = new Set(["mcpUrl", "mcpHeader"]);
+const sourceArgumentBoundary = "--doctorSourceArgument=1";
 
 class CliConfigError extends Error {
   constructor(
@@ -87,7 +88,15 @@ export async function main(
 
   let exitCode = 0;
   const cli = cac("vite-doctor");
-  addDoctorRunCommand(cli, args, cwd, surface, (code) => (exitCode = code));
+  let evidenceArgs: EvidenceArgs;
+  addDoctorRunCommand(
+    cli,
+    args,
+    cwd,
+    surface,
+    (code) => (exitCode = code),
+    () => evidenceArgs,
+  );
   cli
     .command("migrate [path]", "Evaluate source against a future runtime graph.")
     .option("--to <target>", "Explicit target: nuxt@5, nitro@3, or h3@2.")
@@ -207,7 +216,13 @@ export async function main(
   cli.help();
 
   try {
-    cli.parse(["node", "vite-doctor", ...args], { run: false });
+    const { builtin, reserved, source } = splitEvidenceSourceArgs(cli, args);
+    evidenceArgs = { reserved, source };
+    cli.parse(["node", "vite-doctor", ...builtin], { run: false });
+    delete cli.options.doctorSourceArgument;
+    if (cli.matchedCommand && !cli.matchedCommand.isDefaultCommand && source.size) {
+      throw unknownOption(source.keys().next().value!);
+    }
     validateSingleValueOptions(cli);
     const result = await cli.runMatchedCommand();
     if (typeof result === "number") exitCode = result;
@@ -297,29 +312,71 @@ function validateSingleValueOptions(cli: ReturnType<typeof cac>): void {
   }
 }
 
-/**
- * Reads the flags no command option claims as Evidence Source flags, from the sources of every
- * Doctor Extension the run loads, and rejects the rest as cac would.
- */
-async function applyEvidenceSourceFlags(
+type EvidenceArgs = { reserved: Set<string>; source: Map<string, string[]> };
+
+function splitEvidenceSourceArgs(
   cli: ReturnType<typeof cac>,
+  args: string[],
+): EvidenceArgs & { builtin: string[] } {
+  const reserved = new Set(["--version", "-v"]);
+  for (const command of [cli.globalCommand, ...cli.commands]) {
+    for (const option of command.options) {
+      for (const flag of option.rawName.split(/[,\s]+/)) {
+        if (flag.startsWith("-")) reserved.add(flag);
+      }
+    }
+  }
+  const builtin: string[] = [];
+  const source = new Map<string, string[]>();
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if (arg === "--") {
+      builtin.push(...args.slice(index));
+      break;
+    }
+    const equals = arg.indexOf("=");
+    const flag = equals === -1 ? arg : arg.slice(0, equals);
+    if (!flag.startsWith("-") || flag === "-" || reserved.has(flag)) {
+      builtin.push(arg);
+      continue;
+    }
+    const next = args[index + 1];
+    const value =
+      equals !== -1
+        ? arg.slice(equals + 1)
+        : next?.startsWith("-") || next === undefined
+          ? ""
+          : args[++index]!;
+    const values = source.get(flag);
+    if (values) values.push(value);
+    else source.set(flag, [value]);
+    builtin.push(sourceArgumentBoundary);
+  }
+  return { builtin, reserved, source };
+}
+
+function unknownOption(flag: string): Error {
+  return new Error(`Unknown option \`${flag}\``);
+}
+
+async function applyEvidenceSourceFlags(
   options: DoctorRunOptions,
-  flags: Record<string, unknown>,
+  { reserved, source }: EvidenceArgs,
 ): Promise<void> {
-  const command = cli.matchedCommand;
-  const unclaimed = Object.keys(flags).filter(
-    (name) => name !== "--" && !command?.hasOption(name) && !cli.globalCommand.hasOption(name),
-  );
-  if (!unclaimed.length) return;
+  if (!source.size && !options.config?.extensions?.length && !options.hostExtensions) return;
   const { viteDoctorEvidenceSources } = await import("./doctor.js");
   const sources = await viteDoctorEvidenceSources(options);
-  const known = new Set(evidenceSourceFlags(sources).map((flag) => flag.key));
-  const unknown = unclaimed.find((name) => !known.has(name));
-  if (unknown) {
-    const flag = unknown.length > 1 ? `--${kebabFlag(unknown)}` : `-${unknown}`;
-    throw new Error(`Unknown option \`${flag}\``);
+  const declarations = evidenceSourceFlags(sources);
+  const known = new Set<string>();
+  for (const { flag, source: owner } of declarations) {
+    if (reserved.has(flag))
+      throw new Error(`Evidence Source "${owner.name}" declares built-in option ${flag}.`);
+    if (known.has(flag))
+      throw new Error(`Evidence Source option ${flag} is declared more than once.`);
+    known.add(flag);
   }
-  const inputs = evidenceSourceInputs(sources, flags);
+  for (const flag of source.keys()) if (!known.has(flag)) throw unknownOption(flag);
+  const inputs = evidenceSourceInputs(declarations, source);
   if (inputs) options.sources = { ...options.sources, ...inputs };
 }
 
@@ -333,6 +390,7 @@ function addDoctorRunCommand(
   cwd: string,
   surface: CliSurfaceOptions,
   setExitCode: (code: number) => void,
+  evidenceArgs: () => EvidenceArgs,
 ) {
   const command = cli
     .command("[path]", "Run Doctor diagnostics.")
@@ -378,8 +436,6 @@ function addDoctorRunCommand(
       `Run through the long-lived Doctor process (or set ${DOCTOR_PROCESS_ENV}=1).`,
     )
     .option("--no-server", "Run in this process even when the Doctor process is enabled.")
-    // Evidence Sources add flags, and those of config Extensions are known only after it loads.
-    .allowUnknownOptions()
     .action(async (path = ".", options) => {
       const { format, reader, detectedAgent, automatic } = await presentation(
         options.format,
@@ -416,7 +472,7 @@ function addDoctorRunCommand(
       if (declarative?.file === resolve(root, "doctor.config.json")) {
         runOptions.declarativeConfigFile = declarative.file;
       }
-      await applyEvidenceSourceFlags(cli, runOptions, options);
+      await applyEvidenceSourceFlags(runOptions, evidenceArgs());
       if (options.watch) {
         setExitCode(await watchDoctorCommand(args, cwd, surface, root, runOptions));
         return;

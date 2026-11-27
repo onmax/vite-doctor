@@ -1645,7 +1645,7 @@ export interface EvidenceSource<Input = any> {
   /** The flag values that pass this input again, for the rerun command in reports. */
   toOptions?(input: Input): Record<string, string[]>;
   /** Throws when the input can't be read. Doctor validates every input before it collects any. */
-  validate?(input: Input): void;
+  validate?(input: Input): void | Promise<void>;
   collect(
     input: Input,
     context: EvidenceSourceContext,
