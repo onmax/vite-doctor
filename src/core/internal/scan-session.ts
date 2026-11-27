@@ -12,6 +12,8 @@ import {
   type DoctorExtensionInput,
   type DoctorRule,
   type DoctorSeverity,
+  type EvidenceSource,
+  type EvidenceSourceRun,
   type ProjectInventoryContributor,
   type ProjectInfo,
   type RuntimeEvidenceContributor,
@@ -24,6 +26,7 @@ import {
   type WorkspacePackageActivation,
 } from "../primitives.js";
 import { detectProject } from "./project.js";
+import { assertEvidenceSourceNames, collectEvidenceSources } from "./evidence-sources.js";
 import { workspaceProjectView, workspaceViewRoots } from "./workspace-nuxt.js";
 import {
   GitChangeUnavailableError,
@@ -61,6 +64,7 @@ interface RuleRegistry {
   rules: DoctorRule[];
   inventoryContributors: ProjectInventoryContributor[];
   runtimeEvidenceContributors: RuntimeEvidenceContributor[];
+  sources: EvidenceSource[];
 }
 
 export interface ScanSession {
@@ -103,6 +107,7 @@ export interface ScanSession {
   ruleScopes: Map<string, ReadonlySet<string>>;
   workspaceActivations: WorkspacePackageActivation[];
   rulePacks: RulePackActivation[];
+  evidenceSources: EvidenceSourceRun[];
   ruleConfigs: Map<string, ResolvedRuleConfig>;
   ruleOverrides: ResolvedRuleOverride[];
   /** Rules that run only on the files an override turns them on for. */
@@ -157,6 +162,7 @@ export async function createScanSession(
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
   await applyProjectContributions(project, registry);
+  const evidenceSources = await collectEvidenceSources(project, registry.sources, options);
   if (options.affectedFiles && fullRunWhen?.(project)) {
     options = { ...options, affectedFiles: undefined };
     sessionBase.options = options;
@@ -201,6 +207,7 @@ export async function createScanSession(
     ...sessionBase,
     registry,
     project,
+    evidenceSources,
     files,
     testFiles: sourceInventory.testFiles,
     gitChanges: sourceInventory.git,
@@ -371,6 +378,7 @@ export async function collectRulePacks(inputs: readonly DoctorExtensionInput[]):
   rules: DoctorRule[];
   inventoryContributors: ProjectInventoryContributor[];
   runtimeEvidenceContributors: RuntimeEvidenceContributor[];
+  sources: EvidenceSource[];
 }> {
   const extensions = await resolveDoctorExtensions(inputs);
   const registeredPacks: RulePack[] = [];
@@ -410,12 +418,16 @@ export async function collectRulePacks(inputs: readonly DoctorExtensionInput[]):
     }
   }
   assertUniqueContributors(inventoryContributors, "Project Inventory");
-  assertUniqueContributors(runtimeEvidenceContributors, "Runtime Evidence");
+  const sources = extensions.flatMap((extension) => extension.sources ?? []);
+  assertEvidenceSourceNames(sources);
+  // A source's evidence is stored under its name, next to what contributors return.
+  assertUniqueContributors([...runtimeEvidenceContributors, ...sources], "Runtime Evidence");
   return {
     packs,
     rules: packs.flatMap((pack) => pack.rules),
     inventoryContributors,
     runtimeEvidenceContributors,
+    sources,
   };
 }
 

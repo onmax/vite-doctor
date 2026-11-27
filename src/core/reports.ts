@@ -22,6 +22,7 @@ import { codeForRuleId } from "./diagnostics.js";
 import { diagnosticMetadataByCode, diagnosticMetadataByRuleId } from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
 import { shellArgument } from "./internal/utils.js";
+import { REDACTED } from "./internal/evidence-sources.js";
 import { mcpServerLabels } from "../mcp/evidence.js";
 import { unresolvedRuntimeInventory } from "./internal/runtime-packages.js";
 import { defaultReportBudget, type ReportReader } from "./internal/agent-runtime.js";
@@ -626,6 +627,11 @@ export function createJsonReport(result: DoctorRunResult): string {
       graph: result.graph,
       extends: result.extends,
       rulePacks: result.rulePacks,
+      sources: result.evidenceSources?.map(({ name, label, targets }) => ({
+        name,
+        label,
+        targets,
+      })),
       workspacePackages: subject ? undefined : result.workspacePackages,
       evidenceGaps: result.project.evidenceGaps,
       evidenceUsed: result.project.evidenceUsed,
@@ -1199,6 +1205,7 @@ function runArguments(
   for (const target of options?.mcp ?? []) args.push("--mcp-url", commandMcpUrl(target.url));
   for (const name of Object.keys(options?.mcp?.[0]?.headers ?? {}))
     if (isMcpHeaderName(name)) args.push("--mcp-header", `${name}: ${REDACTED}`);
+  for (const source of result.evidenceSources ?? []) args.push(...source.args);
   if (options?.newOnly) args.push("--new-only");
   if (options?.profile) args.push("--profile");
   if (options?.cache !== undefined) args.push(options.cache ? "--cache" : "--no-cache");
@@ -1207,9 +1214,8 @@ function runArguments(
   return args;
 }
 
-const REDACTED = "<redacted>";
 const REDACTED_NOTE =
-  "Doctor redacts --mcp-header values and the credentials, query strings, and custom paths of an --mcp-url because they can carry secrets. Replace each <redacted> with the value you ran with.";
+  "Doctor redacts flag values that can carry secrets, such as --mcp-header values and the credentials, query strings, and custom paths of an --mcp-url. Replace each <redacted> with the value you ran with.";
 const PUBLIC_MCP_PATHS = new Set(["/", "/mcp", "/sse", "/v1/sse", "/github-copilot/mcp"]);
 
 function commandMcpUrl(value: string): string {

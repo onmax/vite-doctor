@@ -12,7 +12,11 @@ import {
   type DoctorRunResult,
   type NuxtDoctorManifest,
 } from "./core/index.js";
-import { collectRulePacks, resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
+import {
+  collectRulePacks,
+  resolveDoctorExtensions,
+  resolveProjectDoctorConfig,
+} from "./core/internal/scan-session.js";
 import {
   detectWorkspacePackages,
   nuxtInventoryOwner,
@@ -47,6 +51,15 @@ export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
     ...(await hostDoctorExtensions(options)),
   ]);
   return registry.packs;
+}
+
+/** The Evidence Sources of every Doctor Extension a Doctor Run with these options loads. */
+export async function viteDoctorEvidenceSources(options: DoctorRunOptions = {}) {
+  const extensions = await resolveDoctorExtensions([
+    ...(options.config?.extensions ?? []),
+    ...(await viteDoctorRunOptions(options)).extensions!,
+  ]);
+  return extensions.flatMap((extension) => extension.sources ?? []);
 }
 
 export async function viteDoctorExtensions(

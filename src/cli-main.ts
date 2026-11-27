@@ -21,6 +21,7 @@ import {
   type DoctorPresentation,
 } from "./core/internal/agent-runtime.js";
 import { applyDoctorOptions, stringFlag } from "./core/internal/cli.js";
+import { evidenceSourceFlags, evidenceSourceInputs } from "./core/internal/evidence-sources.js";
 import { githubAnnotations } from "./core/internal/github-annotations.js";
 import { readViteConfigDoctor } from "./core/internal/vite-config-doctor.js";
 import { findViteConfigFile } from "./core/internal/vite-config-file.js";
@@ -292,9 +293,38 @@ function validateSingleValueOptions(cli: ReturnType<typeof cac>): void {
   for (const option of [...cli.globalCommand.options, ...(cli.matchedCommand?.options ?? [])]) {
     if (option.isBoolean || option.config.type || repeatableOptions.has(option.name)) continue;
     if (!option.names.some((name) => Array.isArray(cli.options[name]))) continue;
-    const flag = option.name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-    throw new Error(`Option --${flag} may only be provided once.`);
+    throw new Error(`Option --${kebabFlag(option.name)} may only be provided once.`);
   }
+}
+
+/**
+ * Reads the flags no command option claims as Evidence Source flags, from the sources of every
+ * Doctor Extension the run loads, and rejects the rest as cac would.
+ */
+async function applyEvidenceSourceFlags(
+  cli: ReturnType<typeof cac>,
+  options: DoctorRunOptions,
+  flags: Record<string, unknown>,
+): Promise<void> {
+  const command = cli.matchedCommand;
+  const unclaimed = Object.keys(flags).filter(
+    (name) => name !== "--" && !command?.hasOption(name) && !cli.globalCommand.hasOption(name),
+  );
+  if (!unclaimed.length) return;
+  const { viteDoctorEvidenceSources } = await import("./doctor.js");
+  const sources = await viteDoctorEvidenceSources(options);
+  const known = new Set(evidenceSourceFlags(sources).map((flag) => flag.key));
+  const unknown = unclaimed.find((name) => !known.has(name));
+  if (unknown) {
+    const flag = unknown.length > 1 ? `--${kebabFlag(unknown)}` : `-${unknown}`;
+    throw new Error(`Unknown option \`${flag}\``);
+  }
+  const inputs = evidenceSourceInputs(sources, flags);
+  if (inputs) options.sources = { ...options.sources, ...inputs };
+}
+
+function kebabFlag(name: string): string {
+  return name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
 
 function addDoctorRunCommand(
@@ -348,6 +378,8 @@ function addDoctorRunCommand(
       `Run through the long-lived Doctor process (or set ${DOCTOR_PROCESS_ENV}=1).`,
     )
     .option("--no-server", "Run in this process even when the Doctor process is enabled.")
+    // Evidence Sources add flags, and those of config Extensions are known only after it loads.
+    .allowUnknownOptions()
     .action(async (path = ".", options) => {
       const { format, reader, detectedAgent, automatic } = await presentation(
         options.format,
@@ -384,6 +416,7 @@ function addDoctorRunCommand(
       if (declarative?.file === resolve(root, "doctor.config.json")) {
         runOptions.declarativeConfigFile = declarative.file;
       }
+      await applyEvidenceSourceFlags(cli, runOptions, options);
       if (options.watch) {
         setExitCode(await watchDoctorCommand(args, cwd, surface, root, runOptions));
         return;

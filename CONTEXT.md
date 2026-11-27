@@ -88,6 +88,10 @@ _Avoid_: Screen, page (a page is one file of a View)
 Facts that explain where and how code executes across client, server, build, and framework runtimes.
 _Avoid_: Context, environment
 
+**Evidence Source**:
+Runtime Evidence a Doctor Extension reads from outside the source tree, such as a deployed server, only when the Doctor Run passes it an input. It declares its CLI flags as data, so the CLI Surface knows them without running Extension code.
+_Avoid_: Scanner, integration, adapter
+
 **Build Evidence**:
 Runtime Evidence that the Vite Plugin Surface collects from a finished `vite build`: each environment's consumer, its output chunks with their module ids, and Vite's importers for each module.
 _Avoid_: Bundle stats, build manifest
@@ -141,6 +145,7 @@ _Avoid_: Agent surface
 - A **Doctor** contains one or more **Rule Packs**.
 - A **Doctor Extension** contributes capabilities to a **Doctor**.
 - A **Doctor Extension** can contribute **Project Inventory** and **Runtime Evidence**.
+- A **Doctor Extension** can declare **Evidence Sources**; a **Doctor Run** reads one only when it is given an input for it.
 - A **Doctor Run** executes a **Doctor** against one project.
 - A **Rule Pack** contains one or more **Rules**.
 - A **Rule Pack** can define one or more **Presets**.
