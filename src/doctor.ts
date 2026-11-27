@@ -34,7 +34,7 @@ import { packageRulePack } from "./rule-packs/package/index.js";
 import { piniaRulePack } from "./rule-packs/pinia/index.js";
 import { mcpRulePack } from "./rule-packs/mcp/index.js";
 import {
-  mcpEvidenceExtension,
+  mcpEvidenceSource,
   mcpEvidenceUsed,
   readMcpServers,
   uncheckedMcpEvidenceGap,
@@ -78,7 +78,11 @@ export async function viteDoctorExtensions(
       rulePacks: [designSystemRulePack],
     }),
     defineDoctorExtension({ name: "vite-doctor/builtin-pinia", rulePacks: [piniaRulePack] }),
-    defineDoctorExtension({ name: "vite-doctor/builtin-mcp", rulePacks: [mcpRulePack] }),
+    defineDoctorExtension({
+      name: "vite-doctor/builtin-mcp",
+      rulePacks: [mcpRulePack],
+      sources: [mcpEvidenceSource],
+    }),
   ];
   if (frameworks.has("nuxt")) {
     const { nuxtDoctorExtensions } = await import("./rule-packs/nuxt/rules/index.js");
@@ -133,7 +137,6 @@ export async function viteDoctorRunOptions(options: DoctorRunOptions): Promise<D
     ...options,
     extensions: [
       ...extensions,
-      ...(options.mcp?.length ? [mcpEvidenceExtension(options.mcp)] : []),
       ...(options.extensions ?? []),
       ...(await hostDoctorExtensions(options)),
     ],

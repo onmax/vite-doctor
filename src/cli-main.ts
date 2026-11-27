@@ -27,7 +27,7 @@ import { readViteConfigDoctor } from "./core/internal/vite-config-doctor.js";
 import { findViteConfigFile } from "./core/internal/vite-config-file.js";
 import type { DoctorProcessStatus } from "./doctor-process/client.js";
 import { DOCTOR_PROCESS_ENV } from "./doctor-process/protocol.js";
-import { assertAbsoluteMcpUrl } from "./mcp/evidence.js";
+import { builtinEvidenceSources } from "./builtin-sources.js";
 import { viteDoctorVersion } from "./version.js";
 
 type MetadataReportFormat = Exclude<DoctorReportFormat, "sarif">;
@@ -44,8 +44,10 @@ const frameworks = new Set<NonNullable<DoctorRunOptions["framework"]>>([
 ]);
 const severities = new Set<NonNullable<DoctorRunOptions["severity"]>>(["error", "warn", "info"]);
 const analyses = new Set(["dead-code", "graph", "dupes", "health"]);
-// cac's `type: [String]` fills an absent array option with "undefined" once another one is set.
-const repeatableOptions = new Set(["mcpUrl", "mcpHeader"]);
+const builtinSourceFlags = evidenceSourceFlags(builtinEvidenceSources);
+const repeatableOptions = new Set(
+  builtinSourceFlags.filter((flag) => flag.definition.repeatable).map((flag) => flag.key),
+);
 
 class CliConfigError extends Error {
   constructor(
@@ -298,8 +300,9 @@ function validateSingleValueOptions(cli: ReturnType<typeof cac>): void {
 }
 
 /**
- * Reads the flags no command option claims as Evidence Source flags, from the sources of every
- * Doctor Extension the run loads, and rejects the rest as cac would.
+ * Reads Evidence Source flags into run inputs. Flags no command option claims belong to the
+ * sources of config Doctor Extensions, which load only here; any other unclaimed flag is rejected
+ * as cac would.
  */
 async function applyEvidenceSourceFlags(
   cli: ReturnType<typeof cac>,
@@ -310,9 +313,11 @@ async function applyEvidenceSourceFlags(
   const unclaimed = Object.keys(flags).filter(
     (name) => name !== "--" && !command?.hasOption(name) && !cli.globalCommand.hasOption(name),
   );
-  if (!unclaimed.length) return;
-  const { viteDoctorEvidenceSources } = await import("./doctor.js");
-  const sources = await viteDoctorEvidenceSources(options);
+  let sources = builtinEvidenceSources;
+  if (unclaimed.length) {
+    const { viteDoctorEvidenceSources } = await import("./doctor.js");
+    sources = await viteDoctorEvidenceSources(options);
+  }
   const known = new Set(evidenceSourceFlags(sources).map((flag) => flag.key));
   const unknown = unclaimed.find((name) => !known.has(name));
   if (unknown) {
@@ -320,7 +325,9 @@ async function applyEvidenceSourceFlags(
     throw new Error(`Unknown option \`${flag}\``);
   }
   const inputs = evidenceSourceInputs(sources, flags);
-  if (inputs) options.sources = { ...options.sources, ...inputs };
+  if (!inputs) return;
+  for (const source of sources) if (source.name in inputs) source.validate?.(inputs[source.name]);
+  options.sources = { ...options.sources, ...inputs };
 }
 
 function kebabFlag(name: string): string {
@@ -364,14 +371,6 @@ function addDoctorRunCommand(
     .option("--full", "Print the whole text or agent report, without a Report Budget.")
     .option("--config <path>", "Explicitly load an executable Doctor config.")
     .option("--host-extensions", hostExtensionsHelp)
-    .option(
-      "--mcp-url <url>",
-      "Read tools/list from this MCP server as Runtime Evidence. Repeatable.",
-    )
-    .option(
-      "--mcp-header <header>",
-      'Request header for every --mcp-url, as "Name: value". Repeatable.',
-    )
     .option("--watch", "Rerun Doctor when project files change.")
     .option(
       "--server",
@@ -433,6 +432,8 @@ function addDoctorRunCommand(
   // cac defaults negated flags to true, which renders as `(default: true)` on `--no-cache`
   // and makes every run look like an explicit `--cache` in rerun commands.
   for (const option of command.options) if (option.negated) option.config.default = undefined;
+  for (const { flag, definition } of builtinSourceFlags)
+    command.option(`${flag} <${definition.value ?? "value"}>`, definition.help);
 }
 
 async function watchDoctorCommand(
@@ -651,7 +652,6 @@ function validateReportBudget(flags: Record<string, unknown>, format: DoctorRepo
 }
 
 function validateCliRunOptions(options: DoctorRunOptions): void {
-  for (const target of options.mcp ?? []) assertAbsoluteMcpUrl(target.url);
   if (options.updateBaseline && !options.baseline)
     throw new Error("--update-baseline requires --baseline <file>.");
   if (options.framework && !frameworks.has(options.framework)) {

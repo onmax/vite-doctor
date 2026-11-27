@@ -318,7 +318,7 @@ test("tools read from a running server through the mcp option are checked", asyn
   const server = await startMcpStub({ tools: [search, lookup] });
   cleanups.push(server.close);
   const root = project();
-  const { diagnostics } = await run(root, { mcp: [{ url: server.url }] });
+  const { diagnostics } = await run(root, { sources: { mcp: [{ url: server.url }] } });
 
   expect(summary(root, diagnostics)).toEqual([
     "MCP0005 error .",
@@ -354,23 +354,23 @@ test.each([false, true])(
     const exclusions = (diagnostics: Diagnostic[]) =>
       diagnostics.filter((item) => item.code === "MCP0005");
 
-    const initial = await run(root, { mcp: [first] });
+    const initial = await run(root, { sources: { mcp: [first] } });
     const [known] = exclusions(initial.diagnostics);
     expect(known?.range !== undefined).toBe(sourceMatch);
     writeBaseline(root, "baseline.json", initial.diagnostics);
 
-    const combined = await run(root, { mcp: [second, first] });
+    const combined = await run(root, { sources: { mcp: [second, first] } });
     const findings = exclusions(combined.diagnostics);
     expect(findings).toHaveLength(2);
     expect(new Set(findings.map((item) => item.fingerprint)).size).toBe(2);
     expect(JSON.stringify(findings)).not.toMatch(/private-[ab]|secret-[ab]/);
 
     const filtered = await run(root, {
-      mcp: [first, second],
+      sources: { mcp: [first, second] },
       baseline: "baseline.json",
       newOnly: true,
     });
-    const standalone = await run(root, { mcp: [second] });
+    const standalone = await run(root, { sources: { mcp: [second] } });
     expect(exclusions(filtered.diagnostics).map((item) => item.fingerprint)).toEqual(
       exclusions(standalone.diagnostics).map((item) => item.fingerprint),
     );
@@ -398,7 +398,7 @@ test.each(["HTTP", "extension"])(
     });
     const options = (): DoctorRunOptions =>
       source === "HTTP"
-        ? { mcp: [{ url: "https://example.test/mcp" }] }
+        ? { sources: { mcp: [{ url: "https://example.test/mcp" }] } }
         : {
             extensions: contributing([
               { name: "stub", tools: [{ ...lookup, inputSchema: { type: "object", properties } }] },
@@ -443,7 +443,10 @@ test("the Recommended Preset reports only excluded tools and truncated text", as
   const server = await startMcpStub({ tools: [search, lookup] });
   cleanups.push(server.close);
   const root = project();
-  const { diagnostics } = await run(root, { extends: ["auto"], mcp: [{ url: server.url }] });
+  const { diagnostics } = await run(root, {
+    extends: ["auto"],
+    sources: { mcp: [{ url: server.url }] },
+  });
 
   expect([...new Set(diagnostics.map((item) => item.code))]).toEqual(["MCP0005"]);
 });
@@ -491,7 +494,7 @@ test("an Extension's failed read of a URL Doctor also read adds no second gap", 
   const other = "http://127.0.0.1:2/mcp";
   const root = project();
   const { result } = await run(root, {
-    mcp: [{ url }],
+    sources: { mcp: [{ url }] },
     extensions: contributing([
       { url, error: "x", status: 503 },
       { url, endpointId: url, error: "x" },

@@ -840,7 +840,7 @@ function surfaceRunInput(
       cache: options.cache ?? true,
       format: options.format,
       maxChars: options.maxChars,
-      mcp: options.mcp && surfaceMcpTargets(options.mcp, devServer),
+      sources: options.mcp && { mcp: surfaceMcpTargets(options.mcp, devServer) },
     },
     vite: {
       inventory: viteInventory(config),

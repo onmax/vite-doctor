@@ -161,6 +161,15 @@ export async function createScanSession(
   sessionBase.config = config;
   const extensions = [...(config.extensions ?? []), ...(options.extensions ?? [])];
   const registry = await collectRulePacks(extensions);
+  // A source's evidence is stored under its name, next to what contributors return. Only a source
+  // the run reads can clash, so an Extension may still contribute evidence under a builtin name.
+  assertUniqueContributors(
+    [
+      ...registry.runtimeEvidenceContributors,
+      ...registry.sources.filter((source) => options.sources?.[source.name] !== undefined),
+    ],
+    "Runtime Evidence",
+  );
   await applyProjectContributions(project, registry);
   const evidenceSources = await collectEvidenceSources(project, registry.sources, options);
   if (options.affectedFiles && fullRunWhen?.(project)) {
@@ -420,8 +429,7 @@ export async function collectRulePacks(inputs: readonly DoctorExtensionInput[]):
   assertUniqueContributors(inventoryContributors, "Project Inventory");
   const sources = extensions.flatMap((extension) => extension.sources ?? []);
   assertEvidenceSourceNames(sources);
-  // A source's evidence is stored under its name, next to what contributors return.
-  assertUniqueContributors([...runtimeEvidenceContributors, ...sources], "Runtime Evidence");
+  assertUniqueContributors(sources, "Runtime Evidence");
   return {
     packs,
     rules: packs.flatMap((pack) => pack.rules),

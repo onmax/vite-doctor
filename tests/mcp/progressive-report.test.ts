@@ -26,7 +26,7 @@ beforeAll(async () => {
     root,
     cache: false,
     extends: ["auto", "mcp/strict"],
-    mcp: [{ url: stub.url, headers: { authorization: "Bearer secret-token" } }],
+    sources: { mcp: [{ url: stub.url, headers: { authorization: "Bearer secret-token" } }] },
   };
   result = await runViteDoctor(options);
   expect(result.diagnostics.length).toBeGreaterThan(20);

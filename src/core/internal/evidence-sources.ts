@@ -98,7 +98,8 @@ export async function collectEvidenceSources(
     }
     source.validate?.(input);
   }
-  const fetch = options.fetch ?? globalThis.fetch;
+  const fetch: typeof globalThis.fetch =
+    options.fetch ?? ((input, init) => globalThis.fetch(input, init));
   const runs: EvidenceSourceRun[] = [];
   for (const [name, input] of requested) {
     const source = byName.get(name)!;

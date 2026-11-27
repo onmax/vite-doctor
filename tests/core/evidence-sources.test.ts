@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { afterEach, expect, test, vi } from "vite-plus/test";
@@ -127,11 +127,12 @@ test("every input is validated before any source is collected", async () => {
   expect(collected).toEqual([]);
 });
 
-test("a source can't share its name with a Runtime Evidence contributor", async () => {
+test("a source the run reads can't share its name with a Runtime Evidence contributor", async () => {
   await expect(
     runViteDoctor({
       root: project(),
       cache: false,
+      sources: { status: { urls: ["https://status.example.test"] } },
       extensions: [
         extension(statusSource()),
         {
@@ -226,4 +227,18 @@ test("an unknown flag stays an error without a config", async () => {
   const { code, output } = await cli(project(), [".", "--chnaged", "--format", "text"]);
   expect(code).toBe(2);
   expect(output).toContain("Unknown option `--chnaged`");
+});
+
+test("the core and the CLI entry reach MCP only through its Evidence Source", () => {
+  const src = join(import.meta.dirname, "../../src");
+  const files = [
+    ...readdirSync(join(src, "core"), { recursive: true, encoding: "utf8" })
+      .filter((file) => file.endsWith(".ts"))
+      .map((file) => join(src, "core", file)),
+    join(src, "cli-main.ts"),
+  ];
+  for (const file of files) {
+    const code = readFileSync(file, "utf8");
+    expect(code, file).not.toMatch(/@loadsheet\/mcp|from "(\.\.?\/)+mcp\/|--mcp-/);
+  }
 });
