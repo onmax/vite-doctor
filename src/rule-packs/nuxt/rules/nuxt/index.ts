@@ -62,6 +62,7 @@ export { preferSeoComposables } from "./prefer-seo-composables.js";
 export { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 export { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
 export { noServerTypesInApp, noServerUtilsInApp } from "./no-server-utils-in-app.js";
+export { noAppCodeInServer, noAppTypesInServer } from "./no-app-code-in-server.js";
 export { exportNameMatchesFile } from "./export-name-matches-file.js";
 export { requireClientOnlyFallback } from "./require-client-only-fallback.js";
 export { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
@@ -136,6 +137,7 @@ import { preferSeoComposables } from "./prefer-seo-composables.js";
 import { noUnsafeUseHeadScript } from "./no-unsafe-use-head-script.js";
 import { preferUseHeadSafeForUntrustedValues } from "./prefer-use-head-safe-for-untrusted-values.js";
 import { noServerTypesInApp, noServerUtilsInApp } from "./no-server-utils-in-app.js";
+import { noAppCodeInServer, noAppTypesInServer } from "./no-app-code-in-server.js";
 import { exportNameMatchesFile } from "./export-name-matches-file.js";
 import { requireClientOnlyFallback } from "./require-client-only-fallback.js";
 import { noComposableInUtils, noStatelessComposable } from "./composable-placement.js";
@@ -208,6 +210,7 @@ const rules = [
   noUnsafeUseHeadScript,
   preferUseHeadSafeForUntrustedValues,
   noServerUtilsInApp,
+  noAppCodeInServer,
   noComposableInUtils,
   moduleRequireMeta,
   moduleResolveRuntimePaths,
@@ -222,6 +225,7 @@ const rules = [
 
 const strictOnlyRules = [
   noServerTypesInApp,
+  noAppTypesInServer,
   noStatelessComposable,
   exportNameMatchesFile,
   noModuleScopeRequestState,

@@ -57,7 +57,7 @@ test.each([
   ]);
   const replay = await run(original.report.project.cwd, original.report.commandArgs.rerun.slice(1));
   expect(replay.code).toBe(original.code);
-  expect(replay.report.diagnostics).toEqual(original.report.diagnostics);
+  expect(replay.report.groups).toEqual(original.report.groups);
   expect(replay.report.summary).toEqual(original.report.summary);
   expect(original.report.commandArgs.rerun).toEqual(expect.arrayContaining([flag, value]));
 });
@@ -78,15 +78,18 @@ test.each([
 
 test("agent rerun retains baseline suppression and a literal baseline path", async () => {
   const root = fixture();
-  const initial = await run(root, [".", "--framework", "vite", "--format", "agent"]);
-  expect(initial.report.diagnostics.length).toBeGreaterThan(0);
+  const initial = await run(root, [".", "--framework", "vite", "--format", "agent", "--full"]);
+  const fingerprints = initial.report.groups.flatMap((group: any) =>
+    group.diagnostics.map((d: any) => ({ fingerprint: d.fingerprint })),
+  );
+  expect(fingerprints.length).toBeGreaterThan(0);
   const baseline = "baseline $VALUE's.json";
   writeFileSync(
     join(root, baseline),
     JSON.stringify({
       version: 2,
       fingerprintScheme: FINGERPRINT_SCHEME,
-      diagnostics: initial.report.diagnostics.map((d: any) => ({ fingerprint: d.fingerprint })),
+      diagnostics: fingerprints,
     }),
   );
   const original = await run(root, [
@@ -100,10 +103,10 @@ test("agent rerun retains baseline suppression and a literal baseline path", asy
     "--new-only",
   ]);
   expect(original.code).toBe(0);
-  expect(original.report.diagnostics).toEqual([]);
+  expect(original.report.groups).toEqual([]);
   const replay = await run(root, original.report.commandArgs.rerun.slice(1));
   expect(replay.code).toBe(0);
-  expect(replay.report.diagnostics).toEqual([]);
+  expect(replay.report.groups).toEqual([]);
 });
 
 test("agent rerun and focused verification retain explicitly trusted config and failure policy", async () => {
@@ -136,7 +139,7 @@ test("agent rerun and focused verification retain explicitly trusted config and 
     );
     const replay = await run(root, args.slice(1));
     expect(replay.code).toBe(original.code);
-    expect(replay.report.diagnostics).toEqual(original.report.diagnostics);
+    expect(replay.report.groups).toEqual(original.report.groups);
     expect(args).toEqual(
       expect.arrayContaining([
         "--config",
@@ -158,7 +161,7 @@ test("generated verification commands never discover executable configuration", 
   expect(original.code).toBe(1);
   expect(original.report.commandArgs.rerun).not.toContain("--config");
   const replay = await run(root, original.report.commandArgs.rerun.slice(1));
-  expect(replay.report.diagnostics).toEqual(original.report.diagnostics);
+  expect(replay.report.groups).toEqual(original.report.groups);
 });
 
 test("report context preserves explicit cache policy while verification omits mutations", async () => {

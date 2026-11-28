@@ -23,6 +23,7 @@ import type {
   ProjectInfo,
   SourceRange,
 } from "../primitives.js";
+import { unresolvedRuntimeInventory } from "./runtime-packages.js";
 import type { GraphSummary } from "./cache-store.js";
 import { FINGERPRINT_SCHEME } from "../diagnostic-constants.js";
 import { defaultConfigDiagnosticMetadata } from "../diagnostic-metadata.js";
@@ -40,7 +41,6 @@ import {
 import { hasRuleSourceCoverage, isTestFileHandle } from "./facts.js";
 import { collectExternalGitChanges } from "./git-change-ranges.js";
 import { lineColumnAt } from "./line-index.js";
-import { workspaceNuxtRoots, workspaceProjectView } from "./workspace-nuxt.js";
 import { owningWorkspacePackage } from "./workspace-packages.js";
 import {
   analyzesTestFiles,
@@ -799,6 +799,9 @@ async function applyReportEligibility(session: ScanSession): Promise<void> {
     (diagnostic: Diagnostic & ScopedReportLocations) => {
       const scopeLocations = diagnostic[scopedReportLocations];
       delete diagnostic[scopedReportLocations];
+      // A live target, such as a deployed MCP server, runs the whole project rather than the
+      // change, so a Git-scoped report keeps what it showed unless files were explicitly limited.
+      if (session.gitChanges && !affected && diagnostic.origin?.live?.length) return true;
       const locations = [diagnostic, ...(diagnostic.related ?? [])];
       const located = locations.some((location) => {
         if (location.range) return onChangedLine(location.file, location.range);
@@ -1008,6 +1011,7 @@ export function normalizeDiagnostic(input: DoctorDiagnosticNormalizationInput): 
   const code = diagnostic.name;
   if (!code) throw doctorInternalDiagnostics.DOC0014({ ruleId: input.ruleId });
   if (!diagnostic.fix) throw doctorInternalDiagnostics.DOC0021({ ruleId: input.ruleId, code });
+  assertFixAddsRemedy(input.ruleId, code, diagnostic.why, diagnostic.fix);
   return {
     ...input,
     diagnostic,
@@ -1018,6 +1022,12 @@ export function normalizeDiagnostic(input: DoctorDiagnosticNormalizationInput): 
     message: diagnostic.why,
     suggestion: diagnostic.fix,
   } as Diagnostic;
+}
+
+function assertFixAddsRemedy(ruleId: string, code: string, why: string, fix: string | undefined) {
+  const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+  if (fix !== undefined && normalize(fix) === normalize(why))
+    throw doctorInternalDiagnostics.DOC0041({ ruleId, code });
 }
 
 type DoctorDiagnosticNormalizationInput = Partial<Diagnostic> & {
@@ -1048,6 +1058,7 @@ export function normalizeDiagnosticFromRuleCode(
   if (!diagnostic) {
     throw doctorInternalDiagnostics.DOC0013({ ruleId: input.ruleId, code });
   }
+  assertFixAddsRemedy(input.ruleId, diagnostic.name, diagnostic.why, diagnostic.fix);
   return {
     ...input,
     diagnostic,
@@ -1115,39 +1126,26 @@ export function pushDiagnostic(
 }
 
 export function reportRuntimeInventoryUnknown(session: ScanSession): void {
-  const nuxtRoots = workspaceNuxtRoots(session.project);
-  // Without a run owner, the run graph is borrowed from a Nuxt app that reports it below.
-  const ownerless =
-    session.project.framework === "nuxt" && !session.project.nuxt && nuxtRoots.length;
-  if (!ownerless) reportUnresolvedRuntime(session, session.project, ".");
-  for (const root of nuxtRoots) {
-    reportUnresolvedRuntime(session, workspaceProjectView(session.project, root), root);
-  }
+  for (const scope of unresolvedRuntimeInventory(session.project))
+    reportUnresolvedRuntime(session, scope);
 }
 
 function reportUnresolvedRuntime(
   session: ScanSession,
-  project: ProjectInfo,
-  packageRoot: string,
+  {
+    root: packageRoot,
+    unresolved,
+    compatibility,
+    manifestPath,
+  }: ReturnType<typeof unresolvedRuntimeInventory>[number],
 ): void {
   const packageJson = resolve(session.root, packageRoot, "package.json");
-  const expected =
-    project.framework === "nuxt"
-      ? ["nuxt", "nitro", "h3"]
-      : project.framework === "nitro"
-        ? ["nitro", "h3"]
-        : project.framework === "vue"
-          ? ["vue"]
-          : [];
-  const unresolved = expected
-    .map((runtime) => project.runtimeGraph?.packages[runtime as "nuxt" | "nitro" | "h3" | "vue"])
-    .filter((item) => item?.state === "unknown");
   const details = [
     ...unresolved.map(
       (item) => `${item?.owner} -> ${item?.runtime}: ${item?.reason ?? "unresolved"}`,
     ),
-    ...(project.nuxtCompatibility?.state === "unknown"
-      ? [`Nuxt compatibility: ${project.nuxtCompatibility.reason ?? "unresolved"}`]
+    ...(compatibility?.state === "unknown"
+      ? [`Nuxt compatibility: ${compatibility.reason ?? "unresolved"}`]
       : []),
   ];
   if (!details.length) return;
@@ -1157,7 +1155,7 @@ function reportUnresolvedRuntime(
     : "Install project dependencies and run Doctor from the target project package. If the project uses Yarn PnP, run Doctor through Yarn so its loader is active.";
   const compatibilityFix =
     "Make the effective future.compatibilityVersion statically provable in nuxt.config, or run pnpm nuxt doctor so the Nuxt integration can record the resolved value.";
-  const compatibilityUnknown = project.nuxtCompatibility?.state === "unknown";
+  const compatibilityUnknown = compatibility?.state === "unknown";
   pushDiagnostic(session, {
     ruleId: "doctor/inventory/unresolved-runtime",
     severity: "warn",
@@ -1165,7 +1163,7 @@ function reportUnresolvedRuntime(
     file:
       unresolved.length || !compatibilityUnknown
         ? packageJson
-        : (project.nuxtCompatibility?.file ?? packageJson),
+        : (compatibility?.file ?? packageJson),
     why: `Doctor could not resolve the governing runtime graph${packageRoot === "." ? "" : ` of ${packageRoot}`}: ${details.join("; ")}`,
     suggestion: [
       unresolved.length ? runtimeFix : undefined,
@@ -1187,12 +1185,12 @@ function reportUnresolvedRuntime(
               file: item?.packageJsonPath,
             },
       ),
-      ...(project.nuxtCompatibility?.state === "unknown"
+      ...(compatibility?.state === "unknown"
         ? [
             {
               kind: "manifest" as const,
               summary: "Nuxt compatibility behavior is unresolved.",
-              file: project.nuxtCompatibility?.file ?? project.nuxt?.manifestPath,
+              file: compatibility?.file ?? manifestPath,
             },
           ]
         : []),

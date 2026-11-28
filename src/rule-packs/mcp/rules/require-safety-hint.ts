@@ -1,11 +1,26 @@
+import { checkMcpToolList } from "@loadsheet/mcp";
 import { createRule } from "../../../core/index.js";
-import { declaredHintFix } from "../../../mcp/clients/claude-directory.js";
 import { diagnostics } from "../diagnostics.js";
-import { annotationsEvidence, collectMcpTools, toolLabel } from "./shared.js";
-import { reportWireTool, wireToolLabel, wireTools } from "./wire.js";
+import {
+  annotationsEvidence,
+  collectMcpTools,
+  toolLabel,
+  type McpToolDefinition,
+} from "./shared.js";
+import { definedToolFingerprint, reportWireTools, wireTools } from "./wire.js";
 
-const UNDECLARED_FIX =
-  "Add `readOnlyHint: true` to the annotations if the tool only reads, or `destructiveHint: true` if it changes or deletes data. Only you can tell which one is true.";
+const SAFETY_BRIEF = "neither readOnlyHint nor destructiveHint is true";
+
+/** The fix `@loadsheet/mcp` gives a tool on the wire with the same hints, so both paths agree. */
+function hintFix(readOnlyHint: unknown, destructiveHint: unknown): string {
+  const [found] = checkMcpToolList(
+    [{ name: "tool", annotations: { readOnlyHint, destructiveHint } }],
+    {
+      codes: ["MCP0002"],
+    },
+  );
+  return found!.fix;
+}
 
 export const requireSafetyHint = createRule({
   meta: {
@@ -43,68 +58,57 @@ export const requireSafetyHint = createRule({
     return {
       async onWorkspaceEnd() {
         const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent) {
-          if (!wire.findings.some((finding) => finding.rule === "claude-directory/missing-hint"))
-            continue;
-          // ChatGPT's confirmation prompt is the same condition seen from a client, so its source
-          // backs this Diagnostic instead of becoming a second one.
-          const findings = wire.findings.filter(
-            (finding) =>
-              finding.rule === "claude-directory/missing-hint" ||
-              finding.rule === "chatgpt/missing-read-only-hint",
-          );
-          const chatgpt = findings.some((finding) => finding.client === "chatgpt");
-          reportWireTool(
-            ctx,
-            wire,
-            diagnostics.MCP0002({
-              why: `MCP tool ${wireToolLabel(wire)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true in its tools/list entry. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.${chatgpt ? " ChatGPT also treats it as a write action that needs the user's confirmation by default, because it has no `readOnlyHint`." : ""}`,
-              fix: declaredHintFix(wire.tool.annotations ?? {}) ?? UNDECLARED_FIX,
-            }),
-            {
-              ruleId: "mcp/tools/require-safety-hint",
-              range: (tool) =>
-                tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
-              findings,
-            },
-          );
-        }
+        reportWireTools(ctx, sent, "MCP0002", {
+          ruleId: "mcp/tools/require-safety-hint",
+          diagnostic: diagnostics.MCP0002,
+          range: (tool) =>
+            tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
+          source: sourceAdvice,
+        });
         for (const tool of sourceOnly) {
+          const advice = sourceAdvice(tool);
+          if (!advice) continue;
           const { annotations } = tool;
-          if (annotations.state === "partial") continue;
-          const hints =
-            annotations.state === "resolved"
-              ? [annotations.values.get("readOnlyHint"), annotations.values.get("destructiveHint")]
-              : [];
-          if (
-            hints.some(
-              (hint) =>
-                hint?.state === "unknown" || (hint?.state === "resolved" && hint.value === true),
-            )
-          )
-            continue;
-          ctx.report(
-            diagnostics.MCP0002({
-              why: `MCP tool ${toolLabel(tool)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.`,
-              fix:
-                declaredHintFix({
-                  readOnlyHint: hints[0]?.state === "resolved" ? hints[0].value : undefined,
-                  destructiveHint: hints[1]?.state === "resolved" ? hints[1].value : undefined,
-                }) ?? UNDECLARED_FIX,
-            }),
-            {
-              ruleId: "mcp/tools/require-safety-hint",
-              severity: ctx.severity,
-              category: "tools",
-              file: tool.file,
-              range: annotations.state === "resolved" ? annotations.range : tool.callee,
-              confidence: "heuristic-high",
-              data: tool.name ? { tool: tool.name.value } : undefined,
-              evidence: annotationsEvidence(tool),
-            },
-          );
+          ctx.report(diagnostics.MCP0002({ why: advice.why, fix: advice.fix }), {
+            ruleId: "mcp/tools/require-safety-hint",
+            severity: ctx.severity,
+            category: "tools",
+            file: tool.file,
+            range: annotations.state === "resolved" ? annotations.range : tool.callee,
+            confidence: "heuristic-high",
+            fingerprint: tool.name
+              ? definedToolFingerprint(
+                  ctx,
+                  "mcp/tools/require-safety-hint",
+                  tool.file,
+                  tool.name.value,
+                )
+              : undefined,
+            brief: advice.brief,
+            data: tool.name ? { tool: tool.name.value } : undefined,
+            evidence: annotationsEvidence(tool),
+          });
         }
       },
     };
   },
 });
+
+function sourceAdvice(tool: McpToolDefinition) {
+  const { annotations } = tool;
+  if (annotations.state === "partial") return undefined;
+  const hints =
+    annotations.state === "resolved"
+      ? [annotations.values.get("readOnlyHint"), annotations.values.get("destructiveHint")]
+      : [];
+  if (hints.some((hint) => hint?.state === "resolved" && hint.value === true)) return false;
+  if (hints.some((hint) => hint?.state === "unknown")) return undefined;
+  return {
+    why: `MCP tool ${toolLabel(tool)} sets neither \`readOnlyHint\` nor \`destructiveHint\` to true. Anthropic's Connectors Directory requires \`readOnlyHint: true\` for read-only tools or \`destructiveHint: true\` for tools that modify or delete data.`,
+    fix: hintFix(
+      hints[0]?.state === "resolved" ? hints[0].value : undefined,
+      hints[1]?.state === "resolved" ? hints[1].value : undefined,
+    ),
+    brief: SAFETY_BRIEF,
+  };
+}

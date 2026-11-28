@@ -5,10 +5,9 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { createReport, type Diagnostic, type DoctorRunOptions } from "../../../src/core/index.ts";
 import { writeBaseline } from "../../../src/core/internal/diagnostic-policy.ts";
 import { runViteDoctor } from "../../../src/doctor.ts";
-import { mcpClientRules } from "../../../src/mcp/index.ts";
+import { MCP_CLIENT_LABELS, mcpClientRules } from "../../../src/mcp/index.ts";
 import type { McpServerEvidence } from "../../../src/mcp/evidence.ts";
-import type { McpTool } from "../../../src/mcp/types.ts";
-import { MCP_CLIENT_LABELS } from "../../../src/rule-packs/mcp/rules/wire.ts";
+import type { McpTool } from "@loadsheet/mcp";
 import { startMcpStub } from "../../mcp/mcp-stub.ts";
 
 const cleanups: Array<() => unknown> = [];
@@ -20,7 +19,7 @@ afterEach(async () => {
 
 const annotated = { annotations: { title: "T", readOnlyHint: true } };
 
-// Root anyOf, `$ref`, and a numeric `exclusiveMinimum`.
+// Root anyOf without `type: "object"`, `$ref`, and a numeric `exclusiveMinimum`.
 const search: McpTool = {
   name: "search",
   description: "Search drops.",
@@ -165,13 +164,13 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
   expect(summary(root, diagnostics)).toEqual([
     "MCP0005 error .",
     "MCP0005 error server/mcp/tools/search.ts:3",
-    "MCP0007 warn server/mcp/tools/search.ts:3",
     "MCP0008 warn server/mcp/tools/search.ts:3",
   ]);
 
   const excluded = byCode(diagnostics, "MCP0005", "search")!;
   expect(excluded.why).toContain('Tool `search` of MCP server "hub" is left out');
-  expect(excluded.why).toContain("in Copilot Studio.");
+  expect(excluded.why).toContain("in Claude Code and Copilot Studio.");
+  expect(excluded.why).toContain("none of them load");
   expect(excluded.why).toContain("System.FormatException");
   expect(excluded.why).toContain("uses `$ref`");
   expect(excluded.confidence).toBe("runtime-backed");
@@ -207,6 +206,25 @@ test("a Doctor Extension's mcpServers produce client-limit Diagnostics at the to
   expect(byCode(again.diagnostics, "MCP0005", "lookup")!.fingerprint).toBe(remote.fingerprint);
 });
 
+test("compact schema briefs preserve which client drops each constraint", async () => {
+  const tool: McpTool = {
+    ...search,
+    inputSchema: {
+      type: "object",
+      properties: {
+        score: { type: "integer", exclusiveMinimum: 0 },
+        tags: { type: "array", items: { type: "string" }, minItems: 1 },
+      },
+    },
+  };
+  const { diagnostics } = await run(project(), {
+    extensions: contributing([{ name: "hub", tools: [tool] }]),
+  });
+  const stripped = byCode(diagnostics, "MCP0008", tool.name)!;
+  expect(stripped.brief).toContain("score.exclusiveMinimum dropped in Codex");
+  expect(stripped.brief).toContain("tags.minItems dropped in VS Code");
+});
+
 test("structured reports retain pointers omitted from the client-limit message", async () => {
   const names = ["first", "second", "third", "fourth", "fifth", "sixth"];
   const tool: McpTool = {
@@ -234,11 +252,13 @@ test("structured reports retain pointers omitted from the client-limit message",
       }),
     ]),
   };
-  for (const format of ["json", "agent"] as const) {
-    const report = JSON.parse(createReport(result, format)) as {
-      diagnostics: Array<{ fingerprint: string; data?: unknown }>;
-    };
-    const data = report.diagnostics.find((item) => item.fingerprint === stripped.fingerprint)?.data;
+  type Reported = Array<{ fingerprint: string; data?: unknown }>;
+  const json = JSON.parse(createReport(result, "json")) as { diagnostics: Reported };
+  const agent = JSON.parse(
+    createReport(result, "agent", { runOptions: { maxChars: Number.POSITIVE_INFINITY } }),
+  ) as { groups: Array<{ diagnostics: Reported }> };
+  for (const reported of [json.diagnostics, agent.groups.flatMap((group) => group.diagnostics)]) {
+    const data = reported.find((item) => item.fingerprint === stripped.fingerprint)?.data;
     expect(data).toMatchObject(expected);
     expect(data).toEqual(stripped.data);
   }
@@ -290,7 +310,6 @@ test("without a package that depends on an MCP library, every tool is reported a
   expect(summary(root, diagnostics)).toEqual([
     "MCP0005 error .",
     "MCP0005 error .",
-    "MCP0007 warn .",
     "MCP0008 warn .",
   ]);
 });
@@ -304,7 +323,6 @@ test("tools read from a running server through the mcp option are checked", asyn
   expect(summary(root, diagnostics)).toEqual([
     "MCP0005 error .",
     "MCP0005 error .",
-    "MCP0007 warn .",
     "MCP0008 warn .",
     "MCP0009 info .",
   ]);
@@ -673,9 +691,14 @@ export default defineMcpTool({
     findings: [{ rule: "claude-directory/missing-title" }],
   });
   const hint = asWritten.all.find((item) => item.code === "MCP0002")!;
-  expect(hint.why).toContain(
-    "ChatGPT also treats it as a write action that needs the user's confirmation by default",
-  );
+  expect(hint.data?.observations).toMatchObject([
+    {
+      server: { name: "hub" },
+      message: expect.stringContaining(
+        "ChatGPT doesn't treat it as read-only because it has no `readOnlyHint`, so users who set the plugin's permissions to \"Allow read-only tools\" must confirm every call.",
+      ),
+    },
+  ]);
   expect(hint.evidence?.map((item) => item.summary).join("\n")).toContain(
     "https://developers.openai.com/api/docs/guides/developer-mode",
   );

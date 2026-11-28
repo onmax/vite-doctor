@@ -8,6 +8,7 @@ import type {
   RuleContext,
 } from "../../../../core/index.js";
 import { pascalCase } from "../../../../core/internal/component-facts.js";
+import { canReportFromWorkspace } from "../../../../core/internal/rule-execution.js";
 import { diagnostics } from "../../diagnostics.js";
 import { displayName } from "./component-usage.js";
 import { parserMovesChild } from "./html-nesting.js";
@@ -56,7 +57,7 @@ export const noInvalidRootNesting = createRule({
             )
               continue;
             const root = node.facts.roots.find((item) => movedRoot(parent.tag, item));
-            if (!root) continue;
+            if (!root || !canReportFromWorkspace(ctx, edge.from)) continue;
             if (!evidenceByFile.has(edge.from))
               evidenceByFile.set(
                 edge.from,

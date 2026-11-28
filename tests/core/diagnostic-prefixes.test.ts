@@ -9,3 +9,17 @@ test("reserved Diagnostic Code Prefixes are exactly the built-in prefixes", () =
     [...RESERVED_DIAGNOSTIC_CODE_PREFIXES].toSorted(byName),
   );
 });
+
+test.each([
+  ["H30001", "H3"],
+  ["NITRO0001", "NITRO"],
+  ["TS0017", "TS"],
+  ["DOC9999", "DOC"],
+  ["ACME0001", "ACME"],
+])("parses the Diagnostic Code Prefix of %s", (code, prefix) => {
+  expect(diagnosticCodePrefix(code)).toBe(prefix);
+});
+
+test.each(["h30001", "3H0001", "H3", "H3-0001"])("rejects malformed code %s", (code) => {
+  expect(diagnosticCodePrefix(code)).toBeUndefined();
+});

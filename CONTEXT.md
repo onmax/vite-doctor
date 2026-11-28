@@ -76,6 +76,14 @@ _Avoid_: Formatter, reporter
 The discovered facts about a target project that rules use during analysis.
 _Avoid_: Project metadata, scan data
 
+**Component Contract**:
+What a component promises the design system, declared statically so Rules can enforce it at call sites. A project component declares it in `<script setup>` as `defineOptions({ doctor: { replaces: "button" } })`; a component the project does not own gets the same object in a design-system Rule's `contracts` option. It holds `replaces`, the raw HTML elements call sites should render the component instead of, and `limits`, how many matching usages one **View** may render.
+_Avoid_: Component metadata, component annotation
+
+**View**:
+Everything one Nuxt route renders at once: the main app, the route's layout, its parent pages, and the page, each followed through the components they render. Design-system Rules count a usage in a View only when it renders every time the View does.
+_Avoid_: Screen, page (a page is one file of a View)
+
 **Runtime Evidence**:
 Facts that explain where and how code executes across client, server, build, and framework runtimes.
 _Avoid_: Context, environment
@@ -112,6 +120,18 @@ _Avoid_: Docs index, rule docs
 The documented list of diagnostic codes and code-specific remediation pages.
 _Avoid_: Error Reference
 
+**Report Budget**:
+The character limit of a text or agent report.
+_Avoid_: truncation, pagination, verbosity
+
+**Progressive Report**:
+A report that prints its head whole, then groups, rows, and detail until the Report Budget, and names the command that shows more.
+_Avoid_: compact mode, summary mode
+
+**Report Reader**:
+Who Doctor assumes reads a report when no `--format` is given: an agent, CI, a terminal, or a pipe. It changes the report format and the Report Budget, never the Doctor Run.
+_Avoid_: mode, audience
+
 **Agent Consumer**:
 An AI coding tool that runs Doctor or consumes Doctor reports and uses structured diagnostics to guide remediation.
 _Avoid_: Agent surface
@@ -137,6 +157,9 @@ _Avoid_: Agent surface
 - A **Diagnostics Host** defines, registers, and exposes **Diagnostic Codes**.
 - A **Rule** can produce more than one **Diagnostic Code** when distinct emitted conditions need distinct documentation or fixes.
 - A **Rule** reads **Project Inventory** and **Runtime Evidence**.
+- A component declares at most one **Component Contract**; Doctor reads it statically from the SFC into **Project Inventory**, and only literal values count.
+- Design-system **Rules** enforce **Component Contracts** at call sites; a contract Doctor cannot read is itself a **Diagnostic**.
+- A **Component Contract** can limit how many of its usages one **View** renders; Doctor builds **Views** only for Nuxt routes it can read statically.
 - A **Doctor** can be exposed through **CLI Surfaces** and **Plugin Surfaces**.
 - A **Plugin Surface** can contribute **Project Inventory** and **Runtime Evidence**.
 - A **Plugin Surface** attaches **Doctor Extensions** that other host plugins or modules register through the host, such as Vite plugin `api.doctor` or the Nuxt `doctor:extendExtensions` hook.
@@ -148,6 +171,8 @@ _Avoid_: Agent surface
 - A **Rule Catalog** documents **Rule Packs** and **Rules**.
 - A **Diagnostic Reference** documents **Diagnostic Codes**.
 - An **Agent Consumer** runs Doctor or consumes Doctor reports; it is not a Doctor surface.
+- Text and agent reports are **Progressive Reports** under a **Report Budget**; JSON and SARIF reports are always complete, and a **Report Budget** never changes a **Doctor Run**.
+- The **Report Reader** picks the default format and **Report Budget**: an agent gets the agent report, CI gets the complete text report, and a terminal or pipe gets the budgeted text report.
 
 ## Example Dialogue
 
@@ -159,3 +184,4 @@ _Avoid_: Agent surface
 - "plugin" can mean a Doctor extension, a Vite plugin, or a Nuxt module. Resolved: use **Plugin Surface** for framework/build-tool integrations that run Doctor, **Doctor Extension** for Doctor's internal extension format, and **Rule Pack** for collections of rules.
 - "context" can mean runtime context, domain docs, or execution environment. Resolved: use **Runtime Evidence** for code execution facts and `CONTEXT.md` only for project language.
 - "diagnostic" and "rule" can be confused because a rule often emits one diagnostic condition. Resolved: use **Rule** for the executable policy and **Diagnostic Code** for the stable emitted condition documented at `/diagnostics/CODE`.
+- "incomplete" can mean missing evidence or a report that doesn't show everything. Resolved: an incomplete **Doctor Run** lacks required evidence; what a **Report Budget** leaves out of a **Progressive Report** is hidden.

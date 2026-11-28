@@ -84,7 +84,7 @@ In the reply that reports the setup, tell the person in one or two sentences tha
 ## Workflow
 
 1. Use `vite-doctor . --changed --format agent` for uncommitted work. Use `vite-doctor . --since <base-ref> --format agent` for a committed branch or pull request. Run Doctor without either scope flag when Git is unavailable or the user asks for a project audit.
-2. Read `status`, `scope`, and every Diagnostic's code, message, remediation, confidence, relative location, evidence, related locations, and optional edit plan.
+2. Read `status`, `scope`, `codes`, and each group in `groups`: its code, Rule, remediation, confidence, and evidence, then each Diagnostic's location or `subject`, message, related locations, and optional edit plan. When `budget` is present, the Report Budget hid rows or detail; append a group's `more` items to `commandArgs.more` to see more of it, or run `commandArgs.full`.
 3. Work only on Diagnostics owned by the requested change. Do not widen the task to unrelated findings.
 4. Apply the smallest fix that satisfies the remediation and preserves project conventions. Treat structured edit plans as proposed edits, not permission to skip review.
 5. When the Diagnostic and its remediation identify one structural cause across sites, such as an import cycle, eager reads between stores during setup, conflicting initializers for one `useState` key, or writes that bypass a shared state's owner, read the primary location and every related location before editing. The number of `related` entries does not determine whether this applies: one related location can complete a cycle or conflict, while several can merely provide evidence. Fix the shared cause for all sites instead of moving the problem between the listed files, suppressing or baselining the Diagnostic, or switching to a dynamic `import()` the remediation does not recommend.
@@ -98,7 +98,7 @@ In the reply that reports the setup, tell the person in one or two sentences tha
 - Use `vite-doctor` for Vite, Vue, Nitro, and Nuxt projects; do not invent framework-specific packages or binaries.
 - Treat Rule IDs as execution/filtering selectors.
 - Treat Diagnostic Codes as the stable remediation identity for docs, fixes, and user-facing explanations.
-- Diagnostic Codes with non-built-in prefixes (anything other than `DOC`, `NITRO`, `NUXT`, `PKG`, `SHAD`, `TS`, `VITE`, `VUE`) come from Doctor Extensions shipped by libraries or the project. Use the `docs` URL in the Diagnostic; do not look for them in the Doctor Diagnostic Reference.
+- Diagnostic Codes with non-built-in prefixes (anything other than `DOC`, `DS`, `MCP`, `NITRO`, `NUXT`, `PINIA`, `PKG`, `TS`, `VITE`, `VUE`) come from Doctor Extensions shipped by libraries or the project. Use the `docs` URL in the Diagnostic; do not look for them in the Doctor Diagnostic Reference.
 - In Nuxt projects, Nuxt modules can register Doctor Extensions. `nuxt doctor` loads them; with the direct CLI, add `--host-extensions` to see the same Diagnostics. Keep that flag in `commandArgs` reruns.
 - To write or test custom Rules, follow https://vite-doctor.onmax.me/extending (`vite-doctor/extension`, `vite-doctor/testkit`).
 - When you will run Doctor several times in one project, set `VITE_DOCTOR_SERVER=1` for those commands. Later runs reuse a long-lived Doctor process and print the same report; `vite-doctor server stop` ends it.

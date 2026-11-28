@@ -103,7 +103,7 @@ test("the JSON report names the root's own framework and one Rule Pack list with
   ]);
 
   const agent = JSON.parse(createAgentReport(result, { runOptions: { root } }));
-  expect(agent.schema).toBe("vite-doctor.agent/v2");
+  expect(agent.schema).toBe("vite-doctor.agent/v3");
   expect(agent.project.framework).toBe("nitro");
   expect(agent.rulePacks).toEqual(report.rulePacks);
 });

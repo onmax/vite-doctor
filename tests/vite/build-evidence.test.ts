@@ -88,6 +88,39 @@ test("reports a server module that a client entry pulls into its chunk", async (
   );
 });
 
+test("agent recovery reruns the build with the original Build Evidence", async () => {
+  await withProject({ "src/main.ts": liveFs }, async (root) => {
+    const run = async (maxChars: number) => {
+      const { logger, warnings } = capture();
+      await build(
+        config(root, logger, {
+          plugins: [doctor({ rules: rule, cache: false, format: "agent", maxChars })],
+        }),
+      );
+      return JSON.parse(
+        warnings.find((warning) => warning.includes('"schema":"vite-doctor.agent/v3"'))!,
+      );
+    };
+    const compact = await run(1024);
+    expect(compact.codes.VITE0033).toBe(1);
+    expect(compact.budget.hidden.detail).toBe(1);
+    expect(compact.commandArgs).toBeUndefined();
+    expect(compact.pluginOptions.full).toEqual({ maxChars: "Infinity" });
+    const full = await run(Number(compact.pluginOptions.full.maxChars));
+    expect(full.budget).toBeUndefined();
+    expect(full.groups[0]).toMatchObject({
+      code: "VITE0033",
+      diagnostics: [
+        {
+          evidence: expect.arrayContaining([
+            expect.objectContaining({ kind: "runtime", path: "src/main.ts" }),
+          ]),
+        },
+      ],
+    });
+  });
+});
+
 test("fails the build in error mode when the rule is set to error", async () => {
   await withProject(
     {

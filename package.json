@@ -1,6 +1,6 @@
 {
   "name": "vite-doctor",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Small Vite Doctor CLI for project diagnostics.",
   "keywords": [
     "cli",
@@ -8,11 +8,14 @@
     "javascript",
     "vite"
   ],
-  "homepage": "https://github.com/onmax/vite-doctor#readme",
+  "homepage": "https://github.com/loadsheet/vite-doctor#readme",
+  "bugs": {
+    "url": "https://github.com/loadsheet/vite-doctor/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/onmax/vite-doctor.git"
+    "url": "git+https://github.com/loadsheet/vite-doctor.git"
   },
   "bin": {
     "nuxt-doctor": "./dist/nuxt-cli.mjs",
@@ -28,11 +31,14 @@
   "exports": {
     ".": "./dist/index.mjs",
     "./cli": "./dist/cli.mjs",
+    "./component-contract": "./dist/component-contract.mjs",
     "./config": "./dist/config.mjs",
     "./extension": "./dist/extension.mjs",
     "./mcp": "./dist/mcp/index.mjs",
     "./nuxt": "./dist/nuxt.mjs",
     "./plugin": "./dist/plugin.mjs",
+    "./rule-packs/design-system": "./dist/rule-packs/design-system/index.mjs",
+    "./rule-packs/h3": "./dist/rule-packs/h3/index.mjs",
     "./rule-packs/mcp": "./dist/rule-packs/mcp/index.mjs",
     "./rule-packs/nitro": "./dist/rule-packs/nitro/index.mjs",
     "./rule-packs/nitro/rules": "./dist/rule-packs/nitro/rules.mjs",
@@ -41,7 +47,6 @@
     "./rule-packs/nuxt/rules": "./dist/rule-packs/nuxt/rules/index.mjs",
     "./rule-packs/package": "./dist/rule-packs/package/index.mjs",
     "./rule-packs/pinia": "./dist/rule-packs/pinia/index.mjs",
-    "./rule-packs/shadcn": "./dist/rule-packs/shadcn/index.mjs",
     "./rule-packs/typescript": "./dist/rule-packs/typescript/index.mjs",
     "./rule-packs/typescript/rules": "./dist/rule-packs/typescript/rules/index.mjs",
     "./rule-packs/vite": "./dist/rule-packs/vite/index.mjs",
@@ -74,12 +79,12 @@
   },
   "dependencies": {
     "@jridgewell/trace-mapping": "catalog:prod",
+    "@loadsheet/mcp": "^0.1.3",
     "@shadcn/lint": "catalog:analysis",
     "@typescript-eslint/parser": "catalog:analysis",
     "@typescript-eslint/scope-manager": "catalog:analysis",
     "@typescript-eslint/visitor-keys": "catalog:analysis",
     "@vue/compiler-sfc": "catalog:analysis",
-    "ajv": "catalog:prod",
     "c12": "catalog:prod",
     "cac": "catalog:prod",
     "consola": "catalog:prod",
@@ -95,12 +100,15 @@
     "pathe": "catalog:prod",
     "picocolors": "catalog:prod",
     "picomatch": "catalog:prod",
+    "postcss": "catalog:analysis",
     "radix3": "catalog:prod",
     "semver": "catalog:prod",
     "std-env": "catalog:prod",
     "tinyglobby": "catalog:prod",
     "typescript": "catalog:analysis",
     "unimport": "catalog:prod",
+    "unimport-nitro-v6": "catalog:prod",
+    "unimport-nitro-v65": "catalog:prod",
     "vue-eslint-parser": "catalog:analysis",
     "yaml": "catalog:prod"
   },
@@ -125,7 +133,8 @@
     "pkg-pr-new": "catalog:release",
     "tsdown": "catalog:build",
     "vite": "catalog:build",
-    "vite-plus": "catalog:build"
+    "vite-plus": "catalog:build",
+    "vue": "catalog:frontend"
   },
   "peerDependencies": {
     "nuxt": ">=4.1.0",

@@ -49,7 +49,14 @@ function componentFacts(value: unknown): boolean {
   return (
     record(value) &&
     (value.props === undefined ||
-      facts(value.props, (item) => named(item) && typeof item.default === "boolean")) &&
+      facts(
+        value.props,
+        (item) =>
+          named(item) &&
+          typeof item.default === "boolean" &&
+          optionalString(item.defaultValue) &&
+          (item.localFallback === undefined || typeof item.localFallback === "boolean"),
+      )) &&
     optionalString(value.propsBinding) &&
     (value.propAliases === undefined || record(value.propAliases)) &&
     (value.emits === undefined || strings(value.emits)) &&
@@ -63,6 +70,8 @@ function componentFacts(value: unknown): boolean {
         typeof item.imported === "string" &&
         typeof item.source === "string",
     ) &&
+    strings(value.registeredComponentNames) &&
+    strings(value.setupBindings) &&
     typeof value.ownLogic === "boolean" &&
     typeof value.ownMarkup === "boolean" &&
     integer(value.rootNodes) &&
@@ -99,8 +108,9 @@ function componentFacts(value: unknown): boolean {
           (listener) => typeof listener.vnodeKey === "string" && strings(listener.modifiers),
         ) &&
         strings(item.directives) &&
+        typeof item.hasSlotContent === "boolean" &&
         strings(item.scope) &&
-        typeof item.inFor === "boolean" &&
+        placement(item) &&
         componentWrappers(item.wrappers) &&
         (item.parent === undefined ||
           (record(item.parent) &&
@@ -108,7 +118,18 @@ function componentFacts(value: unknown): boolean {
             typeof item.parent.element === "boolean" &&
             (item.parent.foreign === undefined || item.parent.foreign === true))),
     ) &&
+    facts(
+      value.slotOutlets,
+      (item) => (item.name === null || typeof item.name === "string") && placement(item),
+    ) &&
     strings(value.bindingReferences) &&
+    (value.doctorOption === undefined ||
+      (record(value.doctorOption) &&
+        optionalRange(value.doctorOption.range) &&
+        (value.doctorOption.unreadable === undefined ||
+          value.doctorOption.cause === "computed" ||
+          value.doctorOption.cause === "overridden" ||
+          value.doctorOption.cause === "overridden-by-setup"))) &&
     typeof value.inlineRouteRulesMayDisableSsr === "boolean" &&
     facts(
       value.dynamicRenders,
@@ -132,6 +153,18 @@ function componentWrappers(value: unknown): boolean {
       typeof wrapper.offset === "number" &&
       typeof wrapper.defaultSlot === "boolean" &&
       typeof wrapper.shadowed === "boolean",
+  );
+}
+
+function placement(item: Record<string, unknown>): boolean {
+  return (
+    typeof item.inFor === "boolean" &&
+    typeof item.conditional === "boolean" &&
+    strings(item.builtInHosts) &&
+    (item.host === undefined ||
+      (record(item.host) &&
+        integer(item.host.usage) &&
+        (item.host.slot === null || typeof item.host.slot === "string")))
   );
 }
 

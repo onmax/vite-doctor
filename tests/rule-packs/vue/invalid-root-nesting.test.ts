@@ -16,6 +16,8 @@ import { dirname, join } from "pathe";
 import { expect, test } from "vite-plus/test";
 import { createAgentReport, defineDoctorExtension, runDoctor } from "../../../src/core/index.ts";
 import { runRuleFixture } from "../../../src/core/testkit.ts";
+import { mergeAffectedRun, stateFromRun } from "../../../src/plugin-delta.ts";
+import { runSurfaceDoctor } from "../../../src/plugin-run.ts";
 import nuxtDoctorModule from "../../../src/rule-packs/nuxt/module.ts";
 import { vueRulePack } from "../../../src/rule-packs/vue/index.ts";
 import { noInvalidRootNesting } from "../../../src/rule-packs/vue/rules/vue/index.ts";
@@ -231,12 +233,16 @@ test.each([
       }
     };
     await prepare();
-    const scan = () =>
+    const options = {
+      root,
+      framework: "nuxt",
+      cache: false,
+      rules: noInvalidRootNesting.meta.id,
+    } as const;
+    const scan = (config?: NonNullable<Parameters<typeof runDoctor>[0]>["config"]) =>
       runDoctor({
-        root,
-        framework: "nuxt",
-        cache: false,
-        rules: noInvalidRootNesting.meta.id,
+        ...options,
+        config,
         extensions: [defineDoctorExtension({ name: "fixture", rulePacks: [vueRulePack] })],
       });
     const initialDiagnostics =
@@ -261,8 +267,27 @@ test.each([
           instruction: expect.stringContaining("Run Nuxt prepare with the Doctor module"),
         },
       });
+      const pluginScan = (affectedFiles?: string[]) =>
+        runSurfaceDoctor(
+          {
+            options: { ...options, affectedFiles },
+            vite: { inventory: {}, evidence: {} },
+            presentation: { format: "agent", reader: "agent" },
+          },
+          [],
+        );
+      const previous = stateFromRun(await pluginScan());
+      expect(previous.evidenceGaps.size).toBe(1);
+      const disabled = await scan({
+        overrides: [
+          { files: ["app/pages/index.vue"], rules: { [noInvalidRootNesting.meta.id]: "off" } },
+        ],
+      });
+      expect(JSON.parse(createAgentReport(disabled)).status).toBe("clean");
       writeFileSync(pagePath, editedPage.replace("<p><Card /></p>", "<div><Card /></div>"));
       expect(JSON.parse(createAgentReport(await scan())).status).toBe("clean");
+      const affected = await pluginScan([pagePath]);
+      expect(mergeAffectedRun(previous, new Set([pagePath]), affected).evidenceGaps.size).toBe(0);
       writeFileSync(pagePath, editedPage);
     }
     await prepare();

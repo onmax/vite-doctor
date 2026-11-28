@@ -262,12 +262,13 @@ function createSourceHandle(
     if (!state.parsed) throw new Error(`Doctor read ${file.displayPath} before parsing it.`);
     return state.parsed;
   };
-  const project = session.project.workspaceNuxt
-    ? workspaceProjectView(
-        session.project,
-        owningWorkspacePackage(projectWorkspacePackages(session.project), file.displayPath),
-      )
-    : session.project;
+  const project =
+    session.project.workspaceNuxt || session.project.workspaceRuntimeGraphs
+      ? workspaceProjectView(
+          session.project,
+          owningWorkspacePackage(projectWorkspacePackages(session.project), file.displayPath),
+        )
+      : session.project;
   const handle: SourceFileHandle = {
     path: absolute,
     relativePath: file.displayPath,

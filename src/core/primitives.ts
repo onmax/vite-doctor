@@ -111,9 +111,44 @@ export interface Diagnostic {
    * as is, and the cache stores it as JSON. `ctx.report` validates and copies the payload.
    */
   data?: Record<string, unknown>;
+  /**
+   * What the Diagnostic is about when it has no source location, such as the MCP tool a server
+   * sent. Reports show it in place of the project root.
+   */
+  subject?: string;
+  /** The Rule's one-line summary of this Diagnostic, shown on its row in a Progressive Report. */
+  brief?: string;
+  /**
+   * Where Doctor saw the problem, as opposed to `file` and `range`, which say where to fix it.
+   * Without it, Doctor found the problem in the source at `file`.
+   */
+  origin?: DiagnosticOrigin;
   fixGroupId?: string;
   analysisPhase?: ExecutionKind;
   cacheHit?: boolean;
+}
+
+/**
+ * Where a Diagnostic came from. A live target, such as a deployed MCP server, can show a problem
+ * the source no longer has, so the remedy depends on both.
+ */
+export interface DiagnosticOrigin {
+  /**
+   * What the source shows: `found` when the matched definition has the problem, `passes` when
+   * it doesn't (without inferring why the live target differs), `not-checked` when the source
+   * wasn't checked or couldn't establish the answer, and `no-definition` when no unique
+   * definition was matched.
+   */
+  code: "found" | "passes" | "not-checked" | "no-definition";
+  /** The live targets that showed the problem during this Doctor Run. */
+  live?: DiagnosticLiveOrigin[];
+}
+
+export interface DiagnosticLiveOrigin {
+  /** What read the target, such as `mcp`. */
+  source: string;
+  /** The target as reports show it, without credentials, such as `https://nuxt.com`. */
+  target: string;
 }
 
 export interface DiagnosticEvidence {
@@ -577,6 +612,14 @@ export interface NuxtDoctorManifest {
 export interface ProjectInfo {
   root: string;
   framework: DoctorFramework;
+  /** Explicit framework selection, as distinct from the detected primary framework. */
+  requestedFramework?: DoctorFramework;
+  /**
+   * The run root has no package.json, workspace, framework config, TypeScript config, or source,
+   * and no framework was requested, so `framework` is Doctor's fallback. When Runtime
+   * Evidence activates a Rule Pack, that evidence is what the run checks.
+   */
+  noProject?: true;
   ssr: boolean;
   vueVersion: string;
   nuxtVersion?: string;
@@ -588,6 +631,14 @@ export interface ProjectInfo {
    * through `ctx.project` for files those packages own.
    */
   workspaceNuxt?: WorkspaceNuxtInventory[];
+  /**
+   * Runtime graphs of workspace packages that resolve a runtime themselves instead of through the
+   * Doctor Run's framework, such as a Vite or Vue package that declares `h3`, keyed by package root.
+   * Rules read the package's runtimes through `ctx.project` for files that package owns.
+   */
+  workspaceRuntimeGraphs?: Record<string, RuntimeGraph>;
+  /** Workspace package that owns the run's runtime graph and, if present, its Nuxt inventory. */
+  runtimeGraphRoot?: string;
   tsconfigPath?: string;
   languages?: ProjectLanguage[];
   nuxt?: NuxtProjectInfo;
@@ -631,6 +682,8 @@ export interface WorkspacePackage {
    */
   nuxtIntegration?: true;
   packages: Record<string, string>;
+  /** Runtimes the package.json declares in any dependency field, peer dependencies included. */
+  declaredRuntimes?: RuntimePackageName[];
   /**
    * Why Doctor treats the package's Vue components as server-rendered, such as a `./nuxt` export or
    * a server-rendered workspace package that depends on it. Unset for Nuxt packages, whose own
@@ -656,12 +709,24 @@ export interface WorkspacePackageActivation {
   nuxtIntegration?: true;
   /** Why Doctor treats the package's Vue components as server-rendered. */
   ssr?: string;
+  /**
+   * The runtimes the package runs, declared or provided by its framework, as Doctor resolved them
+   * for the package's files. Version gates such as `applicability.runtimes.h3` read these.
+   */
+  runtimes?: Partial<Record<RuntimePackageName, WorkspacePackageRuntime>>;
   rulePacks: string[];
+}
+
+export interface WorkspacePackageRuntime {
+  state: RuntimePackageInstance["state"];
+  version?: string;
+  owner: RuntimePackageInstance["owner"];
 }
 
 /**
  * A Rule Pack in a Doctor Run: whether Config Extends selected its Presets, and the roots of the
- * workspace packages whose Project Inventory activates it.
+ * workspace packages whose Project Inventory activates it. In a run without a project, it lists
+ * what in the Runtime Evidence activated it instead, such as an MCP server's origin.
  */
 export interface RulePackActivation {
   name: string;
@@ -694,6 +759,10 @@ export interface RuntimeGraphEdge {
 
 export interface RuntimeGraph {
   packages: Partial<Record<RuntimePackageName, RuntimePackageInstance>>;
+  directH3?: RuntimePackageInstance;
+  nuxtH3MayBeShimmed?: true;
+  nuxtServerAutoImports?: "enabled" | "disabled" | "unknown";
+  nuxtServerBuilder?: "vite";
   edges: RuntimeGraphEdge[];
 }
 
@@ -711,6 +780,9 @@ export interface RuntimeTarget {
   h3?: string;
   vue?: string;
   nuxtCompatibility?: number;
+  /** Which H3 copies a migration upgrades. */
+  h3Owner?: "project" | "nitro" | "both";
+  standaloneNitro?: boolean;
 }
 
 export interface ImportFact {
@@ -810,6 +882,8 @@ export interface ComponentUsageFact {
   }>;
   /** Other directives on the element, such as `if`, `show`, `slot`, `for`, or a custom directive. */
   directives: string[];
+  /** Whether the component is passed non-whitespace template children. */
+  hasSlotContent: boolean;
   /**
    * The nearest enclosing element in the same template, skipping `<template>` wrappers such as
    * `v-if`, `v-for`, and slot templates. `element` is false for a component, a built-in such as
@@ -832,12 +906,58 @@ export interface ComponentUsageFact {
   scope: string[];
   /** Whether this element or an ancestor has `v-for`. */
   inFor: boolean;
+  /**
+   * Whether this element or an ancestor may not render or may render hidden: it has `v-if`,
+   * `v-else-if`, `v-else`, or `v-show`, sits in `<slot>` fallback content, fills a built-in's named
+   * slot such as `<Suspense>`'s `#fallback`, or sits in a native `<dialog>` or `<details>`, on an
+   * element with a `hidden` or `popover` attribute, a `hidden`, `sr-only`, or `<variant>:hidden`
+   * class, or a class or `v-bind` spread Doctor cannot read.
+   */
+  conditional: boolean;
+  /**
+   * The nearest enclosing component usage in the same template, as an index into `usages`, and
+   * the slot it fills there. `slot` is null for a dynamic slot name such as `#[name]`. Absent when
+   * no component usage encloses it.
+   */
+  host?: ComponentSlotHost;
+  /**
+   * Vue built-in components that enclose it in the same template, such as `Teleport` or a
+   * dynamic `component`, as written.
+   */
+  builtInHosts: string[];
+}
+
+/** Where a usage or `<slot>` outlet sits inside an enclosing component usage of the same template. */
+export interface ComponentSlotHost {
+  /** Index into the template's `usages`. */
+  usage: number;
+  /** The slot name, such as `default` or `footer`; null when the name is dynamic. */
+  slot: string | null;
+}
+
+/** A `<slot>` outlet in a Vue SFC template. */
+export interface ComponentSlotOutletFact {
+  /** The slot name, `default` when unnamed; null when `:name` is bound. */
+  name: string | null;
+  /** Whether the outlet or an ancestor may not render, as for `ComponentUsageFact.conditional`. */
+  conditional: boolean;
+  /** Whether the outlet or an ancestor has `v-for`. */
+  inFor: boolean;
+  /** The nearest enclosing component usage in the same template, as for `ComponentUsageFact.host`. */
+  host?: ComponentSlotHost;
+  /** Vue built-in components that enclose it in the same template, as written. */
+  builtInHosts: string[];
+  range: SourceRange;
 }
 
 export interface ComponentPropFact {
   name: string;
   /** Whether the declaration gives the prop a default value. */
   default: boolean;
+  /** The default value when the declaration writes it as a string literal. */
+  defaultValue?: string;
+  /** Whether a local destructuring binding applies a fallback independently of the prop default. */
+  localFallback?: boolean;
   range?: SourceRange;
 }
 
@@ -887,6 +1007,10 @@ export interface ComponentFacts {
   models: Array<{ name: string; binding?: string; default: boolean; range?: SourceRange }>;
   /** Value imports in `<script setup>`, which its template can render as tags. */
   imports: Array<{ local: string; imported: string; source: string }>;
+  /** Other top-level value bindings declared in `<script setup>`. */
+  setupBindings: string[];
+  /** Names explicitly registered in the Options API `components` object. */
+  registeredComponentNames: string[];
   /**
    * Whether the component runs code of its own: `<script setup>` statements other than imports,
    * type declarations, and macro declarations, macro defaults included, or any `<script>` code.
@@ -918,9 +1042,27 @@ export interface ComponentFacts {
   comparisons: Array<{ left: string; right: string; in: "script" | "template" }>;
   /** Components the template renders, in source order. */
   usages: ComponentUsageFact[];
+  /** `<slot>` outlets in the template, in source order. */
+  slotOutlets: ComponentSlotOutletFact[];
   /** Imported names the component references outside a template tag, in script code or template expressions. */
   bindingReferences: string[];
+  /**
+   * The component's `doctor` option, from `defineOptions()` or the `<script>` default export.
+   * `value` is the JSON it spells when every part is a literal; otherwise `unreadable` is the range
+   * of the first part Doctor cannot evaluate statically, or of a later spread or computed key that
+   * can replace it. Undefined when the component sets none.
+   */
+  doctorOption?: DoctorComponentOption;
 }
+
+/** A component's `doctor` option as Doctor read it statically. */
+export type DoctorComponentOption =
+  | { range: SourceRange; value: unknown }
+  | {
+      range: SourceRange;
+      unreadable: SourceRange;
+      cause: "computed" | "overridden" | "overridden-by-setup";
+    };
 
 /** A component usage in an SFC template, resolved to the SFC it renders when Doctor can prove it. */
 export interface ComponentUsageEdge {
@@ -964,6 +1106,8 @@ export interface ComponentNode {
    * binding in code. Usages through them are invisible to `callers`.
    */
   indirectImporters: string[];
+  /** Local `<script setup>` imports, including unused imports and unresolved targets. */
+  importedComponents: ReadonlyMap<string, string | undefined>;
 }
 
 /** Project Inventory of which Vue SFCs render which components, built from File Facts. */
@@ -1454,13 +1598,20 @@ export interface RulePack {
         languages?: ProjectLanguage[];
         packages?: string[];
         modules?: string[];
+        /**
+         * Runtimes a workspace package must run: declared in its package.json, or provided by its
+         * framework, as Nitro and Nuxt provide `h3`.
+         */
+        runtimes?: RuntimePackageName[];
         nuxt?: string;
         /**
-         * Activates the Rule Pack for every workspace package when this returns true for the
-         * Doctor Run's Runtime Evidence, whatever the other conditions say. The MCP Rule Pack uses
-         * it so a configured MCP server is checked in a project without an MCP package.
+         * Activates the Rule Pack for every workspace package when this returns true or a non-empty
+         * list for the Doctor Run's Runtime Evidence, whatever the other conditions say. A list
+         * names what in the evidence activated it, and a run without a project reports those names
+         * as the Rule Pack's `activatedBy`. The MCP Rule Pack returns the servers it reads, so a
+         * configured MCP server is checked in a project without an MCP package.
          */
-        runtimeEvidence?: (runtimeEvidence: Record<string, unknown>) => boolean;
+        runtimeEvidence?: (runtimeEvidence: Record<string, unknown>) => boolean | readonly string[];
       };
 }
 
@@ -1496,6 +1647,8 @@ export interface DoctorRunResult {
   };
   diagnostics: Diagnostic[];
   suppressedDiagnostics?: Diagnostic[];
+  /** `meta.title` of each Rule that reported a Diagnostic, keyed by Rule ID. */
+  ruleTitles?: Record<string, string>;
   fixes?: {
     files: number;
     edits: number;

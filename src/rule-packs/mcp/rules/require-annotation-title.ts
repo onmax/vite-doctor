@@ -6,14 +6,14 @@ import {
   toolLabel,
   type McpToolDefinition,
 } from "./shared.js";
-import { reportWireTool, wireToolLabel, wireTools } from "./wire.js";
+import { definedToolFingerprint, reportWireTools, wireTools } from "./wire.js";
 
 export const requireAnnotationTitle = createRule({
   meta: {
     id: "mcp/tools/require-annotation-title",
     title: "Give every MCP tool an annotations.title",
     description: "Report MCP tools whose annotations have no human-readable title.",
-    why: "Clients show a tool by its title, and MCP has carried it in `annotations.title` since the 2025-03-26 revision. The top-level `title` only arrived in 2025-06-18, so older clients never see it. Anthropic's Connectors Directory requires a title on every tool, and its portal flags tools whose annotations have none, even when a top-level `title` is set. Both MCP toolkits fill the top-level `title` from the file name and pass `annotations` through as written, so a file-discovered tool ships without one unless you add it.",
+    why: "Clients show a tool by its title, and MCP has carried it in `annotations.title` since the 2025-03-26 revision. The top-level `title` only arrived in 2025-06-18, so older clients never see it, and some newer client surfaces still ignore it: Claude Code's transcript shows the bare tool name. Anthropic's Connectors Directory review asks every tool for a `title` and hint annotations, and its portal has flagged tools that set only the top-level `title`. Both MCP toolkits fill the top-level `title` from the file name and pass `annotations` through as written, so a file-discovered tool ships without one unless you add it.",
     recommendedReplacement:
       "Set `annotations.title` to the same human-readable name as the top-level `title`.",
     examples: [
@@ -43,66 +43,71 @@ export const requireAnnotationTitle = createRule({
     return {
       async onWorkspaceEnd() {
         const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent) {
-          const findings = wire.findings.filter(
-            (finding) => finding.rule === "claude-directory/missing-title",
-          );
-          if (!findings.length) continue;
-          const topLevel = typeof wire.tool.title === "string" && wire.tool.title.trim();
-          const suggested = topLevel ? wire.tool.title! : "<Human-readable name>";
-          reportWireTool(
-            ctx,
-            wire,
-            diagnostics.MCP0001({
-              why: `MCP tool ${wireToolLabel(wire)} has no non-empty string in \`annotations.title\` in its tools/list entry.${topLevel ? ` It has a top-level title ${JSON.stringify(wire.tool.title)}, which clients that read only \`annotations.title\` never show.` : ""} Anthropic's Connectors Directory flags tools without one, and clients on the 2025-03-26 revision show only the bare name.`,
-              fix: `Add \`title: ${JSON.stringify(suggested)}\` to the tool's annotations.`,
-            }),
-            { ruleId: "mcp/tools/require-annotation-title", range: annotationsRange, findings },
-          );
-        }
+        reportWireTools(ctx, sent, "MCP0001", {
+          ruleId: "mcp/tools/require-annotation-title",
+          diagnostic: diagnostics.MCP0001,
+          range: annotationsRange,
+          source: sourceAdvice,
+        });
         for (const tool of sourceOnly) {
-          const { annotations } = tool;
-          if (annotations.state === "partial") continue;
-          const title =
-            annotations.state === "resolved" ? annotations.values.get("title") : undefined;
-          if (
-            title?.state === "unknown" ||
-            (title?.state === "resolved" &&
-              typeof title.value === "string" &&
-              title.value.trim().length > 0)
-          )
-            continue;
-          const label = toolLabel(tool);
-          const topLevel = tool.title
-            ? tool.title.source === "file"
-              ? ` Its top-level title "${tool.title.value}" comes from the file name, and the toolkit doesn't copy it into the annotations.`
-              : ` It has a top-level title "${tool.title.value}", which clients that read only \`annotations.title\` never show.`
-            : "";
-          const suggested = tool.title?.value ?? "<Human-readable name>";
-          ctx.report(
-            diagnostics.MCP0001({
-              why: `MCP tool ${label} has no non-empty string in \`annotations.title\`.${topLevel} Anthropic's Connectors Directory flags tools without one, and clients on the 2025-03-26 revision show only the bare name.`,
-              fix:
-                annotations.state === "absent"
-                  ? `Add \`annotations: { title: ${JSON.stringify(suggested)}, readOnlyHint: true }\` (or \`destructiveHint: true\` for a tool that changes data).`
-                  : `Add \`title: ${JSON.stringify(suggested)}\` to the tool's annotations.`,
-            }),
-            {
-              ruleId: "mcp/tools/require-annotation-title",
-              severity: ctx.severity,
-              category: "tools",
-              file: tool.file,
-              range: annotationsRange(tool),
-              confidence: "heuristic-high",
-              data: tool.name ? { tool: tool.name.value } : undefined,
-              evidence: annotationsEvidence(tool),
-            },
-          );
+          const advice = sourceAdvice(tool);
+          if (!advice) continue;
+          ctx.report(diagnostics.MCP0001({ why: advice.why, fix: advice.fix }), {
+            ruleId: "mcp/tools/require-annotation-title",
+            severity: ctx.severity,
+            category: "tools",
+            file: tool.file,
+            range: annotationsRange(tool),
+            confidence: "heuristic-high",
+            fingerprint: tool.name
+              ? definedToolFingerprint(
+                  ctx,
+                  "mcp/tools/require-annotation-title",
+                  tool.file,
+                  tool.name.value,
+                )
+              : undefined,
+            brief: advice.brief,
+            data: tool.name ? { tool: tool.name.value } : undefined,
+            evidence: annotationsEvidence(tool),
+          });
         }
       },
     };
   },
 });
+
+function sourceAdvice(tool: McpToolDefinition) {
+  const missing = missingTitle(tool);
+  if (missing !== true) return missing;
+  const topLevel = tool.title
+    ? tool.title.source === "file"
+      ? ` Its top-level title "${tool.title.value}" comes from the file name, and the toolkit doesn't copy it into the annotations.`
+      : ` It has a top-level title "${tool.title.value}", which some client surfaces ignore: Claude Code's transcript, for example, shows the bare name${tool.name ? ` \`${tool.name.value}\`` : ""}, and clients on the 2025-03-26 revision know only \`annotations.title\`.`
+    : " Clients show only the bare tool name.";
+  const suggested = tool.title?.value ?? "<Human-readable name>";
+  return {
+    why: `MCP tool ${toolLabel(tool)} has no non-empty string in \`annotations.title\`.${topLevel} Anthropic's Connectors Directory review asks every tool for a \`title\` and hint annotations, and its portal flags tools missing them${tool.title ? "; it has flagged tools that set only the top-level `title`" : ""}.`,
+    fix:
+      tool.annotations.state === "absent"
+        ? `Add \`annotations: { title: ${JSON.stringify(suggested)}, readOnlyHint: true }\` (or \`destructiveHint: true\` for a tool that changes data).`
+        : `Add \`title: ${JSON.stringify(suggested)}\` to the tool's annotations.`,
+    brief: `no annotations.title; add title: ${JSON.stringify(suggested)}`,
+  };
+}
+
+/** Whether the definition has no `annotations.title`; `undefined` when Doctor can't resolve it. */
+function missingTitle(tool: McpToolDefinition): boolean | undefined {
+  const { annotations } = tool;
+  if (annotations.state === "partial") return undefined;
+  const title = annotations.state === "resolved" ? annotations.values.get("title") : undefined;
+  if (title?.state === "unknown") return undefined;
+  return !(
+    title?.state === "resolved" &&
+    typeof title.value === "string" &&
+    title.value.trim().length > 0
+  );
+}
 
 function annotationsRange(tool: McpToolDefinition) {
   return tool.annotations.state === "absent" ? tool.callee : tool.annotations.range;

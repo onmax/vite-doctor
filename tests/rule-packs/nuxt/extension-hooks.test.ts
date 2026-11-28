@@ -176,7 +176,7 @@ test("the Nuxt Doctor Command trusts host extensions; the standalone CLI needs a
     main([root, "--format", "agent", "--no-cache"], root, { hostExtensions: true }),
   );
   const agent = JSON.parse(run.output);
-  expect(agent.diagnostics.map((item: { code: string }) => item.code)).toContain("VHUB0001");
+  expect(agent.groups.map((item: { code: string }) => item.code)).toContain("VHUB0001");
   expect(agent.commandArgs.rerun).toContain("--host-extensions");
 });
 

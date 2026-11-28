@@ -5,6 +5,7 @@ import { basename, dirname, join, relative, resolve } from "pathe";
 import { parse } from "yaml";
 import type { DoctorFramework, WorkspacePackage } from "../primitives.js";
 import { detectPackageModule } from "./nuxt-module-inventory.js";
+import { declaredRuntimes } from "./runtime-packages.js";
 
 const FRAMEWORK_PRECEDENCE: DoctorFramework[] = ["nuxt", "nitro", "vue", "vite"];
 
@@ -15,6 +16,7 @@ interface PackageManifest {
   devDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   scripts?: Record<string, string>;
   exports?: unknown;
 }
@@ -126,6 +128,7 @@ function describePackage(
     ...manifest?.devDependencies,
   };
   const framework = detectPackageFramework(directory, manifest, packages);
+  const runtimes = declaredRuntimes(manifest, join(directory, "package.json"));
   const nuxtIntegration = framework !== "nuxt" && shipsNuxtModule(manifest, packages);
   const ssr =
     framework === "nuxt" || !shipsVue(manifest)
@@ -140,6 +143,7 @@ function describePackage(
     framework,
     ...(nuxtIntegration ? { nuxtIntegration: true } : {}),
     packages,
+    ...(runtimes.length ? { declaredRuntimes: runtimes } : {}),
     ...(ssr ? { ssr } : {}),
   };
 }
@@ -357,7 +361,7 @@ function shipsNuxtModule(
   return isRecord(exports) && "./nuxt" in exports;
 }
 
-function hasConfig(directory: string, basename: string): boolean {
+export function hasConfig(directory: string, basename: string): boolean {
   return [".ts", ".mts", ".js", ".mjs", ".cjs"].some((extension) =>
     existsSync(join(directory, basename + extension)),
   );
@@ -425,6 +429,14 @@ function readManifest(file: string): PackageManifest | null {
       ) {
         manifest[key] = dependencies as Record<string, string>;
       }
+    }
+    if (isRecord(value.peerDependenciesMeta)) {
+      manifest.peerDependenciesMeta = Object.fromEntries(
+        Object.entries(value.peerDependenciesMeta).map(([name, meta]) => [
+          name,
+          { optional: isRecord(meta) && meta.optional === true },
+        ]),
+      );
     }
     return manifest;
   } catch {

@@ -3,8 +3,9 @@ export type Framework =
   | "vite"
   | "nuxt"
   | "nitro"
+  | "h3"
   | "typescript"
-  | "shadcn"
+  | "design-system"
   | "package"
   | "pinia"
   | "mcp";
@@ -34,7 +35,12 @@ export const FRAMEWORK_META: Record<Framework, { label: string; pack: string; ic
     pack: "vite-doctor/nitro",
     icon: "i-unjs-nitro",
   },
-  shadcn: { label: "shadcn", pack: "vite-doctor/shadcn", icon: "i-simple-icons-shadcnui" },
+  h3: { label: "H3", pack: "vite-doctor/h3", icon: "i-unjs-h3" },
+  "design-system": {
+    label: "Design system",
+    pack: "vite-doctor/design-system",
+    icon: "i-lucide-swatch-book",
+  },
   pinia: { label: "Pinia", pack: "vite-doctor/pinia", icon: "i-logos-pinia" },
   mcp: { label: "MCP", pack: "vite-doctor/mcp", icon: "i-simple-icons-modelcontextprotocol" },
   typescript: {
@@ -52,6 +58,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   assets: "Assets",
   attrs: "Attributes",
   auth: "Authentication",
+  body: "Request body",
   boundaries: "Boundaries",
   "browser-api": "Browser APIs",
   cache: "Caching",
@@ -59,6 +66,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   computed: "Computed",
   content: "Content",
   context: "Context",
+  errors: "Errors",
   configuration: "Configuration",
   fetch: "Data fetching",
   fetching: "Data fetching",
@@ -78,6 +86,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   project: "Project",
   reactivity: "Reactivity",
   request: "Request",
+  response: "Responses",
   routing: "Routing",
   runtime: "Runtime config",
   "runtime-config": "Runtime config",
@@ -110,10 +119,11 @@ export function packLabel(pack: string) {
 export function frameworkOfPack(pack: string): Framework {
   if (pack === "vite-doctor/package") return "package";
   if (pack === "vite-doctor/typescript") return "typescript";
-  if (pack === "vite-doctor/shadcn") return "shadcn";
+  if (pack === "vite-doctor/design-system") return "design-system";
   if (pack === "vite-doctor/pinia") return "pinia";
   if (pack === "vite-doctor/mcp") return "mcp";
   if (pack === "vite-doctor/nitro") return "nitro";
+  if (pack === "vite-doctor/h3") return "h3";
   if (pack === "vite-doctor/vue") return "vue";
   if (pack === "vite-doctor/vite") return "vite";
   return "nuxt";

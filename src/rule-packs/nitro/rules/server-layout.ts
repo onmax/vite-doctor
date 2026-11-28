@@ -539,13 +539,15 @@ function collectOptions(node: any, path: string[], options: StaticConfigOption[]
       options.push({ path: [...path, key], value: null });
       continue;
     }
-    if (key === "imports" || key === "experimental") {
+    if (key === "imports" || key === "experimental" || key === "dir") {
+      const nestedKey =
+        key === "imports" ? "autoImport" : key === "dir" ? "shared" : "nitroAutoImports";
       const nested = unwrapConfig(property.value);
       if (nested) {
         for (const option of nested.properties) {
           if (option.type !== "Property" || option.computed) continue;
           const name = propertyKey(option.key);
-          if (name === (key === "imports" ? "autoImport" : "nitroAutoImports"))
+          if (name === nestedKey)
             options.push({ path: [...path, key, name], value: literalValue(option.value) });
         }
       }

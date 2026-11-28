@@ -34,6 +34,8 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
   const index = createGraphIndex(session, fs);
   const byId = new Map(facts.map((fact) => [fact.fileId, fact]));
   const components = new Map<string, ComponentNode>();
+  const resolveSfc = (from: FileFacts, source: string, imported: string) =>
+    resolveImportedSfc(index, byId, from, source, imported);
   for (const fact of facts) {
     if (!fact.component) continue;
     const nuxt = session.handlesByPath.get(fact.path)?.project.nuxt;
@@ -47,10 +49,14 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       renders: [],
       callers: [],
       indirectImporters: [],
+      importedComponents: new Map(
+        fact.component.imports.map(({ local, source, imported }) => [
+          local,
+          resolveSfc(fact, source, imported),
+        ]),
+      ),
     });
   }
-  const resolveSfc = (from: FileFacts, source: string, imported: string) =>
-    resolveImportedSfc(index, byId, from, source, imported);
   const unresolved: ComponentUsageEdge[] = [];
   for (const fact of facts) {
     const node: ComponentNode | undefined = components.get(fact.path);
@@ -146,7 +152,7 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       const edge: ComponentUsageEdge = { from: fact.path, usage, ...slotEvidence(usage.wrappers) };
       const binding = usage.tag.includes(".") ? undefined : findBinding(usage.tag);
       if (binding && binding.source !== "#components") {
-        const target = resolveSfc(fact, binding.source, binding.imported);
+        const target = node.importedComponents.get(binding.local);
         if (target) Object.assign(edge, { target, resolvedBy: "import" });
       } else {
         const name = (binding?.imported ?? pascalCase(usage.tag)).replace(/^Lazy(?=[A-Z])/, "");

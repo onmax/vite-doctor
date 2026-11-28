@@ -4,7 +4,7 @@
 
 <h1 align="center"><img src="https://vite-doctor.onmax.me/doctor-icon.png" alt="" width="32" height="32" style="vertical-align: middle;"> Vite Doctor</h1>
 
-<p align="center">Catch framework bugs AI agents miss. Diagnostics for Nuxt, Vue, Nitro and Vite.</p>
+<p align="center">Catch framework bugs AI agents miss. Diagnostics for Nuxt, Vue, Nitro, H3 and Vite.</p>
 
 <p align="center">
   <code>pnpm dlx vite-doctor .</code>
@@ -16,7 +16,7 @@
 
 [![npm version](https://comark-ui.onmax.me/badge.svg?source=npm-version&package=vite-doctor&icon=npm)](https://www.npmjs.com/package/vite-doctor)
 [![npm downloads](https://comark-ui.onmax.me/badge.svg?source=npm-downloads&package=vite-doctor&period=month&icon=npm)](https://www.npmjs.com/package/vite-doctor)
-[![license](https://comark-ui.onmax.me/badge.svg?label=license&value=MIT)](https://github.com/onmax/vite-doctor/blob/main/LICENSE)
+[![license](https://comark-ui.onmax.me/badge.svg?label=license&value=MIT)](https://github.com/loadsheet/vite-doctor/blob/main/LICENSE)
 [![docs](https://comark-ui.onmax.me/badge.svg?label=docs&value=vite-doctor.onmax.me)](https://vite-doctor.onmax.me)
 
 ## Usage
@@ -82,6 +82,7 @@ Check a migration before changing dependencies:
 pnpm dlx vite-doctor migrate .
 pnpm dlx vite-doctor migrate . --to nuxt@5 --format json
 pnpm dlx vite-doctor migrate . --to nitro@3
+pnpm dlx vite-doctor migrate . --to h3@2
 ```
 
 The migration report stages source changes that are safe on the installed runtime, then dependency, configuration, and source changes that must land together, followed by checks that require the target runtime. It does not rewrite the project.

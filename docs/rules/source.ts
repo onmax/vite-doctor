@@ -9,6 +9,8 @@ import {
   runtimeFrameworkDiagnosticMetadata,
   workspaceDiagnosticMetadata,
 } from "../../src/core/diagnostic-metadata.js";
+import { h3RecommendedRuleIds } from "../../src/rule-packs/h3/presets.js";
+import { validatedInputSuggestion } from "../../src/rule-packs/h3/rules/request-helpers.js";
 import { mcpRecommendedRuleIds } from "../../src/rule-packs/mcp/presets.js";
 import { piniaRecommendedRuleIds } from "../../src/rule-packs/pinia/presets.js";
 
@@ -19,8 +21,9 @@ export type RuleFramework =
   | "vite"
   | "nuxt"
   | "nitro"
+  | "h3"
   | "typescript"
-  | "shadcn"
+  | "design-system"
   | "package"
   | "pinia"
   | "mcp";
@@ -123,10 +126,11 @@ export function getRuleReports() {
     vue: rules.filter((rule) => rule.framework === "vue"),
     vite: rules.filter((rule) => rule.framework === "vite"),
     nitro: rules.filter((rule) => rule.framework === "nitro"),
-    nuxt: rules.filter((rule) => ["vue", "nitro", "nuxt"].includes(rule.framework)),
+    h3: rules.filter((rule) => rule.framework === "h3"),
+    nuxt: rules.filter((rule) => ["vue", "nitro", "h3", "nuxt"].includes(rule.framework)),
     typescript: rules.filter((rule) => rule.framework === "typescript"),
     package: rules.filter((rule) => rule.framework === "package"),
-    shadcn: rules.filter((rule) => rule.framework === "shadcn"),
+    "design-system": rules.filter((rule) => rule.framework === "design-system"),
     pinia: rules.filter((rule) => rule.framework === "pinia"),
     mcp: rules.filter((rule) => rule.framework === "mcp"),
     all: rules,
@@ -144,9 +148,10 @@ export function getRuleReports() {
     | "vue"
     | "vite"
     | "nitro"
+    | "h3"
     | "nuxt"
     | "typescript"
-    | "shadcn"
+    | "design-system"
     | "package"
     | "pinia"
     | "mcp"
@@ -407,9 +412,10 @@ function readDiagnosticCodeMaps() {
     "src/rule-packs/package/diagnostics.ts",
     "src/diagnostics.ts",
     "src/rule-packs/nitro/diagnostics.ts",
+    "src/rule-packs/h3/diagnostics.ts",
     "src/rule-packs/nuxt/diagnostics.ts",
     "src/rule-packs/typescript/diagnostics.ts",
-    "src/rule-packs/shadcn/diagnostics.ts",
+    "src/rule-packs/design-system/diagnostics.ts",
     "src/rule-packs/pinia/diagnostics.ts",
     "src/rule-packs/mcp/diagnostics.ts",
   ];
@@ -521,7 +527,7 @@ function collectRuleDocuments() {
     .sort()
     .map((file) => join(viteRulesDir, file));
   const typescriptRulesDir = join(root, "src/rule-packs/typescript/rules");
-  const shadcnRulesDir = join(root, "src/rule-packs/shadcn/rules");
+  const designSystemRulesDir = join(root, "src/rule-packs/design-system/rules");
   const typescriptSources = readdirSync(typescriptRulesDir)
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
@@ -532,6 +538,11 @@ function collectRuleDocuments() {
     .filter((file) => file.endsWith(".ts") && !["ast.ts", "index.ts", "shared.ts"].includes(file))
     .sort()
     .map((file) => join(nitroRulesDir, file));
+  const h3RulesDir = join(root, "src/rule-packs/h3/rules");
+  const h3Sources = readdirSync(h3RulesDir)
+    .filter((file) => file.endsWith(".ts") && !["index.ts", "shared.ts"].includes(file))
+    .sort()
+    .map((file) => join(h3RulesDir, file));
   const nuxtSources = [
     ...ruleSourcesFromIndex(join(nuxtRulesDir, "nuxt/index.ts")),
     join(root, "src/rule-packs/nuxt/review/authorization.ts"),
@@ -550,10 +561,10 @@ function collectRuleDocuments() {
     .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "shared.ts")
     .sort()
     .map((file) => join(mcpRulesDir, file));
-  const shadcnSources = readdirSync(shadcnRulesDir)
-    .filter((file) => file.endsWith(".ts") && file !== "shared.ts")
+  const designSystemSources = readdirSync(designSystemRulesDir)
+    .filter((file) => file.endsWith(".ts") && !["copy.ts", "shared.ts"].includes(file))
     .sort()
-    .map((file) => join(shadcnRulesDir, file));
+    .map((file) => join(designSystemRulesDir, file));
   const codesByRuleId = readDiagnosticCodeMaps();
 
   return withNavigationTitles(
@@ -569,8 +580,12 @@ function collectRuleDocuments() {
         "/typescript/rules",
       ),
       ...withRulePath(collectRules(nitroSources, "vite-doctor/nitro", "nitro"), "/nitro/rules"),
+      ...withRulePath(collectRules(h3Sources, "vite-doctor/h3", "h3"), "/h3/rules"),
       ...withRulePath(collectRules(nuxtSources, "vite-doctor/nuxt", "nuxt"), "/nuxt/rules"),
-      ...withRulePath(collectRules(shadcnSources, "vite-doctor/shadcn", "shadcn"), "/shadcn/rules"),
+      ...withRulePath(
+        collectRules(designSystemSources, "vite-doctor/design-system", "design-system"),
+        "/design-system/rules",
+      ),
       ...withRulePath(collectRules(piniaSources, "vite-doctor/pinia", "pinia"), "/pinia/rules"),
       ...withRulePath(collectRules(mcpSources, "vite-doctor/mcp", "mcp"), "/mcp/rules"),
     ]),
@@ -632,7 +647,7 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         title: readString(opts, "title"),
         description: readString(opts, "description"),
         why: "Raw request input and validation can drift apart when they are separate operations. Nitro and h3 provide validated helpers that keep parsing and validation coupled at the request boundary.",
-        recommendedReplacement: validatedInputReplacement(opts),
+        recommendedReplacement: validatedInputSuggestion(readString(opts, "validatedUtility")),
         examples: validatedInputExamples(opts),
         category: "request",
         severity: "warn" as const,
@@ -641,7 +656,11 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         sourceUrl: githubSourceUrl(source),
       }),
     );
-    const shadcnRules = findRuleFactoryOptions(ast, visitorKeys, "createShadcnRule").map((opts) =>
+    const designSystemRules = findRuleFactoryOptions(
+      ast,
+      visitorKeys,
+      "createDesignSystemRule",
+    ).map((opts) =>
       applyDocumentationMetadata({
         pack,
         source,
@@ -659,7 +678,7 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         sourceUrl: githubSourceUrl(source),
       }),
     );
-    return [...metaRules, ...helperRules, ...shadcnRules].filter((rule) => rule.id);
+    return [...metaRules, ...helperRules, ...designSystemRules].filter((rule) => rule.id);
   });
 }
 
@@ -1371,29 +1390,23 @@ function readStringArray(object: any, key: string) {
     .filter(Boolean);
 }
 
-function validatedInputReplacement(opts: any) {
-  const validatedUtility = readString(opts, "validatedUtility");
-  const [rawUtility] = readStringArray(opts, "rawUtilities");
-  if (!validatedUtility || !rawUtility) return readString(opts, "suggestion");
-  return `Use ${validatedUtility}(event, validator) instead of ${rawUtility}(event) followed by separate validation.`;
-}
-
 function validatedInputExamples(opts: any): RuleExample[] {
   const validatedUtility = readString(opts, "validatedUtility");
   const [rawUtility] = readStringArray(opts, "rawUtilities");
   if (!validatedUtility || !rawUtility) return [];
+  const schema = `import { z } from "zod"\n\nconst schema = z.object({ name: z.string() })`;
   return [
     {
-      title: "Keep reading and validation together",
+      title: "Use the helper with an object-returning parser",
       language: "ts",
-      invalid: `export default defineEventHandler(async (event) => {
+      invalid: `${schema}\n\nexport default defineEventHandler(async (event) => {
   const input = await ${rawUtility}(event)
-  const value = validator.parse(input)
+  const value = schema.parse(input)
 
   return value
 })`,
-      valid: `export default defineEventHandler(async (event) => {
-  const value = await ${validatedUtility}(event, validator)
+      valid: `${schema}\n\nexport default defineEventHandler(async (event) => {
+  const value = await ${validatedUtility}(event, (input) => schema.parse(input))
 
   return value
 })`,
@@ -1464,8 +1477,12 @@ function renderRuleCommand(rule: Pick<RuleDocument, "id" | "framework">) {
     return `pnpm vite-doctor . --framework nuxt --config doctor.config.ts --rules ${rule.id}`;
   if (rule.framework === "package")
     return `pnpm vite-doctor . --extends package/recommended --rules ${rule.id}`;
-  if (rule.framework === "shadcn")
-    return `pnpm vite-doctor . --extends shadcn/strict --rules ${rule.id}`;
+  if (rule.framework === "design-system")
+    return `pnpm vite-doctor . --extends design-system/strict --rules ${rule.id}`;
+  if (rule.framework === "h3")
+    return h3RecommendedRuleIds.includes(rule.id)
+      ? `pnpm vite-doctor . --rules ${rule.id}`
+      : `pnpm vite-doctor . --extends auto,h3/strict --rules ${rule.id}`;
   if (rule.framework === "mcp")
     return mcpRecommendedRuleIds.includes(rule.id)
       ? `pnpm vite-doctor . --rules ${rule.id}`
@@ -1521,7 +1538,7 @@ function trimCode(value: unknown) {
 }
 
 function githubSourceUrl(source: string) {
-  return `https://github.com/onmax/vite-doctor/blob/main/${source}`;
+  return `https://github.com/loadsheet/vite-doctor/blob/main/${source}`;
 }
 
 function toCatalogRule(rule: RuleDocument) {

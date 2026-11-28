@@ -8,7 +8,7 @@ export const noReducedContext = createRule({
     title: "Give clients what the model needs up front",
     description:
       "Report MCP servers whose `initialize` result or tool count leaves a client showing the model less than the server offers.",
-    why: "Clients decide what part of a server reaches the model. With tool search, Claude Code loads only tool names and server instructions at session start, so a server without instructions gives Claude only names to decide when to search. VS Code sends at most 128 tools per request, so a server with more makes users deselect tools, or the request fails. A missing-instructions Diagnostic is `info`; a tool count over the limit is `warn`. Doctor checks the `initialize` result and `tools/list` it reads as Runtime Evidence and quotes each client's source.",
+    why: "Clients decide what part of a server reaches the model. With tool search, Claude Code loads only tool names and server instructions at session start, so a server without instructions gives Claude only names to decide when to search. VS Code sends at most 128 tools per request, so a server with more makes users deselect tools, or the request fails. A missing-instructions Diagnostic is `info`; a tool count over the limit is `warn`. Doctor checks the `initialize` result and `tools/list` it reads as Runtime Evidence and cites each client's source.",
     recommendedReplacement:
       "Return `instructions` from `initialize` saying what the tools are for, and keep a server within 128 tools.",
     examples: [
@@ -37,9 +37,8 @@ export const noReducedContext = createRule({
   create(ctx) {
     return clientLimitsVisitor(ctx, {
       ruleId: "mcp/clients/no-reduced-context",
+      code: "MCP0009",
       diagnostic: diagnostics.MCP0009,
-      effect: "context",
-      outcome: "reaches the model with less context",
     });
   },
 });

@@ -206,6 +206,7 @@ test("Rules that read the component usage graph are not replayed from the cache"
     runDoctor({
       root,
       framework: "vue",
+      runtimeTarget: { vue: "3.5.0" },
       cache: true,
       extensions: [
         defineDoctorExtension({
@@ -240,4 +241,81 @@ defineProps<{ title: string }>()
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("withDefaults looks up the raw declaration key through spreads", async () => {
+  const { rule, graph } = captureGraph();
+  await runProjectFixture({
+    rules: [rule],
+    files: {
+      "src/Button.vue": `<script setup lang="ts">
+withDefaults(defineProps<{ buttonTone?: string; label?: string }>(), { label: 'Save', ...{ 'button-tone': 'primary' } });
+</script><template><button /></template>`,
+    },
+  });
+  const facts = [...graph().components.values()][0]!.facts;
+  expect(facts.props).toMatchObject([
+    { name: "buttonTone", default: false },
+    { name: "label", default: true, defaultValue: "Save" },
+  ]);
+  expect(facts.props?.[0]).not.toHaveProperty("defaultValue");
+});
+
+test("component facts record where each usage and slot outlet renders", async () => {
+  const { rule, graph } = captureGraph();
+  const result = await runProjectFixture({
+    rules: [rule],
+    files: {
+      "src/Panel.vue": `<script setup lang="ts">
+withDefaults(defineProps<{ tone?: string; size?: string }>(), { tone: "primary", size: 3 as any });
+</script>
+<template>
+  <div>
+    <slot />
+    <slot v-if="open" name="footer" />
+    <slot :name="dynamic" />
+    <Card v-slot:header>
+      <Badge />
+    </Card>
+    <Card>
+      <template #[name]><Badge /></template>
+      <Teleport to="body"><Badge v-show="visible" /></Teleport>
+    </Card>
+    <Suspense><template #fallback><Badge /></template></Suspense>
+  </div>
+</template>`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+  const facts = [...graph().components.values()][0]!.facts;
+  expect(facts.props).toEqual([
+    expect.objectContaining({ name: "tone", default: true, defaultValue: "primary" }),
+    expect.objectContaining({ name: "size", default: true }),
+  ]);
+  expect(facts.props?.[1]).not.toHaveProperty("defaultValue");
+  expect(facts.slotOutlets).toMatchObject([
+    { name: "default", conditional: false, inFor: false },
+    { name: "footer", conditional: true },
+    { name: null, conditional: false },
+  ]);
+  expect(
+    facts.usages.map(({ tag, conditional, host, builtInHosts }) => ({
+      tag,
+      conditional,
+      host,
+      builtInHosts,
+    })),
+  ).toEqual([
+    { tag: "Card", conditional: false, host: undefined, builtInHosts: [] },
+    { tag: "Badge", conditional: false, host: { usage: 0, slot: "header" }, builtInHosts: [] },
+    { tag: "Card", conditional: false, host: undefined, builtInHosts: [] },
+    { tag: "Badge", conditional: false, host: { usage: 2, slot: null }, builtInHosts: [] },
+    {
+      tag: "Badge",
+      conditional: true,
+      host: { usage: 2, slot: "default" },
+      builtInHosts: ["Teleport"],
+    },
+    { tag: "Badge", conditional: true, host: undefined, builtInHosts: ["Suspense"] },
+  ]);
 });

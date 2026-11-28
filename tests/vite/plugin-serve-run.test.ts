@@ -5,6 +5,8 @@ import { build, createServer, type InlineConfig, type Logger, type ViteDevServer
 import { expect, test, vi } from "vite-plus/test";
 import type { DoctorExtension } from "../../src/extension.ts";
 import { doctor, type ViteDoctorSurfaceOptions } from "../../src/plugin.ts";
+import { stubReaderEnv } from "../report-reader-env.ts";
+import { withFixture } from "../rule-packs/nuxt/nuxt-modern-rules-fixture.ts";
 
 const doctorRuns = vi.hoisted(() => [] as Promise<unknown>[]);
 
@@ -128,6 +130,107 @@ test("a serve-mode Doctor Run starts after the dev server listens and logs Diagn
     }
   });
 });
+
+test("a save that fixes a computed Nuxt layout restores DS0008 evidence", async () => {
+  const pageSource = (layout: string) =>
+    `<script setup>definePageMeta({ layout: ${layout} })</script><template><main /></template>`;
+  await withFixture(
+    {
+      "nuxt.config.ts": "export default defineNuxtConfig({})",
+      "app/app.vue": "<template><NuxtPage /></template>",
+      "app/pages/index.vue": pageSource("name"),
+    },
+    {},
+    async (root) => {
+      const { logger, logs } = captureLogger();
+      const messages = () => [...logs.info, ...logs.warn, ...logs.error].join("\n");
+      const page = join(root, "app/pages/index.vue");
+      const server = await createServer(
+        serveConfig(
+          root,
+          logger,
+          {
+            framework: "nuxt",
+            rules: "design-system/limit-per-view",
+            config: {
+              rules: {
+                "design-system/limit-per-view": [
+                  "warn",
+                  {
+                    contracts: {
+                      AppButton: {
+                        limits: [{ max: 1, why: "Limit clutter", fix: "Remove a button" }],
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          { server: { middlewareMode: true, ws: false, watch: null } },
+        ),
+      );
+      try {
+        await vi.waitFor(() => expect(messages()).toContain("DS0008 did not count"), {
+          timeout: 15_000,
+        });
+        await writeFile(page, pageSource('"default"'));
+        server.watcher.emit("change", page);
+        await vi.waitFor(() => expect(messages()).toContain("Evidence restored:"), {
+          timeout: 3_000,
+        });
+        expect(messages()).toMatch(/^Now: .*\b0 info$/m);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+});
+
+test.each([true, false])(
+  "the built serve worker uses the host stdout TTY state (%s)",
+  async (tty) => {
+    const { doctor: builtDoctor } = await import("vite-doctor/plugin");
+    await withProject(async (root) => {
+      const { logger, doctorLogs } = captureLogger();
+      const previousTty = process.stdout.isTTY;
+      stubReaderEnv({ CURSOR_TRACE_ID: "1" });
+      vi.stubEnv("CI", undefined);
+      vi.stubEnv("GITHUB_ACTIONS", undefined);
+      process.stdout.isTTY = tty;
+      try {
+        const server = await createServer(
+          serveConfig(
+            root,
+            logger,
+            {},
+            {
+              plugins: [builtDoctor({ run: "serve", rules: secretRule, cache: false })],
+              server: { middlewareMode: true, ws: false, watch: null },
+            },
+          ),
+        );
+        try {
+          const report = await vi.waitFor(
+            () => {
+              const report = doctorLogs().find((message) => message.includes(secretRule));
+              expect(report).toBeDefined();
+              return report!;
+            },
+            { timeout: 15_000 },
+          );
+          if (tty) expect(report).not.toMatch(/^\s*\{/);
+          else expect(JSON.parse(report).schema).toBe("vite-doctor.agent/v3");
+        } finally {
+          await server.close();
+        }
+      } finally {
+        process.stdout.isTTY = previousTty;
+        vi.unstubAllEnvs();
+      }
+    });
+  },
+);
 
 test("warn mode logs serve-mode Diagnostics as warnings", async () => {
   await withProject(async (root) => {

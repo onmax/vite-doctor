@@ -31,6 +31,13 @@ export async function loadNitroScanner(entry: string): Promise<Scanner | undefin
   }
 }
 
+async function loadBundledScanner(version: string): Promise<Scanner | undefined> {
+  if (version === "6.4.0") return import("unimport-nitro-v6");
+  if (version === "6.5.0") return import("unimport-nitro-v65");
+  const scanner = await import("unimport");
+  return scanner.version === version ? scanner : undefined;
+}
+
 function fingerprint(entries: unknown) {
   return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
 }
@@ -99,7 +106,9 @@ export async function verifyNitroAutoImportScan(
     const installed = resolveNitroScanner(nitroPackage);
     if (nitroPackage && installed?.version !== scan.version) return "stale";
     const scanner =
-      installed && trustHost ? await loadNitroScanner(installed.entry) : await import("unimport");
+      installed && trustHost
+        ? await loadNitroScanner(installed.entry)
+        : await loadBundledScanner(scan.version);
     if (scanner?.version !== scan.version)
       return installed && !trustHost ? "requires-trust" : "stale";
     const decisions = scan.decisions && new Map(scan.decisions);

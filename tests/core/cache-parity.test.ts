@@ -325,6 +325,7 @@ test("cached template Rules read and parse nothing until the template changes", 
     const options = {
       root,
       framework: "vue" as const,
+      runtimeTarget: { vue: "3.5.0" },
       cache: true,
       extensions: [pack],
       rules: "fixture/",

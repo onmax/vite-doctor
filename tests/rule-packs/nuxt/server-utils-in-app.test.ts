@@ -129,9 +129,9 @@ test.each([
   `import { route } from '../../server/routes/feed'`,
   `import { auth } from '~~/server/middleware/auth'`,
   `import plugin from '~~/server/plugins/db'`,
-  `import { db } from '#server/utils/db'`,
-])("leaves imports Nuxt import protection already blocks to Nuxt: %s", async (source) => {
-  expect(await run({ "app/utils/price.ts": source })).toEqual([]);
+  `import { handler } from '#server/api/price.get'`,
+])("leaves imports Nuxt 4.4 import protection already blocks to Nuxt: %s", async (source) => {
+  expect(await run({ "app/utils/price.ts": source }, { nuxt: "4.4.0" })).toEqual([]);
 });
 
 test("resolves custom serverDir and aliases from the Nuxt manifest", async () => {
@@ -161,6 +161,7 @@ test("resolves custom serverDir and aliases from the Nuxt manifest", async () =>
   };
   const result = await runProjectFixture({
     framework: "nuxt",
+    dependencies: { nuxt: "4.4.0" },
     files: {
       ".nuxt/doctor.manifest.json": JSON.stringify(manifest),
       "app/utils/a.ts": `import { db } from '#db/client'`,
@@ -246,3 +247,88 @@ test.each(["~", "@", "~~", "@@"])(
     ]);
   },
 );
+
+test.each([
+  ["app/composables/usePrice.ts", `import { formatPrice } from '#server/utils/pricing'`],
+  [
+    "app/pages/index.vue",
+    `<script setup lang="ts">\nconst m = await import('#server/utils/pricing')\n</script>`,
+  ],
+  ["shared/utils/price.ts", `export { formatPrice } from '#server/utils/pricing'`],
+])("reports #server imports, which resolve before Nuxt checks them: %s", async (file, source) => {
+  const diagnostics = await run({ [file]: source });
+  expect(diagnostics).toMatchObject([{ code: "NUXT0075", file }]);
+});
+
+test("reports type-only #server imports separately", async () => {
+  const diagnostics = await run({
+    "app/utils/price.ts": `import type { Price } from '#server/utils/pricing'`,
+  });
+  expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["NUXT0076"]);
+});
+
+test("resolves #server through the manifest alias", async () => {
+  const manifest = {
+    nuxtVersion: "4.5.0",
+    rootDir: "/fixture",
+    srcDir: "app",
+    appDir: "app",
+    buildDir: ".nuxt",
+    autoImports: [],
+    components: [],
+    modules: [],
+    routeRules: {},
+    serverHandlers: [],
+    aliases: { "#server": "backend" },
+    layers: [{ root: ".", srcDir: "app", serverDir: "backend", priority: 0 }],
+  };
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ".nuxt/doctor.manifest.json": JSON.stringify(manifest),
+      "backend/utils/pricing.ts": "export const price = 1",
+      "app/utils/a.ts": `import { price } from '#server/utils/pricing'`,
+    },
+    rules: [noServerUtilsInApp],
+  });
+  expect(result.diagnostics.map((d) => [fixturePath(d.file), d.message])).toEqual([
+    ["app/utils/a.ts", expect.stringContaining("resolves to backend/utils/pricing,")],
+  ]);
+});
+
+async function runWithNuxt(version: string, files: Record<string, string>) {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    dependencies: { nuxt: version },
+    files: { ...serverUtils, ...files },
+    rules: [noServerUtilsInApp, noServerTypesInApp],
+  });
+  return result.diagnostics.map((diagnostic) => ({
+    code: diagnostic.code,
+    file: fixturePath(diagnostic.file),
+  }));
+}
+
+const protectedImport = {
+  "server/api/price.get.ts": "export const handler = () => 1",
+  "app/utils/price.ts": `import { handler } from '~~/server/api/price.get'`,
+};
+
+test("reports protected server directories on Nuxt before 4.4 with an app/ srcDir", async () => {
+  expect(await runWithNuxt("4.3.1", protectedImport)).toEqual([
+    { code: "NUXT0075", file: "app/utils/price.ts" },
+  ]);
+});
+
+test.each(["4.4.0", "4.6.4"])("leaves protected server directories to Nuxt %s", async (version) => {
+  expect(await runWithNuxt(version, protectedImport)).toEqual([]);
+});
+
+test("leaves protected server directories to Nuxt 3 with a root srcDir", async () => {
+  expect(
+    await runWithNuxt("3.21.2", {
+      "server/api/price.get.ts": "export const handler = () => 1",
+      "utils/price.ts": `import { handler } from '~/server/api/price.get'`,
+    }),
+  ).toEqual([]);
+});

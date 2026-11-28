@@ -5,6 +5,7 @@ import type {
   DoctorRule,
   ProjectInfo,
   RuleContext,
+  RuleReportMetadata,
   RuleVisitor,
   SfcHandle,
   SourceFileHandle,
@@ -481,7 +482,7 @@ function createRuleRun(
     get options() {
       return currentRuleConfig.options;
     },
-    report(diagnostic, { projectLevel, data, ...metadata } = {}) {
+    report(diagnostic, { projectLevel, data, ...metadata }: RuleReportMetadata = {}) {
       const atProjectRoot = projectLevel && phase === "workspace";
       const input = normalizeDiagnostic({
         ...metadata,

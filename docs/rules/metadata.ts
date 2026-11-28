@@ -8,7 +8,7 @@ export interface RuleDocumentationMetadata {
 }
 
 export const ruleDocumentationMetadata = {
-  "shadcn/no-restyle": {
+  "design-system/no-restyle": {
     description: "Keep component-owned visual styles inside the component contract.",
     why: "Appearance classes at a component call site can override the variants and sizes owned by the design system. The Rule checks recognized components against the configured class policy.",
     recommendedReplacement:
@@ -24,7 +24,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-raw-colors": {
+  "design-system/no-raw-colors": {
     description: "Prefer theme colors over raw color values.",
     why: "Raw palette colors and literal SVG colors bypass the project's theme. Checking undeclared color tokens and suggesting theme replacements requires a readable theme; without one, those checks are unavailable.",
     recommendedReplacement:
@@ -38,7 +38,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-arbitrary-values": {
+  "design-system/no-arbitrary-values": {
     description: "Use the design system's existing values instead of arbitrary utilities.",
     why: "Arbitrary utility values bypass theme tokens and scale values, making appearance harder to change consistently. Exceptions follow the configured class policy.",
     recommendedReplacement:
@@ -52,7 +52,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-inline-styles": {
+  "design-system/no-inline-styles": {
     description: "Keep styling in the design system rather than component call sites.",
     why: "Ordinary inline properties bypass class-based styling. The Rule checks JSX elements, unreadable style objects, hardcoded colors in custom properties, and style elements.",
     recommendedReplacement:
@@ -66,7 +66,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/require-static-classes": {
+  "design-system/require-static-classes": {
     description: "Use class values that the design-system analyzer can resolve.",
     why: "Unreadable class values on recognized components prevent other design-system Rules from checking those classes. Complete static strings and conditional choices between them remain analyzable.",
     recommendedReplacement:
@@ -82,7 +82,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "shadcn/no-unknown-classes": {
+  "design-system/no-unknown-classes": {
     description: "Avoid classes that are not declared by the project's Tailwind theme.",
     why: "Misspelled or unsupported class names generate no CSS. Without a resolvable Tailwind theme, the Rule uses a reduced fallback that includes bundled utility names plus discovered @utility names and CSS class selectors, as in the example below. That fallback cannot validate theme tokens or provide spelling suggestions.",
     recommendedReplacement:
@@ -93,6 +93,55 @@ export const ruleDocumentationMetadata = {
         language: "tsx",
         invalid: '<div className="flex-cols" />',
         valid: '<div className="flex-col" />',
+      },
+    ],
+  },
+  "design-system/prefer-project-component": {
+    description:
+      "Finds raw elements such as <button> where the project has a component that replaces them.",
+    why: 'A raw element skips the component the project built or installed for it, so it can look and behave differently from every other instance: focus rings, sizes, disabled and loading states, and form field wiring drift. The Rule learns which component replaces which element from Component Contracts, the Nuxt UI component table, or a project SFC named after the element, and reports nothing when two components claim the same element. It replaces nuxt-ui/prefer-u-button (NUXT0013) and nuxt-ui/prefer-u-form-controls (NUXT0014). Choose one config setting for the combined Rule: "off" disables both checks. Update suppression IDs and narrow their scope where needed. Regenerate the baseline instead of editing Rule IDs, since the fingerprints have changed.',
+    recommendedReplacement:
+      "Render the replacing component instead of the raw element, keep its attributes, v-model, listeners, and content, and move styling classes to the component's props.",
+    examples: [
+      {
+        title: "Use UButton in a Nuxt UI app",
+        language: "vue",
+        invalid: '<template>\n  <button type="button" @click="save">Save</button>\n</template>',
+        valid: '<template>\n  <UButton @click="save">Save</UButton>\n</template>',
+      },
+    ],
+  },
+  "design-system/limit-per-view": {
+    description:
+      "Finds views that render more usages of a component than its Component Contract allows, such as two primary buttons.",
+    why: "A component can declare how many of its usages one view may render, such as one primary button. Doctor builds each Nuxt route's view from the app, its layout, its parent pages, and the page, follows the components they render, and counts only usages that render every time the view does. Usages behind `v-if`, `v-show`, or `v-for`, hidden by a class such as `lg:hidden`, inside a native `<dialog>` or `<details>` or overlays such as modals and menus, in teleports or dynamic components, or with props Doctor cannot read do not count, and an app that picks layouts with `setPageLayout()` or an `appLayout` route rule gets no view for the routes it may affect, so a report always names usages that are on screen together.",
+    recommendedReplacement:
+      "Apply the contract's fix to the extra usages, usually a quieter variant, so the view keeps one clear choice.",
+    examples: [
+      {
+        title: "Keep one primary UButton per view",
+        language: "vue",
+        invalid:
+          '<template>\n  <UButton @click="save">Save</UButton>\n  <UButton @click="publish">Publish</UButton>\n</template>',
+        valid:
+          '<template>\n  <UButton @click="save">Save</UButton>\n  <UButton variant="outline" @click="publish">Publish</UButton>\n</template>',
+      },
+    ],
+  },
+  "design-system/unreadable-contract": {
+    description:
+      "Finds `defineOptions({ doctor })` values Doctor cannot read as a Component Contract.",
+    why: "Doctor reads Component Contracts statically from the SFC. A variable, function call, or unknown key in the `doctor` option leaves the contract unread, so design-system/prefer-project-component cannot point raw elements to the component and design-system/limit-per-view cannot count its usages. A limit that misses `max`, `why`, or `fix`, or whose `fix` repeats its `why`, is unreadable too.",
+    recommendedReplacement:
+      'Write the `doctor` option as a literal object, such as `defineOptions({ doctor: { replaces: "button" } })`.',
+    examples: [
+      {
+        title: "Write the contract as a literal",
+        language: "vue",
+        invalid:
+          '<script setup lang="ts">\nconst element = "button";\ndefineOptions({ doctor: { replaces: element } });\n</script>\n\n<template>\n  <button class="app-button"><slot /></button>\n</template>',
+        valid:
+          '<script setup lang="ts">\ndefineOptions({ doctor: { replaces: "button" } });\n</script>\n\n<template>\n  <button class="app-button"><slot /></button>\n</template>',
       },
     ],
   },
@@ -226,9 +275,9 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/request/prefer-assert-method": {
+  "h3/request/prefer-assert-method": {
     description:
-      "Finds Nitro request code that should use the supported assert method pattern instead.",
+      "Finds single-method H3 handlers that check the request method by hand instead of using assertMethod().",
     why: "Manual method checks can drift from H3 response behavior. assertMethod() applies the framework's method validation and 405 handling consistently.",
     recommendedReplacement: "Use assertMethod(event, method) at the top of single-method handlers.",
     examples: [
@@ -241,20 +290,20 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/request/prefer-get-request-ip": {
+  "h3/request/prefer-get-request-ip": {
     description:
-      "Finds Nitro request code that should use the supported get request IP pattern instead.",
-    why: "Reading x-forwarded-for directly trusts raw proxy input and may return a spoofed or comma-separated value instead of the client address.",
+      "Finds request-sensitive H3 code, such as rate limiting, that reads a forwarded client IP header directly.",
+    why: "Reading x-forwarded-for directly trusts raw proxy input and may return a spoofed or comma-separated value instead of the client address. On H3 v2, srvx's trustProxy option decides which proxies may set the client address, and getRequestIP(event) and event.req.ip read the result.",
     recommendedReplacement:
-      "Use getRequestIP(event) and configure trusted proxy handling centrally.",
+      "Use getRequestIP(event) and configure trusted proxies centrally: srvx's trustProxy option on H3 v2.",
     examples: [
       {
         title: "Use getRequestIP",
         language: "ts",
         invalid:
-          "export default defineEventHandler((event) => {\n  return getHeader(event, 'x-forwarded-for')\n})",
+          "export default defineEventHandler((event) => {\n  return rateLimit(event.req.headers.get('x-forwarded-for'))\n})",
         valid:
-          "export default defineEventHandler((event) => {\n  return getRequestIP(event, { xForwardedFor: true })\n})",
+          '// serve(app, { trustProxy: "loopback" })\nexport default defineEventHandler((event) => {\n  return rateLimit(getRequestIP(event))\n})',
       },
     ],
   },
@@ -483,21 +532,30 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/h3/no-removed-send": {
-    description: "Flags send() and sendError(), which H3 v2 removes.",
-    why: "H3 v2 handlers return Web API response values and throw HTTPError instances instead of using imperative send helpers.",
+  "h3/migration/no-removed-exports": {
+    description:
+      "Flags imports, re-exports, and h3 namespace reads of the 19 values and 38 types H3 1.15 exported and H3 v2 removed, such as send(), sendError(), MIMES, and the App type.",
+    why: "H3 v2 no longer exports these names. Importing a removed value fails when the module loads, and importing a removed type fails the typecheck.",
     recommendedReplacement:
-      "Return the response value from the handler, or throw an HTTPError for an error response.",
+      "Use the replacement the H3 migration guide names, which each diagnostic repeats: return the value instead of send(), throw an HTTPError instead of sendError(), and type the app as H3 instead of App.",
     examples: [
       {
         title: "Return the response body",
         language: "ts",
-        invalid: 'export default defineHandler((event) => {\n  return send(event, "ready")\n})',
-        valid: 'export default defineHandler(() => {\n  return "ready"\n})',
+        invalid:
+          'import { defineHandler, send } from "h3"\n\nexport default defineHandler((event) => {\n  return send(event, "ready")\n})',
+        valid:
+          'import { defineHandler } from "h3"\n\nexport default defineHandler(() => {\n  return "ready"\n})',
+      },
+      {
+        title: "Type the app as H3",
+        language: "ts",
+        invalid: 'import type { App } from "h3"\n\nexport function mount(app: App) {}',
+        valid: 'import type { H3 } from "h3"\n\nexport function mount(app: H3) {}',
       },
     ],
   },
-  "nitro/h3/prefer-redirect-response": {
+  "h3/migration/prefer-redirect-response": {
     description: "Flags the H3 v2 sendRedirect compatibility utility.",
     why: "H3 v2 models redirects as returned Web API response values, while sendRedirect remains a compatibility wrapper around the older event-first API.",
     recommendedReplacement:
@@ -512,7 +570,7 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
-  "nitro/h3/prefer-with-base": {
+  "h3/migration/prefer-with-base": {
     description: "Flags the H3 v2 useBase compatibility alias.",
     why: "H3 v2 renamed the path-prefix handler wrapper to withBase, so using the current name keeps source aligned with the documented API.",
     recommendedReplacement:
@@ -523,6 +581,181 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: 'const handler = useBase("/api", app.handler)',
         valid: 'const handler = withBase("/api", app.handler)',
+      },
+    ],
+  },
+  "h3/response/no-event-first-arg": {
+    description:
+      "Flags redirect(), noContent(), html(), and iterable() called with the event as their first argument.",
+    why: 'H3 v2 response helpers build a response value and no longer take the event. Passing it shifts every argument: redirect(event, "/login") uses the event as the location, and html(event, markup) renders the event instead of the markup.',
+    recommendedReplacement:
+      'Drop the event argument and return the helper\'s result, such as return redirect("/login").',
+    examples: [
+      {
+        title: "Return the helper without the event",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  return redirect(event, "/login")\n})',
+        valid: 'export default defineHandler(() => {\n  return redirect("/login")\n})',
+      },
+    ],
+  },
+  "h3/response/no-discarded-response": {
+    description:
+      "Flags H3 v2 response helpers such as redirect(), html(), and noContent() whose result is never returned from the handler.",
+    why: "In H3 v2 these helpers only build a response value. A call whose result is dropped sends nothing, so the handler falls through and responds with whatever it returns next.",
+    recommendedReplacement:
+      'Return the helper\'s result from the handler, such as return redirect("/login").',
+    examples: [
+      {
+        title: "Return the redirect",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  if (!event.context.user) redirect("/login")\n  return "dashboard"\n})',
+        valid:
+          'export default defineHandler((event) => {\n  if (!event.context.user) return redirect("/login")\n  return "dashboard"\n})',
+      },
+    ],
+  },
+  "h3/response/no-prepared-status-with-response": {
+    description:
+      "Flags a status set through event.res.status or setResponseStatus() in a handler that returns a Response.",
+    why: "H3 v2 applies a prepared event.res.status only to plain return values. A returned Response keeps its own status, so the prepared status is silently ignored and the client gets 200.",
+    recommendedReplacement:
+      "Pass the status to the Response, such as new Response(body, { status: 201 }), or return a plain value instead.",
+    examples: [
+      {
+        title: "Set the status on the Response",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  event.res.status = 201\n  return new Response("created")\n})',
+        valid:
+          'export default defineHandler(() => {\n  return new Response("created", { status: 201 })\n})',
+      },
+    ],
+  },
+  "h3/response/no-html-plain-string": {
+    description: "Flags html() called with a plain string that contains markup.",
+    why: "Since H3 2.0.1-rc.26, html() escapes a plain string argument, so markup passed as a string is rendered as text. Only the html`` tagged template and raw() keep trusted markup.",
+    recommendedReplacement:
+      "Use the tagged template html`<h1>${title}</h1>`, which escapes interpolated values, or wrap trusted markup with raw().",
+    examples: [
+      {
+        title: "Use the html tagged template",
+        language: "ts",
+        invalid: 'export default defineHandler(() => {\n  return html("<h1>Hello</h1>")\n})',
+        valid: "export default defineHandler(() => {\n  return html`<h1>Hello</h1>`\n})",
+      },
+    ],
+  },
+  "h3/errors/no-numeric-create-error": {
+    description: "Flags createError() called with a bare status code, such as createError(404).",
+    why: "createError() reads the status from an object or a message string. A number is neither, so createError(404) builds a 500 error in both H3 v1 and v2, and clients get a server error instead of the intended status.",
+    recommendedReplacement:
+      "Pass the status in an object, such as createError({ status: 404 }), or use HTTPError.status(404) in H3 v2.",
+    examples: [
+      {
+        title: "Pass the status in an object",
+        language: "ts",
+        invalid: "export default defineHandler(() => {\n  throw createError(404)\n})",
+        valid:
+          'export default defineHandler(() => {\n  throw createError({ status: 404, message: "Not found" })\n})',
+      },
+    ],
+  },
+  "h3/errors/no-throw-plain-object": {
+    description:
+      "Flags throw statements in H3 handlers that throw an object literal such as { statusCode: 404 }.",
+    why: "H3 v2 turns a thrown value that is not an Error into an unhandled 500 and drops its fields. H3 v1 passed it through createError(), so code migrated from v1 that throws { statusCode } now answers every such error with 500.",
+    recommendedReplacement:
+      'Throw an HTTPError, such as throw new HTTPError({ status: 404, message: "Not found" }) or throw HTTPError.status(404).',
+    examples: [
+      {
+        title: "Throw an HTTPError",
+        language: "ts",
+        invalid:
+          'export default defineHandler(() => {\n  throw { statusCode: 404, message: "Not found" }\n})',
+        valid:
+          'export default defineHandler(() => {\n  throw new HTTPError({ status: 404, message: "Not found" })\n})',
+      },
+    ],
+  },
+  "h3/body/no-double-body-read": {
+    description:
+      "Flags a handler that reads the request body twice, or reads it and then proxies the request.",
+    why: "H3 v2 uses the Web Request stream. If a body is present and the first read consumes it, a second read can fail and the original stream can no longer be forwarded by a proxy.",
+    recommendedReplacement:
+      "Read the body once and reuse it, or read from a clone before forwarding the original stream to a proxy.",
+    examples: [
+      {
+        title: "Read the body once",
+        language: "ts",
+        invalid:
+          "export default defineHandler(async (event) => {\n  await audit(await readBody(event))\n  return save(await readBody(event))\n})",
+        valid:
+          "export default defineHandler(async (event) => {\n  const body = await readBody(event)\n  await audit(body)\n  return save(body)\n})",
+      },
+    ],
+  },
+  "h3/security/session-password-too-short": {
+    description:
+      "Flags a literal password shorter than 32 characters in session calls that can seal a session.",
+    why: 'When H3 seals a session, iron-webcrypto rejects short passwords with "Password string too short". Reading an existing session does not necessarily seal it.',
+    recommendedReplacement:
+      "Read a secret of at least 32 characters from runtime configuration or an environment variable instead of a literal.",
+    examples: [
+      {
+        title: "Read the session password from the environment",
+        language: "ts",
+        invalid:
+          'export default defineHandler((event) => {\n  return useSession(event, { password: "dev-secret" })\n})',
+        valid:
+          "export default defineHandler((event) => {\n  return useSession(event, { password: process.env.SESSION_PASSWORD })\n})",
+      },
+    ],
+  },
+  "h3/migration/no-ignored-hooks": {
+    description:
+      "Flags onRequest and onBeforeResponse on handler objects, and onBeforeResponse and onAfterResponse in app options, which H3 v2 never calls.",
+    why: "H3 v2 replaced handler-object hooks with a middleware array and kept only onRequest, onResponse, and onError as app hooks. The old keys are copied onto the handler or config but never run, so authentication, logging, or header logic in them silently stops.",
+    recommendedReplacement:
+      "Move handler hooks into middleware, such as defineHandler({ middleware: [auth], handler }), and move onBeforeResponse or onAfterResponse app logic to onResponse.",
+    examples: [
+      {
+        title: "Move handler hooks into middleware",
+        language: "ts",
+        invalid: 'export default defineHandler({\n  onRequest: [auth],\n  handler: () => "ok",\n})',
+        valid: 'export default defineHandler({\n  middleware: [auth],\n  handler: () => "ok",\n})',
+      },
+    ],
+  },
+  "h3/migration/no-removed-router-api": {
+    description:
+      "Flags router.add(), router.resolve(), app.stack, lazy handlers registered with { lazy: true }, and array route paths, which H3 v2 removed.",
+    why: "H3 v2 merged the router into the app. The removed members are undefined at runtime, so a call throws when the route module loads and the server fails to start.",
+    recommendedReplacement:
+      "Register routes with app.on(method, path, handler) or app.get(path, handler), register each path separately, and wrap lazy handlers with defineLazyEventHandler().",
+    examples: [
+      {
+        title: "Register routes on the app",
+        language: "ts",
+        invalid: 'const router = createRouter()\nrouter.add("/items", listItems)\napp.use(router)',
+        valid: 'app.get("/items", listItems)',
+      },
+    ],
+  },
+  "h3/middleware/no-exact-path-use": {
+    description:
+      'Flags app.use("/path", middleware) with a path that has no wildcard. Mounting a sub-app with app.use("/path", app) still matches nested paths and is not flagged.',
+    why: 'In H3 v1, app.use("/api", fn) ran for every path under /api. In H3 v2 a middleware path is a route pattern, so "/api" matches only /api itself and the middleware skips every nested route.',
+    recommendedReplacement:
+      'Add a wildcard, such as app.use("/api/**", fn), or keep the exact path when the middleware is meant for that one route.',
+    examples: [
+      {
+        title: "Match nested paths with a wildcard",
+        language: "ts",
+        invalid: 'app.use("/api", auth)',
+        valid: 'app.use("/api/**", auth)',
       },
     ],
   },
@@ -703,33 +936,6 @@ export const ruleDocumentationMetadata = {
         language: "ts",
         invalid: "useHead({\n  script: [{ src: 'https://example.com/widget.js' }],\n})",
         valid: "useHeadSafe({\n  script: [{ src: trustedWidgetUrl }],\n})",
-      },
-    ],
-  },
-  "nuxt-ui/prefer-u-button": {
-    description: "Finds Nuxt project code that should use the supported u button pattern instead.",
-    why: "Native buttons repeat styling, loading, icon, and link behavior that UButton keeps consistent with the project's Nuxt UI theme.",
-    recommendedReplacement: "Use the Nuxt-supported u button pattern instead.",
-    examples: [
-      {
-        title: "Use UButton",
-        language: "vue",
-        invalid: '<template>\n  <button type="button">Save</button>\n</template>',
-        valid: '<template>\n  <UButton type="button">Save</UButton>\n</template>',
-      },
-    ],
-  },
-  "nuxt-ui/prefer-u-form-controls": {
-    description:
-      "Finds Nuxt project code that should use the supported u form controls pattern instead.",
-    why: "Native form controls bypass Nuxt UI's validation, help text, error state, and accessibility wiring.",
-    recommendedReplacement: "Use the Nuxt-supported u form controls pattern instead.",
-    examples: [
-      {
-        title: "Use Nuxt UI form controls",
-        language: "vue",
-        invalid: '<template>\n  <input v-model="email" type="email">\n</template>',
-        valid: '<template>\n  <UInput v-model="email" type="email" />\n</template>',
       },
     ],
   },
@@ -1791,16 +1997,18 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/shared/no-vue-or-nitro-context-in-shared": {
     description:
-      "Flags vue or nitro context in shared in Nuxt shared code before it leaks into runtime behavior.",
-    why: "Nuxt gives this pattern a specific contract. Staying inside that contract makes the code easier to test, refactor, and run across server and client runtimes.",
+      "Report shared/ code, in the root project and in layers, that imports or calls something only the Vue app or the Nitro server has: vue, nuxt/app, #app, #imports, #ui, h3, nitropack, nitro, Node built-ins, app code through ~/ or relative paths, process.env, and Nuxt or Nitro context helpers. Type-only imports are allowed.",
+    why: "Nuxt bundles shared/ into both the app and the server, and its docs say shared code cannot import Vue or Nitro code. Only #app fails the build: vue builds without a warning, node:fs gives only a Vite warning, and app code imported through ~/ ends up in the server bundle. process.env holds the server's environment on the server and is empty or replaced at build time in the browser.",
     recommendedReplacement:
-      "Remove vue or nitro context in shared, or move it to the Nuxt runtime/API that owns that behavior.",
+      "Keep shared/ code pure: pass context and configuration in as parameters. Move Vue composables to app/composables/, Nitro and Node code to server/utils/, and read configuration with useRuntimeConfig() on the side that needs it.",
     examples: [
       {
         title: "Keep shared utilities runtime-neutral",
         language: "ts",
-        invalid: "export function currentPath() {\n  return useRoute().path\n}",
-        valid: "export function currentPath(path: string) {\n  return path\n}",
+        invalid:
+          "// shared/utils/slug.ts\nexport { ref } from 'vue'\nconst prefix = process.env.SLUG_PREFIX\n\nexport function currentPath() {\n  return useRoute().path\n}",
+        valid:
+          "// shared/utils/slug.ts\nexport function slugify(text: string, prefix = '') {\n  return prefix + text.toLowerCase().replace(/\\W+/g, '-')\n}",
       },
     ],
   },
@@ -1937,7 +2145,7 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/structure/no-server-utils-in-app": {
     description: "Report runtime imports from the Nuxt server directory in app or shared code.",
-    why: "Nuxt's import protection doesn't block server/utils. Importing from it in app code ships server code (database clients, private config reads, Node APIs) into the client bundle. Code used by both sides belongs in shared/utils/, which Nuxt auto-imports in both the app and the server.",
+    why: "Nuxt's import protection doesn't block server/utils, and it checks paths after aliases resolve, so #server/utils/ gets through too. Before Nuxt 4.4 its check for server/api, routes, middleware and plugins never matched an app/ srcDir either. Importing from these in app code ships server code (database clients, private config reads, Node APIs) into the client bundle. Code used by both sides belongs in shared/utils/, which Nuxt auto-imports in both the app and the server.",
     recommendedReplacement:
       "Move code used by both the app and the server to shared/utils/. Keep server-only logic in server/ and call it through an API route.",
     examples: [
@@ -1964,6 +2172,37 @@ export const ruleDocumentationMetadata = {
           "// app/pages/orders.vue <script setup>\nimport type { Order } from '~~/server/utils/orders'",
         valid:
           "// shared/types/order.ts\nexport interface Order {\n  id: string\n  totalCents: number\n}\n\n// app/pages/orders.vue: auto-imported\nconst { data } = await useFetch<Order[]>('/api/orders')",
+      },
+    ],
+  },
+  "nuxt/structure/no-app-code-in-server": {
+    description:
+      "Report runtime imports in Nuxt server code that resolve to app code: ~/, @/, ~~/app/, @@/app/, relative paths, and layer or manifest aliases.",
+    why: "Nuxt's import protection only rejects #app in server code. Importing an app module from server/ builds without a warning and Nitro bundles it into the server output. App code can rely on Nuxt's app auto-imports, plugins and browser APIs, which the server does not have, and it couples server code to the app's internals. Code used by both sides belongs in shared/utils/, which Nuxt auto-imports in both the app and the server.",
+    recommendedReplacement:
+      "Move code used by both the server and the app to shared/utils/. Keep code that needs the Vue app in app/.",
+    examples: [
+      {
+        title: "Share utilities through shared/utils",
+        language: "ts",
+        invalid: "// server/api/cart.get.ts\nimport { formatPrice } from '~/utils/format'",
+        valid:
+          "// shared/utils/format.ts\nexport const formatPrice = (cents: number) => (cents / 100).toFixed(2)\n\n// server/api/cart.get.ts: auto-imported\nexport default defineEventHandler(() => formatPrice(1999))",
+      },
+    ],
+  },
+  "nuxt/structure/no-app-types-in-server": {
+    description: "Report type-only imports of app code in Nuxt server code.",
+    why: "Type-only imports are erased from the server bundle, but they couple server code to app internals. A refactor that adds a runtime import next to the type pulls app code into the server. Types used by both sides belong in shared/types/, which Nuxt auto-imports in both the app and the server.",
+    recommendedReplacement:
+      "Move types used by both the server and the app to shared/types/ and import them from there on both sides.",
+    examples: [
+      {
+        title: "Share types through shared/types",
+        language: "ts",
+        invalid: "// server/api/cart.get.ts\nimport type { Cart } from '~/types/cart'",
+        valid:
+          "// shared/types/cart.ts\nexport interface Cart {\n  items: string[]\n}\n\n// server/api/cart.get.ts: auto-imported\nexport default defineEventHandler((): Cart => ({ items: [] }))",
       },
     ],
   },

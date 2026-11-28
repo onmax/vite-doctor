@@ -1,8 +1,7 @@
 import { createRule } from "../../../core/index.js";
-import type { McpTool } from "../../../mcp/types.js";
 import { diagnostics } from "../diagnostics.js";
 import { collectMcpTools } from "./shared.js";
-import { annotationsProblem, reportWireTool, wireToolLabel, wireTools } from "./wire.js";
+import { reportWireTools, wireTools } from "./wire.js";
 
 export const validAnnotations = createRule({
   meta: {
@@ -41,48 +40,13 @@ export const validAnnotations = createRule({
     return {
       async onWorkspaceEnd() {
         const { tools } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of tools) {
-          const problem = annotationsProblem(wire.tool);
-          if (!problem) continue;
-          const empty =
-            problem.schema && emptyInputSchema(wire.tool)
-              ? " Its `inputSchema` is empty too, so the tool's real input schema was likely passed as the annotations and never reached clients."
-              : "";
-          reportWireTool(
-            ctx,
-            wire,
-            diagnostics.MCP0010({
-              why: `In its tools/list entry, MCP tool ${wireToolLabel(wire)} ${problem.why}${empty}`,
-              fix: problem.schema ? SCHEMA_FIX : TYPE_FIX,
-            }),
-            {
-              ruleId: "mcp/tools/valid-annotations",
-              range: (tool) =>
-                tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
-              findings: [],
-            },
-          );
-        }
+        reportWireTools(ctx, tools, "MCP0010", {
+          ruleId: "mcp/tools/valid-annotations",
+          diagnostic: diagnostics.MCP0010,
+          range: (tool) =>
+            tool.annotations.state === "absent" ? tool.callee : tool.annotations.range,
+        });
       },
     };
   },
 });
-
-const TYPE_FIX =
-  "Send `annotations` as an object whose `title` is a string and whose `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint` are booleans, such as `{ title: 'Search docs', readOnlyHint: true }`.";
-
-const SCHEMA_FIX =
-  "A schema landed where the annotations go. With `server.tool()`, pass the input schema as a raw Zod shape (`{ path: z.string() }`, not `z.object(...)`). With `server.registerTool(name, { inputSchema, annotations }, cb)`, pass a raw shape or a `z.object(...)`: a root `z.union(...)` or `.nullable()` still publishes an empty object schema, so make optional arguments optional fields (`{ path: z.string().optional() }`). Then set `annotations` to `{ title, readOnlyHint: true }` or `{ title, destructiveHint: true }`.";
-
-/** A schema that declares no arguments, as the SDK publishes for a schema it couldn't convert. */
-function emptyInputSchema(tool: McpTool): boolean {
-  const schema = tool.inputSchema;
-  if (!schema) return true;
-  return Object.entries(schema).every(([key, value]) => {
-    if (key === "type") return value === "object";
-    if (key === "properties")
-      return !!value && typeof value === "object" && !Object.keys(value).length;
-    if (key === "additionalProperties") return typeof value === "boolean";
-    return key === "$schema";
-  });
-}

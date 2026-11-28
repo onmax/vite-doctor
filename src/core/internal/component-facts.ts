@@ -2,7 +2,9 @@ import type {
   ComponentFacts,
   ComponentPropFact,
   ComponentRootBranch,
+  ComponentSlotHost,
   ComponentUsageFact,
+  DoctorComponentOption,
   SourceRange,
   TemplateChildNode,
   TemplateDirectiveNode,
@@ -10,6 +12,8 @@ import type {
   TemplateRootNode,
 } from "../primitives.js";
 
+import { parseScript } from "./script.js";
+import { patternNames } from "./script-index.js";
 import { analyzeScriptProgram } from "./script-scope.js";
 import {
   findTemplateDirective,
@@ -30,6 +34,7 @@ const BUILT_IN_COMPONENTS = new Set([
   "teleport",
   "suspense",
 ]);
+const CONDITIONAL_DIRECTIVES = new Set(["if", "else-if", "else", "show"]);
 const DECLARATION_MACROS = new Set([
   "defineProps",
   "defineEmits",
@@ -69,6 +74,8 @@ export function createComponentFactsCollector(
     localComponentLookupKnown: false,
     models: [],
     imports: [],
+    setupBindings: [],
+    registeredComponentNames: [],
     ownLogic: false,
     ownMarkup: false,
     rootNodes: 0,
@@ -78,6 +85,7 @@ export function createComponentFactsCollector(
     nuxtAttrsReferences: [],
     comparisons: [],
     usages: [],
+    slotOutlets: [],
     bindingReferences: [],
   };
   const references = new Set<string>();
@@ -236,6 +244,10 @@ function readScriptDeclarations(
       if (!isOptionsWithoutLogic(statement)) facts.ownLogic = plainScriptCode = true;
       continue;
     }
+    if (statement.type === "VariableDeclaration")
+      for (const declaration of statement.declarations)
+        patternNames(declaration.id, facts.setupBindings);
+    else if (statement.id?.name) facts.setupBindings.push(statement.id.name);
     if (isMacroCall(statement, "defineProps")) declaresProps = true;
     if (isMacroCall(statement, "defineEmits")) declaresEmits = true;
     if (
@@ -286,6 +298,29 @@ function readScriptDeclarations(
           typeof inherit.value.value === "boolean"
         ? inherit.value.value
         : undefined;
+  const normalDoctor = normalOptions === undefined ? {} : findOption(normalOptions, "doctor");
+  const setupDoctor = setupOptions === undefined ? {} : findOption(setupOptions, "doctor");
+  const declaredDoctor = setupDoctor.value ?? normalDoctor.value;
+  const overwrite = setupDoctor.unknown ?? (setupDoctor.value ? undefined : normalDoctor.unknown);
+  if (declaredDoctor) {
+    const range = rangeOf(declaredDoctor.start, declaredDoctor.end);
+    facts.doctorOption = overwrite
+      ? {
+          range,
+          unreadable: rangeOf(overwrite.start, overwrite.end),
+          cause: setupDoctor.unknown && !setupDoctor.value ? "overridden-by-setup" : "overridden",
+        }
+      : readDoctorOption(declaredDoctor, rangeOf);
+  }
+  const registered = option("components");
+  if (registered !== "absent" && registered !== "unknown") {
+    const object = unwrapOptions(registered.value);
+    if (object?.type === "ObjectExpression")
+      for (const property of object.properties) {
+        const key = optionKey(property);
+        if (key !== undefined) facts.registeredComponentNames.push(key);
+      }
+  }
   if (delegated) {
     facts.props = undefined;
     facts.emits = undefined;
@@ -317,29 +352,104 @@ function localComponentRegistry(program: AnyNode, value: AnyNode): AnyNode {
   return undefined;
 }
 
+function readDoctorOption(node: AnyNode, rangeOf: RangeOf): DoctorComponentOption {
+  const range = rangeOf(node.start, node.end);
+  const read = staticJson(node);
+  return "unreadable" in read
+    ? { range, unreadable: rangeOf(read.unreadable.start, read.unreadable.end), cause: "computed" }
+    : { range, value: read.value };
+}
+
+/** The JSON value a literal expression spells, or the first node that is not a literal. */
+function unwrapOptions(node: AnyNode): AnyNode {
+  while (
+    node?.type === "TSAsExpression" ||
+    node?.type === "TSTypeAssertion" ||
+    node?.type === "TSNonNullExpression" ||
+    node?.type === "TSSatisfiesExpression" ||
+    node?.type === "ParenthesizedExpression"
+  )
+    node = node.expression;
+  return node;
+}
+
+function staticJson(node: AnyNode): { value: unknown } | { unreadable: AnyNode } {
+  node = unwrapOptions(node);
+  if (node?.type === "Literal" && !node.regex && node.bigint === undefined)
+    return { value: node.value };
+  if (node?.type === "TemplateLiteral" && !node.expressions.length)
+    return { value: node.quasis[0]?.value.cooked };
+  if (
+    node?.type === "UnaryExpression" &&
+    node.operator === "-" &&
+    node.argument?.type === "Literal" &&
+    typeof node.argument.value === "number"
+  )
+    return { value: -node.argument.value };
+  if (node?.type === "ArrayExpression") {
+    const value: unknown[] = [];
+    for (const element of node.elements) {
+      if (!element || element.type === "SpreadElement") return { unreadable: element ?? node };
+      const item = staticJson(element);
+      if ("unreadable" in item) return item;
+      value.push(item.value);
+    }
+    return { value };
+  }
+  if (node?.type === "ObjectExpression") {
+    const value: Record<string, unknown> = {};
+    for (const property of node.properties) {
+      const key =
+        property.computed && property.key?.type === "Literal"
+          ? String(property.key.value)
+          : propertyKey(property);
+      if (key === undefined || property.kind !== "init" || property.method)
+        return { unreadable: property };
+      const item = staticJson(property.value);
+      if ("unreadable" in item) return item;
+      value[key] = item.value;
+    }
+    return { value };
+  }
+  return { unreadable: node };
+}
+
 function componentOptions(declaration: AnyNode): AnyNode {
+  declaration = unwrapOptions(declaration);
   return declaration?.type === "CallExpression" && declaration.callee?.name === "defineComponent"
     ? declaration.arguments?.[0]
     : declaration;
 }
 
 function readOption(options: AnyNode, name: string): "absent" | "unknown" | { value: AnyNode } {
-  if (options?.type !== "ObjectExpression") return "unknown";
+  const result = findOption(options, name);
+  return "unknown" in result ? "unknown" : result.value ? { value: result.value } : "absent";
+}
+
+function findOption(options: AnyNode, name: string): { value?: AnyNode; unknown?: AnyNode } {
+  options = unwrapOptions(options);
+  if (options?.type !== "ObjectExpression") return { unknown: options };
+  let unknown: AnyNode;
   for (let index = options.properties.length - 1; index >= 0; index--) {
     const property = options.properties[index];
     if (property.type === "SpreadElement") {
-      const spread = readOption(property.argument, name);
-      if (spread !== "absent") return spread;
+      const spread = findOption(property.argument, name);
+      if ("unknown" in spread) unknown ??= spread.unknown ?? property;
+      if (spread.value) return unknown ? { value: spread.value, unknown } : { value: spread.value };
       continue;
     }
-    const key =
-      property.computed && property.key?.type === "Literal"
-        ? String(property.key.value)
-        : propertyKey(property);
-    if (key === name) return { value: property.value };
-    if (property.computed && key === undefined) return "unknown";
+    const key = optionKey(property);
+    if (key === name)
+      return unknown ? { value: property.value, unknown } : { value: property.value };
+    if (property.computed && key === undefined) unknown ??= property;
   }
-  return "absent";
+  return unknown ? { unknown } : {};
+}
+
+function optionKey(property: AnyNode): string | undefined {
+  return property.computed && property.key?.type === "Literal"
+    ? String(property.key.value)
+    : propertyKey(property);
 }
 
 function isMacroCall(statement: AnyNode, name: string): boolean {
@@ -437,16 +547,9 @@ function readMacroCall(
   if (name === "withDefaults") {
     const inner = call.arguments?.[0];
     if (inner?.callee?.name !== "defineProps") return false;
-    readProps(facts, inner, id, types, rangeOf);
     const defaults = call.arguments?.[1];
-    const defaulted = new Set<string>();
-    if (defaults?.type === "ObjectExpression")
-      for (const property of defaults.properties ?? []) {
-        const key = propertyKey(property);
-        if (key) defaulted.add(camelize(key));
-      }
-    else if (defaults) facts.props = undefined;
-    for (const prop of facts.props ?? []) if (defaulted.has(prop.name)) prop.default = true;
+    readProps(facts, inner, id, types, rangeOf, defaults);
+    if (defaults && defaults.type !== "ObjectExpression") facts.props = undefined;
     return true;
   }
   if (name === "defineProps") {
@@ -481,10 +584,11 @@ function readProps(
   id: AnyNode,
   types: Map<string, AnyNode>,
   rangeOf: RangeOf,
+  defaults?: AnyNode,
 ): void {
   const typeArgument = (call.typeArguments ?? call.typeParameters)?.params?.[0];
   const props = typeArgument
-    ? propsFromType(typeArgument, types, rangeOf)
+    ? propsFromType(typeArgument, types, rangeOf, defaults)
     : propsFromRuntime(call.arguments?.[0], rangeOf);
   facts.props = props;
   if (id?.type === "Identifier") {
@@ -508,7 +612,9 @@ function readProps(
     if (value?.type === "Identifier") aliases[value.name] = camelize(key);
     if (property.value?.type === "AssignmentPattern") {
       const prop = facts.props?.find((item) => item.name === camelize(key));
-      if (prop) prop.default = true;
+      if (!prop) continue;
+      if (defaults) prop.localFallback = true;
+      else setDefault(prop, stringLiteral(property.value.right));
     }
   }
   facts.propAliases = aliases;
@@ -533,11 +639,15 @@ function propsFromRuntime(argument: AnyNode, rangeOf: RangeOf): ComponentPropFac
   for (const property of argument.properties ?? []) {
     const key = propertyKey(property);
     if (!key) return undefined;
-    props.push({
+    const prop: ComponentPropFact = {
       name: camelize(key),
-      default: hasProperty(property.value, "default"),
+      default: false,
       range: rangeOf(property.start, property.end),
-    });
+    };
+    const fallback = findOption(property.value, "default");
+    if (fallback.value)
+      setDefault(prop, "unknown" in fallback ? undefined : stringLiteral(fallback.value));
+    props.push(prop);
   }
   return props;
 }
@@ -546,9 +656,9 @@ function propsFromType(
   type: AnyNode,
   types: Map<string, AnyNode>,
   rangeOf: RangeOf,
-  seen = new Set<string>(),
+  defaults?: AnyNode,
 ): ComponentPropFact[] | undefined {
-  const members = typeMembers(type, types, seen);
+  const members = typeMembers(type, types, new Set<string>());
   if (!members) return undefined;
   const props: ComponentPropFact[] = [];
   for (const member of members) {
@@ -556,7 +666,17 @@ function propsFromType(
       return undefined;
     const key = !member.computed ? propertyKey(member) : undefined;
     if (!key) return undefined;
-    props.push({ name: camelize(key), default: false, range: rangeOf(member.start, member.end) });
+    const prop: ComponentPropFact = {
+      name: camelize(key),
+      default: false,
+      range: rangeOf(member.start, member.end),
+    };
+    if (defaults) {
+      const fallback = findOption(defaults, key);
+      if (fallback.value)
+        setDefault(prop, "unknown" in fallback ? undefined : stringLiteral(fallback.value));
+    }
+    props.push(prop);
   }
   return props;
 }
@@ -674,6 +794,19 @@ function propertyKey(property: AnyNode): string | undefined {
   return undefined;
 }
 
+function setDefault(prop: ComponentPropFact, value: string | undefined): void {
+  prop.default = true;
+  if (value === undefined) delete prop.defaultValue;
+  else prop.defaultValue = value;
+}
+
+function stringLiteral(node: AnyNode): string | undefined {
+  if (node?.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node?.type === "TemplateLiteral" && !node.expressions?.length)
+    return node.quasis?.[0]?.value?.cooked ?? undefined;
+  return undefined;
+}
+
 function hasProperty(node: AnyNode, name: string): boolean {
   return (
     node?.type === "ObjectExpression" &&
@@ -718,7 +851,15 @@ function walkComponentTemplate(
     facts.roots.push({ branches });
   }
   facts.rootNodes = facts.roots.length;
-  for (const child of root.children) walkChild(walk, child, [], false, undefined, []);
+  for (const child of root.children)
+    walkChild(walk, child, {
+      scope: [],
+      inFor: false,
+      conditional: false,
+      parent: undefined,
+      builtInHosts: [],
+      wrappers: [],
+    });
 }
 
 function rootBranch(element: TemplateElementNode, rangeOf: RangeOf): ComponentRootBranch {
@@ -733,14 +874,18 @@ function locRange(rangeOf: RangeOf, node: TemplateChildNode): SourceRange {
   return rangeOf(node.loc.start.offset, node.loc.end.offset);
 }
 
-function walkChild(
-  walk: TemplateWalk,
-  node: TemplateChildNode,
-  scope: string[],
-  inFor: boolean,
-  parent: ComponentUsageFact["parent"],
-  wrappers: ComponentUsageFact["wrappers"],
-): void {
+/** Where a template node sits: what encloses it and whether it always renders. */
+interface WalkPlace {
+  scope: string[];
+  inFor: boolean;
+  conditional: boolean;
+  parent: ComponentUsageFact["parent"];
+  host?: ComponentSlotHost;
+  builtInHosts: string[];
+  wrappers: ComponentUsageFact["wrappers"];
+}
+
+function walkChild(walk: TemplateWalk, node: TemplateChildNode, place: WalkPlace): void {
   if (node.type === TemplateNodeType.TEXT) {
     if (node.content.trim()) walk.facts.ownMarkup = true;
     return;
@@ -751,30 +896,27 @@ function walkChild(
     return;
   }
   if (node.type !== TemplateNodeType.ELEMENT) return;
-  walkElement(walk, node, scope, inFor, parent, wrappers);
+  walkElement(walk, node, place);
 }
 
-function walkElement(
-  walk: TemplateWalk,
-  element: TemplateElementNode,
-  scope: string[],
-  inFor: boolean,
-  parent: ComponentUsageFact["parent"],
-  wrappers: ComponentUsageFact["wrappers"],
-): void {
-  let elementScope = scope;
-  let childScope = scope;
-  let elementInFor = inFor;
+function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: WalkPlace): void {
+  let elementScope = place.scope;
+  let childScope = place.scope;
+  let elementInFor = place.inFor;
+  let conditional = place.conditional;
+  const { parent, wrappers } = place;
   for (const prop of element.props) {
     if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
     if (prop.name === "for" && prop.forParseResult) {
       const aliases = templateDirectiveBindings(prop);
 
-      elementScope = [...scope, ...aliases];
+      elementScope = [...place.scope, ...aliases];
       childScope = elementScope;
       elementInFor = true;
     }
+    if (CONDITIONAL_DIRECTIVES.has(prop.name)) conditional = true;
   }
+  if (mayHide(element)) conditional = true;
   for (const prop of element.props) {
     if (prop.type === TemplateNodeType.DIRECTIVE && prop.name === "slot" && prop.exp)
       childScope = [...childScope, ...identifiers(prop.exp.content)];
@@ -808,10 +950,22 @@ function walkElement(
     if (walk.facts.imports.some((item) => item.local === binding)) dynamicImport = binding;
     walk.facts.dynamicRenders.push({ wrappers, binding, name });
   }
+  const here = {
+    inFor: elementInFor,
+    conditional,
+    ...(place.host && { host: place.host }),
+    builtInHosts: place.builtInHosts,
+  };
   const usage =
     kind === "component"
-      ? createUsage(walk, element, elementScope, elementInFor, parent, wrappers)
+      ? createUsage(walk, element, elementScope, here, parent, wrappers)
       : undefined;
+  if (kind === "slot")
+    walk.facts.slotOutlets.push({
+      name: slotOutletName(element),
+      ...here,
+      range: locRange(walk.rangeOf, element),
+    });
   for (const prop of element.props) {
     if (prop.type === TemplateNodeType.ATTRIBUTE) {
       walk.visitAttribute(
@@ -844,6 +998,7 @@ function walkElement(
       walk.facts.ownMarkup = true;
     if (usage) readUsageDirective(walk, usage, prop);
   }
+  const usageIndex = walk.facts.usages.length;
   if (usage) walk.facts.usages.push(usage);
   const childParent =
     element.tagType === 3
@@ -881,8 +1036,146 @@ function walkElement(
     if (wrapper && wrapper.tag === parent?.tag)
       childWrappers = [...wrappers.slice(0, -1), { ...wrapper, defaultSlot: false }];
   }
-  for (const child of element.children)
-    walkChild(walk, child, childScope, elementInFor, childParent, childWrappers);
+  const builtIn = element.tagType === 1 && kind === "markup";
+  const childPlace: WalkPlace = {
+    scope: childScope,
+    inFor: elementInFor,
+    // Fallback content of a <slot> renders only when the caller passes nothing.
+    conditional: conditional || kind === "slot",
+    parent: childParent,
+    wrappers: childWrappers,
+    ...(place.host && { host: place.host }),
+    builtInHosts: builtIn ? [...place.builtInHosts, element.tag] : place.builtInHosts,
+  };
+  const ownSlot = slotName(findTemplateDirective(element, "slot"));
+  for (const child of element.children) {
+    const slot = child.type === TemplateNodeType.ELEMENT ? slotTemplateName(child) : undefined;
+    if (usage)
+      walkChild(walk, child, {
+        ...childPlace,
+        host: {
+          usage: usageIndex,
+          slot: slot === undefined ? (ownSlot === undefined ? "default" : ownSlot) : slot,
+        },
+      });
+    else if (builtIn && slot !== undefined && slot !== "default")
+      walkChild(walk, child, { ...childPlace, conditional: true });
+    else walkChild(walk, child, childPlace);
+  }
+}
+
+// Closed until the user opens them.
+const CLOSED_ELEMENTS = new Set(["dialog", "details"]);
+// `hidden`, `sr-only`, and variants such as `lg:hidden`, with Tailwind's `!` important marker.
+const HIDING_CLASS = /^!?(?:[^\s]+:)?(?:hidden|sr-only)!?$/;
+
+/**
+ * Whether an element or component usage may render without showing its content: a closed native
+ * element, a `hidden` or `popover` attribute, inline style, or a potentially hiding class or spread.
+ */
+function mayHide(element: TemplateElementNode): boolean {
+  if (element.tagType === 0 && CLOSED_ELEMENTS.has(element.tag.toLowerCase())) return true;
+  if (element.tagType !== 0 && elementKind(element) !== "component") return false;
+  return element.props.some((prop) => {
+    if (prop.type === TemplateNodeType.ATTRIBUTE) {
+      const name = prop.name.toLowerCase();
+      if (name === "hidden" || name === "popover") return true;
+      if (name === "style") return Boolean(prop.value?.content.trim());
+      return name === "class" && hidingClass(prop.value?.content ?? "");
+    }
+    if (prop.name !== "bind") return false;
+    if (!prop.arg) return objectMayBind(bindingExpression(prop.exp?.content), bindingMayHide);
+    if (!prop.arg.isStatic) return true;
+    const modifiers = prop.modifiers.map((modifier) => modifier.content);
+    const arg = modifiers.includes("camel") ? camelize(prop.arg.content) : prop.arg.content;
+    const propKey = modifiers.includes("prop") ? `.${arg}` : arg;
+    const key = modifiers.includes("attr") ? `^${propKey}` : propKey;
+    return visibilityBinding(key) && bindingMayHide(key, bindingExpression(prop.exp?.content));
+  });
+}
+
+function bindingExpression(expression: string | undefined): AnyNode {
+  const program = parseScript("binding.ts", `(${expression ?? ""})`) as AnyNode;
+  const statement = program?.body?.length === 1 ? program.body[0] : undefined;
+  return unwrapOptions(
+    statement?.type === "ExpressionStatement" ? statement.expression : undefined,
+  );
+}
+
+function objectMayBind(node: AnyNode, test: (key: string, value: AnyNode) => boolean): boolean {
+  node = unwrapOptions(node);
+  if (node?.type !== "ObjectExpression") return true;
+  return node.properties.some((property: AnyNode) => {
+    if (property.type === "SpreadElement") return objectMayBind(property.argument, test);
+    const key = optionKey(property);
+    return key === undefined || test(key, unwrapOptions(property.value));
+  });
+}
+
+export function bindingMaySet(expression: string, names: readonly string[]): boolean {
+  return objectMayBind(bindingExpression(expression), (key) => names.includes(key));
+}
+
+function hidingClass(value: string): boolean {
+  return value.split(/\s+/).some((token) => HIDING_CLASS.test(token));
+}
+
+function knownFalsy(node: AnyNode): boolean {
+  return node?.type === "Literal" && !node.regex && !node.value;
+}
+
+function visibilityKey(key: string): string {
+  return key.replace(/^[.^]+/, "").toLowerCase();
+}
+
+function visibilityBinding(key: string): boolean {
+  return ["class", "hidden", "popover", "style"].includes(visibilityKey(key));
+}
+
+function bindingMayHide(key: string, value: AnyNode): boolean {
+  const name = visibilityKey(key);
+  if (name === "hidden" && (key === "hidden" || key === ".hidden"))
+    return !knownFalsy(value) || value.value === "";
+  if (name === "hidden" || name === "popover" || name === "style")
+    return value?.type !== "Literal" || value.value !== null;
+  if (name !== "class") return false;
+  if (key !== "class") return true;
+  value = unwrapOptions(value);
+  if (value?.type === "ArrayExpression")
+    return value.elements.some((item: AnyNode) => item && bindingMayHide("class", item));
+  if (value?.type === "ObjectExpression")
+    return objectMayBind(value, (key, item) => hidingClass(key) && !knownFalsy(item));
+  const literal = stringLiteral(value);
+  return literal === undefined ? !knownFalsy(value) : hidingClass(literal);
+}
+
+/** The slot a `<template v-slot>` fills: its static name, null when dynamic, undefined if none. */
+function slotTemplateName(element: TemplateElementNode): string | null | undefined {
+  if (element.tagType !== 3) return undefined;
+  return slotName(findTemplateDirective(element, "slot"));
+}
+
+function slotName(slot: TemplateDirectiveNode | undefined): string | null | undefined {
+  if (!slot) return undefined;
+  if (!slot.arg) return "default";
+  return slot.arg.isStatic ? slot.arg.content : null;
+}
+
+function slotOutletName(element: TemplateElementNode): string | null {
+  let name = "default";
+  for (const prop of element.props) {
+    if (prop.type === TemplateNodeType.ATTRIBUTE && prop.name === "name")
+      name = prop.value?.content || "default";
+    if (
+      prop.type === TemplateNodeType.DIRECTIVE &&
+      prop.name === "bind" &&
+      (prop.arg
+        ? !prop.arg.isStatic || prop.arg.content === "name"
+        : bindingMaySet(prop.exp?.content ?? "", ["name"]))
+    )
+      return null;
+  }
+  return name;
 }
 
 function elementKind(element: TemplateElementNode): "component" | "markup" | "slot" | "template" {
@@ -898,7 +1191,7 @@ function createUsage(
   walk: TemplateWalk,
   element: TemplateElementNode,
   scope: string[],
-  inFor: boolean,
+  place: Pick<ComponentUsageFact, "inFor" | "conditional" | "host" | "builtInHosts">,
   parent: ComponentUsageFact["parent"],
   wrappers: ComponentUsageFact["wrappers"],
 ): ComponentUsageFact {
@@ -913,8 +1206,13 @@ function createUsage(
     listeners: [],
     directives: [],
     wrappers,
+    hasSlotContent: element.children.some(
+      (child) =>
+        child.type !== TemplateNodeType.COMMENT &&
+        (child.type !== TemplateNodeType.TEXT || child.content.trim() !== ""),
+    ),
     scope,
-    inFor,
+    ...place,
   };
 }
 

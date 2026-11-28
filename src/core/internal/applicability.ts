@@ -9,6 +9,7 @@ import type {
 } from "../primitives.js";
 import { workspaceProjectView } from "./workspace-nuxt.js";
 import { packageFrameworks } from "./workspace-packages.js";
+import { declaredRuntimes, runtimeProviders } from "./runtime-packages.js";
 
 export interface ApplicabilityResult {
   state: ApplicabilityState;
@@ -43,7 +44,7 @@ export function evaluatePackActivation(pack: RulePack, project: ProjectInfo): Ap
   if (pack.activation === false)
     return inactive(`Rule Pack ${pack.name} requires explicit preset selection.`);
   const results = projectWorkspacePackages(project).map((item) =>
-    evaluateWorkspacePackageActivation(pack, workspaceProjectView(project, item.root), item),
+    evaluateWorkspacePackageActivation(pack, project, item),
   );
   return (
     results.find((result) => result.state === "active") ??
@@ -58,12 +59,22 @@ export function evaluatePackActivation(pack: RulePack, project: ProjectInfo): Ap
 export function activatingWorkspacePackages(pack: RulePack, project: ProjectInfo): string[] {
   if (pack.activation === false) return [];
   return projectWorkspacePackages(project)
-    .filter(
-      (item) =>
-        evaluateWorkspacePackageActivation(pack, workspaceProjectView(project, item.root), item)
-          .state === "active",
-    )
+    .filter((item) => evaluateWorkspacePackageActivation(pack, project, item).state === "active")
     .map((item) => item.root);
+}
+
+/**
+ * What in the Doctor Run's Runtime Evidence activates `pack`: the names its hook returned, an
+ * empty list when it returned only `true`, or undefined when the evidence does not activate it.
+ */
+export function runtimeEvidenceActivation(
+  pack: RulePack,
+  project: ProjectInfo,
+): readonly string[] | undefined {
+  if (!pack.activation) return undefined;
+  const result = pack.activation.runtimeEvidence?.(project.runtimeEvidence ?? {});
+  if (Array.isArray(result)) return result.length ? result : undefined;
+  return result === true ? [] : undefined;
 }
 
 export function projectWorkspacePackages(project: ProjectInfo): WorkspacePackage[] {
@@ -73,8 +84,25 @@ export function projectWorkspacePackages(project: ProjectInfo): WorkspacePackage
         root: ".",
         framework: project.framework,
         packages: (project.inventory?.packages ?? {}) as Record<string, string>,
+        declaredRuntimes: declaredRuntimes({ dependencies: project.inventory?.packages }),
       },
     ]
+  );
+}
+
+/**
+ * Whether a workspace package runs `runtime`: its package.json declares it, installed or not, or
+ * its framework provides it.
+ */
+export function packageRunsRuntime(
+  workspacePackage: WorkspacePackage,
+  runtime: RuntimePackageName,
+): boolean {
+  return (
+    workspacePackage.declaredRuntimes?.includes(runtime) === true ||
+    packageFrameworks(workspacePackage).some((framework) =>
+      runtimeProviders[runtime].includes(framework),
+    )
   );
 }
 
@@ -85,7 +113,7 @@ function evaluateWorkspacePackageActivation(
 ): ApplicabilityResult {
   const activation = pack.activation;
   if (!activation) return active();
-  if (activation.runtimeEvidence?.(project.runtimeEvidence ?? {})) return active();
+  if (runtimeEvidenceActivation(pack, project)) return active();
   if (
     activation.frameworks &&
     !packageFrameworks(workspacePackage).some((framework) =>
@@ -101,7 +129,13 @@ function evaluateWorkspacePackageActivation(
   }
   const results: ApplicabilityResult[] = [];
   if (activation.nuxt) {
-    results.push(evaluateRuntimeRange(project, "nuxt", activation.nuxt));
+    results.push(
+      evaluateRuntimeRange(
+        workspaceProjectView(project, workspacePackage.root),
+        "nuxt",
+        activation.nuxt,
+      ),
+    );
   }
 
   if (activation.languages?.length) {
@@ -112,8 +146,21 @@ function evaluateWorkspacePackageActivation(
     );
   }
 
+  if (activation.runtimes?.length) {
+    results.push(
+      activation.runtimes.some((runtime) => packageRunsRuntime(workspacePackage, runtime))
+        ? active()
+        : inactive(
+            `Rule Pack ${pack.name} requires a workspace package that runs ${activation.runtimes.join(" or ")}.`,
+          ),
+    );
+  }
+
   if (activation.packages?.length || activation.modules?.length) {
-    const moduleNames = new Set((project.nuxt?.modules ?? []).map((module) => module.name));
+    const nuxt =
+      project.workspaceNuxt?.find((item) => item.root === workspacePackage.root)?.nuxt ??
+      ((project.runtimeGraphRoot ?? ".") === workspacePackage.root ? project.nuxt : undefined);
+    const moduleNames = new Set(nuxt?.modules?.map((module) => module.name));
     const packageNames = new Set(Object.keys(workspacePackage.packages));
     const matched =
       activation.packages?.some((name) => moduleNames.has(name) || packageNames.has(name)) ||
@@ -137,13 +184,24 @@ export function evaluateRuntimeRange(
   includePrerelease = false,
 ): ApplicabilityResult {
   if (!validRange(range)) return unknown(`Invalid ${runtime} applicability range ${range}.`);
-  const instance = project.runtimeGraph?.packages[runtime];
-  if (!instance || instance.state !== "resolved" || !instance.version || !valid(instance.version)) {
-    return unknown(instance?.reason ?? `The ${runtime} runtime is unresolved.`);
-  }
-  return satisfies(instance.version, range, { includePrerelease })
-    ? active()
-    : inactive(`${runtime} ${instance.version} does not satisfy ${range}.`);
+  const instances = [project.runtimeGraph?.packages[runtime]];
+  if (runtime === "h3" && project.runtimeGraph?.directH3)
+    instances.push(project.runtimeGraph.directH3);
+  return combineApplicability(
+    instances.map((instance) => {
+      if (
+        !instance ||
+        instance.state !== "resolved" ||
+        !instance.version ||
+        !valid(instance.version)
+      ) {
+        return unknown(instance?.reason ?? `The ${runtime} runtime is unresolved.`);
+      }
+      return satisfies(instance.version, range, { includePrerelease })
+        ? active()
+        : inactive(`${runtime} ${instance.version} does not satisfy ${range}.`);
+    }),
+  );
 }
 
 function evaluateNuxtCompatibility(project: ProjectInfo, range: string): ApplicabilityResult {

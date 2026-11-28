@@ -127,7 +127,7 @@ try {
     "PKG0001",
     "vite",
   );
-  assert.deepEqual(packageReport.diagnostics.map((item) => item.code).sort(), [
+  assert.deepEqual(packageReport.groups.map((item) => item.code).sort(), [
     "PKG0001",
     "PKG0002",
     "PKG0003",
@@ -167,7 +167,7 @@ function verifyReport(result, label, expectedStatuses, expectedCode, expectedFra
   assert.doesNotMatch(result.stderr, /\n\s+at .+\(.+:\d+:\d+\)/);
   const reportLine = output
     .split("\n")
-    .find((line) => line.startsWith('{"schema":"vite-doctor.agent/v2"'));
+    .find((line) => line.startsWith('{"schema":"vite-doctor.agent/v3"'));
   if (!reportLine) throw new Error(`Doctor report missing from: ${output}`);
   const report = JSON.parse(reportLine);
   if (report.project?.framework !== expectedFramework) {
@@ -175,10 +175,10 @@ function verifyReport(result, label, expectedStatuses, expectedCode, expectedFra
   }
   if (expectedCode) {
     assert.equal(report.status, "findings");
-    assert.ok(report.diagnostics.some((diagnostic) => diagnostic.code === expectedCode));
+    assert.ok(expectedCode in report.codes);
   } else {
     assert.equal(report.status, "clean");
-    assert.deepEqual(report.diagnostics, []);
+    assert.deepEqual(report.groups, []);
   }
   return report;
 }
@@ -266,7 +266,7 @@ function verifyViteConfigTypes(archive) {
   const vitePlus = JSON.parse(
     readFileSync(join(root, "node_modules/vite-plus/package.json"), "utf8"),
   );
-  const core = `npm:@voidzero-dev/vite-plus-core@${vitePlus.version}`;
+  const core = vitePlus.dependencies.vite;
   const layouts = [
     // vite-plus's defineConfig is typed against its own copy of Vite. When that copy is only
     // installed under the alias `vite` inside vite-plus, no package can augment it.
@@ -289,14 +289,17 @@ function verifyViteConfigTypes(archive) {
         },
       }),
     );
-    if (layout.overrides) {
-      writeFileSync(
-        join(consumer, "pnpm-workspace.yaml"),
-        `overrides:\n${Object.entries(layout.overrides)
-          .map(([name, spec]) => `  ${name}: ${JSON.stringify(spec)}\n`)
-          .join("")}`,
-      );
-    }
+    // Without its own pnpm-workspace.yaml, pnpm installs the consumer into the workspace that
+    // pnpm creates in `temporary` when it adds a freshly published dependency to
+    // minimumReleaseAgeExclude, and the consumer ends up with no node_modules.
+    writeFileSync(
+      join(consumer, "pnpm-workspace.yaml"),
+      layout.overrides
+        ? `overrides:\n${Object.entries(layout.overrides)
+            .map(([name, spec]) => `  ${name}: ${JSON.stringify(spec)}\n`)
+            .join("")}`
+        : "",
+    );
     execFileSync(pnpmCommand, pnpmArgs(["install", "--ignore-scripts", "--prefer-offline"]), {
       cwd: consumer,
       env,

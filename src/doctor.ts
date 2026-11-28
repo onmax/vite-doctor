@@ -25,7 +25,7 @@ import { isAbsolute, join } from "pathe";
 import { doctorInternalDiagnostics } from "./core/internal-diagnostic-handles.js";
 import { viteRulePack } from "./rules.js";
 import { typescriptRulePack } from "./rule-packs/typescript/index.js";
-import shadcnRulePack from "./rule-packs/shadcn/index.js";
+import designSystemRulePack from "./rule-packs/design-system/index.js";
 import { packageRulePack } from "./rule-packs/package/index.js";
 import { piniaRulePack } from "./rule-packs/pinia/index.js";
 import { mcpRulePack } from "./rule-packs/mcp/index.js";
@@ -60,7 +60,10 @@ export async function viteDoctorExtensions(
       name: "vite-doctor/builtin-typescript",
       rulePacks: [typescriptRulePack],
     }),
-    defineDoctorExtension({ name: "vite-doctor/builtin-shadcn", rulePacks: [shadcnRulePack] }),
+    defineDoctorExtension({
+      name: "vite-doctor/builtin-design-system",
+      rulePacks: [designSystemRulePack],
+    }),
     defineDoctorExtension({ name: "vite-doctor/builtin-pinia", rulePacks: [piniaRulePack] }),
     defineDoctorExtension({ name: "vite-doctor/builtin-mcp", rulePacks: [mcpRulePack] }),
   ];
@@ -80,6 +83,10 @@ export async function viteDoctorExtensions(
         defineDoctorExtension({ name: "vite-doctor/builtin-nitro", rulePacks: [nitroRulePack] }),
       );
     }
+    const { h3RulePack } = await import("./rule-packs/h3/index.js");
+    extensions.push(
+      defineDoctorExtension({ name: "vite-doctor/builtin-h3", rulePacks: [h3RulePack] }),
+    );
   }
   return extensions.map((extension) => ({
     ...extension,

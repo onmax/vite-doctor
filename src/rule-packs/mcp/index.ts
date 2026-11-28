@@ -1,5 +1,5 @@
 import { defineRulePack } from "../../core/index.js";
-import { readMcpServers } from "../../mcp/evidence.js";
+import { mcpServerLabels } from "../../mcp/evidence.js";
 import { mcpRecommendedRuleIds } from "./presets.js";
 import { mcpRules } from "./rules/index.js";
 import { MCP_PACKAGES } from "./rules/shared.js";
@@ -14,7 +14,7 @@ export const mcpRulePack = defineRulePack({
     packages: MCP_PACKAGES,
     // A server passed with --mcp-url or the plugin's `mcp` option is checked even in a repository
     // without an MCP package, such as a job that watches a deployed server.
-    runtimeEvidence: (evidence) => readMcpServers(evidence).length > 0,
+    runtimeEvidence: (evidence) => mcpServerLabels(evidence),
   },
   rules: mcpRules,
   presets: {

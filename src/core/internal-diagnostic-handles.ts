@@ -69,6 +69,11 @@ export const doctorInternalDiagnostics = defineDiagnostics({
           : `Rule "${params.ruleId}" reported a diagnostic without a fix.`,
       fix: "Provide actionable nostics fix text for every Doctor diagnostic.",
     },
+    DOC0041: {
+      why: (params: { ruleId: string; code: string }) =>
+        `Diagnostic "${params.code}" for rule "${params.ruleId}" repeats its why as its fix, so it names the problem without saying how to resolve it.`,
+      fix: "Write the fix as the concrete change that resolves the finding, and keep the problem and its consequence in why.",
+    },
     DOC0022: {
       why: (params: { details: string }) =>
         `Doctor could not resolve the governing runtime graph: ${params.details}`,

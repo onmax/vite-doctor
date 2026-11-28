@@ -14,6 +14,7 @@ import type {
 import {
   addConsumerSsrEvidence,
   detectWorkspacePackages,
+  hasConfig,
   manifestSsrEvidence,
   nuxtInventoryOwner,
   owningWorkspacePackage,
@@ -95,6 +96,22 @@ export async function detectProject(
         undefined,
         runtimeTarget,
       );
+  const runGraphRoot = owner?.root ?? graphPackage?.root ?? ".";
+  const workspaceRuntimeGraphs = Object.fromEntries(
+    workspacePackages
+      .filter(
+        (item) =>
+          item.root !== runGraphRoot && !(framework === "nuxt" && item.framework === "nuxt"),
+      )
+      .map((item) => [
+        item.root,
+        applyRuntimeTarget(
+          resolveRuntimeGraph(root, item.framework, join(root, item.root, "package.json")),
+          undefined,
+          runtimeTarget,
+        ).graph,
+      ]),
+  );
   const workspaceNuxt =
     framework === "nuxt"
       ? await Promise.all(
@@ -118,9 +135,21 @@ export async function detectProject(
     ? join(root, "tsconfig.json")
     : undefined;
   const walk = new ProjectFileWalk(root);
+  const { languages, hasSource } = await detectProjectSource(walk, Boolean(tsconfigPath));
+  // Vite is only the fallback when nothing names a framework, which is not a detected project.
+  const noProject =
+    requested === "auto" &&
+    !packageJson &&
+    !hasSource &&
+    !tsconfigPath &&
+    workspacePackages.length === 1 &&
+    framework === "vite" &&
+    !hasConfig(root, "vite.config");
   const project: ProjectInfo = {
     root: resolve(root),
     framework,
+    ...(requested !== "auto" ? { requestedFramework: requested } : {}),
+    ...(noProject ? { noProject: true as const } : {}),
     ssr: ssr && owner?.nuxt?.ssr !== false,
     vueVersion: runtime.graph.packages.vue?.version ?? cleanVersion(vueVersion),
     nuxtVersion: owner?.nuxtVersion,
@@ -128,11 +157,13 @@ export async function detectProject(
     packageName: packageJson?.name,
     workspacePackages,
     ...(workspaceNuxt.length ? { workspaceNuxt } : {}),
+    ...(Object.keys(workspaceRuntimeGraphs).length ? { workspaceRuntimeGraphs } : {}),
     tsconfigPath,
-    languages: await detectProjectLanguages(walk, Boolean(tsconfigPath)),
+    languages,
     nuxt: owner?.nuxt,
     nuxtModuleDefinitions: owner?.nuxtModuleDefinitions,
     runtimeGraph: runtime.graph,
+    runtimeGraphRoot: runGraphRoot,
     nuxtCompatibility: runtime.compatibility,
     inventory: { packages: deps },
   };
@@ -175,6 +206,8 @@ async function detectNuxtInventory(
     graph,
     resolveNuxtCompatibility(appRoot, graph, facts.manifest, facts.configs, facts.manifestCurrent),
     runtimeTarget,
+    appRoot,
+    facts.configs,
   );
   return {
     root: packageRoot,
@@ -191,14 +224,16 @@ const LANGUAGE_SOURCE = /\.(?:vue|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 
 // Matches `fs.glob("**/*.{vue,ts,...}")` with node_modules, dist, coverage, generated, and dot
 // directories excluded, which is exactly what the shared walk skips.
-async function detectProjectLanguages(
+async function detectProjectSource(
   walk: ProjectFileWalk,
   hasTsconfig: boolean,
-): Promise<ProjectLanguage[]> {
+): Promise<{ languages: ProjectLanguage[]; hasSource: boolean }> {
   let hasTypeScript = hasTsconfig;
   let hasJavaScript = false;
+  let hasSource = false;
   for (const entry of walk.entries()) {
     for (const path of languageSources(walk, entry)) {
+      hasSource = true;
       if (/\.(?:ts|tsx|mts|cts)$/.test(path)) hasTypeScript = true;
       if (/\.(?:js|jsx|mjs|cjs)$/.test(path)) hasJavaScript = true;
       if (path.endsWith(".vue")) {
@@ -209,10 +244,13 @@ async function detectProjectLanguages(
     }
     if (hasTypeScript && hasJavaScript) break;
   }
-  return [
-    ...(hasTypeScript ? (["typescript"] as const) : []),
-    ...(hasJavaScript ? (["javascript"] as const) : []),
-  ];
+  return {
+    hasSource,
+    languages: [
+      ...(hasTypeScript ? (["typescript"] as const) : []),
+      ...(hasJavaScript ? (["javascript"] as const) : []),
+    ],
+  };
 }
 
 // `fs.glob` steps one level into a symlinked directory whose name matches the last segment.
