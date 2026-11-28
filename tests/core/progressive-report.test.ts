@@ -1,39 +1,24 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "pathe";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 import { createReport, type DoctorRunOptions, type DoctorRunResult } from "../../src/core/index.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
-import { startMcpStub } from "./mcp-stub.ts";
-
-const fixture = JSON.parse(
-  readFileSync(new URL("../fixtures/mcp/nuxt.json", import.meta.url), "utf8"),
-);
+import { writeMcpToolProject } from "../report-reader-env.ts";
 
 let root: string;
-let stub: Awaited<ReturnType<typeof startMcpStub>>;
 let options: DoctorRunOptions;
 let result: DoctorRunResult;
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "doctor-progressive-"));
-  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", type: "module" }));
-  stub = await startMcpStub({
-    tools: fixture.tools,
-    instructions: fixture.initialize.instructions,
-  });
-  options = {
-    root,
-    cache: false,
-    extends: ["auto", "mcp/strict"],
-    mcp: [{ url: stub.url, headers: { authorization: "Bearer secret-token" } }],
-  };
+  writeMcpToolProject(root);
+  options = { root, cache: false, extends: ["auto", "mcp/strict"] };
   result = await runViteDoctor(options);
   expect(result.diagnostics.length).toBeGreaterThan(20);
 });
 
-afterAll(async () => {
-  await stub.close();
+afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -187,7 +172,7 @@ test("json and SARIF reports ignore the Report Budget", () => {
   }
 });
 
-test("report commands drop mutating flags, redact header values, and name the root from cwd", () => {
+test("report commands drop mutating flags and name the root from cwd", () => {
   const runOptions = {
     ...options,
     fix: true,
@@ -203,11 +188,7 @@ test("report commands drop mutating flags, redact header values, and name the ro
         expect.stringMatching(/^--(fix|unsafe-fix|update-baseline|watch|max-chars)$/),
       ]),
     );
-    expect(args.join(" ")).not.toContain("secret-token");
   }
-  expect(agent.commandArgs.more).toEqual(
-    expect.arrayContaining(["--mcp-header", "authorization: <redacted>"]),
-  );
   expect(agent.commandArgs.full.at(-3)).toBe("--full");
 
   const text = createReport(result, "text", {
@@ -215,7 +196,6 @@ test("report commands drop mutating flags, redact header values, and name the ro
     cwd: dirname(root),
     formatFlag: "text",
   });
-  expect(text).not.toContain("secret-token");
   const everything = /^Everything: (.*)$/m.exec(text)![1]!;
   expect(everything).toMatch(
     new RegExp(`^vite-doctor \\./${root.split("/").at(-1)} .*--full --format text$`),

@@ -3,10 +3,10 @@ import { diagnostics } from "../diagnostics.js";
 import {
   annotationsEvidence,
   collectMcpTools,
+  definedToolFingerprint,
   toolLabel,
   type McpToolDefinition,
 } from "./shared.js";
-import { definedToolFingerprint, reportWireTools, wireTools } from "./wire.js";
 
 export const requireAnnotationTitle = createRule({
   meta: {
@@ -36,20 +36,13 @@ export const requireAnnotationTitle = createRule({
     cacheScope: "none",
     requires: { crossFile: true },
     requiresContext: ["cross-file"],
-    consumesEvidence: ["ast", "runtime"],
+    consumesEvidence: ["ast"],
     cost: "medium",
   },
   create(ctx) {
     return {
       async onWorkspaceEnd() {
-        const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        reportWireTools(ctx, sent, "MCP0001", {
-          ruleId: "mcp/tools/require-annotation-title",
-          diagnostic: diagnostics.MCP0001,
-          range: annotationsRange,
-          source: sourceAdvice,
-        });
-        for (const tool of sourceOnly) {
+        for (const tool of await collectMcpTools(ctx)) {
           const advice = sourceAdvice(tool);
           if (!advice) continue;
           ctx.report(diagnostics.MCP0001({ why: advice.why, fix: advice.fix }), {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { consola } from "consola";
@@ -21,15 +21,96 @@ afterEach(() => {
 });
 
 async function report(root: string, format: string, args: string[] = []) {
+  return failedReport(root, [
+    ".",
+    "--framework",
+    "vite",
+    "--no-cache",
+    "--format",
+    format,
+    ...args,
+  ]);
+}
+
+async function failedReport(root: string, args: string[]) {
   let output = "";
   vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
     output += String(chunk);
     return true;
   });
-  const code = await main([root, "--framework", "vite", "--no-cache", "--format", format, ...args]);
+  const code = await main(args, root);
   expect(code).toBe(2);
   return JSON.parse(output);
 }
+
+const legacyExtension = `{
+  name: "legacy",
+  setup(api) {
+    api.registerRulePack({ name: "legacy", activation: { runtimeEvidence: () => false } });
+  },
+}`;
+
+test.each([["."], ["rules"], ["explain", "MCP0001"]])(
+  "attributes a legacy Rule Pack to the config that registers it: %s",
+  async (...command) => {
+    const root = fixture();
+    const file = join(root, "doctor.config.mjs");
+    writeFileSync(file, `export default { extensions: [${legacyExtension}] };`);
+    const output = await failedReport(root, [
+      ...command,
+      "--config",
+      "doctor.config.mjs",
+      "--format",
+      "agent",
+      "--framework",
+      "vite",
+    ]);
+    expect(output).toMatchObject({
+      error: { kind: "config", file },
+      next: { action: "fix-config", file },
+    });
+    expect(output.error.message).toContain("removed activation.runtimeEvidence hook");
+  },
+);
+
+test("does not blame an explicit config for a legacy host extension", async () => {
+  const root = fixture();
+  const entry = join(root, "legacy.mjs");
+  writeFileSync(entry, `export default ${legacyExtension};`);
+  writeFileSync(join(root, "doctor.config.mjs"), "export default {};");
+  mkdirSync(join(root, ".nuxt"));
+  writeFileSync(join(root, ".nuxt/doctor.manifest.json"), JSON.stringify({ extensions: [entry] }));
+  const output = await failedReport(root, [
+    ".",
+    "--config",
+    "doctor.config.mjs",
+    "--format",
+    "agent",
+    "--framework",
+    "nuxt",
+    "--host-extensions",
+  ]);
+  expect(output.error.message).toContain("removed activation.runtimeEvidence hook");
+  expect(output.error).not.toHaveProperty("file");
+});
+
+test.each(["mcp/clients/no-excluded-tool", "mcp/clients/*"])(
+  "rejects retired MCP Rules selected by %s",
+  async (rule) => {
+    const output = await report(fixture(), "json", ["--rules", rule]);
+    expect(output.status).toBe("failed");
+    expect(output.error.message).toContain(rule);
+    expect(output.error.message).toContain("loadsheet mcp <url>");
+  },
+);
+
+test("fails a configuration that enables a retired MCP Rule", async () => {
+  const rule = "mcp/tools/valid-annotations";
+  const output = await report(fixture(JSON.stringify({ rules: { [rule]: "error" } })), "json");
+  expect(output.error).toMatchObject({ kind: "config", code: "DOC0020" });
+  expect(output.error.message).toContain(rule);
+  expect(output.error.message).toContain("loadsheet mcp <url>");
+});
 
 for (const format of ["json", "agent", "sarif"]) {
   test(`${format} retains a Diagnostic Code for an invalid invocation`, async () => {

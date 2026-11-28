@@ -63,20 +63,6 @@ export function activatingWorkspacePackages(pack: RulePack, project: ProjectInfo
     .map((item) => item.root);
 }
 
-/**
- * What in the Doctor Run's Runtime Evidence activates `pack`: the names its hook returned, an
- * empty list when it returned only `true`, or undefined when the evidence does not activate it.
- */
-export function runtimeEvidenceActivation(
-  pack: RulePack,
-  project: ProjectInfo,
-): readonly string[] | undefined {
-  if (!pack.activation) return undefined;
-  const result = pack.activation.runtimeEvidence?.(project.runtimeEvidence ?? {});
-  if (Array.isArray(result)) return result.length ? result : undefined;
-  return result === true ? [] : undefined;
-}
-
 export function projectWorkspacePackages(project: ProjectInfo): WorkspacePackage[] {
   return (
     project.workspacePackages ?? [
@@ -113,7 +99,6 @@ function evaluateWorkspacePackageActivation(
 ): ApplicabilityResult {
   const activation = pack.activation;
   if (!activation) return active();
-  if (runtimeEvidenceActivation(pack, project)) return active();
   if (
     activation.frameworks &&
     !packageFrameworks(workspacePackage).some((framework) =>
@@ -170,9 +155,6 @@ function evaluateWorkspacePackageActivation(
         ? active()
         : inactive(`Rule Pack ${pack.name} package or module activation did not match.`),
     );
-  }
-  if (activation.runtimeEvidence && !activation.frameworks && !results.length) {
-    return inactive(`Rule Pack ${pack.name} Runtime Evidence activation did not match.`);
   }
   return combineApplicability(results);
 }

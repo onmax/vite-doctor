@@ -213,6 +213,10 @@ pnpm dlx vite-doctor . --strict
 
 Remove `coverage`, `runtimeEvidence`, `emitGraph`, `confidenceMin`, and `scoreOnly` from `DoctorRunOptions` objects. These options had no effect on Doctor Runs; their removal is a breaking TypeScript API change. Runtime Evidence contributors, graph reports, diagnostic confidence, and scoring remain supported.
 
+### Running MCP servers moved to loadsheet
+
+Doctor reads your code and never connects to a server. `--mcp-url`, `--mcp-header`, the Vite plugin's `mcp` option, Runtime Evidence `{ mcpServers }`, the `vite-doctor/mcp` entry, and MCP0005 to MCP0010 are gone. Replace `vite-doctor --mcp-url <url>` with `npx loadsheet mcp <url>`. The source MCP Rules (MCP0001 to MCP0004) still run.
+
 ## Doctor extensions
 
 Library authors can import `createRule`, `defineRulePack`, `defineDoctorExtension`, and

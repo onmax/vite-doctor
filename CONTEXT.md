@@ -41,7 +41,7 @@ The surface configuration field that selects rule-pack-qualified presets.
 _Avoid_: Preset list
 
 **Activation**:
-The conditions that make a rule pack and its default preset apply automatically to a project. Runtime Evidence can activate a rule pack for every workspace package, as MCP servers read with `--mcp-url` activate the MCP rule pack.
+The conditions that make a rule pack and its default preset apply automatically to a project: the packages it depends on, its frameworks, and the runtimes its code runs in.
 _Avoid_: Detection, matching
 
 **Vite Doctor**:
@@ -85,8 +85,8 @@ Everything one Nuxt route renders at once: the main app, the route's layout, its
 _Avoid_: Screen, page (a page is one file of a View)
 
 **Runtime Evidence**:
-Facts that explain where and how code executes across client, server, build, and framework runtimes.
-_Avoid_: Context, environment
+Facts about which runtime your code runs in (client, server, build, or a framework runtime), collected from your own toolchain: the Vite or Nuxt process a Plugin Surface runs inside, a finished build, or a Doctor Extension. Doctor opens no connection to a server. Checking a running or deployed server by URL is loadsheet's job, not Doctor's.
+_Avoid_: Context, environment, live server checks
 
 **Build Evidence**:
 Runtime Evidence that the Vite Plugin Surface collects from a finished `vite build`: each environment's consumer, its output chunks with their module ids, and Vite's importers for each module.

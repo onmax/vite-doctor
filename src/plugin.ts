@@ -19,7 +19,6 @@ import {
   stateFromRun,
   type DiagnosticState,
 } from "./plugin-delta.js";
-import type { McpServerTarget } from "./mcp/evidence.js";
 import type {
   SurfaceReportInput,
   SurfaceRunInput,
@@ -147,12 +146,6 @@ export interface ViteDoctorSurfaceOptions {
    * the whole report.
    */
   maxChars?: number;
-  /**
-   * MCP servers whose `tools/list` the Doctor Run reads as Runtime Evidence. In dev, a path such
-   * as `/mcp` resolves against this dev server once it listens. A build has no server to resolve
-   * it against, and neither does Nuxt, which runs Vite in middleware mode: pass an absolute URL.
-   */
-  mcp?: McpServerTarget[];
 }
 
 // vite-plus types its defineConfig() against its own copy of Vite, so the key only type-checks
@@ -169,6 +162,11 @@ declare module "vite" {
 }
 
 export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
+  if ("mcp" in options) {
+    throw new Error(
+      "The Vite Doctor plugin's mcp option was removed. Remove it from doctor() and run `npx loadsheet mcp <url>` to check a running MCP server.",
+    );
+  }
   let config: ResolvedConfig | undefined;
   let ran = false;
   let serveRun: ServeDoctorRun | undefined;
@@ -490,7 +488,6 @@ export function doctor(options: ViteDoctorSurfaceOptions = {}): Plugin {
 class ServeDoctorRun {
   private closed = false;
   private state: DiagnosticState | undefined;
-  private hadMcpEvidence = false;
   private active: ActiveRun | undefined;
   private pending = emptyChanges();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -583,14 +580,7 @@ class ServeDoctorRun {
     this.pending = emptyChanges();
     // A Git-scoped run cannot prove a Diagnostic disappeared by checking only saved files.
     const affected =
-      full ||
-      !this.state ||
-      this.options.changed ||
-      this.options.since ||
-      this.options.mcp?.length ||
-      this.hadMcpEvidence
-        ? undefined
-        : files;
+      full || !this.state || this.options.changed || this.options.since ? undefined : files;
     await this.execute({ affected, changed: [...changed], reported });
   }
 
@@ -598,7 +588,7 @@ class ServeDoctorRun {
     const { config } = this.server;
     let base: ReturnType<typeof surfaceRunInput>;
     try {
-      base = surfaceRunInput(config, this.options, undefined, undefined, this.server);
+      base = surfaceRunInput(config, this.options);
     } catch (error) {
       config.logger.error(
         `Vite Doctor could not start the Doctor Run: ${error instanceof Error ? error.message : String(error)}`,
@@ -664,11 +654,10 @@ class ServeDoctorRun {
   private record(root: string, batch: RunBatch, outcome: SurfaceRunOutcome) {
     const previous = this.state;
     const next =
-      previous && batch.affected && !outcome.hasMcpEvidence
+      previous && batch.affected
         ? mergeAffectedRun(previous, batch.affected, outcome)
         : stateFromRun(outcome);
     this.state = next;
-    this.hadMcpEvidence = outcome.hasMcpEvidence;
     if (!previous) {
       this.logReport(outcome);
       return;
@@ -824,7 +813,6 @@ function surfaceRunInput(
   options: ViteDoctorSurfaceOptions,
   targets?: BuildTarget[],
   build?: ViteBuildEvidence,
-  devServer?: ViteDevServer,
 ) {
   return {
     options: {
@@ -840,31 +828,12 @@ function surfaceRunInput(
       cache: options.cache ?? true,
       format: options.format,
       maxChars: options.maxChars,
-      mcp: options.mcp && surfaceMcpTargets(options.mcp, devServer),
     },
     vite: {
       inventory: viteInventory(config),
       evidence: { ...viteRuntimeEvidence(config, targets), ...(build ? { build } : {}) },
     },
   } satisfies SurfaceRunInput;
-}
-
-/** Resolves a path such as `/mcp` against the dev server that serves it. */
-function surfaceMcpTargets(
-  targets: readonly McpServerTarget[],
-  devServer: ViteDevServer | undefined,
-): McpServerTarget[] {
-  return targets.map((target) => {
-    if (URL.canParse(target.url)) return target;
-    const local = devServer?.resolvedUrls?.local[0];
-    if (local) return { ...target, url: new URL(target.url, local).href };
-    const reason = !devServer
-      ? "a build has no dev server to resolve it against"
-      : "this dev server runs in middleware mode, as under Nuxt, so Vite does not know its URL";
-    throw new Error(
-      `The MCP server URL is a path, and ${reason}. Pass an absolute URL in the mcp option, such as http://localhost:3000/mcp.`,
-    );
-  });
 }
 
 function surfaceExtensions(

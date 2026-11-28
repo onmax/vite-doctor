@@ -1,6 +1,7 @@
 import { defineDiagnostics as defineNosticsDiagnostics, type DiagnosticHandle } from "nostics";
 import {
   DOCTOR_DIAGNOSTICS_DOCS_BASE,
+  RETIRED_DIAGNOSTIC_CODES,
   diagnosticCodePrefix,
   isReservedDiagnosticCode,
 } from "./diagnostic-constants.js";
@@ -86,6 +87,8 @@ export function defineDoctorDiagnostics<const Entries extends readonly DoctorDia
   const seenCodes = new Set<string>();
   for (const entry of entries) {
     if (seenCodes.has(entry.code)) throw doctorInternalDiagnostics.DOC0012({ code: entry.code });
+    if (RETIRED_DIAGNOSTIC_CODES[entry.code])
+      throw new Error(`${entry.code} is retired; give ${entry.ruleId} a new code.`);
     seenCodes.add(entry.code);
   }
   const docsByCode = Object.fromEntries(

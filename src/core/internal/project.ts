@@ -14,7 +14,6 @@ import type {
 import {
   addConsumerSsrEvidence,
   detectWorkspacePackages,
-  hasConfig,
   manifestSsrEvidence,
   nuxtInventoryOwner,
   owningWorkspacePackage,
@@ -135,21 +134,11 @@ export async function detectProject(
     ? join(root, "tsconfig.json")
     : undefined;
   const walk = new ProjectFileWalk(root);
-  const { languages, hasSource } = await detectProjectSource(walk, Boolean(tsconfigPath));
-  // Vite is only the fallback when nothing names a framework, which is not a detected project.
-  const noProject =
-    requested === "auto" &&
-    !packageJson &&
-    !hasSource &&
-    !tsconfigPath &&
-    workspacePackages.length === 1 &&
-    framework === "vite" &&
-    !hasConfig(root, "vite.config");
+  const languages = await detectProjectSource(walk, Boolean(tsconfigPath));
   const project: ProjectInfo = {
     root: resolve(root),
     framework,
     ...(requested !== "auto" ? { requestedFramework: requested } : {}),
-    ...(noProject ? { noProject: true as const } : {}),
     ssr: ssr && owner?.nuxt?.ssr !== false,
     vueVersion: runtime.graph.packages.vue?.version ?? cleanVersion(vueVersion),
     nuxtVersion: owner?.nuxtVersion,
@@ -227,13 +216,11 @@ const LANGUAGE_SOURCE = /\.(?:vue|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 async function detectProjectSource(
   walk: ProjectFileWalk,
   hasTsconfig: boolean,
-): Promise<{ languages: ProjectLanguage[]; hasSource: boolean }> {
+): Promise<ProjectLanguage[]> {
   let hasTypeScript = hasTsconfig;
   let hasJavaScript = false;
-  let hasSource = false;
   for (const entry of walk.entries()) {
     for (const path of languageSources(walk, entry)) {
-      hasSource = true;
       if (/\.(?:ts|tsx|mts|cts)$/.test(path)) hasTypeScript = true;
       if (/\.(?:js|jsx|mjs|cjs)$/.test(path)) hasJavaScript = true;
       if (path.endsWith(".vue")) {
@@ -244,13 +231,10 @@ async function detectProjectSource(
     }
     if (hasTypeScript && hasJavaScript) break;
   }
-  return {
-    hasSource,
-    languages: [
-      ...(hasTypeScript ? (["typescript"] as const) : []),
-      ...(hasJavaScript ? (["javascript"] as const) : []),
-    ],
-  };
+  return [
+    ...(hasTypeScript ? (["typescript"] as const) : []),
+    ...(hasJavaScript ? (["javascript"] as const) : []),
+  ];
 }
 
 // `fs.glob` steps one level into a symlinked directory whose name matches the last segment.

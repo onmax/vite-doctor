@@ -1,5 +1,4 @@
 import { isAbsolute, relative } from "pathe";
-import { isMcpHeaderName, parseMcpEndpoint } from "@loadsheet/mcp";
 import pc from "picocolors";
 import { formatDiagnostic } from "nostics";
 import type {
@@ -21,7 +20,6 @@ import { codeForRuleId } from "./diagnostics.js";
 import { diagnosticMetadataByCode, diagnosticMetadataByRuleId } from "./diagnostic-metadata.js";
 import type { DoctorRunOptions } from "./config.js";
 import { shellArgument } from "./internal/utils.js";
-import { mcpServerLabels } from "../mcp/evidence.js";
 import { unresolvedRuntimeInventory } from "./internal/runtime-packages.js";
 import { defaultReportBudget, type ReportReader } from "./internal/agent-runtime.js";
 import { scoreDiagnostics } from "./internal/scoring.js";
@@ -196,16 +194,6 @@ function evidenceKey(item: DiagnosticEvidence): string {
   ]);
 }
 
-/**
- * The MCP servers a Doctor Run without a project checked, by endpoint label. Without a project
- * they are the run's subject, so reports name them instead of a fallback framework.
- */
-function mcpSubject(result: DoctorRunResult): string[] | undefined {
-  if (!result.project.noProject) return undefined;
-  const servers = mcpServerLabels(result.project.runtimeEvidence);
-  return servers.length ? servers : undefined;
-}
-
 /** Diagnostic Codes with their counts, in report order. */
 function codeIndex(groups: ReportGroup[]): Record<string, number> {
   const codes: Record<string, number> = {};
@@ -342,11 +330,7 @@ function textLayout(
       "",
       first,
       ...(commands
-        ? [
-            `One group: ${commands.more} plus its "more:" flags`,
-            `Everything: ${commands.full}`,
-            ...(commands.full.includes(REDACTED) ? [REDACTED_NOTE] : []),
-          ]
+        ? [`One group: ${commands.more} plus its "more:" flags`, `Everything: ${commands.full}`]
         : [
             "More: apply the group's options, or set maxChars: Infinity in the Doctor plugin options",
           ]),
@@ -459,21 +443,10 @@ function textLayout(
 function textHead(result: DoctorRunResult, groups: ReportGroup[]): string[] {
   const lines: string[] = [];
   const status = reportStatus(result);
-  const subject = mcpSubject(result);
-  if (subject) {
-    lines.push(
-      `Checked: ${subject.length === 1 ? "MCP server" : "MCP servers"} ${subject.join(", ")}`,
-    );
-    lines.push(`Project: none, ${result.root} has no package.json`);
-  } else {
-    lines.push(`Detected: ${frameworkLabel(result)}`);
-    lines.push(`Project: ${result.root}`);
-  }
-  if (status === "incomplete") {
-    lines.push(
-      `Status: incomplete, required ${subject ? "MCP server" : "project"} evidence is missing`,
-    );
-  }
+  lines.push(`Detected: ${frameworkLabel(result)}`);
+  lines.push(`Project: ${result.root}`);
+  if (status === "incomplete")
+    lines.push("Status: incomplete, required project evidence is missing");
   for (const gap of result.project.evidenceGaps ?? []) {
     lines.push(
       `Evidence missing: ${gap.message}${gap.files.length ? ` ${gap.files.join(", ")}` : ""}`,
@@ -576,15 +549,13 @@ function isEvidenceBacked(confidence: Confidence) {
 }
 
 export function createJsonReport(result: DoctorRunResult): string {
-  const subject = mcpSubject(result);
   return `${JSON.stringify(
     {
       version: result.version,
       reportVersion: result.reportVersion ?? 4,
       fingerprintScheme: FINGERPRINT_SCHEME,
       status: reportStatus(result),
-      subject: subject && { mcpServers: subject },
-      framework: subject ? null : result.framework,
+      framework: result.framework,
       root: result.root,
       scope: result.scope,
       summary: result.summary,
@@ -601,7 +572,7 @@ export function createJsonReport(result: DoctorRunResult): string {
       graph: result.graph,
       extends: result.extends,
       rulePacks: result.rulePacks,
-      workspacePackages: subject ? undefined : result.workspacePackages,
+      workspacePackages: result.workspacePackages,
       evidenceGaps: result.project.evidenceGaps,
       evidenceUsed: result.project.evidenceUsed,
       runtimeGraph: result.project.runtimeGraph,
@@ -627,7 +598,6 @@ function agentLayout(
 ): ProgressiveLayout {
   const status = reportStatus(result);
   const plugin = context.surface === "plugin";
-  const subject = mcpSubject(result);
   const commandArgs = plugin
     ? undefined
     : {
@@ -635,7 +605,8 @@ function agentLayout(
           "vite-doctor",
           "explain",
           "<code>",
-          ...(subject ? [] : ["--framework", agentFramework(result, context)]),
+          "--framework",
+          agentFramework(result, context),
           ...(context.configFile ? ["--config", context.configFile] : []),
           ...(context.runOptions?.hostExtensions ? ["--host-extensions"] : []),
           "--format",
@@ -651,9 +622,6 @@ function agentLayout(
     Object.fromEntries(
       Object.entries(commandArgs).map(([name, args]) => [name, args.map(shellArgument).join(" ")]),
     );
-  const placeholders = commandArgs?.rerun.some((arg) => arg.includes(REDACTED))
-    ? { [REDACTED]: REDACTED_NOTE }
-    : undefined;
   const recovery = plugin
     ? "Rerun the host with the group's more options or pluginOptions.full (use numeric Infinity for maxChars)."
     : "To see what the Report Budget hid, append a group's more items to commandArgs.more, or use commandArgs.full when no more items are given.";
@@ -663,14 +631,11 @@ function agentLayout(
     `${JSON.stringify({
       schema: "vite-doctor.agent/v3",
       status,
-      subject: subject && { mcpServers: subject },
-      project: subject
-        ? null
-        : {
-            cwd: result.root,
-            framework: result.framework,
-            workspacePackages: result.workspacePackages,
-          },
+      project: {
+        cwd: result.root,
+        framework: result.framework,
+        workspacePackages: result.workspacePackages,
+      },
       rulePacks: result.rulePacks,
       scope: result.scope,
       summary: result.summary,
@@ -682,7 +647,6 @@ function agentLayout(
       evidenceUsed: result.project.evidenceUsed,
       commands,
       commandArgs,
-      placeholders,
       pluginOptions: plugin && budget ? { full: FULL_PLUGIN_OPTIONS } : undefined,
       next:
         status === "clean"
@@ -1134,9 +1098,7 @@ function runArguments(
   context: DoctorReportContext,
   command: RunCommand,
 ): string[] {
-  const args = mcpSubject(result)
-    ? ["vite-doctor", command.root ?? result.root]
-    : ["vite-doctor", command.root ?? ".", "--framework", agentFramework(result, context)];
+  const args = ["vite-doctor", command.root ?? ".", "--framework", agentFramework(result, context)];
   if (result.scope.mode === "changed") {
     if (result.scope.base) args.push("--since", result.scope.base);
     else args.push("--changed");
@@ -1158,29 +1120,12 @@ function runArguments(
   ] as const) {
     if (value !== undefined) args.push(flag, String(value));
   }
-  for (const target of options?.mcp ?? []) args.push("--mcp-url", commandMcpUrl(target.url));
-  for (const name of Object.keys(options?.mcp?.[0]?.headers ?? {}))
-    if (isMcpHeaderName(name)) args.push("--mcp-header", `${name}: ${REDACTED}`);
   if (options?.newOnly) args.push("--new-only");
   if (options?.profile) args.push("--profile");
   if (options?.cache !== undefined) args.push(options.cache ? "--cache" : "--no-cache");
   if (command.full) args.push("--full");
   if (command.format) args.push("--format", command.format);
   return args;
-}
-
-const REDACTED = "<redacted>";
-const REDACTED_NOTE =
-  "Doctor redacts --mcp-header values and the credentials, query strings, and custom paths of an --mcp-url because they can carry secrets. Replace each <redacted> with the value you ran with.";
-const PUBLIC_MCP_PATHS = new Set(["/", "/mcp", "/sse", "/v1/sse", "/github-copilot/mcp"]);
-
-function commandMcpUrl(value: string): string {
-  const url = parseMcpEndpoint(value);
-  if (!url) return REDACTED;
-  const credentials = url.username || url.password ? `${REDACTED}@` : "";
-  const path = PUBLIC_MCP_PATHS.has(url.pathname) ? url.pathname : `/${REDACTED}`;
-  const query = url.search ? `?${REDACTED}` : "";
-  return `${url.protocol}//${credentials}${url.host}${path}${query}`;
 }
 
 // Workspace runs derive Rule Packs from every workspace package, which pinning the resolved

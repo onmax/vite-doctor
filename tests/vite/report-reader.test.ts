@@ -1,19 +1,15 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
-import { mockReportReaderMcp, reportReaderMcpUrl, stubReaderEnv } from "../report-reader-env.ts";
+import { stubReaderEnv, writeMcpToolProject } from "../report-reader-env.ts";
 
 let root: string;
 
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "doctor-reader-"));
-  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", type: "module" }));
-});
-
-beforeEach(() => {
-  mockReportReaderMcp();
+  writeMcpToolProject(root);
 });
 
 afterEach(() => {
@@ -25,7 +21,7 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const args = [".", "--no-cache", "--extends", "auto,mcp/strict", "--mcp-url", reportReaderMcpUrl];
+const args = [".", "--no-cache", "--extends", "auto,mcp/strict"];
 
 test.each([
   ["CLAUDECODE", "1"],

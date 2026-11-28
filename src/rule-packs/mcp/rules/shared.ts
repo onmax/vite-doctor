@@ -1,4 +1,4 @@
-import { basename, dirname, join, resolve } from "pathe";
+import { basename, dirname, join, relative, resolve } from "pathe";
 import type { DiagnosticEvidence, RuleContext, SourceRange } from "../../../core/index.js";
 import { projectWorkspacePackages } from "../../../core/internal/applicability.js";
 import { parseScript } from "../../../core/internal/script.js";
@@ -9,9 +9,19 @@ import {
 } from "../../../core/internal/script-scope.js";
 // oxlint-disable-next-line no-restricted-imports -- walks the project tree, so MCP Rules declare cacheScope "none".
 import { selectScanFiles } from "../../../core/internal/source-inventory.js";
+import { sha256 } from "../../../core/internal/utils.js";
 import { getNodeVisitorKeys } from "../../../core/internal/visitor-keys.js";
 
 type AnyNode = any;
+
+export function definedToolFingerprint(
+  ctx: RuleContext,
+  ruleId: string,
+  file: string,
+  tool: string,
+): string {
+  return sha256(JSON.stringify([ruleId, relative(ctx.project.root, file), tool]));
+}
 
 export type McpLibrary =
   | "h3-mcp"

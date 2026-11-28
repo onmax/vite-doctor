@@ -47,6 +47,24 @@ const runH3Doctor = (root: string) =>
     extensions: [defineDoctorExtension({ name: "test-h3", rulePacks: [h3Pack] })],
   });
 
+test("rejects a legacy Runtime Evidence activation from an untyped extension", async () => {
+  const pack = {
+    ...h3Pack,
+    activation: { runtimeEvidence: (evidence: object) => "acme" in evidence },
+  };
+  await withFixture({ "package.json": "{}" }, async (root) => {
+    await expect(
+      runDoctor({
+        root,
+        cache: false,
+        extensions: [
+          { name: "legacy", setup: (api) => api.registerRulePack(pack as typeof h3Pack) },
+        ],
+      }),
+    ).rejects.toThrow(/activation\.runtimeEvidence.*Project Inventory/);
+  });
+});
+
 test("an h3-only package activates the h3 Rule Pack and its v2 Rules", async () => {
   await withFixture(
     {
