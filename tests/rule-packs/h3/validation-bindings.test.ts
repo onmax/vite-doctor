@@ -58,3 +58,38 @@ for (const { rule, read } of cases) {
     expect(result.diagnostics.map((d) => d.ruleId)).toEqual([rule.meta.id]);
   });
 }
+
+for (const { rule, read } of cases) {
+  test.each([
+    `return UserSchema.parse(${read})`,
+    `return bodySchema.safeParse(${read})`,
+    `return v.parse(Schema, ${read})`,
+    `return validateInput(${read})`,
+    `return schema.parse((${read}) as unknown)`,
+  ])(`${rule.meta.id} reports validation of the read itself: %s`, async (body) => {
+    const result = await runRuleFixture({
+      rule,
+      framework: "nuxt",
+      files: {
+        "server/api/input.ts": `export default defineEventHandler(async event => { ${body} })`,
+      },
+    });
+    expect(result.diagnostics.map((d) => d.ruleId)).toEqual([rule.meta.id]);
+  });
+
+  test.each([
+    `return JSON.parse(${read})`,
+    `return normalize(${read})`,
+    `return UserSchema.parse({ ...${read}, id: 1 })`,
+    `const input = ${read}; return JSON.parse(input)`,
+  ])(`${rule.meta.id} ignores reads that are not validated directly: %s`, async (body) => {
+    const result = await runRuleFixture({
+      rule,
+      framework: "nuxt",
+      files: {
+        "server/api/input.ts": `export default defineEventHandler(async event => { ${body} })`,
+      },
+    });
+    expect(result.diagnostics).toEqual([]);
+  });
+}
