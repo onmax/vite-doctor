@@ -80,6 +80,13 @@ test("text details say when Doctor did not verify the source", () => {
   );
 });
 
+test("text details distinguish an unmatched definition from absent source", () => {
+  const detail = createTextReport(resultFor(finding("", { code: "no-definition", live })));
+  expect(detail).toContain(
+    "    origin: live at https://mcp.example.com; no unique source definition matched",
+  );
+});
+
 test("the agent report carries origin and reserves deployment guidance for passing source", () => {
   const report = JSON.parse(
     createAgentReport(resultFor(finding("src/c.ts", { code: "passes", live }))),
@@ -100,6 +107,18 @@ test("the agent report carries origin and reserves deployment guidance for passi
   const code = JSON.parse(createAgentReport(resultFor(finding("src/a.ts"))));
   expect(code.groups[0].diagnostics[0].origin).toBeUndefined();
   expect(code.next.instruction).not.toMatch(/live|deploy/i);
+});
+
+test("the agent report retains live verification guidance when evidence is incomplete", () => {
+  const result = resultFor(finding("src/a.ts", { code: "passes", live }));
+  result.project.evidenceGaps = [
+    { source: "test", message: "Restore the missing evidence.", files: [] },
+  ];
+  const report = JSON.parse(createAgentReport(result));
+  expect(report.next.action).toBe("restore-evidence");
+  expect(report.next.instruction).toMatch(/^Restore the missing evidence\./);
+  expect(report.next.instruction).toContain("Verify live findings against the same target.");
+  expect(report.next.instruction).toContain("check the deployed version and runtime configuration");
 });
 
 test("SARIF names the live subject as a logical location next to where to fix it", () => {
