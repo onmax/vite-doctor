@@ -34,8 +34,9 @@ import { packageRulePack } from "./rule-packs/package/index.js";
 import { piniaRulePack } from "./rule-packs/pinia/index.js";
 import { mcpRulePack } from "./rule-packs/mcp/index.js";
 import {
-  mcpEvidenceExtension,
+  mcpEvidenceSource,
   mcpEvidenceUsed,
+  mcpServerLabels,
   readMcpServers,
   uncheckedMcpEvidenceGap,
   unreadMcpServerGaps,
@@ -87,7 +88,11 @@ export async function viteDoctorExtensions(
       rulePacks: [designSystemRulePack],
     }),
     defineDoctorExtension({ name: "vite-doctor/builtin-pinia", rulePacks: [piniaRulePack] }),
-    defineDoctorExtension({ name: "vite-doctor/builtin-mcp", rulePacks: [mcpRulePack] }),
+    defineDoctorExtension({
+      name: "vite-doctor/builtin-mcp",
+      rulePacks: [mcpRulePack],
+      sources: [mcpEvidenceSource],
+    }),
   ];
   if (frameworks.has("nuxt")) {
     const { nuxtDoctorExtensions } = await import("./rule-packs/nuxt/rules/index.js");
@@ -140,6 +145,16 @@ export async function runPreparedViteDoctor(
   const gaps = [...unreadMcpServerGaps(result.project), ...(unchecked ? [unchecked] : [])];
   if (gaps.length) result.project.evidenceGaps = [...(result.project.evidenceGaps ?? []), ...gaps];
   if (used.length) result.project.evidenceUsed = [...(result.project.evidenceUsed ?? []), ...used];
+  if (result.project.noProject) {
+    const { name, label } = mcpEvidenceSource;
+    const sourceTargets = new Set(
+      result.evidenceSources?.find((source) => source.name === name)?.targets,
+    );
+    const targets = mcpServerLabels(result.project.runtimeEvidence).filter(
+      (target) => !sourceTargets.has(target),
+    );
+    if (targets.length) result.contributedLiveTargets = [{ name, label, targets }];
+  }
   return { ...result, version: viteDoctorVersion };
 }
 
@@ -149,7 +164,6 @@ export async function viteDoctorRunOptions(options: DoctorRunOptions): Promise<D
     ...options,
     extensions: [
       ...extensions,
-      ...(options.mcp?.length ? [mcpEvidenceExtension(options.mcp)] : []),
       ...(options.extensions ?? []),
       ...(await hostDoctorExtensions(options)),
     ],

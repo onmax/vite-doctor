@@ -179,6 +179,29 @@ test("in a build, an MCP path is a config error", async () => {
   });
 });
 
+test("an empty MCP target list leaves the MCP evidence key available to extensions", async () => {
+  await withProject(async (root) => {
+    const { logger, errors } = captureLogger();
+    const extension = defineDoctorExtension({
+      name: "fixture/contributed-mcp",
+      setup(api) {
+        api.registerRuntimeEvidenceContributor({
+          name: "mcp",
+          contribute: () => ({ mcpServers: [{ name: "fixture", tools: stubTools }] }),
+        });
+      },
+    });
+    await build({
+      ...config(root, logger, { run: "build", mcp: [], extensions: [extension] }),
+      build: { write: false, lib: { entry: "entry.ts", formats: ["es"] } },
+    });
+    expect(doctorRuns).toHaveLength(1);
+    const result = await doctorRuns[0]!;
+    expect(readMcpServers(result.project.runtimeEvidence)).toMatchObject([{ name: "fixture" }]);
+    expect(errors).toEqual([]);
+  });
+});
+
 test("dev refreshes project findings as Extension MCP evidence appears and disappears", async () => {
   await withProject(async (root) => {
     const toggle = join(root, "toggle.ts");

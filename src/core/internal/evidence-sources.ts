@@ -98,10 +98,10 @@ export async function validateEvidenceSources(
 export async function collectEvidenceSources(
   project: ProjectInfo,
   requested: readonly RequestedSource[],
-  fetch: typeof globalThis.fetch = globalThis.fetch,
+  contributeRuntimeEvidence: () => Promise<void>,
+  fetch: typeof globalThis.fetch = (input, init) => globalThis.fetch(input, init),
 ): Promise<EvidenceSourceRun[]> {
-  const runs: EvidenceSourceRun[] = [];
-  for (const { source, input } of requested) {
+  async function collect(source: EvidenceSource, input: unknown): Promise<EvidenceSourceRun> {
     const { name } = source;
     const result = await source.collect(input, { project, fetch });
     project.runtimeEvidence = { ...project.runtimeEvidence, [name]: result.evidence };
@@ -111,12 +111,21 @@ export async function collectEvidenceSources(
         ...result.gaps.map((gap) => ({ source: name, files: [], ...gap })),
       ];
     }
-    runs.push({
+    return {
       name,
       label: source.label,
       targets: result.targets ?? [],
       args: sourceArgs(source, input),
-    });
+    };
+  }
+  const earlyRuns = new Map<string, EvidenceSourceRun>();
+  for (const { source, input } of requested) {
+    if (source.beforeRuntimeEvidence) earlyRuns.set(source.name, await collect(source, input));
+  }
+  await contributeRuntimeEvidence();
+  const runs: EvidenceSourceRun[] = [];
+  for (const { source, input } of requested) {
+    runs.push(earlyRuns.get(source.name) ?? (await collect(source, input)));
   }
   return runs;
 }

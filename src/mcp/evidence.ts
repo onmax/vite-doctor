@@ -1,12 +1,13 @@
 import {
   fetchMcpToolList,
+  isMcpHeaderName,
   McpFetchError,
   mcpEndpointLabel,
   parseMcpEndpoint,
   type McpInitializeResult,
   type McpTool,
 } from "@loadsheet/mcp";
-import type { DoctorExtension, ProjectInfo } from "../core/primitives.js";
+import type { EvidenceSource, ProjectInfo } from "../core/primitives.js";
 import { sha256 } from "../core/internal/utils.js";
 import { viteDoctorVersion } from "../version.js";
 import { mcpEndpointId } from "./endpoint.js";
@@ -100,43 +101,82 @@ function isMcpTool(tool: unknown): tool is McpTool {
   return !!tool && typeof tool === "object" && typeof (tool as McpTool).name === "string";
 }
 
+const PUBLIC_MCP_PATHS = new Set(["/", "/mcp", "/sse", "/v1/sse", "/github-copilot/mcp"]);
+
 /**
- * Doctor Extension that reads `tools/list` from each configured server as `mcp` Runtime Evidence.
- * A server Doctor cannot read is contributed as `{ url, error }`.
+ * Reads `tools/list` from each MCP server the run is given, with `--mcp-url` and `--mcp-header`
+ * on the CLI. A server Doctor cannot read is contributed as `{ url, error }` and an evidence gap.
  */
-export function mcpEvidenceExtension(
-  targets: readonly McpServerTarget[],
-  options: { fetch?: typeof globalThis.fetch; timeout?: number } = {},
-): DoctorExtension {
-  for (const target of targets) assertAbsoluteMcpUrl(target.url);
-  return {
-    name: "vite-doctor/mcp-evidence",
-    setup(api) {
-      api.registerRuntimeEvidenceContributor({
-        name: MCP_EVIDENCE,
-        async contribute(project) {
-          const mcpServers = await Promise.all(
-            targets.map((target) => readServer(target, options)),
-          );
-          const gaps = new Map<string, NonNullable<ProjectInfo["evidenceGaps"]>[number]>();
-          for (const server of mcpServers) {
-            if (!("error" in server)) continue;
-            const instanceKey = unreadGapKey(server);
-            if (gaps.has(instanceKey)) continue;
-            gaps.set(instanceKey, {
-              source: MCP_EVIDENCE,
-              message: `Doctor could not read the tools of the MCP server at ${server.url}, so its tools were not checked: ${server.error}${authHint(server.status)}`,
-              files: [],
-              instanceKey,
-            });
-          }
-          if (gaps.size) project.evidenceGaps = [...(project.evidenceGaps ?? []), ...gaps.values()];
-          return { mcpServers };
-        },
-      });
+export const mcpEvidenceSource: EvidenceSource<McpServerTarget[]> = {
+  name: MCP_EVIDENCE,
+  label: "MCP server",
+  beforeRuntimeEvidence: true,
+  options: {
+    url: {
+      help: "Read tools/list from this MCP server as Runtime Evidence. Repeatable.",
+      value: "url",
+      repeatable: true,
+      // Credentials, query strings, and custom paths can all carry secrets.
+      secret(value, redacted) {
+        const url = parseMcpEndpoint(value);
+        if (!url) return redacted;
+        const credentials = url.username || url.password ? `${redacted}@` : "";
+        const path = PUBLIC_MCP_PATHS.has(url.pathname) ? url.pathname : `/${redacted}`;
+        return `${url.protocol}//${credentials}${url.host}${path}${url.search ? `?${redacted}` : ""}`;
+      },
     },
-  };
-}
+    header: {
+      help: 'Request header for every --mcp-url, as "Name: value". Repeatable.',
+      value: "header",
+      repeatable: true,
+      requires: "url",
+      secret: (value, redacted) => `${value.slice(0, value.indexOf(":"))}: ${redacted}`,
+    },
+  },
+  fromOptions({ url = [], header = [] }) {
+    const headers = new Map<string, string>();
+    for (const entry of header) {
+      const colon = entry.indexOf(":");
+      const name = colon === -1 ? "" : entry.slice(0, colon).trim();
+      if (!isMcpHeaderName(name))
+        throw new Error(
+          '--mcp-header must look like "Name: value", such as "Authorization: Bearer <token>".',
+        );
+      headers.set(name, entry.slice(colon + 1).trim());
+    }
+    return url.map((target) => ({
+      url: target,
+      ...(headers.size ? { headers: Object.fromEntries(headers) } : {}),
+    }));
+  },
+  toOptions: (targets) => ({
+    url: targets.map((target) => target.url),
+    header: Object.entries(targets[0]?.headers ?? {})
+      .filter(([name]) => isMcpHeaderName(name))
+      .map(([name, value]) => `${name}: ${value}`),
+  }),
+  validate(targets) {
+    for (const target of targets) assertAbsoluteMcpUrl(target.url);
+  },
+  async collect(targets, { fetch }) {
+    const mcpServers = await Promise.all(targets.map((target) => readServer(target, { fetch })));
+    const gaps = new Map<string, { message: string; instanceKey: string }>();
+    for (const server of mcpServers) {
+      if (!("error" in server)) continue;
+      const instanceKey = unreadGapKey(server);
+      if (gaps.has(instanceKey)) continue;
+      gaps.set(instanceKey, {
+        message: `Doctor could not read the tools of the MCP server at ${server.url}, so its tools were not checked: ${server.error}${authHint(server.status)}`,
+        instanceKey,
+      });
+    }
+    return {
+      evidence: { mcpServers },
+      targets: mcpServerLabels({ [MCP_EVIDENCE]: { mcpServers } }),
+      gaps: [...gaps.values()],
+    };
+  },
+};
 
 async function readServer(
   { url, headers, serverName }: McpServerTarget,
