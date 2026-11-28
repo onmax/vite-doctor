@@ -30,7 +30,6 @@ export interface ValidatedInputRuleOptions {
   rawUtilities: string[];
   validatedUtility: string;
   message: string;
-  suggestion: string;
   confidence: Confidence;
   docsUrl?: string;
 }
@@ -41,13 +40,18 @@ export interface MethodCheck {
   isNegative: boolean;
 }
 
+export function validatedInputSuggestion(utility: string) {
+  return `Consider ${utility} only if using a validator callback preserves behavior; otherwise keep the read and validation separate. In H3 v1, false means validation failed, and the helper returns raw input when the callback returns true, null, or undefined.`;
+}
+
 export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
+  const suggestion = validatedInputSuggestion(opts.validatedUtility);
   return createRule({
     meta: {
       id: opts.id,
       title: opts.title,
       description: opts.description,
-      recommendedReplacement: `Use ${opts.validatedUtility}(event, validator) instead of ${opts.rawUtilities[0]}(event) followed by separate validation.`,
+      recommendedReplacement: suggestion,
       category: "request",
       severity: "warn",
       confidence: opts.confidence,
@@ -62,7 +66,7 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
         CallExpression(node: AnyNode) {
           if (!isReplaceableRawRead(ctx, node, opts.rawUtilities) || !validatedInline(ctx, node))
             return;
-          report(ctx, node, opts.id, "warn", "request", opts.message, opts.suggestion);
+          report(ctx, node, opts.id, "warn", "request", opts.message, suggestion);
         },
         VariableDeclarator(node: AnyNode) {
           if (!rawInputVariable(ctx, node, opts.rawUtilities)) return;
@@ -74,7 +78,7 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
             (bindings ??= variableReferences(ctx)),
           );
           if (!match) return;
-          report(ctx, match.node, opts.id, "warn", "request", opts.message, opts.suggestion);
+          report(ctx, match.node, opts.id, "warn", "request", opts.message, suggestion);
         },
       };
     },

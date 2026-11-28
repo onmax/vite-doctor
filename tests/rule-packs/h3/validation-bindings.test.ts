@@ -61,6 +61,31 @@ for (const { rule, read } of cases) {
 
 for (const { rule, read } of cases) {
   test.each([
+    ["import * as v from 'valibot'", "v.assert(v.object({}), INPUT)"],
+    ["import { z } from 'zod'", "z.object({}).transform(() => false).parse(INPUT)"],
+  ])(`${rule.meta.id} cautions against changing validator results: %s`, async (imports, call) => {
+    for (const inline of [true, false]) {
+      const result = await runRuleFixture({
+        rule,
+        framework: "nuxt",
+        files: {
+          "server/middleware/input.ts": `${imports}; export default defineEventHandler(async event => {
+            ${inline ? "" : `const input = ${read};`}
+            return ${call.replace("INPUT", inline ? read : "input")}
+          })`,
+        },
+      });
+      expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([rule.meta.id]);
+      expect(result.diagnostics[0]?.suggestion).toContain("keep the read and validation separate");
+      expect(result.diagnostics[0]?.suggestion).toContain("false means validation failed");
+      expect(result.diagnostics[0]?.suggestion).toContain(
+        "returns raw input when the callback returns true, null, or undefined",
+      );
+      expect(result.diagnostics[0]?.suggestion).toBe(rule.meta.recommendedReplacement);
+    }
+  });
+
+  test.each([
     `return UserSchema.parse(${read})`,
     `return bodySchema.safeParse(${read})`,
     `return v.parse(Schema, ${read})`,
