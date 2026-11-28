@@ -211,6 +211,23 @@ test.each([
   expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
 });
 
+test.each(["const", "let"])("reports a %s Map key declared alongside the lookup", async (kind) => {
+  const source = ageCache(`if (${fresh}) return hit.value\n${refresh}`)
+    .replace("load(key: string)", "load(slug: string)")
+    .replace("const hit = cache.get(key)", `${kind} key = slug.trim(), hit = cache.get(key)`);
+  expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+});
+
+test("does not report a Map key changed by a later initializer in the lookup declaration", async () => {
+  const source = ageCache(`if (${fresh}) return hit.value\n${refresh}`)
+    .replace("load(key: string)", "load(slug: string)")
+    .replace(
+      "const hit = cache.get(key)",
+      "let key = slug.trim(), hit = cache.get(key), next = (key = 'internal:' + key)",
+    );
+  expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
+});
+
 test("does not report age-based reuse when a closure can change the Map key", async () => {
   const source = ageCache(`if (${fresh}) return hit.value\nchangeKey()\n${refresh}`).replace(
     "const hit = cache.get(key)",

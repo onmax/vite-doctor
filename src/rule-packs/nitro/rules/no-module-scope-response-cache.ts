@@ -466,24 +466,28 @@ function sameKey(fn: AnyNode, read: AnyNode, write: AnyNode, scopeReferences: Sc
     if (variable.defs.some((definition) => definition.type === "ImportBinding")) return false;
     const writes = variable.references.filter((reference) => reference.isWrite());
     if (!writes.length) return true;
-    const scope = variable.scope.variableScope;
-    if (scope.block.range[0] !== fn.start) {
-      return (
-        variable.defs.length === 1 &&
-        variable.defs[0]?.type === "Variable" &&
-        variable.defs[0].parent.kind === "const" &&
-        writes.every((reference) => reference.init)
-      );
-    }
-    return writesBeforeLookup(fn, read, write, writes);
+    const [definition] = variable.defs;
+    if (
+      variable.defs.length === 1 &&
+      definition?.type === "Variable" &&
+      definition.parent.kind === "const" &&
+      writes.every((reference) => reference.init)
+    )
+      return true;
+    return (
+      variable.scope.variableScope.block.range[0] === fn.start &&
+      writesBeforeLookup(fn, read, write, writes)
+    );
   }
   return first?.type === "Literal" && second?.type === "Literal" && first.value === second.value;
 }
 
 function writesBeforeLookup(fn: AnyNode, read: AnyNode, write: AnyNode, writes: ScopeReference[]) {
-  const declaration = read.__doctorParent?.__doctorParent?.__doctorParent;
+  const declarator = read.__doctorParent?.__doctorParent;
+  const declaration = declarator?.__doctorParent;
   const lookupBlock = declaration?.__doctorParent;
   if (
+    declarator?.type !== "VariableDeclarator" ||
     declaration?.type !== "VariableDeclaration" ||
     lookupBlock?.type !== "BlockStatement" ||
     write.start < declaration.end ||
@@ -491,7 +495,7 @@ function writesBeforeLookup(fn: AnyNode, read: AnyNode, write: AnyNode, writes: 
   )
     return false;
 
-  const prefixes: [number, number][] = [];
+  const prefixes: [number, number][] = [[declaration.start, declarator.start]];
   for (
     let statement = declaration;
     statement && statement !== fn;
