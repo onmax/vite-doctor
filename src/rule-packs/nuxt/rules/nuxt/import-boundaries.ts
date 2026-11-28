@@ -22,8 +22,6 @@ export interface LayerDirs {
 export type Side = "app" | "shared" | "server";
 type NuxtLayer = NonNullable<ProjectInfo["nuxt"]>["layers"][number];
 
-const layersByProject = new WeakMap<ProjectInfo, LayerDirs[]>();
-
 export interface BoundaryFile {
   file: string;
   layer: LayerDirs;
@@ -149,7 +147,8 @@ function absolute(root: string, path: string) {
 }
 
 export function projectLayers(ctx: RuleContext): LayerDirs[] {
-  const cached = layersByProject.get(ctx.project);
+  const key = "nuxt:import-boundary-layers";
+  const cached = ctx.cache.get<LayerDirs[]>(key);
   if (cached) return cached;
   const root = toPosixPath(ctx.project.root);
   const nuxt = ctx.project.nuxt;
@@ -188,7 +187,7 @@ export function projectLayers(ctx: RuleContext): LayerDirs[] {
       sharedDir: sharedDir ? absolute(root, sharedDir) : resolve(layerRoot, "shared"),
     };
   });
-  layersByProject.set(ctx.project, layers);
+  ctx.cache.set(key, layers);
   return layers;
 }
 

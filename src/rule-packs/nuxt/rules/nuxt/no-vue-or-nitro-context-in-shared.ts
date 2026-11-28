@@ -110,8 +110,7 @@ function isProcessEnvRead(ctx: RuleContext, node: AnyNode) {
   const access = parent?.type === "MemberExpression" && parent.object === node ? parent : node;
   if (isWriteOnly(access)) return false;
   return (
-    access === node ||
-    (access.computed ? staticString(access.property) : access.property?.name) !== "NODE_ENV"
+    access === node || node.computed || access.computed || access.property?.name !== "NODE_ENV"
   );
 }
 
