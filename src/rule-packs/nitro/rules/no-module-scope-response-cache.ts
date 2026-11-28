@@ -340,9 +340,8 @@ function ageControlsReuse(
       fn,
       paths.refresh,
       binding,
-      key,
+      (writeKey) => sameKey(fn, key, writeKey, paths.guard, scopeReferences),
       field,
-      scopeReferences,
       paths.mustReturn,
     );
   });
@@ -364,6 +363,7 @@ function freshnessPaths(comparison: AnyNode, freshWhenTrue: boolean) {
           ? block.body.slice(block.body.indexOf(parent) + 1)
           : [];
       return {
+        guard: parent,
         hit: freshWhenTrue ? branch : other,
         refresh: freshWhenTrue ? other : branch,
         mustReturn: !freshWhenTrue && !parent.alternate,
@@ -405,9 +405,8 @@ function refreshesPayload(
   fn: AnyNode,
   statements: AnyNode[],
   binding: CacheBinding,
-  key: AnyNode,
+  matchesKey: (writeKey: AnyNode) => boolean,
   field: string,
-  scopeReferences: ScopeReferences,
   mustReturn: boolean,
 ) {
   const locals: AnyNode[] = [];
@@ -430,7 +429,7 @@ function refreshesPayload(
     const entry =
       binding.kind === "map"
         ? mapMethod(target) === "set" &&
-          sameKey(fn, key, write.arguments[0], scopeReferences) &&
+          matchesKey(write.arguments[0]) &&
           unwrap(write.arguments[1])
         : write.type === "AssignmentExpression" && write.operator === "=" && unwrap(write.right);
     if (entry?.type !== "ObjectExpression") return false;
@@ -463,7 +462,13 @@ function refreshesPayload(
   return false;
 }
 
-function sameKey(fn: AnyNode, read: AnyNode, write: AnyNode, scopeReferences: ScopeReferences) {
+function sameKey(
+  fn: AnyNode,
+  read: AnyNode,
+  write: AnyNode,
+  guard: AnyNode,
+  scopeReferences: ScopeReferences,
+) {
   const first = unwrap(read);
   const second = unwrap(write);
   if (first?.type === "Identifier" && second?.type === "Identifier" && first.name === second.name) {
@@ -473,7 +478,7 @@ function sameKey(fn: AnyNode, read: AnyNode, write: AnyNode, scopeReferences: Sc
     if (variable.defs.some((definition) => definition.type === "ImportBinding")) return false;
     const writes = variable.references.filter((reference) => reference.isWrite());
     if (!writes.length) return true;
-    if (hasInterveningLoopKeyWrite(fn, read, write, writes)) return false;
+    if (hasInterveningLoopKeyWrite(fn, read, write, guard, writes)) return false;
     const [definition] = variable.defs;
     if (
       variable.defs.length === 1 &&
@@ -494,15 +499,17 @@ function hasInterveningLoopKeyWrite(
   fn: AnyNode,
   read: AnyNode,
   write: AnyNode,
+  guard: AnyNode,
   writes: ScopeReference[],
 ) {
   const declaration = read.__doctorParent?.__doctorParent?.__doctorParent;
   const block = declaration?.__doctorParent;
-  const refreshFollowsLookup =
+  const guardAndRefreshFollowLookup =
     declaration?.type === "VariableDeclaration" &&
     block?.type === "BlockStatement" &&
+    declaration.end <= guard.start &&
     declaration.end <= write.start &&
-    write.end <= block.end;
+    Math.max(guard.end, write.end) <= block.end;
   const loops = new Set<AnyNode>();
   for (const access of [read, write]) {
     for (let node = access.__doctorParent; node && node !== fn; node = node.__doctorParent) {
@@ -510,7 +517,7 @@ function hasInterveningLoopKeyWrite(
     }
   }
   return [...loops].some((loop) => {
-    if (refreshFollowsLookup && loop.body.start <= block.start && block.end <= loop.body.end)
+    if (guardAndRefreshFollowLookup && loop.body.start <= block.start && block.end <= loop.body.end)
       return false;
     const init = loop.type === "ForStatement" ? loop.init : null;
     const bothInBody =

@@ -219,15 +219,23 @@ test.each(["const", "let"])("reports a %s Map key declared alongside the lookup"
 });
 
 test.each([
-  ["in a for-of header", "for (const key of candidates)", ""],
-  ["in the loop body", "for (const candidate of candidates)", "const key = candidate.trim()"],
-])("reports same-iteration reuse with a Map key initialized %s", async (_, loop, setup) => {
-  const source = `const cache = new Map<string, { value: unknown, at: number }>()
+  ["in a for-of header", "for (const key of candidates)", "", "const"],
+  ["in a for-of header and a var hit", "for (const key of candidates)", "", "var"],
+  [
+    "in the loop body",
+    "for (const candidate of candidates)",
+    "const key = candidate.trim()",
+    "const",
+  ],
+])(
+  "reports same-iteration reuse with a Map key initialized %s",
+  async (_, loop, setup, hitKind) => {
+    const source = `const cache = new Map<string, { value: unknown, at: number }>()
 export async function load(candidates: string[]) {
   ${loop} {
     ${setup}
     try {
-      const hit = cache.get(key)
+      ${hitKind} hit = cache.get(key)
       if (${fresh}) return hit.value
       ${refresh}
     } catch (error) {
@@ -235,8 +243,9 @@ export async function load(candidates: string[]) {
     }
   }
 }`;
-  expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
-});
+    expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+  },
+);
 
 test("reports cross-iteration reuse with a Map key initialized once in a for header", async () => {
   const source = `const cache = new Map<string, { value: unknown, at: number }>()
@@ -275,6 +284,18 @@ export async function load(slug: string) {
     expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
   },
 );
+
+test("does not match a loop key when the guard runs before the lookup", async () => {
+  const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(slug: string) {
+  for (const key of ['public:' + slug, 'internal:' + slug]) {
+    if (${fresh}) return hit.value
+    var hit = cache.get(key)
+    ${refresh}
+  }
+}`;
+  expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
+});
 
 test("reports age-based reuse in a loop with a key initialized outside it", async () => {
   const source = `const cache = new Map<string, { value: unknown, at: number }>()
