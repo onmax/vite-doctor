@@ -106,15 +106,15 @@ function serverImportVisitor(
 function serverImport(
   ctx: RuleContext,
   node: AnyNode,
-  { file, layer, layers }: BoundaryFile,
+  importer: BoundaryFile,
 ): ServerImport | undefined {
   const source = importSource(node);
   if (!source) return;
   const specifier = staticString(source);
   if (!specifier) return;
-  const resolved = resolveSpecifier(ctx, specifier, file, layer);
+  const resolved = resolveSpecifier(ctx, specifier, importer);
   if (!resolved) return;
-  const targetLayer = layerFor(resolved, layers, ctx.project.root);
+  const targetLayer = layerFor(ctx, resolved, importer.layers);
   const serverDir = targetLayer.serverDirs.find((dir) => isInside(resolved, dir));
   if (!serverDir) return;
   const foundTypeOnly = isTypeOnly(node);

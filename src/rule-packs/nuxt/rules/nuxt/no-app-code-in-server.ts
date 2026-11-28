@@ -99,9 +99,9 @@ function appImportVisitor(
     const source = importSource(node);
     const specifier = source && staticString(source);
     if (!specifier || NUXT_OWNED.test(specifier)) return;
-    const resolved = resolveSpecifier(ctx, specifier, importer.file, importer.layer);
+    const resolved = resolveSpecifier(ctx, specifier, importer);
     if (!resolved || DATA_FILE.test(resolved)) return;
-    const targetLayer = layerFor(resolved, importer.layers, ctx.project.root);
+    const targetLayer = layerFor(ctx, resolved, importer.layers);
     if (sideOf(resolved, targetLayer) !== "app") return;
     const found = {
       node: source,

@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { runProjectFixture } from "../../../src/core/testkit.ts";
+import { noServerUtilsInApp } from "../../../src/rule-packs/nuxt/rules/nuxt/no-server-utils-in-app.ts";
 import { noVueOrNitroContextInShared } from "../../../src/rule-packs/nuxt/rules/nuxt/no-vue-or-nitro-context-in-shared.ts";
 
 async function run(files: Record<string, string>) {
@@ -34,6 +35,7 @@ test.each([
   `import { format } from '../../app/utils/format'`,
   `export const prefix = process.env.SLUG_PREFIX`,
   `export const prefix = process.env['SLUG_PREFIX']`,
+  `process.env.COUNT += '1'`,
   `export function currentPath() { return useRoute().path }`,
 ])("reports shared code that needs one runtime: %s", async (source) => {
   expect(await run({ "shared/utils/slug.ts": source })).toEqual([
@@ -47,6 +49,47 @@ test("reports layer shared directories", async () => {
   ).toEqual([{ code: "NUXT0059", file: "layers/billing/shared/utils/tax.ts" }]);
 });
 
+test("uses the configured shared directory instead of the default in each layer", async () => {
+  const manifest = {
+    nuxtVersion: "4.6.4",
+    appDir: "app",
+    layers: [
+      { root: ".", srcDir: "app", sharedDir: "common", priority: 0 },
+      { root: "layers/billing", sharedDir: "layers/billing/common", priority: 1 },
+    ],
+  };
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ".nuxt/doctor.manifest.json": JSON.stringify(manifest),
+      "common/utils/prefix.ts": `import 'vue'\nimport '#server/utils/price'`,
+      "shared/utils/prefix.ts": `import 'vue'\nimport '#server/utils/price'`,
+      "layers/billing/common/utils/prefix.ts": `import 'vue'`,
+      "layers/billing/shared/utils/prefix.ts": `import 'vue'`,
+    },
+    rules: [noVueOrNitroContextInShared, noServerUtilsInApp],
+  });
+  expect(
+    result.diagnostics
+      .map(({ code, file }) => `${code}:${file?.replace(`${result.project.root}/`, "")}`)
+      .sort((left, right) => left.localeCompare(right)),
+  ).toEqual([
+    "NUXT0059:common/utils/prefix.ts",
+    "NUXT0059:layers/billing/common/utils/prefix.ts",
+    "NUXT0075:common/utils/prefix.ts",
+  ]);
+});
+
+test("uses literal dir.shared without a manifest", async () => {
+  expect(
+    await run({
+      "nuxt.config.ts": `export default defineNuxtConfig({ dir: { shared: 'common' } })`,
+      "common/utils/prefix.ts": `import 'vue'`,
+      "shared/utils/prefix.ts": `import 'vue'`,
+    }),
+  ).toEqual([{ code: "NUXT0059", file: "common/utils/prefix.ts" }]);
+});
+
 test.each([
   `import type { Ref } from 'vue'`,
   `import { type Ref } from 'vue'`,
@@ -58,6 +101,10 @@ test.each([
   `import { slugify } from './slugify'`,
   `import { slugify } from '#shared/utils/slugify'`,
   `export const dev = process.env.NODE_ENV !== 'production'`,
+  `export const dev = process.env['NODE_ENV'] !== 'production'`,
+  `export function prefix(process: { env: { PREFIX: string } }) { return process.env.PREFIX }`,
+  `process.env.VALUE = 'test'`,
+  `delete process.env.VALUE`,
   `export const slug = (text: string) => text.toLowerCase()`,
 ])("allows runtime-neutral shared code: %s", async (source) => {
   expect(await run({ "shared/utils/slug.ts": source })).toEqual([]);

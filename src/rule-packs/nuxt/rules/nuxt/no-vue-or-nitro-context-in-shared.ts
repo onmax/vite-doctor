@@ -61,7 +61,7 @@ export const noVueOrNitroContextInShared = createRule({
         if (problem) report(ctx, source, RULE_ID, "error", "architecture", ...problem);
       }),
       MemberExpression(node: AnyNode) {
-        if (!isProcessEnvRead(node)) return;
+        if (!isProcessEnvRead(ctx, node)) return;
         report(
           ctx,
           node,
@@ -81,7 +81,7 @@ export const noVueOrNitroContextInShared = createRule({
 function sharedImportProblem(
   ctx: RuleContext,
   specifier: string,
-  { file, layer, layers }: BoundaryFile,
+  importer: BoundaryFile,
 ): [message: string, suggestion: string] | undefined {
   if (RUNTIME_PACKAGES.has(specifier) || RUNTIME_ALIASES.test(specifier))
     return [
@@ -93,8 +93,8 @@ function sharedImportProblem(
       `shared/ code imports the Node API ${specifier}, which is not available when the app bundle runs in the browser.`,
       "Move code that needs Node to server/utils/, or pass its result into the shared function.",
     ];
-  const resolved = resolveSpecifier(ctx, specifier, file, layer);
-  if (resolved && sideOf(resolved, layerFor(resolved, layers, ctx.project.root)) === "app")
+  const resolved = resolveSpecifier(ctx, specifier, importer);
+  if (resolved && sideOf(resolved, layerFor(ctx, resolved, importer.layers)) === "app")
     return [
       `shared/ code imports ${specifier}, which resolves to app code. The server also runs shared/ code and cannot use the app's components, composables or auto-imports.`,
       "Move the code both sides need into shared/, or keep the caller in app/.",
@@ -102,14 +102,23 @@ function sharedImportProblem(
 }
 
 // `process.env.NODE_ENV` is replaced at build time on both sides.
-function isProcessEnvRead(node: AnyNode) {
-  if (node.computed || node.property?.name !== "env") return false;
+function isProcessEnvRead(ctx: RuleContext, node: AnyNode) {
+  if ((node.computed ? staticString(node.property) : node.property?.name) !== "env") return false;
   if (node.object?.type !== "Identifier" || node.object.name !== "process") return false;
-  const parent = node.__doctorParent;
-  return !(
-    parent?.type === "MemberExpression" &&
-    parent.object === node &&
-    !parent.computed &&
-    parent.property?.name === "NODE_ENV"
+  if (ctx.helpers.isTypeOnlyContext(node) || ctx.helpers.hasLocalBinding(node.object)) return false;
+  const parent = node.parent ?? node.__doctorParent;
+  const access = parent?.type === "MemberExpression" && parent.object === node ? parent : node;
+  if (isWriteOnly(access)) return false;
+  return (
+    access === node ||
+    (access.computed ? staticString(access.property) : access.property?.name) !== "NODE_ENV"
+  );
+}
+
+function isWriteOnly(node: AnyNode) {
+  const parent = node.parent ?? node.__doctorParent;
+  return (
+    (parent?.type === "AssignmentExpression" && parent.left === node && parent.operator === "=") ||
+    (parent?.type === "UnaryExpression" && parent.operator === "delete" && parent.argument === node)
   );
 }

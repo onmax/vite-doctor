@@ -4,6 +4,7 @@ import {
   noAppCodeInServer,
   noAppTypesInServer,
 } from "../../../src/rule-packs/nuxt/rules/nuxt/no-app-code-in-server.ts";
+import { noServerUtilsInApp } from "../../../src/rule-packs/nuxt/rules/nuxt/no-server-utils-in-app.ts";
 import nuxtRulePack from "../../../src/rule-packs/nuxt/rules/nuxt.ts";
 
 const appCode = {
@@ -72,6 +73,57 @@ test("reports app code imported into a layer's server directory", async () => {
     "layers/billing/server/api/tax.get.ts": `import { tax } from '../../app/utils/tax'`,
   });
   expect(diagnostics).toEqual([{ code: "NUXT0108", file: "layers/billing/server/api/tax.get.ts" }]);
+});
+
+test("treats app/server as ordinary app code on Nuxt 4", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ...appCode,
+      "app/server/price.ts": `import '~/utils/format'`,
+      "app/utils/price.ts": `import '~/server/price'`,
+    },
+    rules: [noAppCodeInServer, noServerUtilsInApp],
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test("uses literal srcDir and serverDir without a manifest", async () => {
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      "nuxt.config.ts": `export default defineNuxtConfig({ srcDir: 'frontend', serverDir: 'backend' })`,
+      "frontend/lib/format.ts": `import '#server/utils/price'`,
+      "backend/utils/price.ts": `import '~/lib/format'`,
+    },
+    rules: [noAppCodeInServer, noServerUtilsInApp],
+  });
+  expect(result.diagnostics.map(({ code }) => code).sort()).toEqual(["NUXT0075", "NUXT0108"]);
+});
+
+test("uses each runtime's alias map for the same specifiers", async () => {
+  const manifest = {
+    nuxtVersion: "4.6.4",
+    appDir: "app",
+    layers: [{ root: ".", srcDir: "app", serverDir: "server", priority: 0 }],
+    aliases: { "#backend": "app/utils", "#frontend": "server/utils", "#app-only": "app/utils" },
+    nitroAliases: { "#backend": "server/utils", "#frontend": "app/utils" },
+  };
+  const result = await runProjectFixture({
+    framework: "nuxt",
+    files: {
+      ".nuxt/doctor.manifest.json": JSON.stringify(manifest),
+      "app/utils/price.ts": `import '#backend/price'\nimport '#frontend/price'`,
+      "server/utils/price.ts": `import '#backend/price'\nimport '#frontend/price'\nimport '#app-only/price'`,
+      "server/utils/types.ts": `import type { Price } from '#frontend/price'`,
+    },
+    rules: [noAppCodeInServer, noAppTypesInServer, noServerUtilsInApp],
+  });
+  expect(
+    result.diagnostics
+      .map(({ code, range }) => `${code}:${range?.line}`)
+      .sort((left, right) => left.localeCompare(right)),
+  ).toEqual(["NUXT0075:2", "NUXT0108:2", "NUXT0109:1"]);
 });
 
 test.each([
