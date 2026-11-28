@@ -473,7 +473,7 @@ function sameKey(fn: AnyNode, read: AnyNode, write: AnyNode, scopeReferences: Sc
     if (variable.defs.some((definition) => definition.type === "ImportBinding")) return false;
     const writes = variable.references.filter((reference) => reference.isWrite());
     if (!writes.length) return true;
-    if (hasLoopKeyWrite(fn, read, writes) || hasLoopKeyWrite(fn, write, writes)) return false;
+    if (hasInterveningLoopKeyWrite(fn, read, write, writes)) return false;
     const [definition] = variable.defs;
     if (
       variable.defs.length === 1 &&
@@ -490,22 +490,43 @@ function sameKey(fn: AnyNode, read: AnyNode, write: AnyNode, scopeReferences: Sc
   return first?.type === "Literal" && second?.type === "Literal" && first.value === second.value;
 }
 
-function hasLoopKeyWrite(fn: AnyNode, access: AnyNode, writes: ScopeReference[]) {
-  for (
-    let parent = access.__doctorParent;
-    parent && parent !== fn;
-    parent = parent.__doctorParent
-  ) {
-    if (
-      LOOP_TYPES.has(parent.type) &&
-      writes.some(
-        ({ identifier }) =>
-          parent.start <= identifier.range[0] && identifier.range[1] <= parent.end,
-      )
-    )
-      return true;
+function hasInterveningLoopKeyWrite(
+  fn: AnyNode,
+  read: AnyNode,
+  write: AnyNode,
+  writes: ScopeReference[],
+) {
+  const declaration = read.__doctorParent?.__doctorParent?.__doctorParent;
+  const block = declaration?.__doctorParent;
+  const refreshFollowsLookup =
+    declaration?.type === "VariableDeclaration" &&
+    block?.type === "BlockStatement" &&
+    declaration.end <= write.start &&
+    write.end <= block.end;
+  const loops = new Set<AnyNode>();
+  for (const access of [read, write]) {
+    for (let node = access.__doctorParent; node && node !== fn; node = node.__doctorParent) {
+      if (LOOP_TYPES.has(node.type)) loops.add(node);
+    }
   }
-  return false;
+  return [...loops].some((loop) => {
+    if (refreshFollowsLookup && loop.body.start <= block.start && block.end <= loop.body.end)
+      return false;
+    const init = loop.type === "ForStatement" ? loop.init : null;
+    const bothInBody =
+      loop.body.start <= Math.min(read.start, write.start) &&
+      Math.max(read.end, write.end) <= loop.body.end;
+    return writes.some(
+      ({
+        identifier: {
+          range: [start, end],
+        },
+      }) => {
+        if (init && bothInBody && init.start <= start && end <= init.end) return false;
+        return loop.start <= start && end <= loop.end;
+      },
+    );
+  });
 }
 
 function writesBeforeLookup(fn: AnyNode, read: AnyNode, write: AnyNode, writes: ScopeReference[]) {

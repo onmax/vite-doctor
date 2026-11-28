@@ -219,6 +219,42 @@ test.each(["const", "let"])("reports a %s Map key declared alongside the lookup"
 });
 
 test.each([
+  ["in a for-of header", "for (const key of candidates)", ""],
+  ["in the loop body", "for (const candidate of candidates)", "const key = candidate.trim()"],
+])("reports same-iteration reuse with a Map key initialized %s", async (_, loop, setup) => {
+  const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(candidates: string[]) {
+  ${loop} {
+    ${setup}
+    try {
+      const hit = cache.get(key)
+      if (${fresh}) return hit.value
+      ${refresh}
+    } catch (error) {
+      throw error
+    }
+  }
+}`;
+  expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+});
+
+test("reports cross-iteration reuse with a Map key initialized once in a for header", async () => {
+  const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(candidate: string) {
+  let attempt = 0
+  for (const key = candidate.trim(); key; attempt++) {
+    if (attempt === 0) {
+      var hit = cache.get(key)
+      continue
+    }
+    if (${fresh}) return hit.value
+    ${refresh}
+  }
+}`;
+  expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+});
+
+test.each([
   ["in the loop header", "const key", "['public:' + slug, 'internal:' + slug]", ""],
   ["in the loop body", "const prefix", "['public:', 'internal:']", "const key = prefix + slug"],
 ])(
