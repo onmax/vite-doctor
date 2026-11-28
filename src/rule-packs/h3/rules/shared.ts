@@ -586,7 +586,7 @@ function resolveIdentifier(ctx: RuleContext, identifier: AnyNode): string | null
   return typeof imported === "string" ? imported : null;
 }
 
-function resolveVariable(ctx: RuleContext, identifier: AnyNode): ScopeVariable | null {
+export function resolveVariable(ctx: RuleContext, identifier: AnyNode): ScopeVariable | null {
   return referencesByOffset(ctx)?.get(offset(identifier) ?? -1)?.resolved ?? null;
 }
 

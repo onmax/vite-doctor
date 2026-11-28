@@ -804,7 +804,7 @@ test("an MCP server that answers 401 from an empty directory reports missing MCP
     server.url,
   ]);
   expect(code).toBe(3);
-  expect(output).toContain("Status: incomplete, required MCP server evidence is missing\n");
+  expect(output).toContain("Status: incomplete, required evidence is missing\n");
   expect(output).toMatch(
     /Evidence missing: .*HTTP 401.*--mcp-header "Authorization: Bearer <token>"\.\n/,
   );

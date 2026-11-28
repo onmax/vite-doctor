@@ -10,6 +10,7 @@ import {
   workspaceDiagnosticMetadata,
 } from "../../src/core/diagnostic-metadata.js";
 import { h3RecommendedRuleIds } from "../../src/rule-packs/h3/presets.js";
+import { validatedInputSuggestion } from "../../src/rule-packs/h3/rules/request-helpers.js";
 import { mcpRecommendedRuleIds } from "../../src/rule-packs/mcp/presets.js";
 import { piniaRecommendedRuleIds } from "../../src/rule-packs/pinia/presets.js";
 
@@ -646,7 +647,7 @@ function collectRules(files: string[], defaultPack: string, framework: RuleFrame
         title: readString(opts, "title"),
         description: readString(opts, "description"),
         why: "Raw request input and validation can drift apart when they are separate operations. Nitro and h3 provide validated helpers that keep parsing and validation coupled at the request boundary.",
-        recommendedReplacement: validatedInputReplacement(opts),
+        recommendedReplacement: validatedInputSuggestion(readString(opts, "validatedUtility")),
         examples: validatedInputExamples(opts),
         category: "request",
         severity: "warn" as const,
@@ -1055,6 +1056,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia", "https://pinia.vuejs.org/");
   }
 
+  if (rule.id === "vue/ssr/no-invalid-root-nesting") {
+    add("Vue hydration mismatch", "https://vuejs.org/guide/scaling-up/ssr.html#hydration-mismatch");
+    add(
+      "HTML parsing: the in body insertion mode",
+      "https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody",
+    );
+  }
+
   if (rule.id === "vue/attrs/no-multi-root-fallthrough") {
     add(
       "Vue attribute inheritance on multiple root nodes",
@@ -1381,29 +1390,23 @@ function readStringArray(object: any, key: string) {
     .filter(Boolean);
 }
 
-function validatedInputReplacement(opts: any) {
-  const validatedUtility = readString(opts, "validatedUtility");
-  const [rawUtility] = readStringArray(opts, "rawUtilities");
-  if (!validatedUtility || !rawUtility) return readString(opts, "suggestion");
-  return `Use ${validatedUtility}(event, validator) instead of ${rawUtility}(event) followed by separate validation.`;
-}
-
 function validatedInputExamples(opts: any): RuleExample[] {
   const validatedUtility = readString(opts, "validatedUtility");
   const [rawUtility] = readStringArray(opts, "rawUtilities");
   if (!validatedUtility || !rawUtility) return [];
+  const schema = `import { z } from "zod"\n\nconst schema = z.object({ name: z.string() })`;
   return [
     {
-      title: "Keep reading and validation together",
+      title: "Use the helper with an object-returning parser",
       language: "ts",
-      invalid: `export default defineEventHandler(async (event) => {
+      invalid: `${schema}\n\nexport default defineEventHandler(async (event) => {
   const input = await ${rawUtility}(event)
-  const value = validator.parse(input)
+  const value = schema.parse(input)
 
   return value
 })`,
-      valid: `export default defineEventHandler(async (event) => {
-  const value = await ${validatedUtility}(event, validator)
+      valid: `${schema}\n\nexport default defineEventHandler(async (event) => {
+  const value = await ${validatedUtility}(event, (input) => schema.parse(input))
 
   return value
 })`,

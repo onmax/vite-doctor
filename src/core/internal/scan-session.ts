@@ -170,7 +170,12 @@ export async function createScanSession(
   assertUniqueContributors(
     [
       ...registry.runtimeEvidenceContributors,
-      ...registry.sources.filter((source) => options.sources?.[source.name] !== undefined),
+      ...registry.sources.filter(
+        ({ name }) =>
+          options.sources &&
+          Object.hasOwn(options.sources, name) &&
+          options.sources[name] !== undefined,
+      ),
     ],
     "Runtime Evidence",
   );
@@ -181,6 +186,7 @@ export async function createScanSession(
     requestedSources,
     () => applyRuntimeEvidence(project, registry),
     options.fetch,
+    options.evidenceSourceCliFlags,
   );
   if (options.affectedFiles && fullRunWhen?.(project)) {
     options = { ...options, affectedFiles: undefined };

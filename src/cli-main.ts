@@ -462,7 +462,10 @@ function addDoctorRunCommand(
       applyHostExtensions(runOptions, surface, options);
       validateCliRunOptions(runOptions);
       validateReportBudget(options, format);
-      const builtinInputs = evidenceSourceInputs(builtinSourceFlags, evidenceArgs().source);
+      const parsedEvidenceArgs = evidenceArgs();
+      const builtinInputs = evidenceSourceInputs(builtinSourceFlags, parsedEvidenceArgs.source);
+      if (parsedEvidenceArgs.source.size)
+        runOptions.evidenceSourceCliFlags = parsedEvidenceArgs.source;
       if (builtinInputs) {
         await validateEvidenceSources(builtinEvidenceSources, builtinInputs);
         runOptions.sources = builtinInputs;
@@ -481,9 +484,9 @@ function addDoctorRunCommand(
       if (declarative?.file === resolve(root, "doctor.config.json")) {
         runOptions.declarativeConfigFile = declarative.file;
       }
-      const prepared = await prepareEvidenceSourceRun(runOptions, evidenceArgs());
       const run = async () => {
         try {
+          const prepared = await prepareEvidenceSourceRun(runOptions, parsedEvidenceArgs);
           return await runDoctorCommand(runOptions, format, explicitConfig, report, prepared);
         } catch (error) {
           if (configFile && isLoadedConfigValidationError(error, runOptions)) {

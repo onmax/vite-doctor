@@ -780,6 +780,7 @@ async function applyReportEligibility(session: ScanSession): Promise<void> {
   if (session.project.evidenceGaps)
     session.project.evidenceGaps = session.project.evidenceGaps.filter(
       (gap) =>
+        !gap.files.length ||
         (gap.source !== "script-parser" && gap.source !== "vue-sfc-parser") ||
         gap.files.some((file) => eligibility.get(file)),
     );

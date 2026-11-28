@@ -515,9 +515,7 @@ function textHead(result: DoctorRunResult, groups: ReportGroup[]): string[] {
     lines.push(`Project: ${result.root}`);
   }
   if (status === "incomplete") {
-    lines.push(
-      `Status: incomplete, required ${subject ? subject.map(({ label }) => label).join(", ") : "project"} evidence is missing`,
-    );
+    lines.push("Status: incomplete, required evidence is missing");
   }
   for (const gap of result.project.evidenceGaps ?? []) {
     lines.push(

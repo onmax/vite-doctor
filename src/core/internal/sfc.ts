@@ -1,11 +1,128 @@
 import { createHash } from "node:crypto";
 import type { SFCDescriptor } from "@vue/compiler-sfc";
-import type { SfcBlockHashes, SfcHandle, SourceRange } from "../primitives.js";
+import type { RuleFileSystem, SfcBlockHashes, SfcHandle, SourceRange } from "../primitives.js";
+import { loadTypeScript, loadVueCompilerSfc } from "./lazy-parsers.js";
 import { lineColumnAt } from "./line-index.js";
 import { parseScriptResult, type ScriptParseLang } from "./script.js";
 import { SFC_TEMPLATE_PARSE_OPTIONS, templateAstFromDescriptor } from "./template.js";
 
 const optionalImport = <T>(specifier: string) => import(/* @vite-ignore */ specifier) as Promise<T>;
+
+export const NUXT_CLIENT_ONLY_TAG = /^(?:Lazy|lazy-)?(?:ClientOnly|client-only)$/;
+const NUXT_CLIENT_ONLY_SSR_NAME = /^_component_(?:Lazy|lazy_)?(?:ClientOnly|client_only)$/;
+
+/** Classify emitted slot paths; missing offsets are unknown, not evidence that a slot survives. */
+export function nuxtDefaultSlotSsr(
+  file: string,
+  source: string,
+  fs: RuleFileSystem,
+): Map<number, "pruned" | "retained"> {
+  const slotsByOffset = new Map<number, "pruned" | "retained">();
+  try {
+    const { parse, compileScript, compileTemplate, registerTS, invalidateTypeCache } =
+      loadVueCompilerSfc();
+    const { descriptor, errors: parseErrors } = parse(source, { filename: file, sourceMap: false });
+    const template = descriptor.template;
+    if (
+      parseErrors.length ||
+      !template ||
+      template.src ||
+      (template.lang && template.lang !== "html")
+    )
+      return slotsByOffset;
+    let bindings;
+    if (descriptor.script || descriptor.scriptSetup) {
+      registerTS(loadTypeScript);
+      const typeFiles = new Set([file]);
+      try {
+        const compiled = compileScript(descriptor, {
+          id: file,
+          isProd: true,
+          fs: {
+            fileExists: (path) => fs.stat(path)?.isFile() ?? false,
+            readFile: (path) => {
+              typeFiles.add(path);
+              return fs.readText(path);
+            },
+            realpath: (path) => fs.realpath(path) ?? path,
+          },
+        });
+        bindings = compiled.bindings;
+        for (const path of compiled.deps ?? []) typeFiles.add(path);
+      } finally {
+        for (const path of typeFiles) invalidateTypeCache(path);
+      }
+    }
+    const { ast, errors } = compileTemplate({
+      filename: file,
+      source: template.content,
+      id: file,
+      ssr: true,
+      isProd: true,
+      ssrCssVars: descriptor.cssVars,
+      compilerOptions: { bindingMetadata: bindings },
+    });
+    if (!ast?.codegenNode || errors.length) return slotsByOffset;
+    const emitted = new Set<object>();
+    const vnodeOffsets = new Set<number>();
+    collectCodegen(ast.codegenNode);
+    const templateOffset = template.loc.start.offset;
+    visit(ast.children);
+
+    function collectCodegen(value: unknown) {
+      if (!value || typeof value !== "object" || emitted.has(value)) return;
+      emitted.add(value);
+      if (isLocatedVNode(value)) vnodeOffsets.add(value.loc.start.offset);
+      for (const [key, child] of Object.entries(value)) if (key !== "loc") collectCodegen(child);
+    }
+
+    function visit(nodes: NonNullable<typeof ast>["children"]) {
+      for (const node of nodes) {
+        if (node.type === 9) {
+          for (const branch of node.branches) visit(branch.children);
+        } else if (node.type === 11) {
+          visit(node.children);
+        } else if (node.type === 1) {
+          if (node.tagType === 1) {
+            const offset = templateOffset + node.loc.start.offset;
+            const call = node.ssrCodegenNode;
+            if (vnodeOffsets.has(node.loc.start.offset)) {
+              slotsByOffset.set(offset, "retained");
+            } else if (call?.type === 14 && emitted.has(call) && typeof call.callee === "symbol") {
+              const [component, , slots] = call.arguments;
+              if (call.callee.description === "ssrRenderVNode") {
+                slotsByOffset.set(offset, "retained");
+              } else if (
+                call.callee.description === "ssrRenderComponent" &&
+                typeof component === "string"
+              ) {
+                const pruned =
+                  NUXT_CLIENT_ONLY_SSR_NAME.test(component) &&
+                  typeof slots === "object" &&
+                  !Array.isArray(slots) &&
+                  slots.type === 15 &&
+                  slots.properties.some(
+                    (prop) =>
+                      prop.key.type === 4 && prop.key.isStatic && prop.key.content === "default",
+                  );
+                slotsByOffset.set(offset, pruned ? "pruned" : "retained");
+              }
+            }
+          }
+          visit(node.children);
+        }
+      }
+    }
+  } catch {
+    return new Map();
+  }
+  return slotsByOffset;
+}
+
+function isLocatedVNode(value: object): value is { loc: { start: { offset: number } } } {
+  const node = value as { type?: number; loc?: { source?: string; start?: { offset?: number } } };
+  return node.type === 13 && !!node.loc?.source && typeof node.loc.start?.offset === "number";
+}
 
 export async function parseSfcFile(
   file: string,

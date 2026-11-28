@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "pathe";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main } from "../../src/cli.ts";
-import { createAgentReport, createJsonReport } from "../../src/core/reports.ts";
+import {
+  createAgentReport,
+  createJsonReport,
+  createTextReport,
+  reportStatus,
+} from "../../src/core/reports.ts";
+import * as watch from "../../src/doctor-process/watch.ts";
 import { runViteDoctor } from "../../src/doctor.ts";
 import type { DoctorExtension, EvidenceSource } from "../../src/extension.ts";
 
@@ -204,6 +210,146 @@ test("the CLI reads a config Extension's source flags once the config loads", as
     },
   ]);
 });
+
+test("a CLI rerun reads the same requested source without a toOptions serializer", async () => {
+  const root = project();
+  writeFileSync(
+    join(root, "doctor.config.mjs"),
+    `export default { extensions: [{ name: "fixture/status", sources: [{
+      name: "status", label: "status page",
+      options: { url: { help: "Read a URL." }, token: { help: "Token.", secret: true } },
+      fromOptions: ({ url }) => url[0],
+      collect: (url) => ({ evidence: {}, gaps: [{ message: "Could not read " + url }] }),
+    }] }] };`,
+  );
+  const url = "https://status.example.test/";
+  const first = await cli(root, [
+    ".",
+    "--config",
+    "doctor.config.mjs",
+    "--status-url",
+    url,
+    "--status-token",
+    "s3cret",
+    "--format",
+    "agent",
+  ]);
+  expect(first.code, first.output).toBe(3);
+  expect(first.output).not.toContain("s3cret");
+  const { commandArgs } = JSON.parse(first.output);
+  const rerun = await cli(root, commandArgs.rerun.slice(1));
+  expect(rerun.code, rerun.output).toBe(3);
+  expect(rerun.output).toContain(`Could not read ${url}`);
+  expect(commandArgs.rerun).toEqual(expect.arrayContaining(["--status-token", "<redacted>"]));
+});
+
+test("watch retries a failed initial Extension load", async () => {
+  const root = project();
+  const generated = join(root, "generated.txt");
+  writeFileSync(
+    join(root, "doctor.config.mjs"),
+    `import { existsSync, readFileSync, writeFileSync } from "node:fs";
+    export default { extensions: [async () => {
+      const file = ${JSON.stringify(generated)};
+      if (!existsSync(file)) throw new Error("Extension input not generated yet");
+      if (readFileSync(file, "utf8") !== "ready") throw new Error("Extension loader called twice");
+      writeFileSync(file, "used");
+      return { default: { name: "fixture/loader" } };
+    }] };`,
+  );
+  const watchRuns = vi.spyOn(watch, "watchDoctorRuns").mockImplementation(async ({ run }) => {
+    expect(await run()).toBe(2);
+    writeFileSync(generated, "ready");
+    return run();
+  });
+  const result = await cli(root, [
+    ".",
+    "--config",
+    "doctor.config.mjs",
+    "--watch",
+    "--format",
+    "text",
+  ]);
+  expect(result.code, result.output).toBe(0);
+  expect(watchRuns).toHaveBeenCalledOnce();
+  expect(result.output).toContain("Extension input not generated yet");
+  expect(readFileSync(generated, "utf8")).toBe("used");
+});
+
+test("an incomplete live-only text report does not blame a healthy source", async () => {
+  const root = project();
+  rmSync(join(root, "package.json"));
+  const result = await runViteDoctor({
+    root,
+    extensions: [
+      {
+        name: "fixture/sources",
+        sources: [
+          statusSource(),
+          {
+            name: "inventory",
+            label: "inventory",
+            collect: () => ({
+              evidence: {},
+              gaps: [{ message: "Inventory unavailable." }],
+            }),
+          },
+        ],
+      },
+    ],
+    sources: { status: { urls: ["https://status.example.test/"] }, inventory: {} },
+    fetch: fetchStatus(200),
+  });
+  const text = createTextReport(result);
+  expect(text).toContain("Checked: status page status.example.test");
+  expect(text).toContain("Status: incomplete, required evidence is missing\n");
+  expect(text).toContain("Evidence missing: Inventory unavailable.");
+});
+
+test("a dormant constructor source does not clash with a Runtime Evidence contributor", async () => {
+  const result = await runViteDoctor({
+    root: project(),
+    sources: { status: { urls: ["https://status.example.test/"] } },
+    fetch: fetchStatus(200),
+    extensions: [
+      {
+        name: "fixture/sources",
+        sources: [statusSource(), { ...statusSource(), name: "constructor" }],
+        setup(api) {
+          api.registerRuntimeEvidenceContributor({ name: "constructor", contribute: () => ({}) });
+        },
+      },
+    ],
+  });
+  expect(result.evidenceSources?.map(({ name }) => name)).toEqual(["status"]);
+});
+
+test.each(["script-parser", "vue-sfc-parser"])(
+  "a project-wide gap from the %s Evidence Source survives a file-scoped run",
+  async (name) => {
+    const result = await runViteDoctor({
+      root: project(),
+      affectedFiles: ["index.js"],
+      sources: { [name]: {} },
+      extensions: [
+        extension({
+          name,
+          label: name,
+          collect: () => ({
+            evidence: {},
+            gaps: [{ message: "Endpoint unavailable." }],
+          }),
+        }),
+      ],
+    });
+    expect(reportStatus(result)).toBe("incomplete");
+    expect(result.project.evidenceGaps).toContainEqual({
+      source: name,
+      files: [],
+      message: "Endpoint unavailable.",
+    });
+  },
+);
 
 test.each([false, true])(
   "the CLI invokes a config loader once (source flags: %s)",

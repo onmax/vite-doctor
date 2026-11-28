@@ -65,6 +65,8 @@ export interface DoctorRunOptions {
    * Inputs can carry tokens, so they stay out of Doctor config files.
    */
   sources?: Record<string, unknown>;
+  /** @internal Parsed Evidence Source flags for reruns when a source cannot serialize its input. */
+  evidenceSourceCliFlags?: ReadonlyMap<string, readonly string[]>;
   /** `fetch` for Evidence Sources, `globalThis.fetch` when unset. */
   fetch?: typeof globalThis.fetch;
   /**
