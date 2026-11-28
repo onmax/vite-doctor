@@ -167,6 +167,53 @@ export async function getRows() {
   expect(diagnostics).toMatchObject([{ code: "NITRO0023", file: "server/utils/cache.ts" }]);
 });
 
+const fresh = "hit && Date.now() - hit.at < 60_000";
+const stale = "!hit || 60_000 <= Date.now() - hit.at";
+const refresh = `const value = await $fetch('/value')
+  cache.set(key, { value, at: Date.now() })
+  return value`;
+
+function ageCache(body: string, keySetup = "") {
+  return `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(key: string) {
+  const hit = cache.get(key)
+  ${keySetup}
+  ${body}
+}`;
+}
+
+test.each([
+  ["an explicit refresh branch", `if (${fresh}) return hit.value; else { ${refresh} }`],
+  ["an explicit stale-or-missing branch", `if (${stale}) { ${refresh} } else return hit.value`],
+  ["a stale-or-missing early return", `if (${stale}) { ${refresh} }\nreturn hit.value`],
+  [
+    "logging before a hit return",
+    `if (${fresh}) { console.debug('hit'); return hit.value }\n${refresh}`,
+  ],
+  [
+    "logging before the refresh write",
+    `if (${fresh}) return hit.value\n${refresh.replace("cache.set", "console.debug('refresh'); cache.set")}`,
+  ],
+])("reports age-based reuse with %s", async (_, body) => {
+  expect(await run({ "server/utils/cache.ts": ageCache(body) })).toMatchObject([
+    { code: "NITRO0023" },
+  ]);
+});
+
+test.each([
+  ["a reassigned", `if (${fresh}) return hit.value\n${refresh}`, "key = 'internal:' + key"],
+  ["a shadowed", `if (${fresh}) return hit.value; else { const key = 'internal'; ${refresh} }`, ""],
+])("does not report age-based reuse with %s Map key", async (_, body, keySetup) => {
+  expect(await run({ "server/utils/cache.ts": ageCache(body, keySetup) })).toEqual([]);
+});
+
+test("does not report a stale branch that refreshes but still returns the old hit", async () => {
+  const source = ageCache(
+    `if (${stale}) { ${refresh.replace("return value", "")} }\nreturn hit?.value`,
+  );
+  expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
+});
+
 test("reports standalone Nitro server code", async () => {
   const diagnostics = await run(
     {

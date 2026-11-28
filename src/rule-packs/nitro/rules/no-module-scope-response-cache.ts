@@ -1,3 +1,4 @@
+import { fileTextScope, type ScopeReference } from "../../../core/internal/script-scope.js";
 import {
   type AnyNode,
   createRule,
@@ -60,6 +61,14 @@ export const noModuleScopeResponseCache = createRule({
         const bindings = moduleBindings(program);
         if (!bindings.size) return;
         const helpers = cacheHelpers(program);
+        let references: Map<number, ScopeReference> | undefined;
+        const scopeReferences = () =>
+          (references ??= new Map(
+            Array.from(
+              fileTextScope(ctx)?.references.values() ?? [],
+              (reference) => [reference.identifier.range[0], reference] as const,
+            ),
+          ));
         walkScriptLocal(program, (node) => {
           if (node.type !== "Identifier") return;
           const binding = bindings.get(node.name);
@@ -75,7 +84,7 @@ export const noModuleScopeResponseCache = createRule({
           binding.expires ||=
             access.expires ||
             comparesWithClock(owner, (item) => cachedEntryOf(item, [node])) ||
-            (access.reads && ageControlsReuse(owner, node, binding));
+            (access.reads && ageControlsReuse(owner, node, binding, scopeReferences));
         });
         for (const binding of bindings.values()) {
           if (!binding.reads || !binding.writes || !binding.expires) continue;
@@ -259,7 +268,7 @@ function readsEntryField(node: AnyNode) {
 
 interface ClockComparisons {
   expirySides: AnyNode[];
-  freshAges: { comparison: AnyNode; timestamp: AnyNode }[];
+  ages: { comparison: AnyNode; timestamp: AnyNode; freshWhenTrue: boolean }[];
 }
 
 const comparisonsByFunction = new WeakMap<object, ClockComparisons>();
@@ -267,7 +276,7 @@ const comparisonsByFunction = new WeakMap<object, ClockComparisons>();
 function clockComparisons(fn: AnyNode): ClockComparisons {
   const cached = comparisonsByFunction.get(fn);
   if (cached) return cached;
-  const found: ClockComparisons = { expirySides: [], freshAges: [] };
+  const found: ClockComparisons = { expirySides: [], ages: [] };
   const clocks = clockLocals(fn);
   walkFunctionBody(fn.body, (node) => {
     if (node.type !== "BinaryExpression" || !RELATIONAL.has(node.operator)) return;
@@ -281,26 +290,33 @@ function clockComparisons(fn: AnyNode): ClockComparisons {
       readsClock(clockSide.left, clocks) &&
       !readsClock(clockSide.right, clocks)
     ) {
-      if ((leftClock ? ["<", "<="] : [">", ">="]).includes(node.operator))
-        found.freshAges.push({ comparison: node, timestamp: unwrap(clockSide.right) });
+      found.ages.push({
+        comparison: node,
+        timestamp: unwrap(clockSide.right),
+        freshWhenTrue: (leftClock ? ["<", "<="] : [">", ">="]).includes(node.operator),
+      });
     }
   });
   comparisonsByFunction.set(fn, found);
   return found;
 }
 
-function ageControlsReuse(fn: AnyNode, reference: AnyNode, binding: CacheBinding) {
+type ScopeReferences = () => Map<number, ScopeReference>;
+
+function ageControlsReuse(
+  fn: AnyNode,
+  reference: AnyNode,
+  binding: CacheBinding,
+  scopeReferences: ScopeReferences,
+) {
   if (binding.kind === "map" && mapMethod(reference) !== "get") return false;
-  return clockComparisons(fn).freshAges.some(({ comparison, timestamp }) => {
+  return clockComparisons(fn).ages.some(({ comparison, timestamp, freshWhenTrue }) => {
     const timestampField = fieldName(timestamp);
     const entry = unwrap(timestamp?.object);
     if (!timestampField || !entry || !cachedEntryOf(entry, [reference])) return false;
-    const guard = freshnessGuard(comparison);
-    if (!guard) return false;
-    const branch = guard.consequent;
-    const hit =
-      branch.type === "BlockStatement" && branch.body.length === 1 ? branch.body[0] : branch;
-    const payload = hit.type === "ReturnStatement" ? unwrap(hit.argument) : null;
+    const paths = freshnessPaths(comparison, freshWhenTrue);
+    if (!paths) return false;
+    const payload = unwrap(straightLineReturn(paths.hit)?.argument);
     const field = fieldName(payload);
     const returnedEntry = unwrap(payload?.object);
     if (!field || field === timestampField || returnedEntry?.type !== "Identifier") return false;
@@ -313,7 +329,15 @@ function ageControlsReuse(fn: AnyNode, reference: AnyNode, binding: CacheBinding
       return false;
     const key =
       binding.kind === "map" ? reference.__doctorParent.__doctorParent.arguments[0] : null;
-    return refreshesPayload(fn, guard, binding, key, field);
+    return refreshesPayload(
+      fn,
+      paths.refresh,
+      binding,
+      key,
+      field,
+      scopeReferences,
+      paths.mustReturn,
+    );
   });
 }
 
@@ -321,19 +345,28 @@ function fieldName(node: AnyNode): string | undefined {
   return node?.type === "MemberExpression" && !node.computed ? node.property?.name : undefined;
 }
 
-function freshnessGuard(comparison: AnyNode): AnyNode {
+function freshnessPaths(comparison: AnyNode, freshWhenTrue: boolean) {
   let current = comparison;
   for (let parent = current.__doctorParent; parent; parent = current.__doctorParent) {
-    if (
-      parent.type === "IfStatement" &&
-      parent.test === current &&
-      !parent.alternate &&
-      parent.__doctorParent?.type === "BlockStatement"
-    )
-      return parent;
-    if (
+    if (parent.type === "IfStatement" && parent.test === current) {
+      const branch = branchStatements(parent.consequent);
+      const block = parent.__doctorParent;
+      const other = parent.alternate
+        ? branchStatements(parent.alternate)
+        : block?.type === "BlockStatement"
+          ? block.body.slice(block.body.indexOf(parent) + 1)
+          : [];
+      return {
+        hit: freshWhenTrue ? branch : other,
+        refresh: freshWhenTrue ? other : branch,
+        mustReturn: !freshWhenTrue && !parent.alternate,
+      };
+    }
+    if (parent.type === "UnaryExpression" && parent.operator === "!") {
+      freshWhenTrue = !freshWhenTrue;
+    } else if (
       !WRAPPERS.has(parent.type) &&
-      !(parent.type === "LogicalExpression" && parent.operator === "&&")
+      !(parent.type === "LogicalExpression" && parent.operator === (freshWhenTrue ? "&&" : "||"))
     )
       break;
     current = parent;
@@ -341,16 +374,37 @@ function freshnessGuard(comparison: AnyNode): AnyNode {
   return null;
 }
 
+function branchStatements(branch: AnyNode): AnyNode[] {
+  return branch.type === "BlockStatement" ? branch.body : [branch];
+}
+
+function isStraightLine(statement: AnyNode) {
+  return (
+    statement.type === "VariableDeclaration" ||
+    (statement.type === "ExpressionStatement" &&
+      unwrap(statement.expression)?.type === "CallExpression")
+  );
+}
+
+function straightLineReturn(statements: AnyNode[]) {
+  for (const statement of statements) {
+    if (statement.type === "ReturnStatement") return statement;
+    if (!isStraightLine(statement)) break;
+  }
+  return null;
+}
+
 function refreshesPayload(
   fn: AnyNode,
-  guard: AnyNode,
+  statements: AnyNode[],
   binding: CacheBinding,
   key: AnyNode,
   field: string,
+  scopeReferences: ScopeReferences,
+  mustReturn: boolean,
 ) {
-  const statements = guard.__doctorParent.body;
   const locals: AnyNode[] = [];
-  for (let index = statements.indexOf(guard) + 1; index < statements.length; index++) {
+  for (let index = 0; index < statements.length; index++) {
     const statement = statements[index];
     if (statement.type === "VariableDeclaration") {
       if (statement.kind === "const") locals.push(...statement.declarations);
@@ -362,12 +416,14 @@ function refreshesPayload(
       target?.type !== "Identifier" ||
       target.name !== binding.name ||
       !resolvesToModuleBinding(target, binding.name)
-    )
+    ) {
+      if (isStraightLine(statement)) continue;
       return false;
+    }
     const entry =
       binding.kind === "map"
         ? mapMethod(target) === "set" &&
-          sameKey(key, write.arguments[0]) &&
+          sameKey(key, write.arguments[0], scopeReferences) &&
           unwrap(write.arguments[1])
         : write.type === "AssignmentExpression" && write.operator === "=" && unwrap(write.right);
     if (entry?.type !== "ObjectExpression") return false;
@@ -391,18 +447,28 @@ function refreshesPayload(
             )?.init,
           )
         : stored;
-    return value?.type === "AwaitExpression" && unwrap(value.argument)?.type === "CallExpression";
+    return (
+      value?.type === "AwaitExpression" &&
+      unwrap(value.argument)?.type === "CallExpression" &&
+      (!mustReturn || straightLineReturn(statements.slice(index + 1)) !== null)
+    );
   }
   return false;
 }
 
-function sameKey(read: AnyNode, write: AnyNode) {
+function sameKey(read: AnyNode, write: AnyNode, scopeReferences: ScopeReferences) {
   const first = unwrap(read);
   const second = unwrap(write);
-  return (
-    (first?.type === "Identifier" && second?.type === "Identifier" && first.name === second.name) ||
-    (first?.type === "Literal" && second?.type === "Literal" && first.value === second.value)
-  );
+  if (first?.type === "Identifier" && second?.type === "Identifier" && first.name === second.name) {
+    const references = scopeReferences();
+    const variable = references.get(first.start)?.resolved;
+    return (
+      !!variable &&
+      variable === references.get(second.start)?.resolved &&
+      !variable.references.some((reference) => reference.isWrite() && !reference.init)
+    );
+  }
+  return first?.type === "Literal" && second?.type === "Literal" && first.value === second.value;
 }
 
 function walkFunctionBody(node: AnyNode, visit: (node: AnyNode) => void) {
