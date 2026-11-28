@@ -218,6 +218,41 @@ test.each(["const", "let"])("reports a %s Map key declared alongside the lookup"
   expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
 });
 
+test.each([
+  ["in the loop header", "const key", "['public:' + slug, 'internal:' + slug]", ""],
+  ["in the loop body", "const prefix", "['public:', 'internal:']", "const key = prefix + slug"],
+])(
+  "does not match Map keys across iterations when initialized %s",
+  async (_, binding, keys, setup) => {
+    const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(slug: string) {
+  for (${binding} of ${keys}) {
+    ${setup}
+    if (key.startsWith('public:')) {
+      var hit = cache.get(key)
+      continue
+    }
+    if (${fresh}) return hit.value
+    ${refresh}
+  }
+}`;
+    expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
+  },
+);
+
+test("reports age-based reuse in a loop with a key initialized outside it", async () => {
+  const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(slug: string) {
+  const key = slug.trim()
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const hit = cache.get(key)
+    if (${fresh}) return hit.value
+    ${refresh}
+  }
+}`;
+  expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+});
+
 test("does not report a Map key changed by a later initializer in the lookup declaration", async () => {
   const source = ageCache(`if (${fresh}) return hit.value\n${refresh}`)
     .replace("load(key: string)", "load(slug: string)")

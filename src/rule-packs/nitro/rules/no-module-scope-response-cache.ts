@@ -14,6 +14,13 @@ const FUNCTION_TYPES = new Set([
   "FunctionExpression",
   "ArrowFunctionExpression",
 ]);
+const LOOP_TYPES = new Set([
+  "ForStatement",
+  "ForOfStatement",
+  "ForInStatement",
+  "WhileStatement",
+  "DoWhileStatement",
+]);
 const BLOCK_TYPES = new Set([
   "BlockStatement",
   "ForStatement",
@@ -466,6 +473,7 @@ function sameKey(fn: AnyNode, read: AnyNode, write: AnyNode, scopeReferences: Sc
     if (variable.defs.some((definition) => definition.type === "ImportBinding")) return false;
     const writes = variable.references.filter((reference) => reference.isWrite());
     if (!writes.length) return true;
+    if (hasLoopKeyWrite(fn, read, writes) || hasLoopKeyWrite(fn, write, writes)) return false;
     const [definition] = variable.defs;
     if (
       variable.defs.length === 1 &&
@@ -480,6 +488,24 @@ function sameKey(fn: AnyNode, read: AnyNode, write: AnyNode, scopeReferences: Sc
     );
   }
   return first?.type === "Literal" && second?.type === "Literal" && first.value === second.value;
+}
+
+function hasLoopKeyWrite(fn: AnyNode, access: AnyNode, writes: ScopeReference[]) {
+  for (
+    let parent = access.__doctorParent;
+    parent && parent !== fn;
+    parent = parent.__doctorParent
+  ) {
+    if (
+      LOOP_TYPES.has(parent.type) &&
+      writes.some(
+        ({ identifier }) =>
+          parent.start <= identifier.range[0] && identifier.range[1] <= parent.end,
+      )
+    )
+      return true;
+  }
+  return false;
 }
 
 function writesBeforeLookup(fn: AnyNode, read: AnyNode, write: AnyNode, writes: ScopeReference[]) {
