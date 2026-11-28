@@ -52,7 +52,7 @@ for (const framework of ["nitro", "nuxt"] as const) {
         preferValidatedRouterParams.meta.id,
       ]);
       expect(result.diagnostics[0]?.suggestion).toContain(
-        "getValidatedRouterParams(event, validator)",
+        "Consider getValidatedRouterParams only if",
       );
     },
   );
