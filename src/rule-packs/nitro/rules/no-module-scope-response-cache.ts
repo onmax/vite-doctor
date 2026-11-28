@@ -73,7 +73,9 @@ export const noModuleScopeResponseCache = createRule({
           // say, a synchronous rate-limit window.
           binding.writes ||= access.writes && isAsyncCode(owner);
           binding.expires ||=
-            access.expires || comparesWithClock(owner, (item) => cachedEntryOf(item, [node]));
+            access.expires ||
+            comparesWithClock(owner, (item) => cachedEntryOf(item, [node])) ||
+            (access.reads && ageControlsReuse(owner, node, binding));
         });
         for (const binding of bindings.values()) {
           if (!binding.reads || !binding.writes || !binding.expires) continue;
@@ -238,7 +240,7 @@ function cachedEntryOf(node: AnyNode, references: AnyNode[]) {
 // A relational comparison between a clock reading and a value derived from the cache, such as
 // `cached.expiresAt > Date.now()`, in the function that owns the cache access.
 function comparesWithClock(fn: AnyNode, isCacheValue: (node: AnyNode) => boolean) {
-  return clockComparisons(fn).some((side) =>
+  return clockComparisons(fn).expirySides.some((side) =>
     mentions(side, (node) => isCacheValue(node) && readsEntryField(node)),
   );
 }
@@ -255,28 +257,152 @@ function readsEntryField(node: AnyNode) {
   return !["get", "has", "size"].includes(member.property?.name);
 }
 
-const comparisonsByFunction = new WeakMap<object, AnyNode[]>();
+interface ClockComparisons {
+  expirySides: AnyNode[];
+  freshAges: { comparison: AnyNode; timestamp: AnyNode }[];
+}
 
-function clockComparisons(fn: AnyNode): AnyNode[] {
-  let sides = comparisonsByFunction.get(fn);
-  if (sides) return sides;
-  const found: AnyNode[] = [];
+const comparisonsByFunction = new WeakMap<object, ClockComparisons>();
+
+function clockComparisons(fn: AnyNode): ClockComparisons {
+  const cached = comparisonsByFunction.get(fn);
+  if (cached) return cached;
+  const found: ClockComparisons = { expirySides: [], freshAges: [] };
   const clocks = clockLocals(fn);
   walkFunctionBody(fn.body, (node) => {
     if (node.type !== "BinaryExpression" || !RELATIONAL.has(node.operator)) return;
-    if (readsClock(node.left, clocks)) found.push(node.right, ...ageOrigin(node.left, clocks));
-    else if (readsClock(node.right, clocks))
-      found.push(node.left, ...ageOrigin(node.right, clocks));
+    const leftClock = readsClock(node.left, clocks);
+    if (!leftClock && !readsClock(node.right, clocks)) return;
+    const clockSide = unwrap(leftClock ? node.left : node.right);
+    found.expirySides.push(leftClock ? node.right : node.left);
+    if (
+      clockSide?.type === "BinaryExpression" &&
+      clockSide.operator === "-" &&
+      readsClock(clockSide.left, clocks) &&
+      !readsClock(clockSide.right, clocks)
+    ) {
+      if ((leftClock ? ["<", "<="] : [">", ">="]).includes(node.operator))
+        found.freshAges.push({ comparison: node, timestamp: unwrap(clockSide.right) });
+    }
   });
   comparisonsByFunction.set(fn, found);
   return found;
 }
 
-// In `Date.now() - hit.at < TTL` the entry sits beside the clock, so the age's origin is compared too.
-function ageOrigin(side: AnyNode, clocks: Set<string>): AnyNode[] {
-  const age = unwrap(side);
-  if (age?.type !== "BinaryExpression" || age.operator !== "-") return [];
-  return readsClock(age.left, clocks) && !readsClock(age.right, clocks) ? [age.right] : [];
+function ageControlsReuse(fn: AnyNode, reference: AnyNode, binding: CacheBinding) {
+  if (binding.kind === "map" && mapMethod(reference) !== "get") return false;
+  return clockComparisons(fn).freshAges.some(({ comparison, timestamp }) => {
+    const timestampField = fieldName(timestamp);
+    const entry = unwrap(timestamp?.object);
+    if (!timestampField || !entry || !cachedEntryOf(entry, [reference])) return false;
+    const guard = freshnessGuard(comparison);
+    if (!guard) return false;
+    const branch = guard.consequent;
+    const hit =
+      branch.type === "BlockStatement" && branch.body.length === 1 ? branch.body[0] : branch;
+    const payload = hit.type === "ReturnStatement" ? unwrap(hit.argument) : null;
+    const field = fieldName(payload);
+    const returnedEntry = unwrap(payload?.object);
+    if (!field || field === timestampField || returnedEntry?.type !== "Identifier") return false;
+    if (
+      binding.kind === "map"
+        ? !cachedEntryOf(returnedEntry, [reference])
+        : returnedEntry.name !== binding.name ||
+          !resolvesToModuleBinding(returnedEntry, binding.name)
+    )
+      return false;
+    const key =
+      binding.kind === "map" ? reference.__doctorParent.__doctorParent.arguments[0] : null;
+    return refreshesPayload(fn, guard, binding, key, field);
+  });
+}
+
+function fieldName(node: AnyNode): string | undefined {
+  return node?.type === "MemberExpression" && !node.computed ? node.property?.name : undefined;
+}
+
+function freshnessGuard(comparison: AnyNode): AnyNode {
+  let current = comparison;
+  for (let parent = current.__doctorParent; parent; parent = current.__doctorParent) {
+    if (
+      parent.type === "IfStatement" &&
+      parent.test === current &&
+      !parent.alternate &&
+      parent.__doctorParent?.type === "BlockStatement"
+    )
+      return parent;
+    if (
+      !WRAPPERS.has(parent.type) &&
+      !(parent.type === "LogicalExpression" && parent.operator === "&&")
+    )
+      break;
+    current = parent;
+  }
+  return null;
+}
+
+function refreshesPayload(
+  fn: AnyNode,
+  guard: AnyNode,
+  binding: CacheBinding,
+  key: AnyNode,
+  field: string,
+) {
+  const statements = guard.__doctorParent.body;
+  const locals: AnyNode[] = [];
+  for (let index = statements.indexOf(guard) + 1; index < statements.length; index++) {
+    const statement = statements[index];
+    if (statement.type === "VariableDeclaration") {
+      if (statement.kind === "const") locals.push(...statement.declarations);
+      continue;
+    }
+    const write = statement.type === "ExpressionStatement" ? unwrap(statement.expression) : null;
+    const target = binding.kind === "map" ? unwrap(write?.callee)?.object : write?.left;
+    if (
+      target?.type !== "Identifier" ||
+      target.name !== binding.name ||
+      !resolvesToModuleBinding(target, binding.name)
+    )
+      return false;
+    const entry =
+      binding.kind === "map"
+        ? mapMethod(target) === "set" &&
+          sameKey(key, write.arguments[0]) &&
+          unwrap(write.arguments[1])
+        : write.type === "AssignmentExpression" && write.operator === "=" && unwrap(write.right);
+    if (entry?.type !== "ObjectExpression") return false;
+    const property = entry.properties.findLast(
+      (item: AnyNode) =>
+        item.type === "SpreadElement" ||
+        item.computed ||
+        item.key?.name === field ||
+        item.key?.value === field,
+    );
+    const stored =
+      property?.type === "Property" && !property.computed ? unwrap(property.value) : null;
+    const value =
+      stored?.type === "Identifier"
+        ? unwrap(
+            locals.findLast(
+              (local) =>
+                local.id?.type === "Identifier" &&
+                local.id.name === stored.name &&
+                resolvesToBinding(stored, stored.name, fn, local),
+            )?.init,
+          )
+        : stored;
+    return value?.type === "AwaitExpression" && unwrap(value.argument)?.type === "CallExpression";
+  }
+  return false;
+}
+
+function sameKey(read: AnyNode, write: AnyNode) {
+  const first = unwrap(read);
+  const second = unwrap(write);
+  return (
+    (first?.type === "Identifier" && second?.type === "Identifier" && first.name === second.name) ||
+    (first?.type === "Literal" && second?.type === "Literal" && first.value === second.value)
+  );
 }
 
 function walkFunctionBody(node: AnyNode, visit: (node: AnyNode) => void) {

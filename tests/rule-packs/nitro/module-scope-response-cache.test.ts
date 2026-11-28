@@ -313,6 +313,32 @@ export function allow(ip: string) {
 }`,
   ],
   [
+    "an age check that only logs a stale hit",
+    `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(key: string) {
+  const hit = cache.get(key)
+  if (hit) {
+    if (Date.now() - hit.at > 60_000) console.warn('old hit')
+    return hit.value
+  }
+  const value = await $fetch('/value')
+  cache.set(key, { value, at: Date.now() })
+  return value
+}`,
+  ],
+  [
+    "an age-based rate limiter with an unrelated await",
+    `const hits = new Map<string, { count: number, at: number, auditId: string }>()
+export async function countHits(ip: string) {
+  const now = Date.now()
+  const entry = hits.get(ip)
+  if (entry && now - entry.at < 60_000) return entry.count
+  const auditId = await audit(ip)
+  hits.set(ip, { count: 1, at: now, auditId })
+  return 1
+}`,
+  ],
+  [
     "a throttle measured by age",
     `let lastCall = 0
 export async function ping() {
