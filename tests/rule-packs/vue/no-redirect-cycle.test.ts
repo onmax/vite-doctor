@@ -367,6 +367,15 @@ test("Nuxt refreshes redirect evidence only for the matching page resolution", a
       }),
     );
     expect(await diagnostics()).toEqual([]);
+
+    writeFileSync(account, nuxtPage("/home"));
+    await nuxt.callHook("builder:watch", "change", "pages/settings/account.vue");
+    await nuxt.callHook("builder:generateApp", {});
+    const accountRoute = readManifest().routes.find(
+      ({ file }: { file: string }) => file === account,
+    );
+    expect(accountRoute.redirect).toBe("/home");
+    expect(accountRoute.dynamic).toBeUndefined();
   } finally {
     await nuxt?.close();
     process.chdir(cwd);

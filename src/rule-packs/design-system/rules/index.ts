@@ -1,8 +1,9 @@
+import { limitPerView } from "./limit-per-view.js";
 import { preferProjectComponent } from "./prefer-project-component.js";
 import { createDesignSystemRule } from "./shared.js";
 import { unreadableContract } from "./unreadable-contract.js";
 
-export { preferProjectComponent, unreadableContract };
+export { limitPerView, preferProjectComponent, unreadableContract };
 
 export const noRestyle = createDesignSystemRule({
   id: "design-system/no-restyle",
@@ -19,6 +20,7 @@ export const noRawColors = createDesignSystemRule({
   rule: "no-raw-colors",
   confidence: "heuristic-medium",
   docsUrl: "https://github.com/shadcn-ui/lint/blob/main/docs/rules/no-raw-colors.md",
+  styleBlocks: true,
 });
 export const noArbitraryValues = createDesignSystemRule({
   id: "design-system/no-arbitrary-values",
@@ -61,5 +63,6 @@ export const designSystemRules = [
   requireStaticClasses,
   noUnknownClasses,
   preferProjectComponent,
+  limitPerView,
   unreadableContract,
 ];

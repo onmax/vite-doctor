@@ -1,3 +1,4 @@
+import { resolve } from "pathe";
 import {
   FRAMEWORK_DIAGNOSTICS_EVIDENCE,
   createReport,
@@ -106,6 +107,7 @@ export async function runSurfaceDoctor(
     diagnostics: result.diagnostics.map((diagnostic) => surfaceDiagnostic(result, diagnostic)),
     evidenceGaps: (result.project.evidenceGaps ?? []).map((gap) => ({
       ...gap,
+      files: gap.files.map((file) => resolve(result.root, file)),
       // A gap with an instance keeps its identity while its reason changes.
       id: JSON.stringify(
         gap.instanceKey ? [gap.source, gap.instanceKey] : [gap.source, gap.message, gap.files],

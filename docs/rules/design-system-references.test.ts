@@ -12,6 +12,13 @@ import {
   rulesCollectionSource,
 } from "./source.js";
 
+const PRIMARY_UBUTTON_LIMIT = {
+  when: { variant: ["solid", null], color: ["primary", null] },
+  max: 1,
+  why: "Two solid primary buttons compete, so users can't tell which action moves them forward.",
+  fix: 'Keep one primary action and give the others variant="outline" or color="neutral".',
+};
+
 test.each(designSystemRulePack.rules)("documents helper-authored $meta.id", async (rule) => {
   const code = diagnosticCodesByRuleId[rule.meta.id as keyof typeof diagnosticCodesByRuleId];
   const document = getRuleDocuments().find((entry) => entry.id === rule.meta.id);
@@ -52,16 +59,24 @@ test.each(designSystemRulePack.rules)(
       "design-system/no-restyle",
       "design-system/require-static-classes",
     ].includes(rule.meta.id);
-    const options = componentRule ? { componentImports: ["^@/components/ui/"] } : {};
+    // Limits are counted per Nuxt route, so its example is a page with a contract in config.
+    const perView = rule.meta.id === "design-system/limit-per-view";
+    const options = componentRule
+      ? { componentImports: ["^@/components/ui/"] }
+      : perView
+        ? { contracts: { UButton: { limits: [PRIMARY_UBUTTON_LIMIT] } } }
+        : {};
     for (const example of document.examples) {
       const vue = example.language === "vue";
       const diagnose = (source: string) =>
         runProjectFixture({
           rules: [rule],
           config: { rules: { [rule.meta.id]: ["warn", options] } },
-          framework: vue ? "vue" : "vite",
+          framework: perView ? "nuxt" : vue ? "vue" : "vite",
           ...(vue && { dependencies: { "@nuxt/ui": "^4.0.0" } }),
-          files: { [vue ? "src/Example.vue" : "src/Example.tsx"]: source },
+          files: {
+            [perView ? "app/pages/index.vue" : vue ? "src/Example.vue" : "src/Example.tsx"]: source,
+          },
         });
       const before = await diagnose(example.invalid);
       const after = await diagnose(example.valid);

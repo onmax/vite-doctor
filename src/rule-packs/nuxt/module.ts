@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nuxtAppInputSignature } from "../../core/internal/nuxt-app-inputs.js";
+import { walkAstFacts } from "../../core/internal/facts.js";
 import { unwrapExpression } from "../../core/internal/nuxt-module-inventory.js";
 import { parseScriptResult, parseScriptSync } from "../../core/internal/script.js";
 import { parseSfcFile, parseVueScriptsResult } from "../../core/internal/sfc.js";
@@ -46,6 +47,7 @@ export type { NuxtDoctorManifest, NuxtModuleSource } from "../../core/index.js";
 export type NuxtDoctorModuleOptions = DoctorConfig;
 
 type HookResult = void | Promise<void>;
+type ResolvedPageSource = { hash: string; dynamic: string[] };
 
 export interface NuxtDoctorHooks {
   /**
@@ -246,9 +248,9 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     evidence.composableScan = undefined;
   });
 
-  const resolvedPageHashes = new WeakMap<unknown[], Map<string, string>>();
-  let publishedPageHashes: Map<string, string> | undefined;
-  nuxt.hook?.("pages:resolved", (pages: any[]) => {
+  const resolvedPageSources = new WeakMap<unknown[], Map<string, ResolvedPageSource>>();
+  let publishedPageSources: Map<string, ResolvedPageSource> | undefined;
+  nuxt.hook?.("pages:resolved", async (pages: any[]) => {
     evidence.pages = flattenPages(pages).map((page: any) => ({
       path: page.path,
       file: page.file,
@@ -258,18 +260,27 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
     capturePageInputs(nuxt, evidence);
     if (!nuxt.options.experimental?.scanPageMeta) return;
     const rootDir = nuxt.options.rootDir ?? process.cwd();
-    const sourceHashes = new Map<string, string>();
+    const sources = new Map<string, ResolvedPageSource>();
+    const scans: Promise<void>[] = [];
     for (const page of evidence.pages) {
       if (typeof page.file !== "string") continue;
       const file = resolve(rootDir, page.file);
-      if (sourceHashes.has(file)) continue;
+      if (sources.has(file)) continue;
       try {
-        sourceHashes.set(file, sha256(readFileSync(file, "utf8")));
+        const source = readFileSync(file, "utf8");
+        const entry: ResolvedPageSource = { hash: sha256(source), dynamic: [] };
+        sources.set(file, entry);
+        scans.push(
+          dynamicRouteFields(file, nuxt.vfs?.[file] ?? source).then((fields) => {
+            entry.dynamic = fields;
+          }),
+        );
       } catch {
         continue;
       }
     }
-    resolvedPageHashes.set(pages, sourceHashes);
+    await Promise.all(scans);
+    resolvedPageSources.set(pages, sources);
   });
 
   nuxt.hook?.("app:templates", (app: NuxtDoctorEvidence["app"]) => {
@@ -315,13 +326,13 @@ async function setupNuxtDoctor(options: NuxtDoctorModuleOptions, nuxt: any) {
             evidence.importDirs = Array.isArray(args[0]) ? [...args[0]] : [];
           if (name === "app:templates") {
             const pages = (args[0] as { pages?: unknown[] } | undefined)?.pages;
-            const sourceHashes = pages && resolvedPageHashes.get(pages);
-            if (sourceHashes !== publishedPageHashes) {
+            const sources = pages && resolvedPageSources.get(pages);
+            if (sources !== publishedPageSources) {
               evidence.routes =
-                pages && sourceHashes
-                  ? serializeRoutes(nuxt.options.rootDir ?? process.cwd(), pages, sourceHashes)
+                pages && sources
+                  ? serializeRoutes(nuxt.options.rootDir ?? process.cwd(), pages, sources)
                   : undefined;
-              publishedPageHashes = sourceHashes;
+              publishedPageSources = sources;
               await writeManifest(nuxt, evidence);
             }
           }
@@ -740,19 +751,9 @@ async function flattenResolvedPages(
 async function runtimePathOverride(file: string, nuxt: Nuxt): Promise<string | null | undefined> {
   try {
     const source = nuxt.vfs[file] ?? readFileSync(file, "utf8");
-    let result: ReturnType<typeof parseScriptResult>;
-    if (file.endsWith(".vue")) {
-      if (!/\bdefinePageMeta\b|<script\b[^>]*\bsrc\s*=/.test(source)) return undefined;
-      const { descriptor, errors } = await parseSfcFile(file, source);
-      if (errors.length || descriptor.script?.src || descriptor.scriptSetup?.src) return null;
-      result = parseVueScriptsResult(file, descriptor, source);
-    } else {
-      if (!/\.[cm]?[jt]sx?$/.test(file)) return null;
-      if (!/\bdefinePageMeta\b/.test(source)) return undefined;
-      result = parseScriptResult(file, source);
-    }
-    if (result.errors.length || !result.ast) return null;
-    const statements = (result.ast.body ?? []) as Array<{ type: string; expression?: unknown }>;
+    const program = await parsePageMetaScript(file, source);
+    if (!program) return program;
+    const statements = (program.body ?? []) as Array<{ type: string; expression?: unknown }>;
     const calls = statements
       .filter((statement) => statement.type === "ExpressionStatement")
       .map((statement) => unwrapExpression(statement.expression))
@@ -775,6 +776,71 @@ async function runtimePathOverride(file: string, nuxt: Nuxt): Promise<string | n
     return override;
   } catch {
     return null;
+  }
+}
+
+async function parsePageMetaScript(file: string, source: string) {
+  let result: ReturnType<typeof parseScriptResult>;
+  if (file.endsWith(".vue")) {
+    if (!/\bdefinePageMeta\b|<script\b[^>]*\bsrc\s*=/.test(source)) return undefined;
+    const { descriptor, errors } = await parseSfcFile(file, source);
+    if (errors.length || descriptor.script?.src || descriptor.scriptSetup?.src) return null;
+    result = parseVueScriptsResult(file, descriptor, source);
+  } else {
+    if (!/\.[cm]?[jt]sx?$/.test(file)) return null;
+    if (!/\bdefinePageMeta\b/.test(source)) return undefined;
+    result = parseScriptResult(file, source);
+  }
+  return result.errors.length ? null : result.ast;
+}
+
+const routeFields = new Set(["path", "name", "alias", "redirect"]);
+
+async function dynamicRouteFields(file: string, source: string): Promise<string[]> {
+  try {
+    const program = await parsePageMetaScript(file, source);
+    if (program === undefined) return [];
+    if (!program) return [...routeFields];
+    const dynamic = new Set<string>();
+    walkAstFacts(program, (node: any) => {
+      if (node.type !== "CallExpression" || node.callee?.name !== "definePageMeta") return;
+      const meta = unwrapExpression(node.arguments[0]);
+      if (meta?.type !== "ObjectExpression") {
+        for (const key of routeFields) dynamic.add(key);
+        return;
+      }
+      for (const property of meta.properties) {
+        if (property.type !== "Property" || property.computed) continue;
+        const key = property.key.name ?? property.key.value;
+        if (routeFields.has(key) && !isSerializablePageMeta(property.value)) dynamic.add(key);
+      }
+    });
+    return [...dynamic];
+  } catch {
+    return [...routeFields];
+  }
+}
+
+function isSerializablePageMeta(expression: any): boolean {
+  const node = unwrapExpression(expression);
+  switch (node?.type) {
+    case "Literal":
+      return node.value === null || ["string", "number", "boolean"].includes(typeof node.value);
+    case "UnaryExpression":
+      return ["+", "-"].includes(node.operator) && typeof node.argument.value === "number";
+    case "ArrayExpression":
+      return node.elements.every(isSerializablePageMeta);
+    case "ObjectExpression":
+      return node.properties.every(
+        (property: any) =>
+          property.type === "Property" &&
+          !property.computed &&
+          property.kind === "init" &&
+          !property.method &&
+          isSerializablePageMeta(property.value),
+      );
+    default:
+      return false;
   }
 }
 
@@ -823,7 +889,7 @@ function serializeMiddleware(
 function serializeRoutes(
   rootDir: string,
   pages: unknown[],
-  sourceHashes: Map<string, string>,
+  sources: Map<string, ResolvedPageSource>,
   parentPath?: string,
 ): NuxtResolvedRoute[] {
   return pages.flatMap((page: any) => {
@@ -832,18 +898,23 @@ function serializeRoutes(
       parentPath === undefined || own.startsWith("/")
         ? own
         : parentPath + (own && (parentPath.endsWith("/") ? "" : "/") + own);
-    const dynamic = page?.meta?.__nuxt_dynamic_meta_key;
+    const legacyDynamic = page?.meta?.__nuxt_dynamic_meta_key;
+    const dynamic = new Set<string>(
+      legacyDynamic instanceof Set ? [...legacyDynamic].map(String) : [],
+    );
     const alias = (Array.isArray(page?.alias) ? page.alias : [page?.alias]).filter(Boolean);
     const route: NuxtResolvedRoute = { path };
     if (typeof page?.name === "string") route.name = page.name;
     if (typeof page?.file === "string") {
       route.file = resolve(rootDir, page.file);
-      route.sourceHash = sourceHashes.get(route.file);
+      const source = sources.get(route.file);
+      route.sourceHash = source?.hash;
+      for (const key of source?.dynamic ?? []) dynamic.add(key);
     }
     if (page?.redirect !== undefined) route.redirect = page.redirect;
     if (alias.length) route.alias = alias;
-    if (dynamic instanceof Set && dynamic.size) route.dynamic = [...dynamic].map(String);
-    return [route, ...serializeRoutes(rootDir, toArray(page?.children), sourceHashes, path)];
+    if (dynamic.size) route.dynamic = [...dynamic];
+    return [route, ...serializeRoutes(rootDir, toArray(page?.children), sources, path)];
   });
 }
 

@@ -139,6 +139,17 @@ test("rule source emits markdown with frontmatter and body sections", async () =
   expect(markdown).not.toContain("## Metadata");
 });
 
+test("validated request helper docs match the rules' conditional guidance", () => {
+  const documents = getRuleDocuments();
+  for (const suffix of ["body", "query", "router-params"]) {
+    const id = `h3/request/prefer-validated-${suffix}`;
+    const rule = h3RulePack.rules.find((item) => item.meta.id === id);
+    const replacement = documents.find((item) => item.id === id)?.recommendedReplacement;
+    expect(replacement).toContain("keep the read and validation separate");
+    expect(replacement).toBe(rule?.meta.recommendedReplacement);
+  }
+});
+
 test("diagnostic source carries upstream docs as reference links", async () => {
   const diagnostic = getDiagnosticDocuments().find(
     (item) =>

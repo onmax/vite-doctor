@@ -111,10 +111,27 @@ export const ruleDocumentationMetadata = {
       },
     ],
   },
+  "design-system/limit-per-view": {
+    description:
+      "Finds views that render more usages of a component than its Component Contract allows, such as two primary buttons.",
+    why: "A component can declare how many of its usages one view may render, such as one primary button. Doctor builds each Nuxt route's view from the app, its layout, its parent pages, and the page, follows the components they render, and counts only usages that render every time the view does. Usages behind `v-if`, `v-show`, or `v-for`, hidden by a class such as `lg:hidden`, inside a native `<dialog>` or `<details>` or overlays such as modals and menus, in teleports or dynamic components, or with props Doctor cannot read do not count, and an app that picks layouts with `setPageLayout()` or an `appLayout` route rule gets no view for the routes it may affect, so a report always names usages that are on screen together.",
+    recommendedReplacement:
+      "Apply the contract's fix to the extra usages, usually a quieter variant, so the view keeps one clear choice.",
+    examples: [
+      {
+        title: "Keep one primary UButton per view",
+        language: "vue",
+        invalid:
+          '<template>\n  <UButton @click="save">Save</UButton>\n  <UButton @click="publish">Publish</UButton>\n</template>',
+        valid:
+          '<template>\n  <UButton @click="save">Save</UButton>\n  <UButton variant="outline" @click="publish">Publish</UButton>\n</template>',
+      },
+    ],
+  },
   "design-system/unreadable-contract": {
     description:
       "Finds `defineOptions({ doctor })` values Doctor cannot read as a Component Contract.",
-    why: "Doctor reads Component Contracts statically from the SFC. A variable, function call, or unknown key in the `doctor` option leaves the contract unread, so design-system/prefer-project-component cannot point raw elements to the component.",
+    why: "Doctor reads Component Contracts statically from the SFC. A variable, function call, or unknown key in the `doctor` option leaves the contract unread, so design-system/prefer-project-component cannot point raw elements to the component and design-system/limit-per-view cannot count its usages. A limit that misses `max`, `why`, or `fix`, or whose `fix` repeats its `why`, is unreadable too.",
     recommendedReplacement:
       'Write the `doctor` option as a literal object, such as `defineOptions({ doctor: { replaces: "button" } })`.',
     examples: [
@@ -1980,16 +1997,18 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/shared/no-vue-or-nitro-context-in-shared": {
     description:
-      "Flags vue or nitro context in shared in Nuxt shared code before it leaks into runtime behavior.",
-    why: "Nuxt gives this pattern a specific contract. Staying inside that contract makes the code easier to test, refactor, and run across server and client runtimes.",
+      "Report shared/ code, in the root project and in layers, that imports or calls something only the Vue app or the Nitro server has: vue, nuxt/app, #app, #imports, #ui, h3, nitropack, nitro, Node built-ins, app code through ~/ or relative paths, process.env, and Nuxt or Nitro context helpers. Type-only imports are allowed.",
+    why: "Nuxt bundles shared/ into both the app and the server, and its docs say shared code cannot import Vue or Nitro code. Only #app fails the build: vue builds without a warning, node:fs gives only a Vite warning, and app code imported through ~/ ends up in the server bundle. process.env holds the server's environment on the server and is empty or replaced at build time in the browser.",
     recommendedReplacement:
-      "Remove vue or nitro context in shared, or move it to the Nuxt runtime/API that owns that behavior.",
+      "Keep shared/ code pure: pass context and configuration in as parameters. Move Vue composables to app/composables/, Nitro and Node code to server/utils/, and read configuration with useRuntimeConfig() on the side that needs it.",
     examples: [
       {
         title: "Keep shared utilities runtime-neutral",
         language: "ts",
-        invalid: "export function currentPath() {\n  return useRoute().path\n}",
-        valid: "export function currentPath(path: string) {\n  return path\n}",
+        invalid:
+          "// shared/utils/slug.ts\nexport { ref } from 'vue'\nconst prefix = process.env.SLUG_PREFIX\n\nexport function currentPath() {\n  return useRoute().path\n}",
+        valid:
+          "// shared/utils/slug.ts\nexport function slugify(text: string, prefix = '') {\n  return prefix + text.toLowerCase().replace(/\\W+/g, '-')\n}",
       },
     ],
   },
@@ -2126,7 +2145,7 @@ export const ruleDocumentationMetadata = {
   },
   "nuxt/structure/no-server-utils-in-app": {
     description: "Report runtime imports from the Nuxt server directory in app or shared code.",
-    why: "Nuxt's import protection doesn't block server/utils. Importing from it in app code ships server code (database clients, private config reads, Node APIs) into the client bundle. Code used by both sides belongs in shared/utils/, which Nuxt auto-imports in both the app and the server.",
+    why: "Nuxt's import protection doesn't block server/utils, and it checks paths after aliases resolve, so #server/utils/ gets through too. Before Nuxt 4.4 its check for server/api, routes, middleware and plugins never matched an app/ srcDir either. Importing from these in app code ships server code (database clients, private config reads, Node APIs) into the client bundle. Code used by both sides belongs in shared/utils/, which Nuxt auto-imports in both the app and the server.",
     recommendedReplacement:
       "Move code used by both the app and the server to shared/utils/. Keep server-only logic in server/ and call it through an API route.",
     examples: [
@@ -2153,6 +2172,37 @@ export const ruleDocumentationMetadata = {
           "// app/pages/orders.vue <script setup>\nimport type { Order } from '~~/server/utils/orders'",
         valid:
           "// shared/types/order.ts\nexport interface Order {\n  id: string\n  totalCents: number\n}\n\n// app/pages/orders.vue: auto-imported\nconst { data } = await useFetch<Order[]>('/api/orders')",
+      },
+    ],
+  },
+  "nuxt/structure/no-app-code-in-server": {
+    description:
+      "Report runtime imports in Nuxt server code that resolve to app code: ~/, @/, ~~/app/, @@/app/, relative paths, and layer or manifest aliases.",
+    why: "Nuxt's import protection only rejects #app in server code. Importing an app module from server/ builds without a warning and Nitro bundles it into the server output. App code can rely on Nuxt's app auto-imports, plugins and browser APIs, which the server does not have, and it couples server code to the app's internals. Code used by both sides belongs in shared/utils/, which Nuxt auto-imports in both the app and the server.",
+    recommendedReplacement:
+      "Move code used by both the server and the app to shared/utils/. Keep code that needs the Vue app in app/.",
+    examples: [
+      {
+        title: "Share utilities through shared/utils",
+        language: "ts",
+        invalid: "// server/api/cart.get.ts\nimport { formatPrice } from '~/utils/format'",
+        valid:
+          "// shared/utils/format.ts\nexport const formatPrice = (cents: number) => (cents / 100).toFixed(2)\n\n// server/api/cart.get.ts: auto-imported\nexport default defineEventHandler(() => formatPrice(1999))",
+      },
+    ],
+  },
+  "nuxt/structure/no-app-types-in-server": {
+    description: "Report type-only imports of app code in Nuxt server code.",
+    why: "Type-only imports are erased from the server bundle, but they couple server code to app internals. A refactor that adds a runtime import next to the type pulls app code into the server. Types used by both sides belong in shared/types/, which Nuxt auto-imports in both the app and the server.",
+    recommendedReplacement:
+      "Move types used by both the server and the app to shared/types/ and import them from there on both sides.",
+    examples: [
+      {
+        title: "Share types through shared/types",
+        language: "ts",
+        invalid: "// server/api/cart.get.ts\nimport type { Cart } from '~/types/cart'",
+        valid:
+          "// shared/types/cart.ts\nexport interface Cart {\n  items: string[]\n}\n\n// server/api/cart.get.ts: auto-imported\nexport default defineEventHandler((): Cart => ({ items: [] }))",
       },
     ],
   },

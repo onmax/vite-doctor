@@ -522,6 +522,69 @@ export interface PageRoute {
   file: string;
   parent: string | null;
   path?: string;
+  fullPath?: string;
+}
+
+function staticPagesDisable(ctx: RuleContext, layer: NuxtAppSource): boolean | "unknown" {
+  const config = configFile(ctx, layer.root);
+  if (!config || /pages:(?:extend|resolved)/.test(config.text)) return false;
+  const program = parseScript(config.file, config.text) as AnyNode;
+  if (!program) return false;
+  const object = exportedConfigObject(program, new Map());
+  const properties = object?.properties;
+  if (
+    !properties ||
+    properties.some((property: AnyNode) => {
+      const name = propertyName(property);
+      return (
+        property.type !== "Property" ||
+        property.kind !== "init" ||
+        !name ||
+        name.startsWith("$") ||
+        name === "router"
+      );
+    })
+  )
+    return false;
+  const pages = unwrap(
+    properties.findLast((property: AnyNode) => propertyName(property) === "pages")?.value,
+  );
+  let enabled = pages;
+  if (pages?.type === "ObjectExpression") {
+    if (
+      pages.properties.some(
+        (property: AnyNode) =>
+          property.type !== "Property" || property.kind !== "init" || !propertyName(property),
+      )
+    )
+      return false;
+    enabled = unwrap(
+      pages.properties.findLast((property: AnyNode) => propertyName(property) === "enabled")?.value,
+    );
+  }
+  if (enabled?.type !== "Literal" || enabled.value !== false) return false;
+  const hooks = properties.findLast((property: AnyNode) => propertyName(property) === "hooks");
+  if (hooks) {
+    const value = unwrap(hooks.value);
+    if (value?.type !== "ObjectExpression" || !value.properties.every(isShutdownHook))
+      return "unknown";
+  }
+  return true;
+}
+
+// Nuxt calls these from `nuxt.close()`, after the pages module has registered its routes.
+const shutdownHooks = new Set(["close"]);
+
+function isShutdownHook(property: AnyNode): boolean {
+  const name = propertyName(property);
+  const handler = unwrap(property.value);
+  return (
+    property.type === "Property" &&
+    property.kind === "init" &&
+    !!name &&
+    shutdownHooks.has(name) &&
+    (handler?.type === "FunctionExpression" || handler?.type === "ArrowFunctionExpression")
+  );
 }
 
 export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: readonly string[]) {
@@ -540,6 +603,7 @@ export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: r
               file: resolve(root, page.file),
               parent: page.parentFile ? resolve(root, page.parentFile) : null,
               path: page.path,
+              fullPath: page.fullPath,
             },
           ]
         : [],
@@ -547,6 +611,9 @@ export function pageRoutes(ctx: RuleContext, layers: NuxtAppSource[], sources: r
   }
   if (pages.length || layers.length !== 1 || unreadLayers(ctx, layers)) return undefined;
   const layer = layers[0]!;
+  const disabled = staticPagesDisable(ctx, layer);
+  if (disabled === true) return [];
+  if (disabled === "unknown") return undefined;
   if (!scanIsReliable(ctx, layer, "pages")) return undefined;
   const dir = prepared ? conventionalDir : join(layer.srcDir, "pages");
   if (!dir) return undefined;

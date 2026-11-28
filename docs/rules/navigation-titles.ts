@@ -138,6 +138,8 @@ export const ruleNavigationTitles: Record<string, string> = {
   "nuxt/state/prefer-explicit-usestate-key-in-exported-composables": "useState keys",
   "nuxt/structure/no-server-types-in-app": "Server types in app",
   "nuxt/structure/no-server-utils-in-app": "Server code in app",
+  "nuxt/structure/no-app-code-in-server": "App code in server",
+  "nuxt/structure/no-app-types-in-server": "App types in server",
   "nuxthub/no-personalized-cached-handler": "Per-user caching",
   "nuxthub/prefer-cached-event-handler": "Cached handlers",
   "vueuse/no-nuxt-auto-import-collision": "VueUse collisions",
@@ -173,6 +175,7 @@ export const ruleNavigationTitles: Record<string, string> = {
 
   "design-system/no-arbitrary-values": "Arbitrary values",
   "design-system/no-inline-styles": "Inline styles",
+  "design-system/limit-per-view": "Limits per view",
   "design-system/no-raw-colors": "Color tokens",
   "design-system/no-restyle": "Component restyling",
   "design-system/no-unknown-classes": "Unknown classes",

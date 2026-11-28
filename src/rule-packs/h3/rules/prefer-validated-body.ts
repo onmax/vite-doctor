@@ -4,12 +4,10 @@ export const preferValidatedBody = createValidatedInputRule({
   id: "h3/request/prefer-validated-body",
   title: "Use readValidatedBody for validated request bodies",
   description:
-    "When an h3 handler validates a request body, read and validate it through the H3 utility.",
+    "Consider reading and validating the request body through the H3 utility when it preserves behavior.",
   rawUtilities: ["readBody"],
   confidence: "heuristic-medium",
   validatedUtility: "readValidatedBody",
   docsUrl: "https://h3.dev/utils/request#readvalidatedbodyevent-validate",
   message: "This request body is read raw and validated separately.",
-  suggestion:
-    "Use readValidatedBody(event, validator) so input parsing and validation stay coupled.",
 });

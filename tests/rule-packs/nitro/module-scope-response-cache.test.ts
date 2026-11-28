@@ -139,9 +139,208 @@ export async function load(key: string) {
   return rows
 }`,
   ],
+  [
+    "an age compared with a TTL",
+    `const cache = new Map<string, { value: unknown, at: number }>()
+const TTL = 60_000
+export async function load(key: string) {
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.at < TTL) return hit.value
+  const value = await $fetch('/value')
+  cache.set(key, { value, at: Date.now() })
+  return value
+}`,
+  ],
+  [
+    "an age from a clock local, with the TTL on the left",
+    `let snapshot: { rows: string[], fetchedAt: number } | undefined
+export async function getRows() {
+  const now = Date.now()
+  if (snapshot && 30_000 >= (now - snapshot.fetchedAt)) return snapshot.rows
+  const rows = await $fetch<string[]>('/rows')
+  snapshot = { rows, fetchedAt: now }
+  return rows
+}`,
+  ],
 ])("reports %s", async (_, source) => {
   const diagnostics = await run({ "server/utils/cache.ts": source });
   expect(diagnostics).toMatchObject([{ code: "NITRO0023", file: "server/utils/cache.ts" }]);
+});
+
+const fresh = "hit && Date.now() - hit.at < 60_000";
+const stale = "!hit || 60_000 <= Date.now() - hit.at";
+const refresh = `const value = await $fetch('/value')
+  cache.set(key, { value, at: Date.now() })
+  return value`;
+
+function ageCache(body: string, keySetup = "") {
+  return `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(key: string) {
+  const hit = cache.get(key)
+  ${keySetup}
+  ${body}
+}`;
+}
+
+test.each([
+  ["an explicit refresh branch", `if (${fresh}) return hit.value; else { ${refresh} }`],
+  ["an explicit stale-or-missing branch", `if (${stale}) { ${refresh} } else return hit.value`],
+  ["a stale-or-missing early return", `if (${stale}) { ${refresh} }\nreturn hit.value`],
+  [
+    "logging before a hit return",
+    `if (${fresh}) { console.debug('hit'); return hit.value }\n${refresh}`,
+  ],
+  [
+    "logging before the refresh write",
+    `if (${fresh}) return hit.value\n${refresh.replace("cache.set", "console.debug('refresh'); cache.set")}`,
+  ],
+])("reports age-based reuse with %s", async (_, body) => {
+  expect(await run({ "server/utils/cache.ts": ageCache(body) })).toMatchObject([
+    { code: "NITRO0023" },
+  ]);
+});
+
+test.each([
+  ["at function scope", "", ""],
+  ["inside a try block", "try {", "} catch (error) { throw error }"],
+])("reports a Map key normalized before lookup %s", async (_, open, close) => {
+  const source = ageCache(`if (${fresh}) return hit.value\n${refresh}\n${close}`).replace(
+    "const hit = cache.get(key)",
+    `${open}\n  key = key.trim().toLowerCase()\n  const hit = cache.get(key)`,
+  );
+  expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+});
+
+test.each(["const", "let"])("reports a %s Map key declared alongside the lookup", async (kind) => {
+  const source = ageCache(`if (${fresh}) return hit.value\n${refresh}`)
+    .replace("load(key: string)", "load(slug: string)")
+    .replace("const hit = cache.get(key)", `${kind} key = slug.trim(), hit = cache.get(key)`);
+  expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+});
+
+test.each([
+  ["in a for-of header", "for (const key of candidates)", "", "const"],
+  ["in a for-of header and a var hit", "for (const key of candidates)", "", "var"],
+  [
+    "in the loop body",
+    "for (const candidate of candidates)",
+    "const key = candidate.trim()",
+    "const",
+  ],
+])(
+  "reports same-iteration reuse with a Map key initialized %s",
+  async (_, loop, setup, hitKind) => {
+    const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(candidates: string[]) {
+  ${loop} {
+    ${setup}
+    try {
+      ${hitKind} hit = cache.get(key)
+      if (${fresh}) return hit.value
+      ${refresh}
+    } catch (error) {
+      throw error
+    }
+  }
+}`;
+    expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+  },
+);
+
+test("reports cross-iteration reuse with a Map key initialized once in a for header", async () => {
+  const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(candidate: string) {
+  let attempt = 0
+  for (const key = candidate.trim(); key; attempt++) {
+    if (attempt === 0) {
+      var hit = cache.get(key)
+      continue
+    }
+    if (${fresh}) return hit.value
+    ${refresh}
+  }
+}`;
+  expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+});
+
+test.each([
+  ["in the loop header", "const key", "['public:' + slug, 'internal:' + slug]", ""],
+  ["in the loop body", "const prefix", "['public:', 'internal:']", "const key = prefix + slug"],
+])(
+  "does not match Map keys across iterations when initialized %s",
+  async (_, binding, keys, setup) => {
+    const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(slug: string) {
+  for (${binding} of ${keys}) {
+    ${setup}
+    if (key.startsWith('public:')) {
+      var hit = cache.get(key)
+      continue
+    }
+    if (${fresh}) return hit.value
+    ${refresh}
+  }
+}`;
+    expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
+  },
+);
+
+test("does not match a loop key when the guard runs before the lookup", async () => {
+  const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(slug: string) {
+  for (const key of ['public:' + slug, 'internal:' + slug]) {
+    if (${fresh}) return hit.value
+    var hit = cache.get(key)
+    ${refresh}
+  }
+}`;
+  expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
+});
+
+test("reports age-based reuse in a loop with a key initialized outside it", async () => {
+  const source = `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(slug: string) {
+  const key = slug.trim()
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const hit = cache.get(key)
+    if (${fresh}) return hit.value
+    ${refresh}
+  }
+}`;
+  expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
+});
+
+test("does not report a Map key changed by a later initializer in the lookup declaration", async () => {
+  const source = ageCache(`if (${fresh}) return hit.value\n${refresh}`)
+    .replace("load(key: string)", "load(slug: string)")
+    .replace(
+      "const hit = cache.get(key)",
+      "let key = slug.trim(), hit = cache.get(key), next = (key = 'internal:' + key)",
+    );
+  expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
+});
+
+test("does not report age-based reuse when a closure can change the Map key", async () => {
+  const source = ageCache(`if (${fresh}) return hit.value\nchangeKey()\n${refresh}`).replace(
+    "const hit = cache.get(key)",
+    "const changeKey = () => { key = 'internal:' + key }\n  const hit = cache.get(key)",
+  );
+  expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
+});
+
+test.each([
+  ["a reassigned", `if (${fresh}) return hit.value\n${refresh}`, "key = 'internal:' + key"],
+  ["a shadowed", `if (${fresh}) return hit.value; else { const key = 'internal'; ${refresh} }`, ""],
+  ["a reinitialized", `if (${fresh}) return hit.value\n${refresh}`, "var key = 'internal:' + key"],
+])("does not report age-based reuse with %s Map key", async (_, body, keySetup) => {
+  expect(await run({ "server/utils/cache.ts": ageCache(body, keySetup) })).toEqual([]);
+});
+
+test("does not report a stale branch that refreshes but still returns the old hit", async () => {
+  const source = ageCache(
+    `if (${stale}) { ${refresh.replace("return value", "")} }\nreturn hit?.value`,
+  );
+  expect(await run({ "server/utils/cache.ts": source })).toEqual([]);
 });
 
 test("reports standalone Nitro server code", async () => {
@@ -273,6 +472,55 @@ export async function load(key: string) {
   const value = await $fetch('/value')
   cache.set(key, { value, expiresAt: metrics() + 1000 })
   return value
+}`,
+  ],
+  [
+    "a synchronous rate-limit window measured by age",
+    `const hits = new Map<string, { count: number, at: number }>()
+export function allow(ip: string) {
+  const now = Date.now()
+  const entry = hits.get(ip)
+  if (!entry || now - entry.at > 60_000) {
+    hits.set(ip, { count: 1, at: now })
+    return true
+  }
+  entry.count++
+  return entry.count <= 10
+}`,
+  ],
+  [
+    "an age check that only logs a stale hit",
+    `const cache = new Map<string, { value: unknown, at: number }>()
+export async function load(key: string) {
+  const hit = cache.get(key)
+  if (hit) {
+    if (Date.now() - hit.at > 60_000) console.warn('old hit')
+    return hit.value
+  }
+  const value = await $fetch('/value')
+  cache.set(key, { value, at: Date.now() })
+  return value
+}`,
+  ],
+  [
+    "an age-based rate limiter with an unrelated await",
+    `const hits = new Map<string, { count: number, at: number, auditId: string }>()
+export async function countHits(ip: string) {
+  const now = Date.now()
+  const entry = hits.get(ip)
+  if (entry && now - entry.at < 60_000) return entry.count
+  const auditId = await audit(ip)
+  hits.set(ip, { count: 1, at: now, auditId })
+  return 1
+}`,
+  ],
+  [
+    "a throttle measured by age",
+    `let lastCall = 0
+export async function ping() {
+  if (Date.now() - lastCall < 1000) return
+  lastCall = Date.now()
+  await $fetch('/ping')
 }`,
   ],
 ])("does not report %s", async (_, source) => {

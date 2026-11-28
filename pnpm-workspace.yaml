@@ -6,7 +6,7 @@ catalogMode: prefer
 catalogs:
   analysis:
     "@oxc-parser/binding-wasm32-wasi": ^0.159.0
-    "@oxc-project/types": ^0.159.0
+    "@oxc-project/types": ^0.160.0
     "@typescript-eslint/parser": ^8.74.0
     "@typescript-eslint/scope-manager": ^8.74.0
     "@typescript-eslint/visitor-keys": ^8.74.0
@@ -17,6 +17,7 @@ catalogs:
     magic-string: ^1.1.0
     nostics: 1.4.0
     oxc-parser: ^0.159.0
+    postcss: ^8.5.33
     typescript: ^6.0.3
     vue-eslint-parser: ^10.4.1
     "@shadcn/lint": 0.2.5
@@ -51,7 +52,7 @@ catalogs:
     better-auth: ^1.6.25
     docus: 5.15.0
     nuxt: ^4.5.2
-    nuxt-better-auth: ^0.6.0
+    nuxt-better-auth: ^0.7.1
     satori: ^0.63.2
     tailwindcss: ^4.3.3
     vue: ^3.5.40
@@ -70,7 +71,9 @@ catalogs:
     radix3: ^1.1.2
     semver: ^7.8.5
     std-env: ^4.2.0
-    unimport: 6.4.0
+    unimport: 7.0.3
+    unimport-nitro-v6: npm:unimport@6.4.0
+    unimport-nitro-v65: npm:unimport@6.5.0
     zod: ^4.4.3
     zod-to-json-schema: ^3.25.2
   release:

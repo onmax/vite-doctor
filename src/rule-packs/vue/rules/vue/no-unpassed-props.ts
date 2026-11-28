@@ -48,11 +48,16 @@ export const noUnpassedProps = createRule({
           const callerFiles = [...new Set(node.callers.map((edge) => edge.from))];
           for (const prop of props) {
             if (passed.has(prop.name)) continue;
-            const value = prop.default ? "its default value" : "undefined";
+            const renderedValue = prop.localFallback
+              ? ""
+              : ` Every instance renders with ${prop.default ? "its default value" : "undefined"}, so the prop is contract surface and branching that no caller exercises.`;
+            const removal = prop.localFallback
+              ? `Verify how ${name} behaves when "${prop.name}" is omitted before removing it from defineProps.`
+              : `Remove "${prop.name}" from ${name}'s defineProps and use ${prop.default ? "the default value directly" : "the value it always has"} in the component.`;
             ctx.report(
               diagnostics.VUE0039({
-                why: `No caller passes prop "${prop.name}" to ${name}: Doctor resolved ${node.callers.length} ${node.callers.length === 1 ? "usage" : "usages"} in ${callerFiles.length} ${callerFiles.length === 1 ? "file" : "files"}, none of which binds it or spreads props into ${name}. Every instance renders with ${value}, so the prop is contract surface and branching that no caller exercises.`,
-                fix: `Remove "${prop.name}" from ${name}'s defineProps and use ${prop.default ? "the default value directly" : "the value it always has"} in the component, or pass it from the caller that needs it. Keep it if ${name} is rendered from code Doctor cannot see, such as another package or a render function.`,
+                why: `No caller passes prop "${prop.name}" to ${name}: Doctor resolved ${node.callers.length} ${node.callers.length === 1 ? "usage" : "usages"} in ${callerFiles.length} ${callerFiles.length === 1 ? "file" : "files"}, none of which binds it or spreads props into ${name}.${renderedValue}`,
+                fix: `${removal} If a caller needs the prop, pass it explicitly. Keep it if ${name} is rendered from code Doctor cannot see, such as another package or a render function.`,
               }),
               {
                 file: node.file,

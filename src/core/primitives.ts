@@ -117,9 +117,37 @@ export interface Diagnostic {
   subject?: string;
   /** The Rule's one-line summary of this Diagnostic, shown on its row in a Progressive Report. */
   brief?: string;
+  /**
+   * Where Doctor saw the problem, as opposed to `file` and `range`, which say where to fix it.
+   * Without it, Doctor found the problem in the source at `file`.
+   */
+  origin?: DiagnosticOrigin;
   fixGroupId?: string;
   analysisPhase?: ExecutionKind;
   cacheHit?: boolean;
+}
+
+/**
+ * Where a Diagnostic came from. A live target, such as a deployed MCP server, can show a problem
+ * the source no longer has, so the remedy depends on both.
+ */
+export interface DiagnosticOrigin {
+  /**
+   * What the source shows: `found` when the matched definition has the problem, `passes` when
+   * it doesn't (without inferring why the live target differs), `not-checked` when the source
+   * wasn't checked or couldn't establish the answer, and `no-definition` when no unique
+   * definition was matched.
+   */
+  code: "found" | "passes" | "not-checked" | "no-definition";
+  /** The live targets that showed the problem during this Doctor Run. */
+  live?: DiagnosticLiveOrigin[];
+}
+
+export interface DiagnosticLiveOrigin {
+  /** What read the target, such as `mcp`. */
+  source: string;
+  /** The target as reports show it, without credentials, such as `https://nuxt.com`. */
+  target: string;
 }
 
 export interface DiagnosticEvidence {
@@ -827,6 +855,8 @@ export interface ComponentUsageFact {
   }>;
   /** Other directives on the element, such as `if`, `show`, `slot`, `for`, or a custom directive. */
   directives: string[];
+  /** Whether the component is passed non-whitespace template children. */
+  hasSlotContent: boolean;
   /**
    * The nearest enclosing element in the same template, skipping `<template>` wrappers such as
    * `v-if`, `v-for`, and slot templates. `element` is false for a component, a built-in such as
@@ -838,12 +868,58 @@ export interface ComponentUsageFact {
   scope: string[];
   /** Whether this element or an ancestor has `v-for`. */
   inFor: boolean;
+  /**
+   * Whether this element or an ancestor may not render or may render hidden: it has `v-if`,
+   * `v-else-if`, `v-else`, or `v-show`, sits in `<slot>` fallback content, fills a built-in's named
+   * slot such as `<Suspense>`'s `#fallback`, or sits in a native `<dialog>` or `<details>`, on an
+   * element with a `hidden` or `popover` attribute, a `hidden`, `sr-only`, or `<variant>:hidden`
+   * class, or a class or `v-bind` spread Doctor cannot read.
+   */
+  conditional: boolean;
+  /**
+   * The nearest enclosing component usage in the same template, as an index into `usages`, and
+   * the slot it fills there. `slot` is null for a dynamic slot name such as `#[name]`. Absent when
+   * no component usage encloses it.
+   */
+  host?: ComponentSlotHost;
+  /**
+   * Vue built-in components that enclose it in the same template, such as `Teleport` or a
+   * dynamic `component`, as written.
+   */
+  builtInHosts: string[];
+}
+
+/** Where a usage or `<slot>` outlet sits inside an enclosing component usage of the same template. */
+export interface ComponentSlotHost {
+  /** Index into the template's `usages`. */
+  usage: number;
+  /** The slot name, such as `default` or `footer`; null when the name is dynamic. */
+  slot: string | null;
+}
+
+/** A `<slot>` outlet in a Vue SFC template. */
+export interface ComponentSlotOutletFact {
+  /** The slot name, `default` when unnamed; null when `:name` is bound. */
+  name: string | null;
+  /** Whether the outlet or an ancestor may not render, as for `ComponentUsageFact.conditional`. */
+  conditional: boolean;
+  /** Whether the outlet or an ancestor has `v-for`. */
+  inFor: boolean;
+  /** The nearest enclosing component usage in the same template, as for `ComponentUsageFact.host`. */
+  host?: ComponentSlotHost;
+  /** Vue built-in components that enclose it in the same template, as written. */
+  builtInHosts: string[];
+  range: SourceRange;
 }
 
 export interface ComponentPropFact {
   name: string;
   /** Whether the declaration gives the prop a default value. */
   default: boolean;
+  /** The default value when the declaration writes it as a string literal. */
+  defaultValue?: string;
+  /** Whether a local destructuring binding applies a fallback independently of the prop default. */
+  localFallback?: boolean;
   range?: SourceRange;
 }
 
@@ -880,6 +956,8 @@ export interface ComponentFacts {
   models: Array<{ name: string; binding?: string; default: boolean; range?: SourceRange }>;
   /** Value imports in `<script setup>`, which its template can render as tags. */
   imports: Array<{ local: string; imported: string; source: string }>;
+  /** Other top-level value bindings declared in `<script setup>`. */
+  setupBindings: string[];
   /** Names explicitly registered in the Options API `components` object. */
   registeredComponentNames: string[];
   /**
@@ -913,6 +991,8 @@ export interface ComponentFacts {
   comparisons: Array<{ left: string; right: string; in: "script" | "template" }>;
   /** Components the template renders, in source order. */
   usages: ComponentUsageFact[];
+  /** `<slot>` outlets in the template, in source order. */
+  slotOutlets: ComponentSlotOutletFact[];
   /** Imported names the component references outside a template tag, in script code or template expressions. */
   bindingReferences: string[];
   /**

@@ -28,6 +28,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "DS0005", ruleId: "design-system/require-static-classes" },
   { code: "DS0006", ruleId: "design-system/no-unknown-classes" },
   { code: "DS0007", ruleId: "design-system/prefer-project-component" },
+  { code: "DS0008", ruleId: "design-system/limit-per-view" },
   { code: "DS0009", ruleId: "design-system/unreadable-contract" },
   { code: "DOC9999", ruleId: "doctor/external-rule-diagnostic" },
   { code: "DOC0001", ruleId: "workspace/dead-code/circular-dependency" },
@@ -332,6 +333,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0105", ruleId: "nuxt/ssr/no-request-data-in-module-state" },
   { code: "NUXT0106", ruleId: "nuxt/ssr/no-request-state-in-cached-page" },
   { code: "NUXT0107", ruleId: "nuxt/routing/no-global-middleware-redirect-loop" },
+  { code: "NUXT0108", ruleId: "nuxt/structure/no-app-code-in-server" },
+  { code: "NUXT0109", ruleId: "nuxt/structure/no-app-types-in-server" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
