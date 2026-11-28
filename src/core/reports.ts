@@ -143,7 +143,7 @@ const SOURCE_STATES: Record<DiagnosticOrigin["code"], string> = {
   found: "the source has it too",
   passes: "the source passes the static check; check the deployment and runtime configuration",
   "not-checked": "the source was not verified",
-  "no-definition": "no definition in source",
+  "no-definition": "no unique source definition matched",
 };
 
 function originSummary(origin: DiagnosticOrigin): string {
@@ -689,6 +689,7 @@ function agentLayout(
   const deployment = live.some((diagnostic) => diagnostic.origin?.code === "passes")
     ? ' When origin.code is "passes", check the deployed version and runtime configuration before editing source or redeploying.'
     : "";
+  const liveGuidance = verifyLive + deployment;
   const serialize = (budget: object | undefined, items: object[]) =>
     `${JSON.stringify({
       schema: "vite-doctor.agent/v3",
@@ -720,13 +721,14 @@ function agentLayout(
           : status === "incomplete"
             ? {
                 action: "restore-evidence",
-                instruction:
+                instruction: `${
                   result.project.evidenceGaps?.map((gap) => gap.message).join(" ") ||
-                  "Install project dependencies and run Doctor from the target package before relying on version-specific results.",
+                  "Install project dependencies and run Doctor from the target package before relying on version-specific results."
+                }${liveGuidance}`,
               }
             : {
                 action: "remediate",
-                instruction: `Apply the smallest remediation that resolves each owned diagnostic${plugin ? "" : ", run its focused verification"}, then rerun Doctor.${verifyLive}${deployment}${budget ? ` ${recovery}` : ""}`,
+                instruction: `Apply the smallest remediation that resolves each owned diagnostic${plugin ? "" : ", run its focused verification"}, then rerun Doctor.${liveGuidance}${budget ? ` ${recovery}` : ""}`,
               },
     })}\n`;
   const budgetField = (hidden: BudgetHidden) => ({ maxChars, hidden });
