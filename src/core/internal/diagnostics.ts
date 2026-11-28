@@ -799,6 +799,9 @@ async function applyReportEligibility(session: ScanSession): Promise<void> {
     (diagnostic: Diagnostic & ScopedReportLocations) => {
       const scopeLocations = diagnostic[scopedReportLocations];
       delete diagnostic[scopedReportLocations];
+      // A live target, such as a deployed MCP server, runs the whole project rather than the
+      // change, so a Git-scoped report keeps what it showed unless files were explicitly limited.
+      if (session.gitChanges && !affected && diagnostic.origin?.live?.length) return true;
       const locations = [diagnostic, ...(diagnostic.related ?? [])];
       const located = locations.some((location) => {
         if (location.range) return onChangedLine(location.file, location.range);

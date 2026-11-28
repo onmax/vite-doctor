@@ -1074,6 +1074,7 @@ function serializeDiagnostic(result: DoctorRunResult, diagnostic: Diagnostic) {
     docs: diagnostic.docs,
     subject: diagnostic.subject,
     brief: diagnostic.brief,
+    origin: diagnostic.origin,
     location: {
       path: relative(result.root, diagnostic.file),
       ...(diagnostic.range

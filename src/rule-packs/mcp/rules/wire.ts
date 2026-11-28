@@ -11,6 +11,8 @@ import {
 import { relative } from "pathe";
 import type {
   DiagnosticEvidence,
+  DiagnosticLiveOrigin,
+  DiagnosticOrigin,
   ProjectInfo,
   RuleContext,
   SourceRange,
@@ -173,37 +175,132 @@ export function wireTools(ctx: RuleContext, sources: McpToolDefinition[]) {
 }
 
 /**
- * Reports a tool's `code` finding when the server sent one, at its source definition when one
- * matches and at the project root otherwise. The fingerprint uses the endpoint, not its URL, so
- * it stays stable when only the port or host changes.
+ * The fingerprint of a Rule's finding on a tool the source defines. The Rule's source check and
+ * its check of a server's `tools/list` share it, so passing or dropping `--mcp-url` keeps the
+ * finding's identity in baselines.
  */
-export function reportWireTool(
+export function definedToolFingerprint(
   ctx: RuleContext,
-  wire: WireTool,
+  ruleId: string,
+  file: string,
+  tool: string,
+): string {
+  return sha256(JSON.stringify([ruleId, relative(ctx.project.root, file), tool]));
+}
+
+/** The server a finding came from, named by its endpoint origin as the rest of the report does. */
+export function liveOrigin(server: McpServerToolsEvidence): DiagnosticLiveOrigin {
+  return {
+    source: "mcp",
+    target: server.url ? mcpEndpointLabel(server.url) : (server.name ?? "an MCP server"),
+  };
+}
+
+type WireAdvice = { why: string; fix: string; brief: string };
+
+/**
+ * Reports findings at a matching definition, or at the project root. When the source also
+ * has the problem, report it once with all the live observations. Live-only findings keep
+ * separate identities for each endpoint, independent of which endpoints the run reads.
+ */
+export function reportWireTools(
+  ctx: RuleContext,
+  tools: WireTool[],
   code: McpCode,
   options: {
     ruleId: string;
     diagnostic: DoctorDiagnosticHandle;
     range: (definition: McpToolDefinition) => SourceRange;
+    /** Advice when the source fails, `false` when it passes, or `undefined` if unknown. */
+    source?: (definition: McpToolDefinition) => WireAdvice | false | undefined;
   },
 ): void {
-  const found = wire.diagnostics.find((diagnostic) => diagnostic.code === code);
-  if (!found) return;
+  const groups = new Map<string, WireFinding[]>();
+  for (const wire of tools) {
+    const found = wire.diagnostics.find((diagnostic) => diagnostic.code === code);
+    if (!found) continue;
+    const { server, tool, definition } = wire;
+    const inSource = definition && options.source?.(definition);
+    const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
+    const fingerprint =
+      definition && inSource
+        ? definedToolFingerprint(ctx, options.ruleId, definition.file, tool.name)
+        : sha256(
+            JSON.stringify([options.ruleId, server.name ?? null, endpointId ?? null, tool.name]),
+          );
+    const endpoint = liveOrigin(server);
+    const observation = {
+      server: {
+        ...(server.name === undefined ? {} : { name: server.name }),
+        ...(server.url === undefined ? {} : { url: endpoint.target }),
+      },
+      ...(typeof endpointId === "string" ? { endpointId: sha256(endpointId) } : {}),
+      message: found.message,
+      fix: found.fix,
+      brief: found.brief,
+      findings: found.findings,
+    };
+    const finding = { wire, inSource, endpoint, observation, order: JSON.stringify(observation) };
+    const group = groups.get(fingerprint);
+    if (group) group.push(finding);
+    else groups.set(fingerprint, [finding]);
+  }
+  for (const [fingerprint, group] of groups) reportWireFinding(ctx, fingerprint, group, options);
+}
+
+interface WireFinding {
+  wire: WireTool;
+  inSource: WireAdvice | false | undefined;
+  endpoint: DiagnosticLiveOrigin;
+  observation: Pick<McpDiagnostic, "message" | "fix" | "brief" | "findings"> & {
+    server: { name?: string; url?: string };
+    endpointId?: string;
+  };
+  order: string;
+}
+
+function reportWireFinding(
+  ctx: RuleContext,
+  fingerprint: string,
+  group: WireFinding[],
+  options: Parameters<typeof reportWireTools>[3],
+): void {
+  group.sort((left, right) => (left.order < right.order ? -1 : left.order > right.order ? 1 : 0));
+  const { wire, inSource, observation } = group[0]!;
   const { server, tool, definition } = wire;
-  const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
-  const endpointId = server.endpointId ?? (server.url ? mcpEndpointId(server.url) : undefined);
-  const label = server.name ?? endpoint ?? "an MCP server";
+  const advice = inSource || {
+    why: observation.message,
+    fix: observation.fix,
+    brief: observation.brief,
+  };
+  const findings = [
+    ...new Map(
+      group.flatMap(({ observation }) =>
+        observation.findings.map((finding) => [JSON.stringify(finding), finding] as const),
+      ),
+    ).values(),
+  ];
   const range = definition ? options.range(definition) : undefined;
-  const anchor = endpointId ?? (definition ? relative(ctx.project.root, definition.file) : null);
-  const fingerprint = sha256(
-    JSON.stringify([options.ruleId, server.name ?? null, anchor, tool.name]),
-  );
+  const origin: DiagnosticOrigin = {
+    code: !definition
+      ? "no-definition"
+      : inSource
+        ? "found"
+        : inSource === false
+          ? "passes"
+          : "not-checked",
+    live: group.map(({ endpoint }) => endpoint),
+  };
   const evidence: DiagnosticEvidence[] = [
-    {
-      kind: "runtime",
-      summary: `Read from the tools/list of MCP server ${JSON.stringify(label)}${endpoint ? ` at ${endpoint}` : ""} during this Doctor Run.`,
-    },
-    ...citations(found.findings),
+    ...group.map(({ wire: { server } }) => {
+      const endpoint = server.url ? mcpEndpointLabel(server.url) : undefined;
+      const label = server.name ?? endpoint ?? "an MCP server";
+      return {
+        kind: "runtime" as const,
+        summary: `Read from the tools/list of MCP server ${JSON.stringify(label)}${endpoint ? ` at ${endpoint}` : ""} during this Doctor Run.`,
+      };
+    }),
+    ...citations(findings),
     ...(definition && range
       ? [
           {
@@ -215,7 +312,7 @@ export function reportWireTool(
         ]
       : []),
   ];
-  ctx.report(options.diagnostic({ why: found.message, fix: found.fix }), {
+  ctx.report(options.diagnostic({ why: advice.why, fix: advice.fix }), {
     ruleId: options.ruleId,
     severity: ctx.severity,
     category: "tools",
@@ -223,18 +320,19 @@ export function reportWireTool(
     projectLevel: !definition,
     range,
     fingerprint,
-    instanceKey: endpointId ? fingerprint : undefined,
+    instanceKey: fingerprint,
     confidence: "runtime-backed",
+    origin,
     evidence,
-    subject: toolSubject(ctx, server, tool.name),
-    brief: found.brief,
+    subject: group.length > 1 ? tool.name : toolSubject(ctx, server, tool.name),
+    brief: advice.brief,
     data: {
-      server: {
-        ...(server.name === undefined ? {} : { name: server.name }),
-        ...(endpoint === undefined ? {} : { url: endpoint }),
-      },
+      ...(group.length === 1 ? { server: observation.server } : {}),
       tool: tool.name,
-      findings: found.findings,
+      findings,
+      ...(inSource || group.length > 1
+        ? { observations: group.map(({ observation }) => observation) }
+        : {}),
     },
   });
 }

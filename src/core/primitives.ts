@@ -118,9 +118,37 @@ export interface Diagnostic {
   subject?: string;
   /** The Rule's one-line summary of this Diagnostic, shown on its row in a Progressive Report. */
   brief?: string;
+  /**
+   * Where Doctor saw the problem, as opposed to `file` and `range`, which say where to fix it.
+   * Without it, Doctor found the problem in the source at `file`.
+   */
+  origin?: DiagnosticOrigin;
   fixGroupId?: string;
   analysisPhase?: ExecutionKind;
   cacheHit?: boolean;
+}
+
+/**
+ * Where a Diagnostic came from. A live target, such as a deployed MCP server, can show a problem
+ * the source no longer has, so the remedy depends on both.
+ */
+export interface DiagnosticOrigin {
+  /**
+   * What the source shows: `found` when the matched definition has the problem, `passes` when
+   * it doesn't (without inferring why the live target differs), `not-checked` when the source
+   * wasn't checked or couldn't establish the answer, and `no-definition` when no unique
+   * definition was matched.
+   */
+  code: "found" | "passes" | "not-checked" | "no-definition";
+  /** The live targets that showed the problem during this Doctor Run. */
+  live?: DiagnosticLiveOrigin[];
+}
+
+export interface DiagnosticLiveOrigin {
+  /** What read the target, such as `mcp`. */
+  source: string;
+  /** The target as reports show it, without credentials, such as `https://nuxt.com`. */
+  target: string;
 }
 
 export interface DiagnosticEvidence {

@@ -1,8 +1,8 @@
 import { nameProblems } from "@loadsheet/mcp";
 import { createRule } from "../../../core/index.js";
 import { diagnostics } from "../diagnostics.js";
-import { collectMcpTools } from "./shared.js";
-import { reportWireTool, wireTools } from "./wire.js";
+import { collectMcpTools, type McpToolDefinition } from "./shared.js";
+import { definedToolFingerprint, reportWireTools, wireTools } from "./wire.js";
 
 export const validName = createRule({
   meta: {
@@ -38,52 +38,60 @@ export const validName = createRule({
     return {
       async onWorkspaceEnd() {
         const { tools: sent, sourceOnly } = wireTools(ctx, await collectMcpTools(ctx));
-        for (const wire of sent)
-          reportWireTool(ctx, wire, "MCP0003", {
-            ruleId: "mcp/tools/valid-name",
-            diagnostic: diagnostics.MCP0003,
-            range: (tool) => tool.name?.range ?? tool.callee,
-          });
+        reportWireTools(ctx, sent, "MCP0003", {
+          ruleId: "mcp/tools/valid-name",
+          diagnostic: diagnostics.MCP0003,
+          range: (tool) => tool.name?.range ?? tool.callee,
+          source: sourceAdvice,
+        });
         for (const tool of sourceOnly) {
           const name = tool.name;
           if (!name) continue;
-          const problems = nameProblems(name.value);
-          if (!problems.length) continue;
-          const origin = name.source === "file" ? " It comes from the file name." : "";
-          ctx.report(
-            diagnostics.MCP0003({
-              why: `MCP tool name ${JSON.stringify(name.value)} ${problems.join(" and ")}.${origin} Anthropic's Connectors Directory rejects names over 64 characters, and MCP allows only letters, digits, \`_\`, \`-\`, and \`.\`.`,
-              fix:
-                name.source === "file"
-                  ? tool.library === "@vite-hub/mcp"
-                    ? "Rename or move the tool file so its discovered name is at most 64 letters, digits, `_`, `-`, or `.`."
-                    : "Rename the file, or set `name` on the definition, to at most 64 letters, digits, `_`, `-`, or `.`."
-                  : "Rename the tool to at most 64 letters, digits, `_`, `-`, or `.`.",
-            }),
-            {
-              ruleId: "mcp/tools/valid-name",
-              severity: ctx.severity,
-              category: "tools",
-              file: tool.file,
-              range: name.range,
-              confidence: name.source === "file" ? "heuristic-medium" : "heuristic-high",
-              brief: `name ${problems.join(" and ")}`,
-              data: { tool: name.value },
-              evidence: [
-                {
-                  kind: "ast",
-                  file: tool.file,
-                  range: name.range,
-                  summary:
-                    name.source === "file"
-                      ? `The ${tool.library} toolkit names this tool after its file.`
-                      : `The tool is registered as ${JSON.stringify(name.value)}.`,
-                },
-              ],
-            },
-          );
+          const advice = sourceAdvice(tool);
+          if (!advice) continue;
+          ctx.report(diagnostics.MCP0003({ why: advice.why, fix: advice.fix }), {
+            ruleId: "mcp/tools/valid-name",
+            severity: ctx.severity,
+            category: "tools",
+            file: tool.file,
+            range: name.range,
+            confidence: name.source === "file" ? "heuristic-medium" : "heuristic-high",
+            fingerprint: definedToolFingerprint(ctx, "mcp/tools/valid-name", tool.file, name.value),
+            brief: advice.brief,
+            data: { tool: name.value },
+            evidence: [
+              {
+                kind: "ast",
+                file: tool.file,
+                range: name.range,
+                summary:
+                  name.source === "file"
+                    ? `The ${tool.library} toolkit names this tool after its file.`
+                    : `The tool is registered as ${JSON.stringify(name.value)}.`,
+              },
+            ],
+          });
         }
       },
     };
   },
 });
+
+function sourceAdvice(tool: McpToolDefinition) {
+  const name = tool.name;
+  if (!name) return undefined;
+  const problems = nameProblems(name.value);
+  if (!problems.length) return false;
+  const problem = problems.join(" and ");
+  const origin = name.source === "file" ? " It comes from the file name." : "";
+  return {
+    why: `MCP tool name ${JSON.stringify(name.value)} ${problem}.${origin} Anthropic's Connectors Directory rejects names over 64 characters, and MCP allows only letters, digits, \`_\`, \`-\`, and \`.\`.`,
+    fix:
+      name.source === "file"
+        ? tool.library === "@vite-hub/mcp"
+          ? "Rename or move the tool file so its discovered name is at most 64 letters, digits, `_`, `-`, or `.`."
+          : "Rename the file, or set `name` on the definition, to at most 64 letters, digits, `_`, `-`, or `.`."
+        : "Rename the tool to at most 64 letters, digits, `_`, `-`, or `.`.",
+    brief: `name ${problem}`,
+  };
+}
