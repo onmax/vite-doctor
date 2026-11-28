@@ -1600,6 +1600,8 @@ export interface DoctorRunResult {
   ruleTimings?: Array<{ rule: string; ms: number; files: number }>;
   workspacePackages?: WorkspacePackageActivation[];
   rulePacks?: RulePackActivation[];
+  /** Evidence Sources the run read because it was given an input for them. */
+  evidenceSources?: EvidenceSourceRun[];
   graph?: {
     files: number;
     importEdges: number;
@@ -1615,7 +1617,77 @@ export interface DoctorExtension {
   name: string;
   version?: string;
   rulePacks?: RulePack[];
+  /**
+   * Evidence Sources the Extension reads when a Doctor Run passes them an input. They are data,
+   * not `setup` registrations, so the CLI can derive their flags without running Extension code.
+   */
+  sources?: EvidenceSource[];
   setup?(api: DoctorExtensionApi): void | Promise<void>;
+}
+
+/**
+ * Evidence a Doctor Run reads from outside the source tree, such as a deployed server, only when
+ * the run is given an input for it. Without an input Doctor never calls `collect`, so a run sends
+ * no request it wasn't asked to send.
+ */
+export interface EvidenceSource<Input = any> {
+  /**
+   * Names the run input (`sources[name]`), the CLI flags (`--<name>-<option>`), the Runtime
+   * Evidence entry Rules read, and the source of its evidence gaps.
+   */
+  name: string;
+  /** What a target is, such as "MCP server". */
+  label: string;
+  /** CLI flags, keyed by option name in camelCase. */
+  options?: Record<string, EvidenceSourceOption>;
+  /** Builds the input from CLI flag values, keyed by option name. Throws on a value it can't use. */
+  fromOptions?(values: Record<string, string[]>): Input;
+  /** The flag values that pass this input again, for the rerun command in reports. */
+  toOptions?(input: Input): Record<string, string[]>;
+  /** Throws when the input can't be read. Doctor validates every input before it collects any. */
+  validate?(input: Input): void | Promise<void>;
+  collect(
+    input: Input,
+    context: EvidenceSourceContext,
+  ): Promise<EvidenceSourceResult> | EvidenceSourceResult;
+}
+
+export interface EvidenceSourceOption {
+  help: string;
+  /** Placeholder in `--help`, such as `url`. */
+  value?: string;
+  repeatable?: boolean;
+  /** Another option of the same source this one only applies with. */
+  requires?: string;
+  /**
+   * The value can carry credentials. Reports show `<redacted>` in its place, or what the function
+   * returns, such as a header name without its value.
+   */
+  secret?: boolean | ((value: string, redacted: string) => string);
+}
+
+export interface EvidenceSourceContext {
+  project: ProjectInfo;
+  /** The run's `fetch`, so tests and other runtimes can replace it. */
+  fetch: typeof globalThis.fetch;
+}
+
+export interface EvidenceSourceResult {
+  /** Stored as `project.runtimeEvidence[source.name]`. */
+  evidence: Record<string, unknown>;
+  /** What was read, as reports may show it: never a credential. */
+  targets?: string[];
+  /** Targets the source could not read. Each makes the report `incomplete`. */
+  gaps?: Array<{ message: string; instanceKey?: string }>;
+}
+
+/** An Evidence Source a Doctor Run read. */
+export interface EvidenceSourceRun {
+  name: string;
+  label: string;
+  targets: string[];
+  /** CLI arguments that read the source again, with secret values redacted. */
+  args: string[];
 }
 
 /** Loads a Doctor Extension only when a Doctor Run needs it. */

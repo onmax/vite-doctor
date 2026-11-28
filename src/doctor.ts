@@ -12,7 +12,11 @@ import {
   type DoctorRunResult,
   type NuxtDoctorManifest,
 } from "./core/index.js";
-import { collectRulePacks, resolveProjectDoctorConfig } from "./core/internal/scan-session.js";
+import {
+  collectRulePacks,
+  resolveDoctorExtensions,
+  resolveProjectDoctorConfig,
+} from "./core/internal/scan-session.js";
 import {
   detectWorkspacePackages,
   nuxtInventoryOwner,
@@ -47,6 +51,24 @@ export async function viteDoctorRulePacks(options: DoctorRunOptions = {}) {
     ...(await hostDoctorExtensions(options)),
   ]);
   return registry.packs;
+}
+
+export async function prepareViteDoctorEvidenceSources(options: DoctorRunOptions) {
+  const runOptions = await viteDoctorRunOptions(options);
+  const extensions = await resolveDoctorExtensions([
+    ...(runOptions.config?.extensions ?? []),
+    ...(runOptions.extensions ?? []),
+  ]);
+  return {
+    sources: extensions.flatMap((extension) => extension.sources ?? []),
+    runOptions: {
+      ...runOptions,
+      config: runOptions.config?.extensions
+        ? { ...runOptions.config, extensions: [] }
+        : runOptions.config,
+      extensions,
+    },
+  };
 }
 
 export async function viteDoctorExtensions(
@@ -96,8 +118,15 @@ export async function viteDoctorExtensions(
 }
 
 export async function runViteDoctor(options: DoctorRunOptions, fullRunForMcpEvidence = false) {
+  return runPreparedViteDoctor(await viteDoctorRunOptions(options), fullRunForMcpEvidence);
+}
+
+export async function runPreparedViteDoctor(
+  options: DoctorRunOptions,
+  fullRunForMcpEvidence = false,
+) {
   const result = await runDoctor(
-    await viteDoctorRunOptions(options),
+    options,
     fullRunForMcpEvidence
       ? (project) => readMcpServers(project.runtimeEvidence).length > 0
       : undefined,

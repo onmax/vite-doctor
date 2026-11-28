@@ -109,6 +109,7 @@ async function executeDoctorRun(
   result.extends = options.extends ?? session.config.extends;
   result.workspacePackages = session.workspaceActivations;
   result.rulePacks = session.rulePacks;
+  if (session.evidenceSources.length) result.evidenceSources = session.evidenceSources;
   const reported = new Set(result.diagnostics.map((diagnostic) => diagnostic.ruleId));
   result.ruleTitles = Object.fromEntries(
     session.registry.rules
