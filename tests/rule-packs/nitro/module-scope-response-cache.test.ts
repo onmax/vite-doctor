@@ -200,10 +200,13 @@ test.each([
   ]);
 });
 
-test("reports age-based reuse when the Map key is normalized before lookup", async () => {
-  const source = ageCache(`if (${fresh}) return hit.value\n${refresh}`).replace(
+test.each([
+  ["at function scope", "", ""],
+  ["inside a try block", "try {", "} catch (error) { throw error }"],
+])("reports a Map key normalized before lookup %s", async (_, open, close) => {
+  const source = ageCache(`if (${fresh}) return hit.value\n${refresh}\n${close}`).replace(
     "const hit = cache.get(key)",
-    "key = key.trim().toLowerCase()\n  const hit = cache.get(key)",
+    `${open}\n  key = key.trim().toLowerCase()\n  const hit = cache.get(key)`,
   );
   expect(await run({ "server/utils/cache.ts": source })).toMatchObject([{ code: "NITRO0023" }]);
 });
@@ -219,6 +222,7 @@ test("does not report age-based reuse when a closure can change the Map key", as
 test.each([
   ["a reassigned", `if (${fresh}) return hit.value\n${refresh}`, "key = 'internal:' + key"],
   ["a shadowed", `if (${fresh}) return hit.value; else { const key = 'internal'; ${refresh} }`, ""],
+  ["a reinitialized", `if (${fresh}) return hit.value\n${refresh}`, "var key = 'internal:' + key"],
 ])("does not report age-based reuse with %s Map key", async (_, body, keySetup) => {
   expect(await run({ "server/utils/cache.ts": ageCache(body, keySetup) })).toEqual([]);
 });

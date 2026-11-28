@@ -463,27 +463,51 @@ function sameKey(fn: AnyNode, read: AnyNode, write: AnyNode, scopeReferences: Sc
     const references = scopeReferences();
     const variable = references.get(first.start)?.resolved;
     if (!variable || variable !== references.get(second.start)?.resolved) return false;
+    if (variable.defs.some((definition) => definition.type === "ImportBinding")) return false;
+    const writes = variable.references.filter((reference) => reference.isWrite());
+    if (!writes.length) return true;
     const scope = variable.scope.variableScope;
-    const earlierAccess = Math.min(first.start, second.start);
-    const firstAccessStatement =
-      fn.body?.type === "BlockStatement" &&
-      fn.body.body.find(
-        (statement: AnyNode) => statement.start <= earlierAccess && earlierAccess < statement.end,
+    if (scope.block.range[0] !== fn.start) {
+      return (
+        variable.defs.length === 1 &&
+        variable.defs[0]?.type === "Variable" &&
+        variable.defs[0].parent.kind === "const" &&
+        writes.every((reference) => reference.init)
       );
-    return !variable.references.some(
-      (reference) =>
-        reference.isWrite() &&
-        !reference.init &&
-        !(
-          firstAccessStatement &&
-          scope.block.range[0] === fn.start &&
-          reference.from.variableScope === scope &&
-          reference.identifier.range[0] >= fn.body.start &&
-          reference.identifier.range[1] <= firstAccessStatement.start
-        ),
-    );
+    }
+    return writesBeforeLookup(fn, read, write, writes);
   }
   return first?.type === "Literal" && second?.type === "Literal" && first.value === second.value;
+}
+
+function writesBeforeLookup(fn: AnyNode, read: AnyNode, write: AnyNode, writes: ScopeReference[]) {
+  const declaration = read.__doctorParent?.__doctorParent?.__doctorParent;
+  const lookupBlock = declaration?.__doctorParent;
+  if (
+    declaration?.type !== "VariableDeclaration" ||
+    lookupBlock?.type !== "BlockStatement" ||
+    write.start < declaration.end ||
+    write.end > lookupBlock.end
+  )
+    return false;
+
+  const prefixes: [number, number][] = [];
+  for (
+    let statement = declaration;
+    statement && statement !== fn;
+    statement = statement.__doctorParent
+  ) {
+    const block = statement.__doctorParent;
+    if (block?.type === "BlockStatement") prefixes.push([block.start, statement.start]);
+  }
+  return writes.every(
+    (reference) =>
+      reference.from.variableScope.block.range[0] === fn.start &&
+      prefixes.some(
+        ([start, end]) =>
+          start <= reference.identifier.range[0] && reference.identifier.range[1] <= end,
+      ),
+  );
 }
 
 function walkFunctionBody(node: AnyNode, visit: (node: AnyNode) => void) {
