@@ -16,7 +16,14 @@ import type { RuleContext } from "../../../../core/index.js";
 const RULE_ID = "nuxt/shared/no-vue-or-nitro-context-in-shared";
 const RUNTIME_PACKAGES = new Set(["vue", "nuxt", "nuxt/app", "h3", "nitropack"]);
 const RUNTIME_ALIASES = /^(?:#app|#imports|#ui|nitropack\/runtime|nitro)(?:\/|$)/;
-const NODE_BUILTINS = new Set(builtinModules);
+// Bare names that browser polyfill packages also publish, such as `events` or `buffer`; only
+// their `node:` form is unambiguous.
+const POLYFILLED = new Set(
+  "assert buffer console constants crypto domain events http https os path punycode process querystring stream string_decoder sys timers tty url util vm zlib".split(
+    " ",
+  ),
+);
+const NODE_BUILTINS = new Set(builtinModules.filter((name) => !POLYFILLED.has(name)));
 
 export const noVueOrNitroContextInShared = createRule({
   meta: {
