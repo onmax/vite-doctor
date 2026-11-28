@@ -264,11 +264,19 @@ function clockComparisons(fn: AnyNode): AnyNode[] {
   const clocks = clockLocals(fn);
   walkFunctionBody(fn.body, (node) => {
     if (node.type !== "BinaryExpression" || !RELATIONAL.has(node.operator)) return;
-    if (readsClock(node.left, clocks)) found.push(node.right);
-    else if (readsClock(node.right, clocks)) found.push(node.left);
+    if (readsClock(node.left, clocks)) found.push(node.right, ...ageOrigin(node.left, clocks));
+    else if (readsClock(node.right, clocks))
+      found.push(node.left, ...ageOrigin(node.right, clocks));
   });
   comparisonsByFunction.set(fn, found);
   return found;
+}
+
+// In `Date.now() - hit.at < TTL` the entry sits beside the clock, so the age's origin is compared too.
+function ageOrigin(side: AnyNode, clocks: Set<string>): AnyNode[] {
+  const age = unwrap(side);
+  if (age?.type !== "BinaryExpression" || age.operator !== "-") return [];
+  return readsClock(age.left, clocks) && !readsClock(age.right, clocks) ? [age.right] : [];
 }
 
 function walkFunctionBody(node: AnyNode, visit: (node: AnyNode) => void) {
