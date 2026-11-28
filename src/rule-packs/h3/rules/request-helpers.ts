@@ -266,6 +266,45 @@ function hasValidationOfVariable(
   return found;
 }
 
+const parseMethod = /^(?:safe)?parse(?:Async)?$/i;
+const zodSource = /^zod(?:\/(?:mini|v3|v4(?:\/mini)?))?$/;
+const zodFactory =
+  /^(?:any|array|bigint|boolean|coerce|custom|date|discriminatedUnion|enum|instanceof|intersection|lazy|literal|looseObject|map|nativeEnum|never|null|nullable|nullish|number|object|optional|promise|record|set|strictObject|string|templateLiteral|tuple|undefined|union|unknown|void)$/;
+const zodSchemaMethod =
+  /^(?:and|array|brand|catch|default|describe|extend|max|min|nonempty|nullable|nullish|omit|optional|or|partial|passthrough|pick|pipe|readonly|refine|required|strict|strip|superRefine|transform)$/;
+
+function importBinding(ctx: RuleContext, identifier: AnyNode) {
+  if (identifier?.type !== "Identifier") return;
+  return resolveVariable(ctx, identifier)?.defs.find(
+    (definition) => definition.type === "ImportBinding",
+  );
+}
+
+function importedName(node: NonNullable<ReturnType<typeof importBinding>>["node"]) {
+  if (node.type !== "ImportSpecifier") return null;
+  return node.imported.type === "Identifier" ? node.imported.name : node.imported.value;
+}
+
+function isZodSchema(ctx: RuleContext, receiver: AnyNode) {
+  let value = constantValue(ctx, receiver);
+  while (value?.type === "CallExpression") {
+    const callee = unwrap(value.callee);
+    const object = callee?.type === "MemberExpression" ? unwrap(callee.object) : null;
+    const definition = importBinding(ctx, object ?? callee);
+    const source =
+      definition?.parent.type === "ImportDeclaration" ? definition.parent.source.value : null;
+    if (definition && typeof source === "string" && zodSource.test(source)) {
+      const name = importedName(definition.node);
+      const factory = object ? memberName(callee) : name;
+      return Boolean(factory && (!object || !name || name === "z") && zodFactory.test(factory));
+    }
+    const method = memberName(callee);
+    if (!method || !zodSchemaMethod.test(method)) return false;
+    value = object;
+  }
+  return false;
+}
+
 function isValidatedInput(ctx: RuleContext, node: AnyNode, isInput: (arg: AnyNode) => boolean) {
   const first = node.arguments?.[0];
   const second = node.arguments?.[1];
@@ -284,17 +323,21 @@ function isValidatedInput(ctx: RuleContext, node: AnyNode, isInput: (arg: AnyNod
     definition?.parent.type === "ImportDeclaration" ? definition.parent.source.value : null;
   if (typeof source === "string" && isBuiltin(source)) return false;
 
-  const parseMethod = /^(?:safe)?parse(?:Async)?$/i;
-  const libParse =
-    typeof source === "string" && /^(?:valibot|zod(?:\/v4(?:\/mini)?)?)$/.test(source);
-  if (libParse && !receiver && definition?.node.type === "ImportSpecifier") {
-    const imported = definition.node.imported;
-    return (
+  if (
+    definition &&
+    typeof source === "string" &&
+    (source === "valibot" || zodSource.test(source))
+  ) {
+    const imported = importedName(definition.node);
+    if (receiver && imported && !(zodSource.test(source) && imported === "z")) return false;
+    const validator = receiver ? name : imported;
+    return Boolean(
       inputSecond &&
-      parseMethod.test(imported.type === "Identifier" ? imported.name : imported.value)
+      validator &&
+      (parseMethod.test(validator) || (source === "valibot" && validator === "assert")),
     );
   }
-  if (receiver && (libParse || (!binding && /^(?:v|valibot|zod)$/.test(receiver.name ?? "")))) {
+  if (receiver && !binding && /^(?:v|valibot|zod)$/.test(receiver.name ?? "")) {
     return inputSecond && parseMethod.test(name);
   }
   if (!inputFirst) return false;
@@ -302,11 +345,12 @@ function isValidatedInput(ctx: RuleContext, node: AnyNode, isInput: (arg: AnyNod
   if (receiver) {
     const receiverName = receiver.type === "Identifier" ? receiver.name : memberName(receiver);
     return Boolean(
-      receiverName &&
-      /^(?:(?:schema|validator|body|query|params|input|payload)\w*|v|s|\w+(?:Schema|Validator))$/.test(
-        receiverName,
-      ) &&
-      parseMethod.test(name),
+      parseMethod.test(name) &&
+      ((receiverName &&
+        /^(?:(?:schema|validator|body|query|params|input|payload)\w*|v|s|\w+(?:Schema|Validator))$/.test(
+          receiverName,
+        )) ||
+        isZodSchema(ctx, receiver)),
     );
   }
   // `parseLimit(query)` is as often a coercer that never rejects as a validator, so only a local

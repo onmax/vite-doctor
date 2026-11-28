@@ -156,3 +156,59 @@ test.each([
     reports ? [preferValidatedBody.meta.id] : [],
   );
 });
+
+test.each([
+  ["import { z } from 'zod'", "", "z.object({ page: z.string() }).parse(INPUT)", true],
+  [
+    "import * as z from 'zod'",
+    "const filter = z.object({ page: z.string() }).strict()",
+    "filter.safeParse(INPUT)",
+    true,
+  ],
+  ["import { object, string } from 'zod'", "", "object({ page: string() }).parse(INPUT)", true],
+  ["import * as v from 'valibot'", "const filter = v.object({})", "v.assert(filter, INPUT)", true],
+  [
+    "import { assert as verify, object } from 'valibot'",
+    "const filter = object({})",
+    "verify(filter, INPUT)",
+    true,
+  ],
+  [
+    "import * as zm from 'zod/mini'",
+    "const filter = zm.object({})",
+    "zm.parse(filter, INPUT)",
+    true,
+  ],
+  [
+    "import { parse as decode, object } from 'zod/mini'",
+    "const filter = object({})",
+    "decode(filter, INPUT)",
+    true,
+  ],
+  ["import * as z from 'zod'", "", "z.object({}).parse({}, INPUT)", false],
+  ["import * as v from 'valibot'", "", "v.assert(INPUT, {})", false],
+  ["import { check } from 'valibot'", "", "check(INPUT)", false],
+  ["import * as zm from 'zod/mini'", "", "zm.parse(INPUT, {})", false],
+  ["import { object } from './other'", "", "object({}).parse(INPUT)", false],
+  ["import { z } from 'zod'", "const z = other", "z.object({}).parse(INPUT)", false],
+])(
+  "H30008 recognizes validator signatures: %s / %s / %s",
+  async (imports, setup, call, reports) => {
+    for (const inline of [true, false]) {
+      const read = "getQuery(event)";
+      const result = await runRuleFixture({
+        rule: preferValidatedQuery,
+        framework: "nuxt",
+        files: {
+          "server/api/input.ts": `${imports}; export default defineEventHandler(event => {
+          ${setup}; ${inline ? "" : `const input = ${read};`}
+          return ${call.replace("INPUT", inline ? read : "input")}
+        })`,
+        },
+      });
+      expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual(
+        reports ? [preferValidatedQuery.meta.id] : [],
+      );
+    }
+  },
+);
