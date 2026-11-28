@@ -339,6 +339,8 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "NUXT0105", ruleId: "nuxt/ssr/no-request-data-in-module-state" },
   { code: "NUXT0106", ruleId: "nuxt/ssr/no-request-state-in-cached-page" },
   { code: "NUXT0107", ruleId: "nuxt/routing/no-global-middleware-redirect-loop" },
+  { code: "NUXT0108", ruleId: "nuxt/structure/no-app-code-in-server" },
+  { code: "NUXT0109", ruleId: "nuxt/structure/no-app-types-in-server" },
 ]);
 
 export const allDiagnosticCodesByRuleId = allDoctorDiagnosticRegistry.codesByRuleId;
