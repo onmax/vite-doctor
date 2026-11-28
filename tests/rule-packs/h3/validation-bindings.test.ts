@@ -66,6 +66,7 @@ for (const { rule, read } of cases) {
     `return v.parse(Schema, ${read})`,
     `return validateInput(${read})`,
     `return schema.parse((${read}) as unknown)`,
+    `return schema.parse(<unknown>(${read}))`,
   ])(`${rule.meta.id} reports validation of the read itself: %s`, async (body) => {
     const result = await runRuleFixture({
       rule,
@@ -79,6 +80,9 @@ for (const { rule, read } of cases) {
 
   test.each([
     `return JSON.parse(${read})`,
+    `return globalThis.JSON.parse(${read})`,
+    `return UserSchema.parse({}, ${read})`,
+    `return v.parse(${read}, {})`,
     `return normalize(${read})`,
     `return UserSchema.parse({ ...${read}, id: 1 })`,
     `const input = ${read}; return JSON.parse(input)`,
@@ -93,3 +97,62 @@ for (const { rule, read } of cases) {
     expect(result.diagnostics).toEqual([]);
   });
 }
+
+test.each([
+  ["import { parse } from 'node:path'", "parse(await readBody<string>(event))"],
+  ["import * as schema from 'path'", "schema.parse(await readBody<string>(event))"],
+  [
+    "import assert from 'node:assert/strict'",
+    "assert(event.context.ready, await readBody<string>(event))",
+  ],
+])("H30007 ignores non-validation calls: %s", async (imports, expression) => {
+  const result = await runRuleFixture({
+    rule: preferValidatedBody,
+    framework: "nuxt",
+    files: {
+      "server/api/input.ts": `${imports}; export default defineEventHandler(async event => ${expression})`,
+    },
+  });
+  expect(result.diagnostics).toEqual([]);
+});
+
+test.each([
+  ["import * as validation from 'valibot'", "validation.parse(Schema, getQuery(event))"],
+  ["import { parse as decode } from 'valibot'", "decode(Schema, getQuery(event))"],
+  [
+    "import * as schema from 'node:path'",
+    "{ const schema = makeSchema(); return schema.parse(getQuery(event)) }",
+  ],
+])("H30008 recognizes validation at the resolved call site: %s", async (imports, body) => {
+  const result = await runRuleFixture({
+    rule: preferValidatedQuery,
+    framework: "nuxt",
+    files: {
+      "server/api/input.ts": `${imports}; export default defineEventHandler(event => ${body})`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual([
+    preferValidatedQuery.meta.id,
+  ]);
+});
+
+test.each([
+  ["return StringSchema.parse(await readBody(event, { strict: false }))", false],
+  [
+    "const input = await readBody(event, { strict: false }); return StringSchema.parse(input)",
+    false,
+  ],
+  ["return StringSchema.parse(await readBody(event, options))", false],
+  ["return StringSchema.parse(await readBody(event, { strict: true }))", true],
+])("H30007 checks explicit body parsing options: %s", async (body, reports) => {
+  const result = await runRuleFixture({
+    rule: preferValidatedBody,
+    framework: "nuxt",
+    files: {
+      "server/api/input.ts": `export default defineEventHandler(async event => { ${body} })`,
+    },
+  });
+  expect(result.diagnostics.map((diagnostic) => diagnostic.ruleId)).toEqual(
+    reports ? [preferValidatedBody.meta.id] : [],
+  );
+});

@@ -1,5 +1,6 @@
+import { isBuiltin } from "node:module";
 import { fileTextScope } from "../../../core/internal/script-scope.js";
-import { constantValue } from "./_migration-helpers.js";
+import { constantValue, memberName, propertyKey, unwrap } from "./_migration-helpers.js";
 import {
   type AnyNode,
   createRule,
@@ -8,6 +9,7 @@ import {
   isH3HandlerFile,
   nearestFunctionOrProgram,
   report,
+  resolveVariable,
   sourceForNode,
   walkScriptLocal,
 } from "./shared.js";
@@ -58,7 +60,8 @@ export function createValidatedInputRule(opts: ValidatedInputRuleOptions) {
       let bindings: Map<number, Set<number>> | undefined;
       return {
         CallExpression(node: AnyNode) {
-          if (!isH3Call(ctx, node, opts.rawUtilities) || !validatedInline(ctx, node)) return;
+          if (!isReplaceableRawRead(ctx, node, opts.rawUtilities) || !validatedInline(ctx, node))
+            return;
           report(ctx, node, opts.id, "warn", "request", opts.message, opts.suggestion);
         },
         VariableDeclarator(node: AnyNode) {
@@ -179,7 +182,26 @@ export function methodCheckMethods(node: AnyNode, source: string, anchor: AnyNod
 
 function rawInputVariable(ctx: RuleContext, node: AnyNode, rawUtilities: string[]) {
   if (node.type !== "VariableDeclarator" || node.id?.type !== "Identifier") return null;
-  return isH3Call(ctx, unwrapAwait(node.init), rawUtilities) ? node.id.name : null;
+  return isReplaceableRawRead(ctx, unwrapAwait(node.init), rawUtilities) ? node.id.name : null;
+}
+
+function isReplaceableRawRead(ctx: RuleContext, node: AnyNode, rawUtilities: string[]) {
+  if (!isH3Call(ctx, node, rawUtilities)) return false;
+  if (!rawUtilities.includes("readBody")) return true;
+  if (node.arguments?.[0]?.type === "SpreadElement") return false;
+  const options = node.arguments?.[1];
+  if (!options) return true;
+  const value = unwrap(options);
+  const strict =
+    value?.type === "ObjectExpression" && value.properties.length === 1
+      ? value.properties[0]
+      : null;
+  return (
+    propertyKey(strict) === "strict" &&
+    strict.kind === "init" &&
+    strict.value?.type === "Literal" &&
+    strict.value.value === true
+  );
 }
 
 function variableReferences(ctx: RuleContext): Map<number, Set<number>> {
@@ -214,6 +236,7 @@ const INLINE_WRAPPERS = new Set([
   "AwaitExpression",
   "ParenthesizedExpression",
   "TSAsExpression",
+  "TSTypeAssertion",
   "TSSatisfiesExpression",
   "TSNonNullExpression",
 ]);
@@ -224,12 +247,7 @@ function validatedInline(ctx: RuleContext, read: AnyNode) {
   while (input.__doctorParent && INLINE_WRAPPERS.has(input.__doctorParent.type))
     input = input.__doctorParent;
   const call = input.__doctorParent;
-  if (call?.type !== "CallExpression" || !call.arguments?.includes(input)) return false;
-  const isInput = (arg: AnyNode) => arg === input;
-  return (
-    isDirectValidatorCall(ctx, call, isInput) ||
-    isSchemaMethodValidatorCall(call, isInput, ctx.file.text)
-  );
+  return call?.type === "CallExpression" && isValidatedInput(ctx, call, (arg) => arg === input);
 }
 
 function hasValidationOfVariable(
@@ -243,28 +261,57 @@ function hasValidationOfVariable(
   walkScriptLocal(scope.body ?? scope, (node) => {
     if (found || node.type !== "CallExpression") return;
     if (typeof node.start === "number" && node.start <= after) return;
-    if (
-      isDirectValidatorCall(ctx, node, isInput) ||
-      isSchemaMethodValidatorCall(node, isInput, ctx.file.text)
-    )
-      found = true;
+    if (isValidatedInput(ctx, node, isInput)) found = true;
   });
   return found;
 }
 
-function isDirectValidatorCall(
-  ctx: RuleContext,
-  node: AnyNode,
-  isInput: (arg: AnyNode) => boolean,
-) {
-  const name = calleeName(node);
-  if (!name || !node.arguments?.some(isInput)) return false;
-  if (node.callee?.type === "MemberExpression" && node.callee.object?.name === "JSON") return false;
+function isValidatedInput(ctx: RuleContext, node: AnyNode, isInput: (arg: AnyNode) => boolean) {
+  const first = node.arguments?.[0];
+  const second = node.arguments?.[1];
+  const callee = unwrap(node.callee);
+  const receiver = callee?.type === "MemberExpression" ? unwrap(callee.object) : null;
+  const identifier = receiver ?? callee;
+  const name = receiver ? memberName(callee) : callee?.type === "Identifier" ? callee.name : null;
+  if (!name || !first || first.type === "SpreadElement") return false;
+  const inputFirst = isInput(first);
+  const inputSecond = second && isInput(second);
+  if (!inputFirst && !inputSecond) return false;
+
+  const binding = identifier?.type === "Identifier" ? resolveVariable(ctx, identifier) : null;
+  const definition = binding?.defs.find((definition) => definition.type === "ImportBinding");
+  const source =
+    definition?.parent.type === "ImportDeclaration" ? definition.parent.source.value : null;
+  if (typeof source === "string" && isBuiltin(source)) return false;
+
+  const parseMethod = /^(?:safe)?parse(?:Async)?$/i;
+  const libParse =
+    typeof source === "string" && /^(?:valibot|zod(?:\/v4(?:\/mini)?)?)$/.test(source);
+  if (libParse && !receiver && definition?.node.type === "ImportSpecifier") {
+    const imported = definition.node.imported;
+    return (
+      inputSecond &&
+      parseMethod.test(imported.type === "Identifier" ? imported.name : imported.value)
+    );
+  }
+  if (receiver && (libParse || (!binding && /^(?:v|valibot|zod)$/.test(receiver.name ?? "")))) {
+    return inputSecond && parseMethod.test(name);
+  }
+  if (!inputFirst) return false;
   if (/^(?:validate|validator|assert|check)\w*$/i.test(name)) return true;
-  if (/^(?:safe)?parse(?:Async)?$/i.test(name)) return true;
+  if (receiver) {
+    const receiverName = receiver.type === "Identifier" ? receiver.name : memberName(receiver);
+    return Boolean(
+      receiverName &&
+      /^(?:(?:schema|validator|body|query|params|input|payload)\w*|v|s|\w+(?:Schema|Validator))$/.test(
+        receiverName,
+      ) &&
+      parseMethod.test(name),
+    );
+  }
   // `parseLimit(query)` is as often a coercer that never rejects as a validator, so only a local
   // helper that can throw or return false counts as validation.
-  return /^parse\w+$/i.test(name) && localHelperCanReject(ctx, node.callee);
+  return /^(?:safe)?parse\w*$/i.test(name) && localHelperCanReject(ctx, callee);
 }
 
 function localHelperCanReject(ctx: RuleContext, callee: AnyNode) {
@@ -287,20 +334,6 @@ function localHelperCanReject(ctx: RuleContext, callee: AnyNode) {
       rejects = true;
   });
   return rejects;
-}
-
-function isSchemaMethodValidatorCall(
-  node: AnyNode,
-  isInput: (arg: AnyNode) => boolean,
-  source: string,
-) {
-  const name = calleeName(node);
-  if (name !== "parse" && name !== "safeParse" && name !== "validate") return false;
-  if (!node.arguments?.some(isInput)) return false;
-  const callee = sourceForNode(node.callee, source);
-  return /\b(?:(?:schema|validator|body|query|params|input|payload|zod|valibot|v|s)\w*|\w+(?:Schema|Validator))\.(?:parse|safeParse|validate)$/.test(
-    callee,
-  );
 }
 
 function methodExpressionName(
