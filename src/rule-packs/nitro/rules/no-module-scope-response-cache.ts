@@ -423,7 +423,7 @@ function refreshesPayload(
     const entry =
       binding.kind === "map"
         ? mapMethod(target) === "set" &&
-          sameKey(key, write.arguments[0], scopeReferences) &&
+          sameKey(fn, key, write.arguments[0], scopeReferences) &&
           unwrap(write.arguments[1])
         : write.type === "AssignmentExpression" && write.operator === "=" && unwrap(write.right);
     if (entry?.type !== "ObjectExpression") return false;
@@ -456,16 +456,31 @@ function refreshesPayload(
   return false;
 }
 
-function sameKey(read: AnyNode, write: AnyNode, scopeReferences: ScopeReferences) {
+function sameKey(fn: AnyNode, read: AnyNode, write: AnyNode, scopeReferences: ScopeReferences) {
   const first = unwrap(read);
   const second = unwrap(write);
   if (first?.type === "Identifier" && second?.type === "Identifier" && first.name === second.name) {
     const references = scopeReferences();
     const variable = references.get(first.start)?.resolved;
-    return (
-      !!variable &&
-      variable === references.get(second.start)?.resolved &&
-      !variable.references.some((reference) => reference.isWrite() && !reference.init)
+    if (!variable || variable !== references.get(second.start)?.resolved) return false;
+    const scope = variable.scope.variableScope;
+    const earlierAccess = Math.min(first.start, second.start);
+    const firstAccessStatement =
+      fn.body?.type === "BlockStatement" &&
+      fn.body.body.find(
+        (statement: AnyNode) => statement.start <= earlierAccess && earlierAccess < statement.end,
+      );
+    return !variable.references.some(
+      (reference) =>
+        reference.isWrite() &&
+        !reference.init &&
+        !(
+          firstAccessStatement &&
+          scope.block.range[0] === fn.start &&
+          reference.from.variableScope === scope &&
+          reference.identifier.range[0] >= fn.body.start &&
+          reference.identifier.range[1] <= firstAccessStatement.start
+        ),
     );
   }
   return first?.type === "Literal" && second?.type === "Literal" && first.value === second.value;
