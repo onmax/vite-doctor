@@ -17,6 +17,7 @@ import { patternNames } from "./script-index.js";
 import { analyzeScriptProgram } from "./script-scope.js";
 import {
   findTemplateDirective,
+  parseTemplateExpression,
   TemplateNodeType,
   templateDirectiveBindings,
   templateRoots,
@@ -68,6 +69,9 @@ export function createComponentFactsCollector(
   rangeOf: RangeOf,
 ): ComponentFactsCollector {
   const facts: ComponentFacts = {
+    inlineRouteRulesMayDisableSsr: false,
+    dynamicRenders: [],
+    localComponentLookupKnown: false,
     models: [],
     imports: [],
     setupBindings: [],
@@ -90,6 +94,12 @@ export function createComponentFactsCollector(
   readScriptDeclarations(facts, descriptor, scriptAst, rangeOf);
   return {
     visitScript(node) {
+      if (
+        node.type === "CallExpression" &&
+        node.callee?.name === "defineRouteRules" &&
+        inlineRouteRulesMayDisableSsr(node.arguments?.[0])
+      )
+        facts.inlineRouteRulesMayDisableSsr = true;
       if (node.type === "ImportDeclaration") {
         importEnd = node.end;
         return;
@@ -112,7 +122,7 @@ export function createComponentFactsCollector(
     },
     finish(template, visitAttribute) {
       if (template) walkComponentTemplate(facts, template, references, rangeOf, visitAttribute);
-      facts.readsAttrs = references.has("$attrs");
+      facts.readsAttrs ||= references.has("$attrs");
       if (!facts.readsAttrs)
         readAttrsReferences(facts, scriptAst, references, namespaceAttrsReaders);
       const imported = new Set(facts.imports.map((item) => item.local));
@@ -120,6 +130,21 @@ export function createComponentFactsCollector(
       return facts;
     },
   };
+}
+
+function inlineRouteRulesMayDisableSsr(argument: AnyNode): boolean {
+  while (
+    ["TSAsExpression", "TSSatisfiesExpression", "ParenthesizedExpression"].includes(argument?.type)
+  )
+    argument = argument.expression;
+  if (argument?.type !== "ObjectExpression") return true;
+  for (let index = argument.properties.length - 1; index >= 0; index--) {
+    const property = argument.properties[index];
+    const key = property.key;
+    if (!key || (property.computed && key.type !== "Literal")) return true;
+    if ((key.name ?? key.value) === "ssr") return property.value?.value !== true;
+  }
+  return false;
 }
 
 function readAttrsReferences(
@@ -240,6 +265,31 @@ function readScriptDeclarations(
       : fromSetup;
   };
   const inherit = option("inheritAttrs");
+  const components = option("components");
+  const registry =
+    components === "absent" || components === "unknown"
+      ? undefined
+      : localComponentRegistry(program, components.value);
+  const name = option("name");
+  if (
+    name !== "absent" &&
+    name !== "unknown" &&
+    name.value?.type === "Literal" &&
+    typeof name.value.value === "string"
+  )
+    facts.runtimeComponentName = name.value.value;
+  const delegated = option("mixins") !== "absent" || option("extends") !== "absent";
+  facts.localComponentLookupKnown =
+    !delegated &&
+    (name === "absent" || facts.runtimeComponentName !== undefined) &&
+    (components === "absent" ||
+      registry?.properties.every((property: AnyNode) => propertyKey(property) !== undefined) ===
+        true);
+  if (registry) {
+    facts.localComponents = registry.properties
+      .map(propertyKey)
+      .filter((name: unknown): name is string => typeof name === "string");
+  }
   facts.inheritAttrs =
     inherit === "absent"
       ? true
@@ -271,7 +321,6 @@ function readScriptDeclarations(
         if (key !== undefined) facts.registeredComponentNames.push(key);
       }
   }
-  const delegated = option("mixins") !== "absent" || option("extends") !== "absent";
   if (delegated) {
     facts.props = undefined;
     facts.emits = undefined;
@@ -279,6 +328,28 @@ function readScriptDeclarations(
     if (!declaresProps && !plainScriptCode && option("props") === "absent") facts.props = [];
     if (!declaresEmits && !plainScriptCode && option("emits") === "absent") facts.emits = [];
   }
+}
+
+function localComponentRegistry(program: AnyNode, value: AnyNode): AnyNode {
+  if (value?.type === "ObjectExpression") return value;
+  if (value?.type !== "Identifier") return undefined;
+  const { scopes } = analyzeScriptProgram(program, "module");
+  for (const scope of scopes) {
+    const variable = scope.references.find((reference) => reference.identifier === value)?.resolved;
+    if (!variable || variable.defs.length !== 1) continue;
+    const definition = variable.defs[0];
+    if (
+      definition?.type === "Variable" &&
+      definition.parent.kind === "const" &&
+      definition.node.id.type === "Identifier" &&
+      definition.node.init?.type === "ObjectExpression" &&
+      variable.references.every(
+        (reference) => reference.init === true || reference.identifier === value,
+      )
+    )
+      return definition.node.init;
+  }
+  return undefined;
 }
 
 function readDoctorOption(node: AnyNode, rangeOf: RangeOf): DoctorComponentOption {
@@ -787,6 +858,7 @@ function walkComponentTemplate(
       conditional: false,
       parent: undefined,
       builtInHosts: [],
+      wrappers: [],
     });
 }
 
@@ -810,6 +882,7 @@ interface WalkPlace {
   parent: ComponentUsageFact["parent"];
   host?: ComponentSlotHost;
   builtInHosts: string[];
+  wrappers: ComponentUsageFact["wrappers"];
 }
 
 function walkChild(walk: TemplateWalk, node: TemplateChildNode, place: WalkPlace): void {
@@ -831,6 +904,7 @@ function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: Wa
   let childScope = place.scope;
   let elementInFor = place.inFor;
   let conditional = place.conditional;
+  const { parent, wrappers } = place;
   for (const prop of element.props) {
     if (prop.type !== TemplateNodeType.DIRECTIVE) continue;
     if (prop.name === "for" && prop.forParseResult) {
@@ -849,6 +923,33 @@ function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: Wa
   }
   const kind = elementKind(element);
   if (kind === "markup") walk.facts.ownMarkup = true;
+  const isComponent = element.tagType === 1;
+  const explicitDynamic =
+    isComponent && (element.tag === "component" || element.tag === "Component");
+  const isProp = isComponent
+    ? element.props.find((prop) =>
+        prop.type === TemplateNodeType.ATTRIBUTE
+          ? prop.name === "is"
+          : prop.name === "bind" && prop.arg?.isStatic && prop.arg.content === "is",
+      )
+    : undefined;
+  const dynamicIs = explicitDynamic ? isProp : undefined;
+  let dynamicLiteral = false;
+  let dynamicImport: string | undefined;
+  if (dynamicIs?.type === TemplateNodeType.ATTRIBUTE) {
+    if (dynamicIs.value)
+      walk.facts.dynamicRenders.push({ wrappers, name: dynamicIs.value.content });
+  } else if (dynamicIs) {
+    const target = dynamicIs.exp && parseTemplateExpression(dynamicIs.exp);
+    const identifier =
+      target?.type === "Identifier" ? target.name : !dynamicIs.exp ? "is" : undefined;
+    const binding = identifier && !elementScope.includes(identifier) ? identifier : undefined;
+    const name =
+      target?.type === "Literal" && typeof target.value === "string" ? target.value : undefined;
+    dynamicLiteral = name !== undefined;
+    if (walk.facts.imports.some((item) => item.local === binding)) dynamicImport = binding;
+    walk.facts.dynamicRenders.push({ wrappers, binding, name });
+  }
   const here = {
     inFor: elementInFor,
     conditional,
@@ -856,7 +957,9 @@ function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: Wa
     builtInHosts: place.builtInHosts,
   };
   const usage =
-    kind === "component" ? createUsage(walk, element, elementScope, here, place.parent) : undefined;
+    kind === "component"
+      ? createUsage(walk, element, elementScope, here, parent, wrappers)
+      : undefined;
   if (kind === "slot")
     walk.facts.slotOutlets.push({
       name: slotOutletName(element),
@@ -878,8 +981,13 @@ function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: Wa
       });
       continue;
     }
-    if (prop.exp && prop.name !== "for" && prop.name !== "slot")
-      readExpression(walk, prop.exp.content);
+    if (
+      prop.exp &&
+      prop.name !== "for" &&
+      prop.name !== "slot" &&
+      (prop !== dynamicIs || !dynamicLiteral)
+    )
+      readExpression(walk, prop.exp.content, prop === dynamicIs ? dynamicImport : undefined);
     if (prop.name === "for" && prop.forParseResult)
       readExpression(walk, prop.forParseResult.source.content);
     if (prop.arg && !prop.arg.isStatic) readExpression(walk, prop.arg.content);
@@ -893,7 +1001,41 @@ function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: Wa
   const usageIndex = walk.facts.usages.length;
   if (usage) walk.facts.usages.push(usage);
   const childParent =
-    element.tagType === 3 ? place.parent : { tag: element.tag, element: element.tagType === 0 };
+    element.tagType === 3
+      ? parent
+      : {
+          tag: element.tag,
+          element: element.tagType === 0,
+          ...(element.ns !== 0 && { foreign: true as const }),
+        };
+  const slot = findTemplateDirective(element, "slot");
+  const defaultSlot = !slot?.arg || (slot.arg.isStatic && slot.arg.content === "default");
+  let childWrappers = wrappers;
+  if (isComponent || element.tagType === 2) {
+    const staticOverride =
+      !explicitDynamic && isProp?.type === TemplateNodeType.ATTRIBUTE
+        ? isProp.value?.content
+        : undefined;
+    const renderTag = staticOverride?.startsWith("vue:") ? staticOverride.slice(4) : element.tag;
+    childWrappers = [
+      ...wrappers,
+      {
+        tag: element.tag,
+        renderTag,
+        offset: element.loc.start.offset,
+        defaultSlot,
+        shadowed:
+          tagCandidates(renderTag).some((tag) => elementScope.includes(tag)) ||
+          element.props.some(
+            (prop) => prop.type !== TemplateNodeType.ATTRIBUTE && prop.name === "is",
+          ),
+      },
+    ];
+  } else if (element.tagType === 3 && slot && !defaultSlot && !parent?.element) {
+    const wrapper = wrappers.at(-1);
+    if (wrapper && wrapper.tag === parent?.tag)
+      childWrappers = [...wrappers.slice(0, -1), { ...wrapper, defaultSlot: false }];
+  }
   const builtIn = element.tagType === 1 && kind === "markup";
   const childPlace: WalkPlace = {
     scope: childScope,
@@ -901,6 +1043,7 @@ function walkElement(walk: TemplateWalk, element: TemplateElementNode, place: Wa
     // Fallback content of a <slot> renders only when the caller passes nothing.
     conditional: conditional || kind === "slot",
     parent: childParent,
+    wrappers: childWrappers,
     ...(place.host && { host: place.host }),
     builtInHosts: builtIn ? [...place.builtInHosts, element.tag] : place.builtInHosts,
   };
@@ -1050,6 +1193,7 @@ function createUsage(
   scope: string[],
   place: Pick<ComponentUsageFact, "inFor" | "conditional" | "host" | "builtInHosts">,
   parent: ComponentUsageFact["parent"],
+  wrappers: ComponentUsageFact["wrappers"],
 ): ComponentUsageFact {
   const start = element.loc.start.offset + 1;
   return {
@@ -1061,6 +1205,7 @@ function createUsage(
     spreads: [],
     listeners: [],
     directives: [],
+    wrappers,
     hasSlotContent: element.children.some(
       (child) =>
         child.type !== TemplateNodeType.COMMENT &&
@@ -1148,9 +1293,16 @@ function capitalize(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-function readExpression(walk: TemplateWalk, content: string | undefined): void {
+function readExpression(
+  walk: TemplateWalk,
+  content: string | undefined,
+  trackedImport?: string,
+): void {
   if (!content) return;
-  for (const name of content.match(IDENTIFIER) ?? []) walk.references.add(name);
+  for (const name of content.match(IDENTIFIER) ?? []) {
+    if (name === "$attrs") walk.facts.readsAttrs = true;
+    if (name !== trackedImport) walk.references.add(name);
+  }
   if (!content.includes("==") && !content.includes("!=")) return;
   for (const match of content.matchAll(COMPARISON))
     walk.facts.comparisons.push({
@@ -1168,4 +1320,14 @@ function identifiers(content: string | undefined): string[] {
 /** Vue's prop name normalization: `active-id` and `activeId` name the same prop. */
 export function camelize(name: string): string {
   return name.replace(/-(\w)/g, (_, char: string) => char.toUpperCase());
+}
+
+export function pascalCase(tag: string): string {
+  const camel = camelize(tag);
+  return camel.charAt(0).toUpperCase() + camel.slice(1);
+}
+
+/** Names a `<script setup>` binding can have to render as `tag`. */
+export function tagCandidates(tag: string): string[] {
+  return [tag, camelize(tag), pascalCase(tag)];
 }

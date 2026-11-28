@@ -307,8 +307,16 @@ export interface NuxtProjectInfo {
   };
   components: Map<
     string,
-    { name: string; file: string; mode?: "client" | "server" | "all"; sourceLayer?: string }
+    {
+      name: string;
+      file: string;
+      mode?: "client" | "server" | "all";
+      global?: true;
+      sourceLayer?: string;
+    }
   >;
+  /** Resolved Nuxt component loader exclusions from a current manifest. */
+  componentTransformExclude?: RegExp[];
   layers: Array<{
     name?: string;
     root: string;
@@ -332,6 +340,8 @@ export interface NuxtProjectInfo {
   routeRules?: Record<string, unknown>;
   /** `false` when the Nuxt app disables server-side rendering. */
   ssr?: boolean;
+  /** Whether the resolved config or statically known defaults enable SSR for hydration rules. */
+  hydrationSsr?: boolean;
   runtimeConfig?: unknown;
   serverDirs: {
     api: string[];
@@ -366,6 +376,7 @@ export interface NuxtProjectInfo {
     serverHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedServerHandlers?: NuxtDoctorManifest["serverHandlers"];
     resolvedRouteRules?: Record<string, unknown>;
+    inlineRouteRules?: boolean;
     routeRulePagesCurrent?: boolean;
     nitroPreset?: string;
     resolvedApp?: NuxtDoctorManifest["resolvedApp"];
@@ -515,7 +526,12 @@ export interface NuxtDoctorManifest {
     commentsDisable: string[];
   };
   components: unknown[];
-  resolvedComponents?: Array<{ name: string; file: string; mode: "client" | "server" | "all" }>;
+  resolvedComponents?: Array<{
+    name: string;
+    file: string;
+    mode: "client" | "server" | "all";
+    global?: true;
+  }>;
   hasServerPageIslands?: boolean;
   appRegistrationIgnore?: NuxtAppRegistrationIgnore;
   appRegistration?: Record<
@@ -523,6 +539,7 @@ export interface NuxtDoctorManifest {
     NuxtAppRegistrationSnapshot | undefined
   >;
   componentIslands?: boolean | "auto";
+  componentTransformExclude?: Array<{ source: string; flags: string }>;
   layers: Array<{
     root: string;
     nuxtConfigMtimeMs?: number | null;
@@ -543,6 +560,8 @@ export interface NuxtDoctorManifest {
   routeRules: Record<string, unknown>;
   /** Nitro's resolved `routeRules`; unset when the manifest was written before Nitro started. */
   resolvedRouteRules?: Record<string, unknown>;
+  /** Whether Nuxt can merge route rules from resolved pages. */
+  inlineRouteRules?: boolean;
   routeRulePageMtimes?: Record<string, number | null>;
   routeRulePageInventory?: Record<string, string[]>;
   nitroPreset?: string;
@@ -871,7 +890,18 @@ export interface ComponentUsageFact {
    * `<Transition>`, or a `<slot>` outlet, whose rendered parent element is elsewhere. Absent at
    * the template root.
    */
-  parent?: { tag: string; element: boolean };
+  parent?: { tag: string; element: boolean; foreign?: true };
+  /**
+   * Tags of the components, built-ins such as `<Transition>`, and `<slot>` outlets that enclose
+   * the usage in the same template, outermost first.
+   */
+  wrappers: Array<{
+    tag: string;
+    renderTag: string;
+    offset: number;
+    defaultSlot: boolean;
+    shadowed: boolean;
+  }>;
   /** Names that an enclosing `v-for` or `v-slot` introduces, or a `v-for` on this element. */
   scope: string[];
   /** Whether this element or an ancestor has `v-for`. */
@@ -950,6 +980,19 @@ export interface ComponentRootBranch {
 
 /** What a Vue SFC declares in `<script setup>` and renders in its template. */
 export interface ComponentFacts {
+  /** A Nuxt inline route rule might disable SSR. */
+  inlineRouteRulesMayDisableSsr: boolean;
+  dynamicRenders: Array<{
+    wrappers: ComponentUsageFact["wrappers"];
+    binding?: string;
+    name?: string;
+  }>;
+  /** Names declared in a static Options API or defineOptions components registry. */
+  localComponents?: string[];
+  /** Whether Doctor knows the local runtime lookup keys. */
+  localComponentLookupKnown: boolean;
+  /** A name explicitly supplied to Vue's runtime component lookup. */
+  runtimeComponentName?: string;
   /** Props `<script setup>` declares, or `undefined` when they cannot be read statically. */
   props?: ComponentPropFact[];
   /** The name `const props = defineProps()` binds. */
@@ -1030,6 +1073,14 @@ export interface ComponentUsageEdge {
   target?: string;
   /** How Doctor resolved `target`. */
   resolvedBy?: "import" | "nuxt-components";
+  /** Mode applied by Nuxt to this auto-import or `#components` binding, not to direct imports. */
+  nuxtMode?: "client" | "server" | "all";
+  /** This usage is inside a recognized client-only default slot. */
+  clientOnlySlot?: true;
+  /** The server render of this Nuxt slot could not be established. */
+  unknownSsrSlot?: true;
+  /** A Nuxt auto-import name that could not be resolved to an SFC. */
+  unresolvedNuxtName?: string;
 }
 
 export interface ComponentNode {
@@ -1041,6 +1092,14 @@ export interface ComponentNode {
   renders: ComponentUsageEdge[];
   /** Resolved usages of this component in other templates. */
   callers: ComponentUsageEdge[];
+  /** Resolved dynamic renders, separate from static usages and their prop contracts. */
+  dynamicRenders?: Array<
+    Pick<ComponentUsageEdge, "clientOnlySlot" | "unknownSsrSlot" | "nuxtMode"> & { target: string }
+  >;
+  /** A dynamic component outside a recognized client-only default slot may render other SFCs. */
+  hasUnresolvedDynamicRender?: true;
+  /** An import can render this SFC outside the tracked static and dynamic usages. */
+  hasUntrackedImporter?: true;
   /**
    * Files that import this SFC other than as a `<script setup>` tag binding: script modules,
    * re-exports, dynamic imports, Options API `<script>` imports, or SFCs that also reference the

@@ -1,5 +1,5 @@
 import { resolve } from "pathe";
-import type { RuleContext } from "../../../../core/index.js";
+import type { NuxtProjectInfo, RuleContext } from "../../../../core/index.js";
 import { projectWorkspacePackages } from "../../../../core/internal/applicability.js";
 import { owningWorkspacePackage } from "../../../../core/internal/workspace-packages.js";
 import { projectNuxtInventories } from "../../../../core/internal/workspace-nuxt.js";
@@ -13,12 +13,13 @@ import { projectNuxtInventories } from "../../../../core/internal/workspace-nuxt
  * depends on it. The Rule option `{ ssr: true }` or `{ ssr: false }` overrides it, for libraries
  * whose server-rendering consumers live outside the workspace.
  */
-export function vueSsrEvidence(ctx: RuleContext): string | undefined {
-  const packages = projectWorkspacePackages(ctx.project);
-  const owner = packages.find(
-    (item) => item.root === owningWorkspacePackage(packages, ctx.file.relativePath),
-  );
-  if (owner?.framework === "nuxt" || isInNuxtApp(ctx, owner?.root ?? ".")) return undefined;
+export function vueSsrEvidence(
+  ctx: RuleContext,
+  relativePath = ctx.file.relativePath,
+): string | undefined {
+  const owner = owningPackage(ctx, relativePath);
+  if (owner?.framework === "nuxt" || nuxtAppOf(ctx, relativePath, owner?.root ?? "."))
+    return undefined;
   const option = (ctx.options as { ssr?: unknown } | undefined)?.ssr;
   if (option === false) return undefined;
   if (option === true) return "the Rule option ssr is true";
@@ -31,6 +32,68 @@ export function vueSsrEvidence(ctx: RuleContext): string | undefined {
 }
 
 /**
+ * Why Doctor treats the SFC at `relativePath` as rendered on the server and then hydrated, in a
+ * Nuxt app or in other Vue code, or `undefined` without that evidence. A Nuxt app hydrates unless
+ * `ssr` is false, but a route rule can turn SSR off for routes Doctor cannot map to components, so
+ * an app with unreadable or stale page-derived rules, or a rule that sets `ssr: false`, has no
+ * evidence. Only call this for a hydration candidate: stale page-derived rules record a gap for
+ * its file.
+ */
+export function hydrationEvidence(
+  ctx: RuleContext,
+  relativePath: string,
+  appsWithPossibleInlineSsrOptOut: ReadonlySet<NuxtProjectInfo>,
+): string | undefined {
+  const nuxt = hydrationNuxtApp(ctx, relativePath);
+  if (!nuxt) return vueSsrEvidence(ctx, relativePath);
+  const manifest = nuxt.manifest;
+  if (
+    nuxt.hydrationSsr !== true ||
+    appsWithPossibleInlineSsrOptOut.has(nuxt) ||
+    !routeRulesKeepSsr(nuxt.routeRules)
+  )
+    return undefined;
+  if (manifest?.isCurrent) {
+    if (manifest.inlineRouteRules !== false && manifest.routeRulePagesCurrent === false) {
+      ctx.project.evidenceGaps = [
+        ...(ctx.project.evidenceGaps ?? []),
+        {
+          source: "vite-doctor/nuxt-hydration-route-rules",
+          files: [relativePath],
+          message: `Doctor cannot verify SSR for a potential component nesting mismatch in ${relativePath} because Nuxt's page-derived route rules are stale. Run Nuxt prepare with the Doctor module enabled, then rerun Doctor.`,
+        },
+      ];
+      return undefined;
+    }
+    if (!routeRulesKeepSsr(manifest.resolvedRouteRules)) return undefined;
+  }
+  return "the Nuxt app enables SSR and has no known route-level SSR opt-out";
+}
+
+export function hydrationNuxtApp(
+  ctx: RuleContext,
+  relativePath: string,
+): NuxtProjectInfo | undefined {
+  return nuxtAppOf(ctx, relativePath, owningPackage(ctx, relativePath)?.root ?? ".");
+}
+
+function routeRulesKeepSsr(rules: Record<string, unknown> | undefined): boolean {
+  if (!rules) return true;
+  // Without the build manifest Doctor only knows that nuxt.config mentions `routeRules`.
+  if (rules.__staticDetection) return false;
+  return Object.values(rules).every(
+    (rule) =>
+      typeof rule !== "object" || rule === null || (rule as { ssr?: unknown }).ssr !== false,
+  );
+}
+
+function owningPackage(ctx: RuleContext, relativePath: string) {
+  const packages = projectWorkspacePackages(ctx.project);
+  const root = owningWorkspacePackage(packages, relativePath);
+  return packages.find((item) => item.root === root);
+}
+
+/**
  * Whether the Doctor Run itself is a Vue SSR project outside Nuxt. Rules that report any browser
  * global or random id in a file, not only render values, keep to this narrower evidence: in a
  * library they cannot tell whether a helper ever runs during a server render.
@@ -40,13 +103,17 @@ export function isVueSsrRun(ctx: RuleContext): boolean {
 }
 
 /**
- * Whether the file sits in a Nuxt app or layer directory. A Nuxt app at the workspace root does not
- * own the workspace packages nested in it unless one of them is itself a layer.
+ * The Nuxt app whose app or layer directory holds the file. A Nuxt app at the workspace root does
+ * not own the workspace packages nested in it unless one of them is itself a layer.
  */
-function isInNuxtApp(ctx: RuleContext, ownerRoot: string): boolean {
-  const file = resolve(ctx.project.root, ctx.file.relativePath);
+function nuxtAppOf(
+  ctx: RuleContext,
+  relativePath: string,
+  ownerRoot: string,
+): NuxtProjectInfo | undefined {
+  const file = resolve(ctx.project.root, relativePath);
   const ownerDir = resolve(ctx.project.root, ownerRoot);
-  return projectNuxtInventories(ctx.project).some((nuxt) =>
+  return projectNuxtInventories(ctx.project).find((nuxt) =>
     [...nuxt.appRoots, ...nuxt.layers.map((layer) => layer.root)].some((root) => {
       const absolute = resolve(ctx.project.root, root);
       return isInside(file, absolute) && isInside(absolute, ownerDir);

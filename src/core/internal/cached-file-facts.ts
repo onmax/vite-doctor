@@ -111,10 +111,12 @@ function componentFacts(value: unknown): boolean {
         typeof item.hasSlotContent === "boolean" &&
         strings(item.scope) &&
         placement(item) &&
+        componentWrappers(item.wrappers) &&
         (item.parent === undefined ||
           (record(item.parent) &&
             typeof item.parent.tag === "string" &&
-            typeof item.parent.element === "boolean")),
+            typeof item.parent.element === "boolean" &&
+            (item.parent.foreign === undefined || item.parent.foreign === true))),
     ) &&
     facts(
       value.slotOutlets,
@@ -127,7 +129,30 @@ function componentFacts(value: unknown): boolean {
         (value.doctorOption.unreadable === undefined ||
           value.doctorOption.cause === "computed" ||
           value.doctorOption.cause === "overridden" ||
-          value.doctorOption.cause === "overridden-by-setup")))
+          value.doctorOption.cause === "overridden-by-setup"))) &&
+    typeof value.inlineRouteRulesMayDisableSsr === "boolean" &&
+    facts(
+      value.dynamicRenders,
+      (render) =>
+        componentWrappers(render.wrappers) &&
+        optionalString(render.binding) &&
+        optionalString(render.name),
+    ) &&
+    (value.localComponents === undefined || strings(value.localComponents)) &&
+    typeof value.localComponentLookupKnown === "boolean" &&
+    optionalString(value.runtimeComponentName)
+  );
+}
+
+function componentWrappers(value: unknown): boolean {
+  return facts(
+    value,
+    (wrapper) =>
+      typeof wrapper.tag === "string" &&
+      typeof wrapper.renderTag === "string" &&
+      typeof wrapper.offset === "number" &&
+      typeof wrapper.defaultSlot === "boolean" &&
+      typeof wrapper.shadowed === "boolean",
   );
 }
 
