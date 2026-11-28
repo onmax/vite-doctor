@@ -125,6 +125,7 @@ export const allDoctorDiagnosticRegistry = defineDoctorDiagnostics([
   { code: "VUE0049", ruleId: "vue/reactivity/no-shallow-ref-deep-mutation" },
   { code: "VUE0050", ruleId: "vue/watch/no-property-read-source" },
   { code: "VUE0051", ruleId: "vue/attrs/no-multi-root-fallthrough" },
+  { code: "VUE0052", ruleId: "vue/ssr/no-invalid-root-nesting" },
   { code: "VUE0053", ruleId: "vue/router/no-redirect-cycle" },
 
   { code: "VITE0001", ruleId: "vite/assets/no-dynamic-new-url" },

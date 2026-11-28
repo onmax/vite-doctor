@@ -549,6 +549,7 @@ test("uses prepared routes across layers and Nuxt's effective layout registratio
       "base/nuxt.config.ts": "export default {}",
       ".nuxtignore": "app/shells/ignored.vue",
       "app/app.vue": template("<NuxtPage />"),
+      "app/components/Panel.client.vue": template("<div>Panel</div>"),
       "app/pages/users.vue": template("<div>Users</div>"),
       "app/pages/users/[id].vue": template("<div>User</div>"),
       "app/pages/groups.vue": template("<div>Groups</div>"),
@@ -592,6 +593,11 @@ test("uses prepared routes across layers and Nuxt's effective layout registratio
     const manifest = JSON.parse(
       readFileSync(join(root, ".nuxt/doctor.manifest.json"), "utf8"),
     ) as NuxtDoctorManifest;
+    expect(manifest.resolvedComponents).toEqual(
+      expect.arrayContaining([
+        { name: "Panel", file: join(root, "app/components/Panel.client.vue"), mode: "client" },
+      ]),
+    );
     expect(manifest.pages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ file: join(root, "app/pages/users/[id].vue"), parentFile: null }),

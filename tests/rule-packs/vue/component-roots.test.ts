@@ -78,11 +78,17 @@ import Two from './Two.vue'
     [["fragment", undefined]],
     [["text", undefined]],
   ]);
-  expect(facts("src/Usage.vue").usages.map((usage) => [usage.tag, usage.parent])).toEqual([
-    ["Two", undefined],
-    ["Two", { tag: "ul", element: true }],
-    ["Card", undefined],
-    ["Two", { tag: "Card", element: false }],
+  expect(
+    facts("src/Usage.vue").usages.map((usage) => [usage.tag, usage.parent, usage.wrappers]),
+  ).toEqual([
+    ["Two", undefined, []],
+    ["Two", { tag: "ul", element: true }, []],
+    ["Card", undefined, []],
+    [
+      "Two",
+      { tag: "Card", element: false },
+      [{ tag: "Card", renderTag: "Card", offset: 144, defaultSlot: true, shadowed: false }],
+    ],
   ]);
 });
 
@@ -359,6 +365,12 @@ test("VUE0051 distinguishes missing DOM inheritance from component event deliver
 });
 
 test.each([
+  [
+    "dynamic target reads $attrs",
+    multiRoot("", '<component :is="$attrs" /><span />'),
+    'id="root"',
+    false,
+  ],
   [
     "aliased useAttrs",
     multiRoot(

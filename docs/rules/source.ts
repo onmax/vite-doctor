@@ -1056,6 +1056,14 @@ function ruleUsefulLinks(rule: RuleDocument): RuleUsefulLink[] {
     add("Pinia", "https://pinia.vuejs.org/");
   }
 
+  if (rule.id === "vue/ssr/no-invalid-root-nesting") {
+    add("Vue hydration mismatch", "https://vuejs.org/guide/scaling-up/ssr.html#hydration-mismatch");
+    add(
+      "HTML parsing: the in body insertion mode",
+      "https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody",
+    );
+  }
+
   if (rule.id === "vue/attrs/no-multi-root-fallthrough") {
     add(
       "Vue attribute inheritance on multiple root nodes",

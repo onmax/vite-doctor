@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { glob } from "node:fs/promises";
-import { join, relative, resolve } from "pathe";
+import { isAbsolute, join, relative, resolve } from "pathe";
 import type {
   AutoImportEntry,
   DoctorFramework,
@@ -25,10 +25,13 @@ import { detectNuxtModuleDefinitions } from "./nuxt-module-inventory.js";
 import type { RuntimeTarget } from "../primitives.js";
 import { ProjectFileWalk, rememberProjectFileWalk, type ProjectEntry } from "./project-files.js";
 import { loadTypeScript } from "./lazy-parsers.js";
+import { pascalCase } from "./component-facts.js";
 import {
   applyRuntimeTarget,
+  autoRegisteredNuxtLayers,
   isNuxtManifestCurrent,
   readNuxtConfigGranularCachedData,
+  readNuxtConfigHydrationSsr,
   readNuxtConfigSsr,
   resolveNuxtCompatibility,
   resolveRuntimeGraph,
@@ -403,6 +406,9 @@ async function detectNuxt(
   { manifest, manifestPath, manifestCurrent, configs }: NuxtRunFacts,
 ): Promise<NuxtProjectInfo> {
   const config = readNuxtConfigText(root);
+  const manifestSsr = manifestCurrent ? manifest?.ssr : undefined;
+  const configSsr =
+    manifestSsr === undefined ? readNuxtConfigHydrationSsr(root, configs) : undefined;
   const autoImportEntries = (manifest?.autoImports ?? coreAutoImports()) as AutoImportEntry[];
   const detectedAppRoots = await detectNuxtAppRoots(root);
   const appRoots = [
@@ -431,13 +437,21 @@ async function detectNuxt(
           transform: manifest.nitroAutoImportTransform,
         }
       : undefined,
-    components: new Map(
-      (manifest?.components ?? []).flatMap((component: any) =>
-        typeof component?.name === "string" && typeof component.file === "string"
-          ? [[component.name, component]]
-          : [],
-      ),
+    components: nuxtComponents(
+      manifest?.resolvedComponents?.filter(({ name, file }) => {
+        const path = relative(root, file);
+        return (
+          name === "ClientOnly" ||
+          (!isAbsolute(path) &&
+            !path.startsWith("../") &&
+            !path.split("/").includes("node_modules"))
+        );
+      }) ?? manifest?.components,
+      manifestCurrent,
     ),
+    componentTransformExclude: manifestCurrent
+      ? readComponentTransformExclude(manifest?.componentTransformExclude)
+      : undefined,
     layers: manifest?.layers ?? [{ root, priority: 0 }],
     localLayerAliases: manifest?.localLayerAliases,
     productionBuildCache: manifestCurrent ? manifest?.productionBuildCache : undefined,
@@ -445,8 +459,12 @@ async function detectNuxt(
       manifestCurrent && typeof manifest?.granularCachedData === "boolean"
         ? { enabled: manifest.granularCachedData, source: "manifest" }
         : readNuxtConfigGranularCachedData(root, configs),
-    routeRules: manifest?.routeRules ?? readRouteRules(config.primary),
-    ssr: (manifestCurrent ? manifest?.ssr : undefined) ?? readNuxtConfigSsr(root, configs),
+    routeRules:
+      (manifestCurrent ? manifest?.routeRules : undefined) ?? readRouteRules(config.anyFormat),
+    ssr: manifestSsr ?? (configSsr === null ? readNuxtConfigSsr(root, configs) : configSsr),
+    hydrationSsr:
+      manifestSsr ??
+      (configSsr !== null && configSsr !== false && autoRegisteredNuxtLayers(root).length === 0),
     runtimeConfig: manifest?.runtimeConfig,
     serverDirs: await serverDirs(root),
     doctorConfig: manifest?.doctorConfig,
@@ -461,6 +479,46 @@ async function detectNuxt(
       manifestCurrent,
     ),
   };
+}
+
+function readComponentTransformExclude(
+  patterns: NuxtDoctorManifest["componentTransformExclude"],
+): RegExp[] | undefined {
+  if (!Array.isArray(patterns)) return undefined;
+  try {
+    return patterns.map(({ source, flags }) => new RegExp(source, flags));
+  } catch {
+    return undefined;
+  }
+}
+
+function nuxtComponents(
+  components: unknown[] | undefined,
+  manifestCurrent: boolean,
+): NuxtProjectInfo["components"] {
+  const registry: NuxtProjectInfo["components"] = new Map();
+  const ambiguous = new Set<string>();
+  for (const component of components ?? []) {
+    if (typeof component !== "object" || !component) continue;
+    const { name, file, mode, global } = component as Record<string, unknown>;
+    if (typeof name !== "string" || typeof file !== "string") continue;
+    const key = pascalCase(name);
+    const entry = registry.get(key);
+    const globallyRegistered = manifestCurrent && global === true;
+    if (
+      entry &&
+      (entry.file !== file || entry.mode !== mode || !!entry.global !== globallyRegistered)
+    )
+      ambiguous.add(key);
+    registry.set(key, {
+      name,
+      file,
+      mode: mode === "client" || mode === "server" || mode === "all" ? mode : undefined,
+      ...(globallyRegistered && { global: true }),
+    });
+  }
+  for (const key of ambiguous) registry.delete(key);
+  return registry;
 }
 
 async function detectNuxtAppRoots(root: string): Promise<string[]> {

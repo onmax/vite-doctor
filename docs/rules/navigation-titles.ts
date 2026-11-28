@@ -276,6 +276,7 @@ export const ruleNavigationTitles: Record<string, string> = {
   "vue/state/no-external-shared-state-mutation": "Shared state writes",
   "vue/ssr/data-allow-mismatch-surgical": "allow-mismatch",
   "vue/ssr/no-browser-api-in-setup": "Browser APIs",
+  "vue/ssr/no-invalid-root-nesting": "Root HTML nesting",
   "vue/ssr/no-random-or-local-time-render": "Random, time, locale",
   "vue/ssr/no-setup-state-from-browser-read": "Setup browser state",
   "vue/ssr/use-id-for-stable-ids": "useId",

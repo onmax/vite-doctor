@@ -3,14 +3,16 @@ import type {
   ComponentNode,
   ComponentFacts,
   ComponentUsageEdge,
+  ComponentUsageFact,
   ComponentUsageGraph,
   FileFacts,
   ImportFact,
   NuxtProjectInfo,
 } from "../primitives.js";
-import { camelize } from "./component-facts.js";
+import { pascalCase, tagCandidates } from "./component-facts.js";
 import { sourceFacts } from "./facts.js";
 import type { ScanSession } from "./scan-session.js";
+import { NUXT_CLIENT_ONLY_TAG, nuxtDefaultSlotSsr } from "./sfc.js";
 import { createGraphIndex, type GraphIndex } from "./workspace-graph.js";
 
 const graphs = new WeakMap<ScanSession, Promise<ComponentUsageGraph>>();
@@ -28,7 +30,8 @@ export function componentUsageGraph(session: ScanSession): Promise<ComponentUsag
 async function buildComponentUsageGraph(session: ScanSession): Promise<ComponentUsageGraph> {
   session.facts = await sourceFacts(session);
   const facts = session.facts;
-  const index = createGraphIndex(session, session.ruleInputs.frame().fs);
+  const fs = session.ruleInputs.frame().fs;
+  const index = createGraphIndex(session, fs);
   const byId = new Map(facts.map((fact) => [fact.fileId, fact]));
   const components = new Map<string, ComponentNode>();
   const resolveSfc = (from: FileFacts, source: string, imported: string) =>
@@ -56,20 +59,116 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
   }
   const unresolved: ComponentUsageEdge[] = [];
   for (const fact of facts) {
-    const node = fact.component && components.get(fact.path);
+    const node: ComponentNode | undefined = components.get(fact.path);
     if (!node) continue;
-    const registry = nuxtComponentRegistry(session, fact.path);
+    const handle = session.handlesByPath.get(fact.path);
+    const nuxt = handle?.project.nuxt;
+    const registry = nuxt?.components;
+    const transformExclude = nuxt?.componentTransformExclude;
+    const excludedFromComponentTransform = transformExclude?.some((pattern) => {
+      pattern.lastIndex = 0;
+      return pattern.test(fact.path);
+    });
+    const findBinding = (tag: string) => {
+      const candidates = tagCandidates(tag);
+      return node.facts.imports.find((item) => candidates.includes(item.local));
+    };
+    const compiledSlots =
+      handle &&
+      excludedFromComponentTransform &&
+      [...node.facts.usages, ...node.facts.dynamicRenders].some((usage) =>
+        usage.wrappers.some(
+          ({ renderTag, defaultSlot }) => defaultSlot && NUXT_CLIENT_ONLY_TAG.test(renderTag),
+        ),
+      )
+        ? nuxtDefaultSlotSsr(handle.path, handle.text, fs)
+        : undefined;
+    const slotEvidence = (
+      wrappers: ComponentUsageFact["wrappers"],
+    ): Pick<ComponentUsageEdge, "clientOnlySlot" | "unknownSsrSlot"> => {
+      let unknownSsrSlot = false;
+      const clientOnlySlot = wrappers.some(({ renderTag: tag, offset, defaultSlot, shadowed }) => {
+        if (!defaultSlot) return false;
+        if (compiledSlots?.get(offset) === "pruned") return true;
+        if (shadowed) return false;
+        const binding = findBinding(tag);
+        if (!binding && excludedFromComponentTransform) {
+          if (NUXT_CLIENT_ONLY_TAG.test(tag) && !compiledSlots?.has(offset)) unknownSsrSlot = true;
+          return false;
+        }
+        const name = binding?.source === "#components" ? binding.imported : pascalCase(tag);
+        if (
+          binding?.source === "vue-client-only" ||
+          binding?.source === "#app/components/client-only"
+        )
+          return true;
+        if (!nuxt || name !== "ClientOnly" || (binding && binding.source !== "#components"))
+          return false;
+        const registered = registry?.get(name);
+        const locallyRegistered = node.facts.localComponents?.some((localName) =>
+          tagCandidates(tag).includes(localName),
+        );
+        if (!binding && locallyRegistered && excludedFromComponentTransform !== false) return false;
+        if (registered)
+          return /(?:^|\/)nuxt\/dist\/app\/components\/client-only(?:\.[^/]+)?$/.test(
+            registered.file,
+          );
+        return !!binding || !locallyRegistered;
+      });
+      return clientOnlySlot
+        ? { clientOnlySlot: true }
+        : unknownSsrSlot
+          ? { unknownSsrSlot: true }
+          : {};
+    };
+    for (const render of node.facts.dynamicRenders) {
+      const slot = slotEvidence(render.wrappers);
+      const binding: ComponentNode["facts"]["imports"][number] | undefined =
+        node.facts.imports.find((item) => item.local === render.binding);
+      const entry: { file: string; mode?: ComponentUsageEdge["nuxtMode"] } | undefined =
+        binding?.source === "#components"
+          ? (registry?.get(binding.imported) ??
+            registry?.get(binding.imported.replace(/^Lazy(?=[A-Z])/, "")))
+          : render.name === undefined
+            ? undefined
+            : resolveRuntimeComponent(node.facts, registry, render.name);
+      const target: string | undefined = entry?.file
+        ? resolve(session.root, entry.file)
+        : binding && resolveSfc(fact, binding.source, binding.imported);
+      const callee: ComponentNode | undefined = target ? components.get(target) : undefined;
+      if (target && callee) {
+        (node.dynamicRenders ??= []).push({
+          target,
+          ...slot,
+          ...(entry?.mode && { nuxtMode: entry.mode }),
+        });
+        if (callee !== node && !callee.indirectImporters.includes(fact.path))
+          callee.indirectImporters.push(fact.path);
+      } else if (!slot.clientOnlySlot && !slot.unknownSsrSlot && render.name === undefined) {
+        node.hasUnresolvedDynamicRender = true;
+      }
+    }
     for (const usage of node.facts.usages) {
-      const edge: ComponentUsageEdge = { from: fact.path, usage };
-      const binding = usage.tag.includes(".")
-        ? undefined
-        : node.facts.imports.find((item) => tagCandidates(usage.tag).includes(item.local));
-      if (binding) {
+      const edge: ComponentUsageEdge = { from: fact.path, usage, ...slotEvidence(usage.wrappers) };
+      const binding = usage.tag.includes(".") ? undefined : findBinding(usage.tag);
+      if (binding && binding.source !== "#components") {
         const target = node.importedComponents.get(binding.local);
         if (target) Object.assign(edge, { target, resolvedBy: "import" });
       } else {
-        const target = registry?.get(pascalCase(usage.tag).replace(/^Lazy(?=[A-Z])/, ""));
-        if (target) Object.assign(edge, { target, resolvedBy: "nuxt-components" });
+        const name = (binding?.imported ?? pascalCase(usage.tag)).replace(/^Lazy(?=[A-Z])/, "");
+        const entry = registry?.get(name);
+        if (typeof entry?.file === "string") {
+          const target = isAbsolute(entry.file) ? entry.file : resolve(session.root, entry.file);
+          Object.assign(edge, { target, resolvedBy: "nuxt-components", nuxtMode: entry.mode });
+        } else if (
+          nuxt &&
+          !usage.tag.includes(".") &&
+          !tagCandidates(usage.tag).some(
+            (tag) => usage.scope.includes(tag) || node.facts.localComponents?.includes(tag),
+          )
+        ) {
+          edge.unresolvedNuxtName = name;
+        }
       }
       node.renders.push(edge);
       const callee = edge.target ? components.get(edge.target) : undefined;
@@ -77,6 +176,7 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
       else {
         delete edge.target;
         delete edge.resolvedBy;
+        delete edge.nuxtMode;
         unresolved.push(edge);
       }
     }
@@ -84,8 +184,9 @@ async function buildComponentUsageGraph(session: ScanSession): Promise<Component
   for (const fact of facts) {
     for (const target of indirectSfcImports(fact, resolveSfc)) {
       const node = components.get(target);
-      if (node && !node.indirectImporters.includes(fact.path))
-        node.indirectImporters.push(fact.path);
+      if (!node) continue;
+      node.hasUntrackedImporter = true;
+      if (!node.indirectImporters.includes(fact.path)) node.indirectImporters.push(fact.path);
     }
   }
   return { components, unresolved };
@@ -102,6 +203,31 @@ function readsNuxtAttrs(facts: ComponentFacts, nuxt: NuxtProjectInfo | undefined
       (entry.name === "useAttrs" || entry.name === "getCurrentInstance")
     );
   });
+}
+
+function resolveRuntimeComponent(
+  facts: ComponentNode["facts"],
+  registry: NuxtProjectInfo["components"] | undefined,
+  name: string,
+) {
+  const candidates = tagCandidates(name);
+  if (
+    !facts.localComponentLookupKnown ||
+    candidates.some(
+      (candidate) =>
+        candidate === facts.runtimeComponentName || facts.localComponents?.includes(candidate),
+    )
+  )
+    return undefined;
+  for (const candidate of candidates) {
+    const exact = registry?.get(candidate);
+    const base = candidate.startsWith("Lazy") ? registry?.get(candidate.slice(4)) : undefined;
+    const global = exact?.global && exact.name === candidate ? exact : undefined;
+    const lazy = base?.global && `Lazy${base.name}` === candidate ? base : undefined;
+    if (global && lazy) return undefined;
+    if (global || lazy) return global ?? lazy;
+  }
+  return undefined;
 }
 
 function resolveImportedSfc(
@@ -162,33 +288,4 @@ function indirectSfcImports(
 
 function isSetupImport(item: ImportFact, setup: Array<{ local: string }>): boolean {
   return item.specifiers.every((name) => setup.some((binding) => binding.local === name));
-}
-
-/** Nuxt component registry entries the Project Inventory names with a file. */
-function nuxtComponentRegistry(
-  session: ScanSession,
-  file: string,
-): Map<string, string> | undefined {
-  const nuxt = session.handlesByPath.get(file)?.project.nuxt ?? session.project.nuxt;
-  if (!nuxt?.components?.size) return undefined;
-  const registry = new Map<string, string>();
-  for (const entry of nuxt.components.values()) {
-    if (typeof entry?.name !== "string" || typeof entry.file !== "string") continue;
-    registry.set(
-      pascalCase(entry.name),
-      isAbsolute(entry.file) ? entry.file : resolve(session.root, entry.file),
-    );
-  }
-  return registry.size ? registry : undefined;
-}
-
-/** Names a `<script setup>` binding can have to render as `tag`, as Vue's compiler resolves them. */
-function tagCandidates(tag: string): string[] {
-  const camel = camelize(tag);
-  return [tag, camel, camel.charAt(0).toUpperCase() + camel.slice(1)];
-}
-
-function pascalCase(tag: string): string {
-  const camel = camelize(tag);
-  return camel.charAt(0).toUpperCase() + camel.slice(1);
 }
